@@ -109,3 +109,53 @@ def test_enrol_codes_are_rate_limited(client, started):
     for _ in range(real.CODES_PER_HOUR):
         assert client.post("/api/devices/enrol-code", json={}).status_code == 201
     assert client.post("/api/devices/enrol-code", json={}).status_code == 429
+
+
+# ---------------------------------------------------------------- slice-5 review regressions
+
+def test_demo_incidents_cannot_touch_real_devices(client, started):  # H1
+    dev = enrolled(client)
+    facts = {**FACTS, "containers": [{"name": "minecraft", "image": "mc:1", "state": "running", "status": "Up"}]}
+    beat(client, dev["token"], facts)
+    before = db.device(started, dev["deviceId"]).get().to_dict()
+    events_before = len(list(db.events(started).get()))
+    for kind in ("logs_locked", "server_lagging", "disk_full", "update_available"):
+        r = client.post("/api/demo/inject", json={"kind": kind, "deviceId": dev["deviceId"]})
+        assert r.status_code == 422 and r.json()["code"] == "invalid_body"
+    assert db.device(started, dev["deviceId"]).get().to_dict() == before
+    assert len(list(db.events(started).get())) == events_before
+
+
+def test_silent_real_device_shows_offline(client, started):  # M3
+    dev = enrolled(client)
+    beat(client, dev["token"])
+    db.device(started, dev["deviceId"]).update({"lastSeen": datetime.now(timezone.utc) - timedelta(days=2)})
+    summary = agentlib.fleet_summary(started, generation(started))
+    assert "NOT REPORTING" in summary
+    line = next(line for line in summary.splitlines() if dev["deviceId"] in line)
+    assert "Health: offline" in line and "Pi-hole" not in line
+    db.client().collection("helperTokens").document(real._sha(dev["token"])).update({"lastSeen": None})
+    beat(client, dev["token"])  # a fresh report brings it back
+    assert "NOT REPORTING" not in agentlib.fleet_summary(started, generation(started))
+
+
+def test_revoke_racing_heartbeats_ends_revoked_and_offline(client, started):  # M4
+    import threading
+    dev = enrolled(client)
+    results = []
+
+    def heartbeat():
+        try:
+            results.append(real.heartbeat(dev["token"], FACTS)["ok"])
+        except ApiError as e:
+            results.append(e.code)
+
+    t = threading.Thread(target=heartbeat)
+    t.start()
+    real.revoke(started, dev["deviceId"])
+    t.join()
+    d = db.device(started, dev["deviceId"]).get().to_dict()
+    tok = db.client().collection("helperTokens").document(real._sha(dev["token"])).get().to_dict()
+    assert tok["revoked"] is True and d["revoked"] is True
+    with pytest.raises(ApiError):
+        real.heartbeat(dev["token"], FACTS)

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Nightlight helper: reports a device's health to Nightlight. Read-only.
 
-It sends only: OS name, CPU architecture, CPU / memory / disk percentages, uptime, Docker container names and states,
-the names of failed system services, and how many software updates are waiting. It never sends host names, IP
-addresses, logs, files or passwords, and it never changes anything on the device.
+It sends only: OS name, CPU architecture, CPU / memory / disk percentages, uptime, Docker containers (name, image
+name and tag without any registry address or path, state, status text), the names of failed system services, and how
+many software updates are waiting. It does not collect host names, IP addresses, logs, files, environment variables or
+passwords, and it never changes anything on the device. It talks only HTTPS to the address you enrolled with.
 
 Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # once: trade the one-time code for a device token
@@ -15,14 +16,18 @@ Python 3.8+, standard library only; uses psutil when it is installed.
 """
 
 import argparse
+import http.client
 import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 VERSION = "0.1.0"
@@ -115,9 +120,15 @@ def _containers():
             c = json.loads(line)
         except ValueError:
             continue
-        rows.append({"name": c.get("Names", "")[:64], "image": c.get("Image", "")[:128],
+        rows.append({"name": c.get("Names", "")[:64], "image": _image_name(c.get("Image", "")),
                      "state": c.get("State", "")[:32], "status": c.get("Status", "")[:64]})
     return rows
+
+
+def _image_name(ref):
+    """Only the image's own name and tag: no registry host, port, path or digest leaves the machine."""
+    ref = ref.split("@", 1)[0]
+    return ref.rsplit("/", 1)[-1][:128]
 
 
 def _failed_units():
@@ -141,14 +152,48 @@ def facts():
             "failedUnits": _failed_units(), "updatesPending": _updates_pending()}
 
 
+LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
+
+def check_api(url):
+    """The API must be HTTPS (plain HTTP only for a local development server on this machine)."""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme == "https" and u.hostname:
+        return url.rstrip("/")
+    if u.scheme == "http" and u.hostname in LOOPBACK:
+        return url.rstrip("/")
+    sys.exit("Refusing to send credentials to a non-HTTPS address: " + url)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects with a code or token attached; a redirect is treated as an error."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _post(url, body, headers=None):
+    """POST JSON. Returns (status, body dict); status 0 means the network failed."""
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json", **(headers or {})})
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read() or b"{}")
+        with _OPENER.open(req, timeout=30) as r:
+            status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        status = e.code
+        try:
+            raw = e.read()
+        except (OSError, http.client.HTTPException):
+            raw = b""
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+        return 0, {"error": str(getattr(e, "reason", e))[:200]}
+    try:
+        return status, json.loads(raw or b"{}")
+    except ValueError:
+        return status, {"error": "unexpected response"}
 
 
 def _load():
@@ -156,22 +201,64 @@ def _load():
         return json.load(f)
 
 
-def enrol(api, code, name):
-    status, body = _post(api.rstrip("/") + "/helper/enrol", {"code": code, "name": name})
-    if status != 201:
-        sys.exit(f"Enrolment failed ({status}): {body.get('code', body)}")
+def _save_config(data):
+    """Write the token file owner-only: a fresh 0600 file, atomically replacing the entry (never through a symlink)."""
+    if os.path.islink(CONFIG_DIR):
+        sys.exit(f"Refusing to use {CONFIG_DIR}: it is a symbolic link.")
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
-    fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # the token is a secret: owner-only
-    with os.fdopen(fd, "w") as f:
-        json.dump({"api": api.rstrip("/"), "token": body["token"], "deviceId": body["deviceId"]}, f)
+    st = os.stat(CONFIG_DIR)
+    if st.st_uid != os.getuid():
+        sys.exit(f"Refusing to use {CONFIG_DIR}: it belongs to another user.")
+    if stat.S_IMODE(st.st_mode) & 0o077:
+        os.chmod(CONFIG_DIR, 0o700)
+    fd, tmp = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".helper-", suffix=".json")  # created 0600
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CONFIG)  # replaces the directory entry itself, not a symlink's target
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def enrol(api, code, name):
+    api = check_api(api)
+    status, body = _post(api + "/helper/enrol", {"code": code, "name": name})
+    if status != 201:
+        sys.exit(f"Enrolment failed ({status or 'network error'}): {body.get('code') or body.get('error') or body}")
+    _save_config({"api": api, "token": body["token"], "deviceId": body["deviceId"]})
     print(f"Joined Nightlight as device {body['deviceId']}. Token saved to {CONFIG} (owner-only).")
 
 
 def once():
     cfg = _load()
-    status, body = _post(cfg["api"] + "/helper/heartbeat", facts(), {"X-Device-Token": cfg["token"]})
-    print(f"Report sent ({status}): {body}")
+    api = check_api(cfg["api"])
+    status, body = _post(api + "/helper/heartbeat", facts(), {"X-Device-Token": cfg["token"]})
+    if status == 200:
+        print(f"Report sent: {body.get('findings', 0)} finding(s).")
+    elif status == 401:
+        print("This device's access was revoked or is unknown. Enrol again with a new code.")
+    else:
+        print(f"Report not sent ({status or 'network error'}): {body.get('code') or body.get('error')}")
     return status
+
+
+def run(every):
+    """Keep reporting; network or server trouble is retried with growing waits, a revoked token stops."""
+    wait = every
+    while True:
+        try:
+            status = once()
+        except Exception as e:  # never let one bad report end monitoring
+            print(f"Report failed: {type(e).__name__}")
+            status = 0
+        if status == 401:
+            sys.exit(1)
+        wait = every if status == 200 else min(max(wait, every) * 2, 900)
+        time.sleep(wait)
 
 
 def main():
@@ -193,9 +280,7 @@ def main():
     elif a.cmd == "show":
         print(json.dumps(facts(), indent=2))
     else:
-        while True:
-            once()
-            time.sleep(max(a.every, 30))
+        run(max(a.every, 30))
 
 
 if __name__ == "__main__":

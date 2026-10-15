@@ -76,8 +76,15 @@ failed automatic job lowers its trust level by one step.
 | `POST /api/devices/{deviceId}/revoke` | Firebase token | `{}` | `200 {ok, deviceId}`: the helper's token stops working |
 
 Heartbeat facts (anything else is rejected): `helperVersion`, `os`, `arch`, `cpuPct`, `memPct`, `diskPct`,
-`uptimeSec`, `containers[] {name, image, state, status}`, `failedUnits[]`, `updatesPending`. No host names, IP
-addresses, logs or credentials are accepted.
+`uptimeSec`, `containers[] {name, image, state, status}`, `failedUnits[]`, `updatesPending`. The helper reduces
+`image` to the image's own name and tag (no registry host, port, path or digest) and doesn't collect host names, IP
+addresses, logs, environment variables or credentials; the server also scrubs every value. Free-text values such as
+container names come from the device and are shown as reported.
+
+A real device that hasn't reported for **5 minutes** (or was revoked) is presented as `status: "offline"`,
+`health: "unknown"` with no findings; show `lastSeen` so people know how fresh the data is. The helper only talks
+HTTPS to the enrolled address, never follows redirects with its token, stores the token owner-only (0600), and
+keeps retrying with growing waits when the network drops.
 
 Real devices have `realm: "real"` and `simulated: false`; they are always shown (they have no `demoGeneration`),
 are never touched by Reset, and jobs don't run on them (read-only). Their services come from containers

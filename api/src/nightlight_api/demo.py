@@ -215,6 +215,8 @@ def inject(uid: str, kind: str, device_id: str) -> dict:
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
+        if device.get("realm") == "real":  # real devices report their own facts; the demo panel can't alter them
+            raise invalid("deviceId", "real_device_read_only")
         services = {s.id: s.to_dict() for s in svc_snaps}
         try:
             updated, new_services, event = sim.inject(device, services, kind)

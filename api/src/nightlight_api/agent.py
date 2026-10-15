@@ -79,11 +79,13 @@ def _bounded(value: dict, ctx: TurnContext) -> dict:
 
 
 def _device_summary(d: dict) -> dict:
+    d = real.view(d)
     top = next(iter(d.get("findings") or []), None)
     return {"id": d["id"], "name": d.get("name"), "purpose": d.get("purpose"), "status": d.get("status"),
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
             "topProblem": top and top.get("message"), "simulated": d.get("simulated", True),
-            "real": d.get("realm") == "real"}
+            "real": d.get("realm") == "real", "lastReport": str(d.get("lastSeen")) if d.get("realm") == "real" else None,
+            "stale": d.get("stale", False)}
 
 
 def fleet_summary(uid: str, generation: int) -> str:
@@ -96,7 +98,10 @@ def fleet_summary(uid: str, generation: int) -> str:
         s = _device_summary(dict(d, id=snap.id))
         disk = f"disk {s['diskPct']}% full; " if s["diskPct"] is not None else ""
         problem = f"top problem: {s['topProblem']}" if s["topProblem"] else "no known problems"
-        kind = "REAL device, read-only (no jobs can run on it)" if s["real"] else "simulated"
+        kind = "simulated"
+        if s["real"]:
+            kind = "REAL device, read-only (no jobs can run on it); " + (
+                "NOT REPORTING for over 5 minutes, health unknown" if s["stale"] else f"last report {s['lastReport']}")
         lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
     text = scrub("\n".join(sorted(lines)))[0]
     return text.replace("{", "(").replace("}", ")")
@@ -118,10 +123,10 @@ def make_tools(ctx: TurnContext, read_only: bool):
         snap = db.device(ctx.uid, device_id).get()
         if not snap.exists or not real.is_current(snap.to_dict(), ctx.generation):
             return {"error": "no such device"}
-        d = dict(snap.to_dict(), id=device_id)
+        d = real.view(dict(snap.to_dict(), id=device_id))
         services = [dict(s.to_dict(), id=s.id) for s in db.services(ctx.uid, device_id).get()]
         keep = ("id", "name", "purpose", "os", "status", "health", "vitals", "findings", "diskConsumers",
-                "diskGb", "simulated", "version")
+                "diskGb", "simulated", "version", "realm", "stale", "lastSeen")
         out = {k: d.get(k) for k in keep}
         out["services"] = [{k: s.get(k) for k in ("id", "name", "status", "version", "latestVersion",
                                                   "updateAvailable", "players", "lastBackupDaysAgo", "findings")

@@ -101,13 +101,20 @@ def enrol(code: str, name: str) -> dict:
 
 
 def revoke(uid: str, device_id: str) -> dict:
-    found = [s for s in tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id)).get()
-             if s.to_dict().get("uid") == uid]
-    if not found:
-        raise not_found()
-    for s in found:
-        s.reference.update({"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
-    db.device(uid, device_id).update({"status": "offline", "health": "unknown", "revoked": True})
+    """Revoke the device's token(s) and mark it offline, together, in one transaction."""
+    query = tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id))
+
+    @firestore.transactional
+    def run(tx):
+        tokens = [t for t in query.get(transaction=tx) if t.to_dict().get("uid") == uid]
+        dsnap = db.device(uid, device_id).get(transaction=tx)
+        if not tokens or not dsnap.exists:
+            raise not_found()
+        for t in tokens:
+            tx.update(t.reference, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
+        tx.update(db.device(uid, device_id), {"status": "offline", "health": "unknown", "revoked": True})
+
+    db.run_transaction(run)
     return {"ok": True, "deviceId": device_id}
 
 
@@ -208,6 +215,20 @@ def heartbeat(token: str, facts: dict) -> dict:
 
     device_id = db.run_transaction(run)
     return {"ok": True, "deviceId": device_id, "findings": len(findings)}
+
+
+STALE_AFTER = timedelta(minutes=5)
+
+
+def view(doc: dict, now: datetime | None = None) -> dict:
+    """How a device should be presented: a real device that hasn't reported for 5 minutes is offline/unknown,
+    whatever its last report said."""
+    if doc.get("realm") != "real":
+        return doc
+    last = doc.get("lastSeen")
+    if doc.get("revoked") or not last or (now or _now()) - last > STALE_AFTER:
+        return {**doc, "status": "offline", "health": "unknown", "findings": [], "stale": True}
+    return {**doc, "stale": False}
 
 
 def is_current(doc: dict, generation: int) -> bool:
