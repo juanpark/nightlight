@@ -20,11 +20,13 @@ class Settings:
     # Trust: clean human-approved runs needed before a promotion offer.
     promotion_threshold: int = 3
 
-    # Model and cost guards (build plan §7). Prices: Agent Platform list price per 1M tokens, read 2026-10-16.
-    model: str = os.environ.get("MODEL", "gemini-3.8-flash")
-    thinking_level: str = os.environ.get("THINKING_LEVEL", "LOW")
-    price_in_per_m: float = float(os.environ.get("PRICE_IN_PER_M", "0.75"))
-    price_out_per_m: float = float(os.environ.get("PRICE_OUT_PER_M", "3.75"))
+    # Model and cost guards (build plan §7). Default: Gemini 3.5 Flash-Lite, chosen on measured speed (16 Oct: about
+    # twice as fast as 3.8 Flash with equally plain answers). Prices: Agent Platform global list price per 1M tokens
+    # (3.5 Flash-Lite $0.30 / $2.50; 3.8 Flash $0.75 / $3.75), read 2026-10-16.
+    model: str = os.environ.get("MODEL", "gemini-3.5-flash-lite")
+    thinking_level: str = os.environ.get("THINKING_LEVEL", "MINIMAL")
+    price_in_per_m: float = float(os.environ.get("PRICE_IN_PER_M", "0.30"))
+    price_out_per_m: float = float(os.environ.get("PRICE_OUT_PER_M", "2.50"))
     max_input_tokens: int = int(os.environ.get("MAX_INPUT_TOKENS", "16000"))
     # Enforced by the API as a hard cap on output + thinking tokens combined (verified 2026-10-16).
     max_output_tokens: int = int(os.environ.get("MAX_OUTPUT_TOKENS", "1024"))

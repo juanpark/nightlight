@@ -66,7 +66,8 @@ def test_approve_then_continuation_is_read_only(client, started):
     FakeLlm.log.clear()
     ev = events(client.post(f"/api/turns/{cont}/stream", json={}))
     assert ev[-1]["type"] == "done"
-    assert all("rotate_logs" not in call["tools"] for call in FakeLlm.log)  # continuation can't act
+    assert FakeLlm.log and all(call["tools"] == [] for call in FakeLlm.log)  # one narrating call, no tools
+    assert len(FakeLlm.log) == 1
     assert "Done." in "".join(e.get("delta", "") for e in ev)
 
 
@@ -147,3 +148,9 @@ def test_turn_rate_limit(client, started, monkeypatch):
     assert ask(client, sid).status_code == 200
     r = ask(client, sid)
     assert r.status_code == 429 and r.json()["code"] == "quota_uid"
+
+
+def test_fleet_summary_goes_into_the_instruction(started):
+    from nightlight_api import agent as agentlib_
+    text = agentlib_.fleet_summary(started, 1)
+    assert "pi-1" in text and "94%" in text and "{" not in text and len(text.splitlines()) == 5

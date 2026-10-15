@@ -24,7 +24,8 @@ INSTRUCTION = """You are Nightlight, a calm house-sitter for someone's home and 
 The person is not technical. Speak plainly: no jargon, no commands, no acronyms without a short explanation.
 
 How to answer:
-- Look before you speak: use the tools to read devices and recent events. Never invent device state.
+- The summary of their home is below; use get_device for details before proposing a fix. Never invent device
+  state.
 - Lead with what matters in one or two short sentences: what is wrong, why it matters to them, how serious it is.
 - If a fix helps, propose exactly one by calling its tool. Say what it will change and that it can be undone.
 - After calling an action tool, report its status honestly:
@@ -34,9 +35,9 @@ How to answer:
 - Everything here is a simulated sample home; say so if asked.
 - Keep the whole reply under 80 words."""
 
-CONTINUATION = """You are Nightlight. A change the person decided on has just finished. In one or two short, plain
-sentences, say what happened and how the device is now. Check the device with a tool first. Do not propose new
-actions."""
+CONTINUATION = """You are Nightlight. A change the person decided on has just finished; the update below says exactly
+what happened and the device's state afterwards. In one or two short, plain sentences, tell them what happened and how
+the device is now. Use only the facts in the update. Do not propose anything new."""
 
 FALLBACK = ("Sorry, that needed more thinking than I'm allowed for one answer. Could you ask about one device or one "
             "problem at a time?")
@@ -53,6 +54,7 @@ class TurnContext:
     metrics: dict = field(default_factory=lambda: {"modelCalls": 0, "toolCalls": 0, "tokensIn": 0, "tokensOut": 0,
                                                     "tokensThinking": 0, "costUsd": 0.0})
     reservations: list = field(default_factory=list)
+    fleet: str = ""  # plain-text summary of the home, put in the instruction so the model needn't list devices
     actions: list = field(default_factory=list)  # action docs proposed this turn
     redacted: int = 0
 
@@ -79,6 +81,21 @@ def _device_summary(d: dict) -> dict:
     return {"id": d["id"], "name": d.get("name"), "purpose": d.get("purpose"), "status": d.get("status"),
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
             "topProblem": top and top.get("message"), "simulated": d.get("simulated", True)}
+
+
+def fleet_summary(uid: str, generation: int) -> str:
+    """One plain line per device for the instruction (no braces: ADK treats {name} in instructions as variables)."""
+    lines = []
+    for snap in db.devices(uid).get():
+        d = snap.to_dict()
+        if d.get("demoGeneration") != generation:
+            continue
+        s = _device_summary(dict(d, id=snap.id))
+        disk = f"disk {s['diskPct']}% full; " if s["diskPct"] is not None else ""
+        problem = f"top problem: {s['topProblem']}" if s["topProblem"] else "no known problems"
+        lines.append(f"- {s['id']} ({s['name']}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
+    text = scrub("\n".join(sorted(lines)))[0]
+    return text.replace("{", "(").replace("}", ")")
 
 
 def make_tools(ctx: TurnContext, read_only: bool):
@@ -281,12 +298,16 @@ def make_callbacks(ctx: TurnContext):
 
 
 def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
+    """The question agent gets the fleet summary and the tools; the follow-up after an approval gets neither: the
+    server already knows the result, so one short model call narrates it."""
     before_model, after_model, before_tool = make_callbacks(ctx)
+    instruction = CONTINUATION if continuation else (
+        INSTRUCTION + "\n\nTheir home right now (simulated sample home):\n" + (ctx.fleet or "- no devices"))
     return LlmAgent(
         name="nightlight",
         model=model or settings.model,
-        instruction=CONTINUATION if continuation else INSTRUCTION,
-        tools=make_tools(ctx, read_only=continuation),
+        instruction=instruction,
+        tools=[] if continuation else make_tools(ctx, read_only=False),
         generate_content_config=types.GenerateContentConfig(
             max_output_tokens=settings.max_output_tokens,
             thinking_config=types.ThinkingConfig(thinking_level=settings.thinking_level)),

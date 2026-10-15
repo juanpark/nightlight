@@ -278,6 +278,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     async def produce():
         try:
             continuation = c.turn["kind"] == "continuation"
+            if not continuation:
+                ctx.fleet = await asyncio.to_thread(agentlib.fleet_summary, uid, c.generation)
             agent = agentlib.build(ctx, continuation=continuation, model=model)
             sessions = InMemorySessionService()
             runner = Runner(app_name=APP, agent=agent, session_service=sessions)

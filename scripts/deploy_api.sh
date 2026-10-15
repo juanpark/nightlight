@@ -11,4 +11,4 @@ gcloud run deploy nightlight-api --source api --project "$PROJECT" --region "$RE
   --service-account "api-runtime@${PROJECT}.iam.gserviceaccount.com" \
   --allow-unauthenticated --min-instances 0 --max-instances 3 --concurrency 20 --cpu 1 --memory 1Gi \
   --timeout 300 \
-  --set-env-vars "^@^GOOGLE_CLOUD_PROJECT=${PROJECT}@GOOGLE_CLOUD_LOCATION=global@GOOGLE_GENAI_USE_ENTERPRISE=True@WEB_ORIGINS=${WEB_ORIGINS}@MODEL_BUDGET_USD=35@PRICE_IN_PER_M=0.75@PRICE_OUT_PER_M=3.75@MAX_OUTPUT_TOKENS=1024@THINKING_LEVEL=LOW"
+  --set-env-vars "^@^GOOGLE_CLOUD_PROJECT=${PROJECT}@GOOGLE_CLOUD_LOCATION=global@GOOGLE_GENAI_USE_ENTERPRISE=True@WEB_ORIGINS=${WEB_ORIGINS}@MODEL_BUDGET_USD=35@MODEL=gemini-3.5-flash-lite@PRICE_IN_PER_M=0.30@PRICE_OUT_PER_M=2.50@MAX_OUTPUT_TOKENS=1024@THINKING_LEVEL=MINIMAL"

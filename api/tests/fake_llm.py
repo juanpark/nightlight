@@ -32,6 +32,11 @@ class FakeLlm(BaseLlm):
                 if p.function_response]
         usage = types.GenerateContentResponseUsageMetadata(prompt_token_count=1000, candidates_token_count=40,
                                                            thoughts_token_count=60, total_token_count=1100)
+        if not tools:  # the follow-up after an approval has no tools: it just narrates the update
+            text = "Done. The Pi is fine now."
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text=text)]), partial=False,
+                              usage_metadata=usage, turn_complete=True)
+            return
         if "get_device" not in done:
             part = types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"}))
         elif "rotate_logs" in tools and "rotate_logs" not in done:

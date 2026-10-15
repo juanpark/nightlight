@@ -82,7 +82,7 @@ def test_cost_of_needs_full_usage():
                                                                     candidates_token_count=10)) is None
     u = types.GenerateContentResponseUsageMetadata(prompt_token_count=100, candidates_token_count=10,
                                                    total_token_count=150)
-    assert quota.cost_of(u) == pytest.approx((100 * 0.75 + 50 * 3.75) / 1e6)
+    assert quota.cost_of(u) == pytest.approx((100 * settings.price_in_per_m + 50 * settings.price_out_per_m) / 1e6)
 
 
 def test_reconcile_is_signed_and_keeps_unknown(started):
