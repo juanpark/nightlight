@@ -1,7 +1,118 @@
 # Nightlight
 
-A house-sitter for your home and small-office servers. Nightlight shows every device you run, and what runs on it, on
-one friendly map. A Gemini agent keeps watch, explains problems in plain words, and fixes them with your permission.
-It starts by asking about everything and earns more freedom only when you say so.
+**A house-sitter for your home and small-office servers.** Nightlight shows every device you run, and what runs on
+it, on one friendly map. A Gemini agent keeps watch, explains problems in plain words, and fixes them with your
+permission. It starts by asking about everything and earns more freedom only when you say so.
 
-> Status: in development for the Google Cloud AI Builder Cup 2026 (October 2026).
+Built for the Google Cloud AI Builder Cup 2026 (category: Future of Work & Enterprise Productivity).
+
+> Status: in development. The backend and agent are deployed on Cloud Run; the web app is being built.
+
+## Who it's for
+
+People who run a few machines that matter to them but have no IT person: a family with a NAS full of photos, a
+Raspberry Pi running a home VPN, home automation, someone hosting a Minecraft world for their kids, a dental clinic or
+a small office. Existing AI operations tools are built for engineers (terminals, chat windows, one on/off switch for
+the agent). Nightlight is visual and plain-language.
+
+## How it works
+
+1. **See everything.** Places hold devices; devices hold the services that run on them. Each shows a health light and
+   one plain sentence ("The Minecraft world hasn't been backed up in 9 days").
+2. **Ask.** "Is anything wrong at home?" The agent reads the devices with tools and answers in two short sentences.
+3. **Approve.** When a fix helps, the agent proposes it on an approval card: what it will do, a dry run, what it
+   touches, how to undo it, and a risk badge (safe / some risk / risky). Nothing changes until you tap Approve.
+4. **Trust grows, one kind of job at a time.** After three clean approvals of the same kind of job, Nightlight asks
+   whether it may handle that job on its own next time. Risky jobs have a ceiling (restarting a game server always
+   asks), and any failure moves trust back down a step.
+
+| Trust level | What the agent does |
+|---|---|
+| Always ask me | explains and waits for a tap |
+| Ask me for new things | does familiar safe jobs on its own, asks about anything new |
+| Just handle it and tell me | acts, then reports in plain words |
+
+## Try it
+
+The demo uses a **simulated sample home** (clearly labelled): a Raspberry Pi with a VPN and a car-data logger, a Mac
+Mini running home automation, a NAS, a Minecraft game server, a camera recorder and a router. Judges can use the
+one-click demo; no account is needed.
+
+Sample questions that work:
+
+- "Is anything wrong at home?" (the Pi's disk is 94% full; it proposes cleaning old logs)
+- "My kids say Minecraft is really laggy tonight. Can you help?" (memory is nearly full; it proposes a restart)
+- "When was the Minecraft world last backed up?"
+- "Is there an update for the game server?"
+
+The demo panel can trigger incidents: disk full, a failing job, a lagging game server, an overdue backup, an
+available update.
+
+## Architecture
+
+```
+Browser (Next.js) ── Firebase Authentication (Google sign-in, one-click demo)
+   │  HTTPS + ID token (REST + streamed replies)          Firestore (live, read-only listeners per user)
+   ▼                                                              ▲
+Nightlight API on Cloud Run (FastAPI) ────────────────────────────┘
+   └─ Gemini agent (ADK, in-process) ── Gemini 3.5 Flash-Lite on Google Agent Platform
+```
+
+- **Only our own authenticated routes are public.** The agent runs inside the API; the user id comes only from the
+  verified Firebase token, and every record lives under that user.
+- **Every approval is one Firestore transaction**: the decision, the change, the result, the trust update and the
+  follow-up reply are committed together, so nothing runs twice (tested with 10 simultaneous approvals).
+- **The agent proposes, it never acts directly.** Action tools create approval cards; only approved (or explicitly
+  trusted) jobs run.
+- **Reset is safe under concurrency**: a barrier blocks all demo writes while the sample home is re-created.
+
+## Google technology
+
+| Service | Use |
+|---|---|
+| Gemini on Google Agent Platform | the agent's reasoning and plain-language explanations (3.5 Flash-Lite by default; the model is one setting) |
+| Agent Development Kit (ADK, Python) | tools, the agent loop and streaming |
+| Cloud Run | hosts the API (and the web app); scales to zero |
+| Firestore | devices, services, approval cards, trust levels, chats; security rules keep each user's data private |
+| Firebase Authentication | Google sign-in and the one-click demo |
+
+## Guardrails
+
+- **Approval before action**, with dry run, blast radius, rollback and a risk badge; risk ceilings on the trust ladder.
+- **Secrets are scrubbed** from chat text, tool results, model output and history before they are stored, shown or
+  sent to the model (best effort; patterns plus sensitive keys). Real device helpers are designed to never send
+  credentials at all.
+- **Cost is bounded before any model call**: each call reserves its worst-case cost (full input and output limits)
+  against a model budget, with per-user, per-visitor and daily limits and a kill switch; input size is checked with
+  Gemini's own token counter, and output (including thinking) is capped.
+- **Stale work can't land**: chat turns hold a lease; a reset or a takeover stops the next model call before it is
+  paid for.
+
+## Data sources
+
+The demo's devices and incidents are **synthetic** and labelled as such. Health checks are deterministic rules over
+device data; the model explains them and never invents device state (it reads devices through tools).
+
+## Performance
+
+Measured against the real model with `scripts/bench.py` (details in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)):
+question about 3.8 s, follow-up after approval about 1.6 s, about $0.0012 for the whole story.
+
+## Run locally
+
+Requirements: Python 3.12 with [uv](https://docs.astral.sh/uv/), the Firebase CLI (for the Firestore emulator),
+Java 21 (for the emulator).
+
+```bash
+./scripts/test_api.sh            # the API test suite against the Firestore emulator (no cloud access needed)
+./scripts/secret_scan.sh         # secret scan of staged changes and history
+```
+
+The API contract for the web app is in [`docs/API.md`](docs/API.md); sample data for every state is in
+[`contracts/mocks/`](contracts/mocks/).
+
+## Known limits
+
+- The demo home is simulated; connecting real devices (a small read-only helper) is in progress.
+- Answers are kept short on purpose; very long conversations are trimmed or refused rather than cut off silently.
+- The approval card's "undo" is simulated in the demo.

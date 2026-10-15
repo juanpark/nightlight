@@ -117,12 +117,14 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
-        c = sim.card(device, _by_id(services), action_type, params)
-        key = proposal_key(generation, turn_id, device_id, c["svcId"], action_type, params)
+        # Identity first, from stable inputs only: a retried turn must find its action even when the job has
+        # already run and would no longer apply (e.g. an update that is now installed).
+        key = proposal_key(generation, turn_id, device_id, sim.service_for(device, action_type), action_type, params)
         aid = make_action_id(key)
         existing = db.action(uid, aid).get(transaction=tx)
         if existing.exists:
             return dict(existing.to_dict(), id=aid)
+        c = sim.card(device, _by_id(services), action_type, params)  # only a genuinely new proposal is validated
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action_type, generation)
         decision = trustlib.resolve(user, trust_doc, device, _service_doc(services, c["svcId"]), action_type, params)
         action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device_id, "params": params,

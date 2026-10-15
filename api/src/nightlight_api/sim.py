@@ -54,7 +54,9 @@ def refresh(device: dict, services: dict | None = None) -> tuple[dict, dict]:
     pct = disk_pct(d)
     d.setdefault("vitals", {})["diskPct"] = pct
     keep = {"disk_over_90", "memory_high", "backup_overdue", "update_available"}  # recomputed below
-    findings = [f for f in d.get("findings", []) if f.get("check") not in keep]
+    # Device-native findings only; the service-derived ones are rebuilt from the current services below, so cleared
+    # service problems disappear and nothing is counted twice.
+    findings = [f for f in d.get("findings", []) if f.get("check") not in keep and not f.get("fromService")]
     if pct is not None and pct >= 90:
         findings.append({"id": f"f_disk_{d['id']}", "check": "disk_over_90", "severity": "crit",
                          "message": f"The {d['name']}'s disk is {pct}% full.",
@@ -71,7 +73,7 @@ def refresh(device: dict, services: dict | None = None) -> tuple[dict, dict]:
         worst = max((SEVERITY.get(f["severity"], 0) for f in svc["findings"]), default=0)
         svc["status"] = "crit" if worst >= 3 else "warn" if worst == 2 else "ok"
         # Every service problem also counts toward its device's health light.
-        findings += [{**f, "svcId": svc_id} for f in svc["findings"]]
+        findings += [{**f, "svcId": svc_id, "fromService": True} for f in svc["findings"]]
     findings.sort(key=lambda f: -SEVERITY.get(f["severity"], 0))
     d["findings"] = findings
     worst = max((SEVERITY.get(f["severity"], 0) for f in findings), default=0)
@@ -84,6 +86,8 @@ def refresh(device: dict, services: dict | None = None) -> tuple[dict, dict]:
 # ------------------------------------------------------------------ incidents (demo panel / seed)
 
 INCIDENTS = {"disk_full", "logs_locked", "server_lagging", "backup_overdue", "update_available"}
+INCIDENT_CHECK = {"disk_full": "disk_over_90", "server_lagging": "memory_high", "backup_overdue": "backup_overdue",
+                  "update_available": "update_available"}
 
 
 def inject(device: dict, services: dict, kind: str) -> tuple[dict, dict, dict]:
@@ -115,15 +119,18 @@ def inject(device: dict, services: dict, kind: str) -> tuple[dict, dict, dict]:
     elif kind == "update_available":
         if game is None:
             raise ValueError("no_game")
+        if game.get("latestVersion") in (None, game.get("version")):  # already current: a newer release appears
+            major, _, patch = (game.get("version") or "1.0.0").rpartition(".")
+            game["latestVersion"] = f"{major}.{int(patch) + 1}" if patch.isdigit() else f"{game.get('version')}.1"
         game["updateAvailable"] = True
         event = {"kind": "update_available", "severity": "info", "svcId": "minecraft"}
     else:
         raise ValueError("unknown_incident")
     d, svcs = refresh(d, svcs)
     if "message" not in event:
-        top = next((f for f in d["findings"] if f.get("svcId") == event["svcId"] or event["kind"] == "disk_full"),
-                   None)
-        event["message"] = top["message"] if top else f"Something changed on the {d['name']}."
+        check = INCIDENT_CHECK[kind]
+        match = next((f for f in d["findings"] if f.get("check") == check), None)
+        event["message"] = match["message"] if match else f"Something changed on the {d['name']}."
     return d, svcs, event
 
 
@@ -172,14 +179,18 @@ def _backup_card(d, svcs):
             "rollback": "Nothing to undo: it only adds a copy, and old copies are kept."}
 
 
-def _backup_apply(d, svcs):
-    game = _need_game(svcs)
-    before = game.get("lastBackupDaysAgo")
-    world = _consumer(d, "world")
-    backups = _consumer(d, "backups")
+def _copy_world(d, game) -> None:
+    """Add one copy of the world to the backups folder and mark the backup fresh."""
+    world, backups = _consumer(d, "world"), _consumer(d, "backups")
     if world and backups:
         backups["sizeGb"] = round(backups["sizeGb"] + world["sizeGb"], 1)
     game["lastBackupDaysAgo"] = 0
+
+
+def _backup_apply(d, svcs):
+    game = _need_game(svcs)
+    before = game.get("lastBackupDaysAgo")
+    _copy_world(d, game)
     d, svcs = refresh(d, svcs)
     return {"summary": f"Backed up the Minecraft world (last backup was {before} days ago).",
             "before": {"lastBackupDaysAgo": before}, "after": {"lastBackupDaysAgo": 0}}, d, svcs
@@ -219,9 +230,9 @@ def _update_card(d, svcs):
 def _update_apply(d, svcs):
     game = _need_game(svcs)
     before = game.get("version")
+    _copy_world(d, game)  # the promised backup, before changing anything
     game["version"] = game.get("latestVersion")
     game["updateAvailable"] = False
-    game["lastBackupDaysAgo"] = 0
     game.setdefault("players", {})["online"] = 0
     d, svcs = refresh(d, svcs)
     return {"summary": f"Backed up the world and updated Minecraft {before} → {game['version']}.",
@@ -229,16 +240,30 @@ def _update_apply(d, svcs):
 
 
 # riskClass sets the trust ceiling; `allowlisted` jobs may run on their own at "Ask me for new things" once approved.
+def _game_svc(d):
+    return "minecraft"
+
+
 ACTIONS = {
     "rotate_logs": {"label": "Clean up old log files", "riskClass": "routine", "allowlisted": True,
-                    "card": _rotate_logs_card, "apply": _rotate_logs_apply},
+                    "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _rotate_logs_card, "apply": _rotate_logs_apply,
+                    "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
     "backup_world": {"label": "Back up the game world", "riskClass": "routine", "allowlisted": True,
-                     "card": _backup_card, "apply": _backup_apply},
+                     "svc": _game_svc, "card": _backup_card, "apply": _backup_apply,
+                     "snapshot": lambda d, s: {"lastBackupDaysAgo": (_game(s) or {}).get("lastBackupDaysAgo")}},
     "restart_server": {"label": "Restart the game server", "riskClass": "service", "allowlisted": False,
-                       "card": _restart_card, "apply": _restart_apply},
+                       "svc": _game_svc, "card": _restart_card, "apply": _restart_apply,
+                       "snapshot": lambda d, s: {"mem": (d.get("vitals") or {}).get("mem")}},
     "update_server": {"label": "Update the game server", "riskClass": "service", "allowlisted": False,
-                      "card": _update_card, "apply": _update_apply},
+                      "svc": _game_svc, "card": _update_card, "apply": _update_apply,
+                      "snapshot": lambda d, s: {"version": (_game(s) or {}).get("version")}},
 }
+
+
+def service_for(device: dict, action_type: str) -> str | None:
+    """The service a job concerns. Depends only on the device and job, never on mutable state, so a proposal's
+    identity is the same before and after the job has run."""
+    return ACTIONS[action_type]["svc"](device)
 
 
 def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
@@ -257,7 +282,8 @@ def apply(device: dict, services: dict, action_type: str, params: dict) -> tuple
     if d.pop("simFailNext", False):
         what = "log folder was locked by another program" if action_type == "rotate_logs" \
             else "game server didn't respond in time"
+        snap = ACTIONS[action_type]["snapshot"](d, svcs)  # unchanged state, shown on the failed card
         return False, {"ok": False, "summary": f"The {d['name']}'s {what}, so nothing was changed.",
-                       "before": {}, "after": {}}, d, svcs
+                       "before": snap, "after": dict(snap)}, d, svcs
     result, d, svcs = ACTIONS[action_type]["apply"](d, svcs)
     return True, {"ok": True, **result}, d, svcs

@@ -19,6 +19,17 @@
     "demoGeneration": 4,
     "x": 120,
     "y": 80,
+    "findings": [
+      {
+        "id": "f_disk_pi-1",
+        "check": "disk_over_90",
+        "severity": "crit",
+        "message": "The Pi's disk is 94% full.",
+        "evidence": "/ at 94% of 6.4 GB",
+        "firstSeen": "2026-10-16T16:40:00.000Z",
+        "svcId": "teslamate"
+      }
+    ],
     "diskConsumers": [
       {
         "what": "old log files",
@@ -37,6 +48,7 @@
       {
         "id": "wireguard",
         "name": "WireGuard VPN",
+        "category": "network",
         "status": "ok",
         "version": "1.0.20210914",
         "updateAvailable": false,
@@ -46,19 +58,11 @@
       {
         "id": "teslamate",
         "name": "TeslaMate",
-        "status": "warn",
+        "category": "home",
+        "status": "ok",
         "version": "1.29.2",
         "updateAvailable": true,
-        "findings": [
-          {
-            "id": "f_disk_pi-1",
-            "check": "disk_over_90",
-            "severity": "crit",
-            "message": "The Pi's disk is 94% full.",
-            "evidence": "/ at 94% of 31 GB",
-            "firstSeen": "2026-10-16T16:40:00.000Z"
-          }
-        ],
+        "findings": [],
         "demoGeneration": 4
       }
     ]
@@ -87,13 +91,15 @@
       {
         "id": "home-assistant",
         "name": "Home Assistant",
+        "category": "home",
         "status": "ok",
         "version": "2026.10.1",
         "updateAvailable": false,
         "findings": [],
         "demoGeneration": 4
       }
-    ]
+    ],
+    "findings": []
   },
   {
     "id": "nas-1",
@@ -119,6 +125,7 @@
       {
         "id": "nfs",
         "name": "Shared folder",
+        "category": "files",
         "status": "ok",
         "version": "4.2",
         "updateAvailable": false,
@@ -128,6 +135,7 @@
       {
         "id": "backup",
         "name": "Nightly backup",
+        "category": "files",
         "status": "warn",
         "version": "n/a",
         "updateAvailable": false,
@@ -142,6 +150,18 @@
           }
         ],
         "demoGeneration": 4
+      }
+    ],
+    "findings": [
+      {
+        "id": "f_backup_verify",
+        "check": "backup_never_test_restored",
+        "severity": "warn",
+        "message": "Backups run, but no one has checked that they can be restored.",
+        "evidence": "last test restore: never",
+        "firstSeen": "2026-10-16T15:00:00.000Z",
+        "svcId": "backup",
+        "fromService": true
       }
     ]
   },
@@ -213,6 +233,26 @@
         ],
         "demoGeneration": 4
       }
+    ],
+    "findings": [
+      {
+        "id": "f_backup_overdue",
+        "check": "backup_overdue",
+        "severity": "warn",
+        "message": "The Minecraft world hasn't been backed up in 9 days.",
+        "evidence": "last world backup: 9 days ago",
+        "svcId": "minecraft",
+        "fromService": true
+      },
+      {
+        "id": "f_update_available",
+        "check": "update_available",
+        "severity": "info",
+        "message": "Minecraft 1.21.5 is available (you have 1.21.4).",
+        "evidence": "installed 1.21.4, latest 1.21.5",
+        "svcId": "minecraft",
+        "fromService": true
+      }
     ]
   },
   {
@@ -235,7 +275,8 @@
     "demoGeneration": 4,
     "x": 420,
     "y": 220,
-    "services": []
+    "services": [],
+    "findings": []
   },
   {
     "id": "router-1",
@@ -257,6 +298,7 @@
     "demoGeneration": 4,
     "x": 270,
     "y": 360,
-    "services": []
+    "services": [],
+    "findings": []
   }
 ]

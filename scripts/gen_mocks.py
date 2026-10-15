@@ -57,7 +57,7 @@ def fleet(gen: int, pi_disk: int, pi_version: int) -> list[dict]:
     disk_finding = [{
         "id": "f_disk_pi-1", "check": "disk_over_90", "severity": "crit",
         "message": f"The Pi's disk is {pi_disk}% full.",
-        "evidence": f"/ at {pi_disk}% of 31 GB", "firstSeen": ts(100),
+        "evidence": f"/ at {pi_disk}% of 6.4 GB", "firstSeen": ts(100), "svcId": "teslamate",
     }] if pi_disk >= 90 else []
 
     def device(id_, name, kind, os_, purpose, status, health, vitals, version, x, y, services, **extra):
@@ -68,28 +68,32 @@ def fleet(gen: int, pi_disk: int, pi_version: int) -> list[dict]:
         }
         d.update(extra)
         d["services"] = [dict(s, demoGeneration=gen) for s in services]
+        # Like live data: every service problem also appears on its device (marked fromService).
+        d["findings"] = d.get("findings", []) + [dict(f, svcId=s["id"], fromService=True)
+                                                 for s in services for f in s.get("findings", [])]
         return d
 
     return [
         device("pi-1", "Raspberry Pi", "pi", "Debian 12 (simulated)",
                "Runs your home VPN and your car's data logger.", pi_status, "verified",
                {"cpu": 18, "mem": 61, "diskPct": pi_disk, "uptime": 1209600}, pi_version, 120, 80,
-               [{"id": "wireguard", "name": "WireGuard VPN", "status": "ok", "version": "1.0.20210914",
+               [{"id": "wireguard", "name": "WireGuard VPN", "category": "network", "status": "ok", "version": "1.0.20210914",
                  "updateAvailable": False, "findings": []},
-                {"id": "teslamate", "name": "TeslaMate", "status": "warn" if pi_disk >= 90 else "ok",
-                 "version": "1.29.2", "updateAvailable": True, "findings": disk_finding}],
+                {"id": "teslamate", "name": "TeslaMate", "category": "home", "status": "ok",
+                 "version": "1.29.2", "updateAvailable": True, "findings": []}],
+               findings=disk_finding,  # a device-level check that concerns TeslaMate (svcId), as in live data
                diskConsumers=[{"what": "old log files", "sizeGb": 2.1 if pi_disk >= 90 else 0.1},
                               {"what": "car logger database backup", "sizeGb": 1.4},
                               {"what": "unused Docker images", "sizeGb": 0.9}]),
         device("mac-1", "Mac Mini", "mac", "macOS 15 (simulated)", "Runs your home automation.", "ok", "verified",
                {"cpu": 9, "mem": 48, "diskPct": 52, "uptime": 604800}, 2, 320, 80,
-               [{"id": "home-assistant", "name": "Home Assistant", "status": "ok", "version": "2026.10.1",
+               [{"id": "home-assistant", "name": "Home Assistant", "category": "home", "status": "ok", "version": "2026.10.1",
                  "updateAvailable": False, "findings": []}]),
         device("nas-1", "NAS", "nas", "NAS OS (simulated)", "Stores family photos and runs the nightly backup.",
                "warn", "verified", {"cpu": 4, "mem": 33, "diskPct": 71, "uptime": 2592000}, 4, 220, 220,
-               [{"id": "nfs", "name": "Shared folder", "status": "ok", "version": "4.2", "updateAvailable": False,
+               [{"id": "nfs", "name": "Shared folder", "category": "files", "status": "ok", "version": "4.2", "updateAvailable": False,
                  "findings": []},
-                {"id": "backup", "name": "Nightly backup", "status": "warn", "version": "n/a",
+                {"id": "backup", "name": "Nightly backup", "category": "files", "status": "warn", "version": "n/a",
                  "updateAvailable": False,
                  "findings": [{"id": "f_backup_verify", "check": "backup_never_test_restored", "severity": "warn",
                                "message": "Backups run, but no one has checked that they can be restored.",

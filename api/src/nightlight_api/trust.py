@@ -93,9 +93,10 @@ def after_outcome(trust: dict, action: dict, ok: bool, by: str, now) -> dict:
     s = scope(action["deviceId"], action.get("svcId"))
     if s not in t.get("approvedScopes", []):
         t["approvedScopes"] = [*t.get("approvedScopes", []), s]
+    # The offer promises "handle it on my own", so only jobs whose ceiling allows that get one.
     eligible = (len(t["successes"]) >= settings.promotion_threshold and not t.get("pinned")
                 and not t.get("offer") and not t.get("offerDeclined")
-                and LEVELS.index(t["level"]) < LEVELS.index(t["ceiling"]))
+                and t["ceiling"] == "auto" and t["level"] != "auto")
     if eligible:
         n = len(t["successes"])
         t["offer"] = {"offerId": new_id("offer"), "demoGeneration": t["demoGeneration"],
