@@ -15,6 +15,7 @@ from . import __version__, actions, db, demo, quota, sim, trust as trustlib, tur
 from .auth import current_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
+from .redact import scrub
 
 app = FastAPI(title="Nightlight API", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_exception_handler(ApiError, api_error_handler)
@@ -47,6 +48,14 @@ class InjectBody(Strict):
 class MessageBody(Strict):
     text: str = Field(min_length=1, max_length=2000)
     clientRequestId: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+    @model_validator(mode="after")
+    def within_2kb(self):
+        if len(self.text.encode()) > 2000:  # the documented limit is bytes, not characters
+            raise ValueError("text must be at most 2,000 bytes")
+        if not self.text.strip():
+            raise ValueError("text must not be blank")
+        return self
 
 
 class DecideBody(Strict):
@@ -99,7 +108,8 @@ def demo_inject(body: InjectBody, uid: str = Depends(current_uid)):
 def decide(action_id: str, body: DecideBody, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
         raise not_found()
-    status, payload = actions.decide(uid, action_id, body.decision, body.note)
+    note = scrub(body.note)[0] if body.note else None
+    status, payload = actions.decide(uid, action_id, body.decision, note)
     return JSONResponse(payload, status_code=status)
 
 
@@ -173,8 +183,13 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+    """The visitor's address for the per-visitor limit.
+
+    Cloud Run's front end appends the real client address to X-Forwarded-For, so the rightmost entry is the one
+    Google added; anything to its left came from the client and is ignored.
+    """
+    forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    ip = forwarded[-1] if forwarded else (request.client.host if request.client else "")
     return quota.ip_hash(ip)
 
 

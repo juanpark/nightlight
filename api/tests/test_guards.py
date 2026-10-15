@@ -56,10 +56,10 @@ class Req:
         self.config = types.GenerateContentConfig(system_instruction="sys")
 
 
-def test_small_request_needs_no_count():
-    def counter(req):
-        raise AssertionError("should not count")
-    agentlib.bound_input(Req(2, 100), counter=counter)
+def test_every_request_is_counted_exactly():
+    seen = []
+    agentlib.bound_input(Req(2, 100), counter=lambda r: seen.append(1) or 50)
+    assert seen == [1]  # no shortcut: even a tiny request is counted by the model's own tokenizer
 
 
 def test_large_request_is_counted_and_trimmed():

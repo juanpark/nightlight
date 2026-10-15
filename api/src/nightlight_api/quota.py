@@ -44,8 +44,12 @@ def flags_ref():
     return db.client().collection("ops").document("flags")
 
 
-def reserve(uid: str, ip: str, now: datetime | None = None) -> float:
-    """Reserve one model call. Returns the reserved amount (USD). Raises QuotaExceeded or ApiError(403)."""
+def reserve(uid: str, ip: str, now: datetime | None = None, fence=None) -> float:
+    """Reserve one model call. Returns the reserved amount (USD). Raises QuotaExceeded or ApiError(403/409).
+
+    `fence(tx)` (the turn's ownership check) runs in the same transaction, so a turn made stale by a reset or a
+    takeover can never reserve, and therefore never call the model.
+    """
     now = now or datetime.now(timezone.utc)
     hour, day = _hour_key(now), _day_key(now)
     c_max = settings.c_max
@@ -54,6 +58,8 @@ def reserve(uid: str, ip: str, now: datetime | None = None) -> float:
 
     @firestore.transactional
     def run(tx):
+        if fence:
+            fence(tx)
         flags = flags_ref().get(transaction=tx)
         if flags.exists and flags.to_dict().get("killSwitch"):
             raise ApiError(403, "kill_switch")
@@ -82,34 +88,40 @@ def reserve(uid: str, ip: str, now: datetime | None = None) -> float:
     return db.run_transaction(run)
 
 
-def cost_of(prompt_tokens: int | None, output_tokens: int | None, thinking_tokens: int | None) -> float | None:
-    if prompt_tokens is None or output_tokens is None:
+def cost_of(usage) -> float | None:
+    """Actual cost of one model call from its usage metadata, or None if billable usage isn't fully known.
+
+    Prompt tokens bill at the input price; every other counted token (output, thinking, tool-use prompt) is billed
+    at the output price, which is never cheaper, so the figure is an upper bound of the real charge.
+    """
+    if usage is None or usage.prompt_token_count is None or usage.total_token_count is None:
         return None
-    out = (output_tokens or 0) + (thinking_tokens or 0)
-    return (prompt_tokens * settings.price_in_per_m + out * settings.price_out_per_m) / 1e6
+    prompt = usage.prompt_token_count
+    rest = max(usage.total_token_count - prompt, 0)
+    return (prompt * settings.price_in_per_m + rest * settings.price_out_per_m) / 1e6
 
 
 def reconcile(reserved: float, actual: float | None) -> None:
-    """Swap a reservation for the actual cost. Unknown cost keeps the reservation (never under-counts)."""
+    """Swap a reservation for the actual cost (signed: an overage raises the admission counter).
+
+    Unknown cost keeps the reservation, so the budget is never under-counted.
+    """
     if actual is None:
         return
-    refund = max(reserved - actual, 0.0)
-    global_ref().set({"reservedUsd": firestore.Increment(-refund), "spentUsd": firestore.Increment(actual)},
+    global_ref().set({"reservedUsd": firestore.Increment(actual - reserved), "spentUsd": firestore.Increment(actual)},
                      merge=True)
 
 
-def count_turn(uid: str, now: datetime | None = None) -> None:
-    """Per-user turn limit, counted when a new message is accepted (separate from model calls)."""
-    now = now or datetime.now(timezone.utc)
-    hour = _hour_key(now)
-    ref = db.user(uid).collection("quota").document(f"turns_{hour}")
+def turn_quota_ref(uid: str, now: datetime):
+    return db.user(uid).collection("quota").document(f"turns_{_hour_key(now)}")
 
-    @firestore.transactional
-    def run(tx):
-        snap = ref.get(transaction=tx)
-        n = (snap.to_dict() or {}).get("count", 0) if snap.exists else 0
-        if n >= settings.turns_per_uid_hour:
-            raise QuotaExceeded("quota_uid", _seconds_to_next_hour(now))
-        tx.set(ref, {"count": n + 1, "hour": hour})
 
-    db.run_transaction(run)
+def check_turn_quota(snapshot, now: datetime) -> int:
+    """Per-user turn limit for new messages. Call with the quota doc read inside the caller's transaction.
+
+    Returns the new count to write; raises QuotaExceeded when the hour is used up.
+    """
+    n = (snapshot.to_dict() or {}).get("count", 0) if snapshot.exists else 0
+    if n >= settings.turns_per_uid_hour:
+        raise QuotaExceeded("quota_uid", _seconds_to_next_hour(now))
+    return n + 1

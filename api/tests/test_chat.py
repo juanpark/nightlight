@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from nightlight_api import agent as agentlib, db, demo, quota, turns
+from nightlight_api import agent as agentlib, db, demo, turns
 from nightlight_api.errors import ApiError
 from fake_llm import FakeLlm
 
@@ -12,6 +12,10 @@ from fake_llm import FakeLlm
 @pytest.fixture(autouse=True)
 def fake_model(monkeypatch):
     FakeLlm.log.clear()
+    FakeLlm.behavior = None
+    counted = []
+    monkeypatch.setattr(agentlib, "COUNTER", lambda req: counted.append(1) or 100)  # exact count, faked
+    FakeLlm.counted = counted
     real_build = agentlib.build
     monkeypatch.setattr(agentlib, "build", lambda ctx, continuation, model=None:
                         real_build(ctx, continuation=continuation, model=FakeLlm()))
@@ -137,9 +141,8 @@ def test_reconcile_replaces_reservation(client, started):
 
 
 def test_turn_rate_limit(client, started, monkeypatch):
-    from nightlight_api import config
-    monkeypatch.setattr(quota, "settings", type("S", (), {**{k: getattr(config.settings, k) for k in
-                        dir(config.settings) if not k.startswith("_")}, "turns_per_uid_hour": 1})())
+    from nightlight_api.config import settings
+    monkeypatch.setattr(settings, "turns_per_uid_hour", 1)
     sid = new_session(client)
     assert ask(client, sid).status_code == 200
     r = ask(client, sid)

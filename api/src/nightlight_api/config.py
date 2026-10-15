@@ -9,7 +9,7 @@ def _list(name: str, default: str = "") -> list[str]:
     return [v for v in re.split(r"[,\s]+", os.environ.get(name, default)) if v]
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     project_id: str = os.environ.get("GOOGLE_CLOUD_PROJECT", "demo-nightlight")
     port: int = int(os.environ.get("PORT", "8080"))
@@ -34,6 +34,7 @@ class Settings:
     model_calls_per_day: int = int(os.environ.get("MODEL_CALLS_PER_DAY", "2000"))
     turns_per_uid_hour: int = int(os.environ.get("TURNS_PER_UID_HOUR", "40"))
     model_calls_per_turn: int = 6
+    tool_calls_per_turn: int = 6
     kill_switch: bool = os.environ.get("MODEL_KILL_SWITCH", "0") == "1"
     ip_hash_salt: str = os.environ.get("IP_HASH_SALT", "nightlight")
     # Turn leases.

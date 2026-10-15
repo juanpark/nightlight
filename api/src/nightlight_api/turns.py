@@ -24,7 +24,7 @@ from .config import settings
 from .errors import ApiError, conflict, not_found
 from .fence import turn_fence
 from .ids import new_id
-from .redact import scrub, scrub_value
+from .redact import StreamScrubber, scrub, scrub_value
 
 APP = "nightlight"
 
@@ -81,10 +81,8 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
     """Store the user's message and its queued turn, once per clientRequestId. Returns the turn id."""
     turn_id = f"turn_{client_request_id}"
     text_hash = hashlib.sha256(text.encode()).hexdigest()
-    existing = db.turns(uid, session_id).document(turn_id).get()
-    if not existing.exists:
-        quota.count_turn(uid)  # per-user turn limit, counted for new messages only
     clean, _ = scrub(text)
+    now = _utcnow()
 
     @firestore.transactional
     def run(tx):
@@ -92,6 +90,8 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
         s_snap = db.session(uid, session_id).get(transaction=tx)
         t_ref = db.turns(uid, session_id).document(turn_id)
         t_snap = t_ref.get(transaction=tx)
+        q_ref = quota.turn_quota_ref(uid, now)
+        q_snap = q_ref.get(transaction=tx)
         if not s_snap.exists:
             raise not_found()
         session = s_snap.to_dict()
@@ -100,7 +100,8 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
         if t_snap.exists:
             if t_snap.to_dict().get("textSha256") != text_hash:
                 raise conflict("request_mismatch", turnId=turn_id)
-            return
+            return  # a retry finds the existing turn and is not counted again
+        count = quota.check_turn_quota(q_snap, now)  # only new, valid messages count toward the hourly limit
         seq = session["nextSeq"]
         msg_id = new_id("msg")
         tx.set(db.messages(uid, session_id).document(msg_id), {
@@ -112,6 +113,7 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
         tx.set(turn_index(uid, turn_id), {"sessionId": session_id, "demoGeneration": user["demoGeneration"]})
         title = clean[:40] + ("…" if len(clean) > 40 else "") if seq == 1 else session.get("title")
         tx.update(db.session(uid, session_id), {"nextSeq": seq + 1, "lastTurnId": turn_id, "title": title})
+        tx.set(q_ref, {"count": count})
 
     db.run_transaction(run)
     return turn_id
@@ -244,14 +246,19 @@ def sse(event: dict) -> str:
 
 
 async def stream(uid: str, c: Claim, ip: str, model=None):
-    """Async generator of SSE strings for a claimed turn. Always ends with `done` or `error`."""
+    """Async generator of SSE strings for a claimed turn. Always ends with `done` or `error`.
+
+    The agent runs as a producer task; this loop forwards its events, sends a `: ping` comment every 15 s of
+    silence, and a separate timer renews the lease on a clock (not on model events). Losing the lease or the
+    generation stops the producer before any further model call.
+    """
     t0 = time.monotonic()
     yield sse({"type": "turn_start", "turnId": c.turn_id, "attempt": c.attempt,
                "messageId": c.turn.get("userMessageId"), "at": _iso(_utcnow()),
                **({"replay": True} if c.mode == "replay" else {})})
     if c.mode == "replay":
-        msg = db.messages(uid, c.session_id).document(c.turn["finalMessageId"]).get().to_dict()
-        yield sse({"type": "text", "delta": msg["text"]})
+        msg = await asyncio.to_thread(lambda: db.messages(uid, c.session_id).document(c.turn["finalMessageId"]).get())
+        yield sse({"type": "text", "delta": msg.to_dict()["text"]})
         yield sse({"type": "done", "turnId": c.turn_id, "metrics": c.turn.get("metrics", {})})
         return
     if c.mode == "failed":
@@ -259,39 +266,70 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         yield sse({"type": "error", "code": err.get("code"), "message": err.get("message"), "retryable": False})
         return
 
-    continuation = c.turn["kind"] == "continuation"
     ctx = agentlib.TurnContext(uid=uid, session_id=c.session_id, turn_id=c.turn_id, attempt=c.attempt,
                                generation=c.generation, ip=ip)
-    agent = agentlib.build(ctx, continuation=continuation, model=model)
-    sessions = InMemorySessionService()
-    runner = Runner(app_name=APP, agent=agent, session_service=sessions)
-    adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
-    for content in await asyncio.to_thread(history, uid, c):
-        await sessions.append_event(adk_session, Event(author="user" if content.role == "user" else agent.name,
-                                                       content=content))
-    prompt = c.turn["input"] if not continuation else f"[Update] {c.turn['input']}"
-    message = types.Content(role="user", parts=[types.Part(text=prompt)])
+    queue: asyncio.Queue = asyncio.Queue()
+    lost = asyncio.Event()
+    scrubber = StreamScrubber()
+    final_raw, tool_calls, first_text_ms = None, [], None
 
-    streamed, final_text, tool_calls, first_text_ms = [], None, [], None
-    last_renew = time.monotonic()
-    try:
-        async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                         run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                              max_llm_calls=settings.model_calls_per_turn)):
-            if time.monotonic() - last_renew > settings.turn_lease_seconds / 3:
+    async def produce():
+        try:
+            continuation = c.turn["kind"] == "continuation"
+            agent = agentlib.build(ctx, continuation=continuation, model=model)
+            sessions = InMemorySessionService()
+            runner = Runner(app_name=APP, agent=agent, session_service=sessions)
+            adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
+            for content in await asyncio.to_thread(history, uid, c):
+                await sessions.append_event(adk_session, Event(
+                    author="user" if content.role == "user" else agent.name, content=content))
+            prompt = c.turn["input"] if not continuation else f"[Update] {c.turn['input']}"
+            message = types.Content(role="user", parts=[types.Part(text=prompt)])
+            async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                             run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                                  max_llm_calls=settings.model_calls_per_turn)):
+                await queue.put(("event", ev))
+            await queue.put(("end", None))
+        except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
+            await queue.put(("error", e))
+
+    async def keep_lease():
+        while True:
+            await asyncio.sleep(settings.turn_lease_seconds / 3)
+            try:
                 await asyncio.to_thread(renew, uid, c)
-                last_renew = time.monotonic()
+            except ApiError:
+                lost.set()
+                return
+
+    producer = asyncio.create_task(produce())
+    renewer = asyncio.create_task(keep_lease())
+    try:
+        while True:
+            if lost.is_set():
+                raise ApiError(409, "stale")
+            try:
+                kind, item = await asyncio.wait_for(queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
+            if kind == "error":
+                raise item
+            if kind == "end":
+                break
+            ev = item
             for part in (ev.content.parts if ev.content else []) or []:
                 if part.thought:
                     continue
                 if part.text:
                     if ev.partial:
-                        if first_text_ms is None:
-                            first_text_ms = int((time.monotonic() - t0) * 1000)
-                        streamed.append(part.text)
-                        yield sse({"type": "text", "delta": part.text})
+                        piece = scrubber.push(part.text)
+                        if piece:
+                            if first_text_ms is None:
+                                first_text_ms = int((time.monotonic() - t0) * 1000)
+                            yield sse({"type": "text", "delta": piece})
                     else:
-                        final_text = (final_text or "") + part.text
+                        final_raw = (final_raw or "") + part.text
                 if part.function_call and not ev.partial:
                     args, _ = scrub_value(dict(part.function_call.args or {}))
                     tool_calls.append({"name": part.function_call.name, "args": args})
@@ -302,16 +340,14 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                                "summary": _summary(resp), "redacted": ctx.redacted})
                     if part.function_response.name == "rotate_logs" and resp.get("status") == "pending":
                         yield sse({"type": "approval_request", "actionId": resp.get("actionId")})
-        sent = "".join(streamed)
-        text = (final_text or sent).strip()
-        if not text:
-            text = agentlib.FALLBACK
-        if text != sent.strip():
-            # The browser must end up with exactly the stored text: send whatever the stream didn't cover.
-            yield sse({"type": "text", "delta": text[len(sent):] if text.startswith(sent) else
-                       ("\n\n" if sent else "") + text})
-            if not text.startswith(sent):
-                text = (sent + "\n\n" + text) if sent else text
+        piece, text = scrubber.finish(final_raw if final_raw is not None else None)
+        if not text.strip():
+            text, piece = agentlib.FALLBACK, agentlib.FALLBACK
+        if piece:
+            if first_text_ms is None:
+                first_text_ms = int((time.monotonic() - t0) * 1000)
+            yield sse({"type": "text", "delta": piece})
+        # `text` is exactly what the browser has received; it is what we store and replay.
         metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
                    "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6)}
         await asyncio.to_thread(finish, uid, c, text=text, metrics=metrics, tool_calls=tool_calls,
@@ -337,6 +373,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         except ApiError:
             pass
         yield sse({"type": "error", **err, "retryable": True})
+    finally:
+        for task in (producer, renewer):
+            task.cancel()
 
 
 def _summary(resp: dict) -> str:

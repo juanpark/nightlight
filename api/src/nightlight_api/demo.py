@@ -166,6 +166,7 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     _delete_older(uid, op, generation, inner, hook)
     _delete_older(uid, op, generation, old_sessions, hook)
     _delete_older(uid, op, generation, [s.reference for s in db.trust(uid).get()], hook)
+    _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("turnIndex").get()], hook)
     _stale_pending(uid, op, generation, hook)
     count = _seed(uid, op, generation, template, hook)
     _finalize(uid, op, generation, hook)

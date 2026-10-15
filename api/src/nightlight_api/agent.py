@@ -4,6 +4,7 @@ Tools read the caller's simulated fleet and *propose* actions; they never change
 is preceded by a cost reservation and an input-size bound, and followed by reconciliation (quota.py).
 """
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 
@@ -57,12 +58,20 @@ class TurnContext:
 
 
 def _bounded(value: dict, ctx: TurnContext) -> dict:
+    """Scrub a tool result and keep its final serialised form within tool_result_bytes."""
     clean, n = scrub_value(value)
     ctx.redacted += n
-    raw = json.dumps(clean, default=str)
-    if len(raw.encode()) > settings.tool_result_bytes:
-        return {"truncated": True, "summary": raw[: settings.tool_result_bytes - 200]}
-    return clean
+    limit = settings.tool_result_bytes
+    if len(json.dumps(clean, default=str).encode()) <= limit:
+        return clean
+    raw = json.dumps(clean, default=str, ensure_ascii=False)
+    keep = len(raw)
+    while keep > 0:
+        out = {"truncated": True, "summary": raw[:keep]}
+        if len(json.dumps(out, default=str).encode()) <= limit:
+            return out
+        keep = int(keep * 0.8)
+    return {"truncated": True, "summary": ""}
 
 
 def _device_summary(d: dict) -> dict:
@@ -73,13 +82,13 @@ def _device_summary(d: dict) -> dict:
 
 
 def make_tools(ctx: TurnContext, read_only: bool):
-    def list_fleet(tool_context: ToolContext) -> dict:
+    def _list_fleet_sync(tool_context: ToolContext) -> dict:
         """List every device in the person's home: name, purpose, health and its top problem."""
         devices = [_device_summary(dict(s.to_dict(), id=s.id)) for s in db.devices(ctx.uid).get()
                    if s.to_dict().get("demoGeneration") == ctx.generation]
         return _bounded({"devices": devices}, ctx)
 
-    def get_device(device_id: str, tool_context: ToolContext) -> dict:
+    def _get_device_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Read one device in detail: health, what runs on it, findings and what is using its disk.
 
         Args:
@@ -97,7 +106,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                            for s in services]
         return _bounded(out, ctx)
 
-    def get_recent_events(tool_context: ToolContext) -> dict:
+    def _get_recent_events_sync(tool_context: ToolContext) -> dict:
         """List the ten most recent things that happened on the person's devices."""
         evs = [s.to_dict() for s in db.events(ctx.uid).get()]
         evs = [e for e in evs if e.get("demoGeneration") == ctx.generation]
@@ -105,7 +114,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _bounded({"events": [{k: e.get(k) for k in ("deviceId", "kind", "severity", "message", "at")}
                                     for e in evs[:10]]}, ctx)
 
-    def rotate_logs(device_id: str, tool_context: ToolContext) -> dict:
+    def _rotate_logs_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Propose cleaning up log files older than 7 days on a device to free disk space.
 
         This never runs immediately unless the person has allowed it: usually it puts an approval card in front of
@@ -131,6 +140,23 @@ def make_tools(ctx: TurnContext, read_only: bool):
             out["result"] = a["result"]["summary"]
         return _bounded(out, ctx)
 
+    # The model sees async wrappers so blocking Firestore work runs off the event loop (lease renewal and pings keep
+    # running). Each wrapper keeps the sync function's name, docstring and parameters for the tool declaration.
+    async def list_fleet(tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_list_fleet_sync, tool_context)
+
+    async def get_device(device_id: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_get_device_sync, device_id, tool_context)
+
+    async def get_recent_events(tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_get_recent_events_sync, tool_context)
+
+    async def rotate_logs(device_id: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_rotate_logs_sync, device_id, tool_context)
+
+    for wrapper, sync in ((list_fleet, _list_fleet_sync), (get_device, _get_device_sync),
+                          (get_recent_events, _get_recent_events_sync), (rotate_logs, _rotate_logs_sync)):
+        wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events]
     return tools if read_only else [*tools, rotate_logs]
 
@@ -147,38 +173,39 @@ def _client():
     return _genai_client
 
 
-def _request_bytes(req) -> int:
-    payload = {"contents": [c.model_dump(mode="json", exclude_none=True) for c in req.contents],
-               "system": str(req.config.system_instruction or ""),
-               "tools": [t.model_dump(mode="json", exclude_none=True) for t in (req.config.tools or [])]}
-    return len(json.dumps(payload).encode())
-
-
-def _count(req) -> int:
+def count_tokens(req) -> int:
+    """Exact token count of the complete outgoing request (system instruction, tools, contents)."""
     cfg = types.CountTokensConfig(system_instruction=req.config.system_instruction, tools=req.config.tools)
     return _client().models.count_tokens(model=settings.model, contents=req.contents, config=cfg).total_tokens
 
 
+COUNTER = count_tokens  # tests replace this; production always counts through the model's own API
+
+
 def _trim_oldest(req) -> bool:
-    """Drop the oldest history entry without leaving a function response whose call was removed."""
+    """Drop the oldest complete exchange; never leave a tool response without its call, never drop the current input.
+
+    The request is kept starting at a plain user message (not a tool response, not a model turn).
+    """
+    def starts_cleanly(contents):
+        first = contents[0]
+        return first.role == "user" and not any(p.function_response for p in (first.parts or []))
+
     if len(req.contents) <= 1:
         return False
-    req.contents.pop(0)
-    while len(req.contents) > 1 and any(p.function_response for p in (req.contents[0].parts or [])):
-        req.contents.pop(0)
+    trimmed = req.contents[1:]
+    while trimmed and not starts_cleanly(trimmed):
+        trimmed = trimmed[1:]
+    if not trimmed:
+        return False
+    req.contents[:] = trimmed
     return True
 
 
 def bound_input(req, counter=None) -> None:
-    """Guarantee the request fits max_input_tokens, or refuse to call the model.
-
-    Tokens never exceed the UTF-8 bytes of the serialised request (byte-fallback tokeniser), so a request whose JSON
-    is within the limit is admitted without a count. Larger requests are counted exactly and trimmed.
-    """
+    """Guarantee the complete request fits max_input_tokens by exact count, trimming history; otherwise refuse."""
     limit = settings.max_input_tokens
-    if _request_bytes(req) <= limit:
-        return
-    counter = counter or _count
+    counter = counter or COUNTER
     for _ in range(50):
         try:
             n = counter(req)
@@ -192,39 +219,44 @@ def bound_input(req, counter=None) -> None:
 
 
 def make_callbacks(ctx: TurnContext):
+    fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
+
     def before_model(callback_context, llm_request):
         if ctx.metrics["modelCalls"] >= settings.model_calls_per_turn:
             raise ApiError(429, "too_many_steps")
         bound_input(llm_request)
-        ctx.reservations.append(quota.reserve(ctx.uid, ctx.ip))
+        # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
+        ctx.reservations.append(quota.reserve(ctx.uid, ctx.ip, fence=fence))
         ctx.metrics["modelCalls"] += 1
         return None
 
     def after_model(callback_context, llm_response: LlmResponse):
         if llm_response.partial:
             return None
-        u = llm_response.usage_metadata
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
-        if not u:
-            return None  # usage unknown: the full reservation stays counted
-        ctx.metrics["tokensIn"] += u.prompt_token_count or 0
-        ctx.metrics["tokensOut"] += u.candidates_token_count or 0
-        ctx.metrics["tokensThinking"] += u.thoughts_token_count or 0
-        actual = quota.cost_of(u.prompt_token_count, u.candidates_token_count, u.thoughts_token_count)
+        u = llm_response.usage_metadata
+        actual = quota.cost_of(u)
+        if u:
+            ctx.metrics["tokensIn"] += u.prompt_token_count or 0
+            ctx.metrics["tokensOut"] += u.candidates_token_count or 0
+            ctx.metrics["tokensThinking"] += u.thoughts_token_count or 0
         if actual is not None:
             ctx.metrics["costUsd"] += actual
-        quota.reconcile(reserved, actual)
+        quota.reconcile(reserved, actual)  # unknown usage keeps the full reservation
         return None
 
-    def after_tool(tool, args, tool_context, tool_response):
+    def before_tool(tool, args, tool_context):
+        # Admission happens before the tool runs, so a batch of parallel calls can't exceed the limit.
+        if ctx.metrics["toolCalls"] >= settings.tool_calls_per_turn:
+            return {"error": "tool limit reached for this answer; reply with what you have"}
         ctx.metrics["toolCalls"] += 1
         return None
 
-    return before_model, after_model, after_tool
+    return before_model, after_model, before_tool
 
 
 def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
-    before_model, after_model, after_tool = make_callbacks(ctx)
+    before_model, after_model, before_tool = make_callbacks(ctx)
     return LlmAgent(
         name="nightlight",
         model=model or settings.model,
@@ -235,5 +267,5 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
             thinking_config=types.ThinkingConfig(thinking_level=settings.thinking_level)),
         before_model_callback=before_model,
         after_model_callback=after_model,
-        after_tool_callback=after_tool,
+        before_tool_callback=before_tool,
     )
