@@ -79,7 +79,9 @@ def run_transaction(fn, *, max_attempts: int = 25, outer_tries: int = 6):
         try:
             return fn(client().transaction(max_attempts=max_attempts))
         except (Aborted, ValueError) as e:
-            if isinstance(e, ValueError) and "does not succeed" not in str(e) and "attempts" not in str(e):
+            # The SDK reports exhausted commit attempts as a ValueError chained from Aborted; any other
+            # ValueError is a real bug and must not be retried.
+            if isinstance(e, ValueError) and not isinstance(e.__cause__, Aborted):
                 raise
             if attempt == outer_tries - 1:
                 raise
