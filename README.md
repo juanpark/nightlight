@@ -22,9 +22,10 @@ the agent). Nightlight is visual and plain-language.
 2. **Ask.** "Is anything wrong at home?" The agent reads the devices with tools and answers in two short sentences.
 3. **Approve.** When a fix helps, the agent proposes it on an approval card: what it will do, a dry run, what it
    touches, how to undo it, and a risk badge (safe / some risk / risky). Nothing changes until you tap Approve.
-4. **Trust grows, one kind of job at a time.** After three clean approvals of the same kind of job, Nightlight asks
-   whether it may handle that job on its own next time. Risky jobs have a ceiling (restarting a game server always
-   asks), and any failure moves trust back down a step.
+4. **Trust grows, one kind of job at a time.** After three approved successes of the same kind of job, Nightlight may
+   ask whether it can handle that job on its own next time (only for jobs that are allowed to run on their own and
+   not pinned by you). Risky jobs have a ceiling (restarting a game server always asks), and a failure moves an
+   unpinned job's trust back down a step.
 
 | Trust level | What the agent does |
 |---|---|
@@ -60,8 +61,9 @@ Nightlight API on Cloud Run (FastAPI) ──────────────
 
 - **Only our own authenticated routes are public.** The agent runs inside the API; the user id comes only from the
   verified Firebase token, and every record lives under that user.
-- **Every approval is one Firestore transaction**: the decision, the change, the result, the trust update and the
-  follow-up reply are committed together, so nothing runs twice (tested with 10 simultaneous approvals).
+- **Every approval is one Firestore transaction**: the decision, the device and service changes, the result, the
+  trust update and the queued follow-up turn commit together, so a job never runs twice (tested with 10 simultaneous
+  approvals). The follow-up reply is then generated in its own step.
 - **The agent proposes, it never acts directly.** Action tools create approval cards; only approved (or explicitly
   trusted) jobs run.
 - **Reset is safe under concurrency**: a barrier blocks all demo writes while the sample home is re-created.
@@ -70,7 +72,7 @@ Nightlight API on Cloud Run (FastAPI) ──────────────
 
 | Service | Use |
 |---|---|
-| Gemini on Google Agent Platform | the agent's reasoning and plain-language explanations (3.5 Flash-Lite by default; the model is one setting) |
+| Gemini on Google Agent Platform | the agent's reasoning and plain-language explanations (3.5 Flash-Lite by default; configurable, but model, thinking level and pricing must be changed together) |
 | Agent Development Kit (ADK, Python) | tools, the agent loop and streaming |
 | Cloud Run | hosts the API (and the web app); scales to zero |
 | Firestore | devices, services, approval cards, trust levels, chats; security rules keep each user's data private |
@@ -85,13 +87,15 @@ Nightlight API on Cloud Run (FastAPI) ──────────────
 - **Cost is bounded before any model call**: each call reserves its worst-case cost (full input and output limits)
   against a model budget, with per-user, per-visitor and daily limits and a kill switch; input size is checked with
   Gemini's own token counter, and output (including thinking) is capped.
-- **Stale work can't land**: chat turns hold a lease; a reset or a takeover stops the next model call before it is
-  paid for.
+- **Stale work can't land**: chat turns hold a lease; after a reset or a takeover, a stale turn can't reserve new
+  model calls or commit results (a call already admitted may still run, but its result is discarded).
 
 ## Data sources
 
 The demo's devices and incidents are **synthetic** and labelled as such. Health checks are deterministic rules over
-device data; the model explains them and never invents device state (it reads devices through tools).
+device data; the model explains them. It is instructed to use only the supplied summary and its tools and not to
+invent device state, but generated explanations can still be wrong; the approval card shows the facts from the
+device data.
 
 ## Performance
 
