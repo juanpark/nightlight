@@ -36,3 +36,7 @@ AGENTS.md
 
 # Emulator logs
 *-debug.log
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
