@@ -49,6 +49,21 @@ Sample questions that work:
 The demo panel can trigger incidents: disk full, a failing job, a lagging game server, an overdue backup, an
 available update.
 
+## Real devices (read-only helper)
+
+A small Python script ([`helper/nightlight_helper.py`](helper/nightlight_helper.py), standard library, psutil if
+present) joins your home with a one-time code made in the app and then reports health facts every minute: disk,
+memory, CPU, uptime, stopped system services, containers (name, image name and tag, state), pending updates. It never
+sends hostnames, IP addresses, logs or credentials, talks HTTPS only, and keeps its device token in an owner-only
+file. A device that hasn't reported for 5 minutes is shown as offline with unknown health. Tested on a Raspberry Pi
+(Python 3.9).
+
+```bash
+python3 nightlight_helper.py show                      # preview exactly what would be sent
+python3 nightlight_helper.py enrol <API_URL> <CODE>    # join with a one-time code (valid 10 minutes, single use)
+python3 nightlight_helper.py run                       # keep reporting
+```
+
 ## Architecture
 
 ```
@@ -117,6 +132,7 @@ The API contract for the web app is in [`docs/API.md`](docs/API.md); sample data
 
 ## Known limits
 
-- The demo home is simulated; connecting real devices (a small read-only helper) is in progress.
+- Real devices are **read-only**: the helper reports health facts and Nightlight explains them, but jobs run only on
+  the simulated home.
 - Answers are kept short on purpose; very long conversations are trimmed or refused rather than cut off silently.
 - The approval card's "undo" is simulated in the demo.
