@@ -226,8 +226,10 @@ def view(doc: dict, now: datetime | None = None) -> dict:
     if doc.get("realm") != "real":
         return doc
     last = doc.get("lastSeen")
-    if doc.get("revoked") or not last or (now or _now()) - last > STALE_AFTER:
-        return {**doc, "status": "offline", "health": "unknown", "findings": [], "stale": True}
+    reason = "revoked" if doc.get("revoked") else "no_report_yet" if not last else \
+        "overdue" if (now or _now()) - last > STALE_AFTER else None
+    if reason:
+        return {**doc, "status": "offline", "health": "unknown", "findings": [], "stale": True, "staleReason": reason}
     return {**doc, "stale": False}
 
 

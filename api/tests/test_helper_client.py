@@ -125,3 +125,21 @@ def test_malformed_reply_is_reported_not_raised(helper):
 def test_unreachable_server_is_reported_not_raised(helper):
     status, body = helper._post("http://127.0.0.1:9/x", {})
     assert status == 0 and "error" in body
+
+
+@pytest.mark.parametrize("payload", [b"<html>proxy page</html>", b"[]", b"null", b"{}"])
+def test_bad_acknowledgment_is_not_success(helper, monkeypatch, payload):
+    class Ack(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):
+            pass
+
+    srv = _server(Ack)
+    helper._save_config({"api": f"http://127.0.0.1:{srv.server_port}", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "facts", lambda: {})
+    assert helper.once() == 0  # not counted as delivered; continuous mode will back off and retry

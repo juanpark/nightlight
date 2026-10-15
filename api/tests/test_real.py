@@ -157,5 +157,6 @@ def test_revoke_racing_heartbeats_ends_revoked_and_offline(client, started):  # 
     d = db.device(started, dev["deviceId"]).get().to_dict()
     tok = db.client().collection("helperTokens").document(real._sha(dev["token"])).get().to_dict()
     assert tok["revoked"] is True and d["revoked"] is True
+    assert real.view(d)["status"] == "offline" and real.view(d)["staleReason"] == "revoked"
     with pytest.raises(ApiError):
         real.heartbeat(dev["token"], FACTS)

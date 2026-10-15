@@ -191,9 +191,10 @@ def _post(url, body, headers=None):
     except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
         return 0, {"error": str(getattr(e, "reason", e))[:200]}
     try:
-        return status, json.loads(raw or b"{}")
+        body = json.loads(raw or b"{}")
     except ValueError:
         return status, {"error": "unexpected response"}
+    return status, body if isinstance(body, dict) else {"error": "unexpected response"}
 
 
 def _load():
@@ -237,6 +238,9 @@ def once():
     cfg = _load()
     api = check_api(cfg["api"])
     status, body = _post(api + "/helper/heartbeat", facts(), {"X-Device-Token": cfg["token"]})
+    if status == 200 and body.get("ok") is not True:
+        status = 0  # a 200 without our acknowledgment is a protocol error, not a delivered report
+        body = {"error": body.get("error") or "unexpected response"}
     if status == 200:
         print(f"Report sent: {body.get('findings', 0)} finding(s).")
     elif status == 401:

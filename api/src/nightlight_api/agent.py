@@ -85,7 +85,7 @@ def _device_summary(d: dict) -> dict:
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
             "topProblem": top and top.get("message"), "simulated": d.get("simulated", True),
             "real": d.get("realm") == "real", "lastReport": str(d.get("lastSeen")) if d.get("realm") == "real" else None,
-            "stale": d.get("stale", False)}
+            "stale": d.get("stale", False), "staleReason": d.get("staleReason")}
 
 
 def fleet_summary(uid: str, generation: int) -> str:
@@ -100,8 +100,10 @@ def fleet_summary(uid: str, generation: int) -> str:
         problem = f"top problem: {s['topProblem']}" if s["topProblem"] else "no known problems"
         kind = "simulated"
         if s["real"]:
+            why = {"revoked": "its access was revoked", "no_report_yet": "it hasn't reported yet",
+                   "overdue": "NOT REPORTING for over 5 minutes"}.get(s["staleReason"])
             kind = "REAL device, read-only (no jobs can run on it); " + (
-                "NOT REPORTING for over 5 minutes, health unknown" if s["stale"] else f"last report {s['lastReport']}")
+                f"{why}, health unknown" if s["stale"] else f"last report {s['lastReport']}")
         lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
     text = scrub("\n".join(sorted(lines)))[0]
     return text.replace("{", "(").replace("}", ")")
