@@ -2,16 +2,16 @@
 
 from typing import Literal
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from google.cloud import firestore
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, sim, trust as trustlib
+from . import __version__, actions, db, demo, quota, sim, trust as trustlib, turns
 from .auth import current_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -42,6 +42,11 @@ Id = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
 class InjectBody(Strict):
     kind: Literal[tuple(sorted(sim.INCIDENTS))]
     deviceId: str = Id
+
+
+class MessageBody(Strict):
+    text: str = Field(min_length=1, max_length=2000)
+    clientRequestId: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 
 class DecideBody(Strict):
@@ -160,3 +165,42 @@ def promotion(action_type: str, body: PromotionBody, uid: str = Depends(current_
 
     db.run_transaction(run)
     return db.trust_doc(uid, "sim", action_type).get().to_dict()
+
+
+# ------------------------------------------------------------------ chat
+
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+    return quota.ip_hash(ip)
+
+
+def _session_id_ok(session_id: str) -> None:
+    if not re.fullmatch(r"sess_[0-9A-Z]{26}", session_id):
+        raise not_found()
+
+
+@app.post("/api/chat/sessions", status_code=201)
+def chat_session(body: Empty, uid: str = Depends(current_uid)):
+    return turns.create_session(uid)
+
+
+@app.post("/api/chat/sessions/{session_id}/messages")
+def chat_message(session_id: str, body: MessageBody, request: Request, uid: str = Depends(current_uid)):
+    _session_id_ok(session_id)
+    turn_id = turns.accept_message(uid, session_id, body.text, body.clientRequestId)
+    claimed = turns.claim(uid, turn_id)
+    return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
+                             headers=SSE_HEADERS)
+
+
+@app.post("/api/turns/{turn_id}/stream")
+def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(current_uid)):
+    if not re.fullmatch(r"(turn_[0-9a-f-]{36}|cont_act_[0-9a-f]{26})", turn_id):
+        raise not_found()
+    claimed = turns.claim(uid, turn_id)
+    return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
+                             headers=SSE_HEADERS)

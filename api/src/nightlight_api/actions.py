@@ -73,6 +73,9 @@ def _finish(tx, uid: str, action: dict, device: dict, service: dict | None, trus
             "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
             "actionId": a["id"], "input": f"{sim.ACTIONS[a['type']]['label']} on the {device['name']} {verb}.{summary}",
             "createdAt": _now()})
+        # Lets POST /api/turns/{turnId}/stream find the session that owns this continuation.
+        tx.set(db.user(uid).collection("turnIndex").document(cont),
+               {"sessionId": a["sessionId"], "demoGeneration": a["demoGeneration"]})
         a["continuationTurnId"] = cont
         a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": cont}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
