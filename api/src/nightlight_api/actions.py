@@ -117,6 +117,8 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
+        if device.get("realm") == "real":
+            raise ValueError("read_only_device")  # real devices only report; jobs run on the simulated home
         # Identity first, from stable inputs only: a retried turn must find its action even when the job has
         # already run and would no longer apply (e.g. an update that is now installed).
         key = proposal_key(generation, turn_id, device_id, sim.service_for(device, action_type), action_type, params)

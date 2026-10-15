@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, quota, sim, trust as trustlib, turns
+from . import __version__, actions, db, demo, quota, real, sim, trust as trustlib, turns
 from .auth import current_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -219,3 +219,61 @@ def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(
     claimed = turns.claim(uid, turn_id)
     return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
                              headers=SSE_HEADERS)
+
+
+# ------------------------------------------------------------------ real devices (read-only helper)
+
+class EnrolBody(Strict):
+    code: str = Field(pattern=r"^[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}$")
+    name: str = Field(min_length=1, max_length=40)
+
+
+class Container(Strict):
+    name: str = Field(max_length=64)
+    image: str | None = Field(default=None, max_length=128)
+    state: str | None = Field(default=None, max_length=32)
+    status: str | None = Field(default=None, max_length=64)
+
+
+class HeartbeatBody(Strict):
+    helperVersion: str = Field(max_length=16)
+    os: str | None = Field(default=None, max_length=80)
+    arch: str | None = Field(default=None, max_length=16)
+    cpuPct: float | None = Field(default=None, ge=0, le=100)
+    memPct: float | None = Field(default=None, ge=0, le=100)
+    diskPct: float | None = Field(default=None, ge=0, le=100)
+    uptimeSec: int | None = Field(default=None, ge=0)
+    containers: list[Container] = Field(default_factory=list, max_length=50)
+    failedUnits: list[str] = Field(default_factory=list, max_length=50)
+    updatesPending: int | None = Field(default=None, ge=0, le=100000)
+
+    @model_validator(mode="after")
+    def short_units(self):
+        if any(len(u) > 128 for u in self.failedUnits):
+            raise ValueError("unit names must be at most 128 characters")
+        return self
+
+
+@app.post("/api/devices/enrol-code", status_code=201)
+def enrol_code(body: Empty, uid: str = Depends(current_uid)):
+    return real.create_code(uid)
+
+
+@app.post("/api/devices/{device_id}/revoke")
+def revoke_device(device_id: str, body: Empty, uid: str = Depends(current_uid)):
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return real.revoke(uid, device_id)
+
+
+@app.post("/helper/enrol", status_code=201)
+def helper_enrol(body: EnrolBody):
+    return real.enrol(body.code, scrub(body.name)[0])
+
+
+@app.post("/helper/heartbeat")
+def helper_heartbeat(body: HeartbeatBody, request: Request):
+    token = request.headers.get("x-device-token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
+        raise ApiError(401, "invalid_token")
+    return real.heartbeat(token, body.model_dump())

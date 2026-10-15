@@ -14,7 +14,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import ToolContext
 from google.genai import types
 
-from . import actions, db, quota
+from . import actions, db, quota, real
 from .config import settings
 from .errors import ApiError
 from .fence import turn_fence
@@ -33,7 +33,8 @@ How to answer:
   failed = say it didn't work and that nothing changed.
 - Never claim something was done unless a tool result says status "done".
 - Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
-- Everything here is a simulated sample home; say so if asked.
+- Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper and
+  are read-only: explain their problems and what the person could do, but don't propose jobs for them.
 - Keep the whole reply under 80 words."""
 
 CONTINUATION = """You are Nightlight. A change the person decided on has just finished; the update below says exactly
@@ -81,7 +82,8 @@ def _device_summary(d: dict) -> dict:
     top = next(iter(d.get("findings") or []), None)
     return {"id": d["id"], "name": d.get("name"), "purpose": d.get("purpose"), "status": d.get("status"),
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
-            "topProblem": top and top.get("message"), "simulated": d.get("simulated", True)}
+            "topProblem": top and top.get("message"), "simulated": d.get("simulated", True),
+            "real": d.get("realm") == "real"}
 
 
 def fleet_summary(uid: str, generation: int) -> str:
@@ -89,12 +91,13 @@ def fleet_summary(uid: str, generation: int) -> str:
     lines = []
     for snap in db.devices(uid).get():
         d = snap.to_dict()
-        if d.get("demoGeneration") != generation:
+        if not real.is_current(d, generation):
             continue
         s = _device_summary(dict(d, id=snap.id))
         disk = f"disk {s['diskPct']}% full; " if s["diskPct"] is not None else ""
         problem = f"top problem: {s['topProblem']}" if s["topProblem"] else "no known problems"
-        lines.append(f"- {s['id']} ({s['name']}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
+        kind = "REAL device, read-only (no jobs can run on it)" if s["real"] else "simulated"
+        lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
     text = scrub("\n".join(sorted(lines)))[0]
     return text.replace("{", "(").replace("}", ")")
 
@@ -103,7 +106,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
     def _list_fleet_sync(tool_context: ToolContext) -> dict:
         """List every device in the person's home: name, purpose, health and its top problem."""
         devices = [_device_summary(dict(s.to_dict(), id=s.id)) for s in db.devices(ctx.uid).get()
-                   if s.to_dict().get("demoGeneration") == ctx.generation]
+                   if real.is_current(s.to_dict(), ctx.generation)]
         return _bounded({"devices": devices}, ctx)
 
     def _get_device_sync(device_id: str, tool_context: ToolContext) -> dict:
@@ -113,7 +116,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             device_id: the device id from list_fleet, for example "pi-1".
         """
         snap = db.device(ctx.uid, device_id).get()
-        if not snap.exists or snap.to_dict().get("demoGeneration") != ctx.generation:
+        if not snap.exists or not real.is_current(snap.to_dict(), ctx.generation):
             return {"error": "no such device"}
         d = dict(snap.to_dict(), id=device_id)
         services = [dict(s.to_dict(), id=s.id) for s in db.services(ctx.uid, device_id).get()]
@@ -343,7 +346,7 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     server already knows the result, so one short model call narrates it."""
     before_model, after_model, before_tool = make_callbacks(ctx)
     instruction = CONTINUATION if continuation else (
-        INSTRUCTION + "\n\nTheir home right now (simulated sample home):\n" + (ctx.fleet or "- no devices"))
+        INSTRUCTION + "\n\nTheir home right now:\n" + (ctx.fleet or "- no devices"))
     return LlmAgent(
         name="nightlight",
         model=model or settings.model,

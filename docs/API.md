@@ -31,7 +31,8 @@ fields. Example data for every shape is in [`contracts/mocks/`](../contracts/moc
 | `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status | `phases/<phase>/sessions.json` |
 
 Every demo document carries `demoGeneration`. Show only documents whose `demoGeneration` equals the user's current
-`demoGeneration`; older ones are leftovers from before a reset.
+`demoGeneration` (older ones are leftovers from before a reset), plus real devices (`realm: "real"`), which are always
+current.
 
 ## Endpoints
 
@@ -64,6 +65,26 @@ While `demo.state` is `resetting`, every demo write and chat answers `409 resett
 When trust allows a job to run automatically, there is no card and no follow-up turn: the action is created already
 finished, `done` or `failed`, with `decision.by = "auto"`, and the agent explains the outcome in the same reply. A
 failed automatic job lowers its trust level by one step.
+
+## Real devices (read-only helper)
+
+| Method and path | Auth | Body | Response |
+|---|---|---|---|
+| `POST /api/devices/enrol-code` | Firebase token | `{}` | `201 {code: "ABCD-EFGH", expiresAt}`: one-time, 10 minutes, at most 10 per hour |
+| `POST /helper/enrol` | the one-time code | `{"code":"ABCD-EFGH","name":"My Pi"}` | `201 {deviceId, token}`: the token is shown only here and kept by the helper; `401 invalid_code` if unknown, used or expired |
+| `POST /helper/heartbeat` | header `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
+| `POST /api/devices/{deviceId}/revoke` | Firebase token | `{}` | `200 {ok, deviceId}`: the helper's token stops working |
+
+Heartbeat facts (anything else is rejected): `helperVersion`, `os`, `arch`, `cpuPct`, `memPct`, `diskPct`,
+`uptimeSec`, `containers[] {name, image, state, status}`, `failedUnits[]`, `updatesPending`. No host names, IP
+addresses, logs or credentials are accepted.
+
+Real devices have `realm: "real"` and `simulated: false`; they are always shown (they have no `demoGeneration`),
+are never touched by Reset, and jobs don't run on them (read-only). Their services come from containers
+(`category: "containers"`) and failed system services (`category: "system"`). Checks: `disk_over_80`,
+`disk_over_90`, `memory_high`, `service_down`, `container_down`, `updates_pending`, `restart_overdue`.
+
+The helper: [`helper/nightlight_helper.py`](../helper/nightlight_helper.py) (`enrol`, `once`, `run`, `show`).
 
 ## Jobs, incidents and checks
 
