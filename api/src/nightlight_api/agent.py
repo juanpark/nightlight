@@ -218,11 +218,24 @@ def bound_input(req, counter=None) -> None:
     raise ApiError(422, "context_limit")
 
 
-def _scrub_parts(content) -> None:
-    """Scrub visible text in place; opaque protocol fields (thought signatures, call ids) are left untouched."""
-    for part in (content.parts if content else []) or []:
-        if part.text and not part.thought:
-            part.text = scrub(part.text)[0]
+def scrub_content(content) -> None:
+    """Scrub a whole message in place: all visible text is joined and scrubbed as one string.
+
+    Scrubbing parts one by one would let a secret that starts in one part and ends in the next slip through. The
+    scrubbed text goes into the first visible part; later visible parts are emptied (kept only if they carry an
+    opaque thought signature, which must be preserved), so nothing else changes.
+    """
+    parts = (content.parts if content else None) or []
+    visible = [i for i, p in enumerate(parts) if p.text and not p.thought]
+    if not visible:
+        return
+    clean = scrub("".join(parts[i].text for i in visible))[0]
+    parts[visible[0]].text = clean
+    for i in reversed(visible[1:]):
+        if parts[i].thought_signature or parts[i].function_call:
+            parts[i].text = None
+        else:
+            del parts[i]
 
 
 def make_callbacks(ctx: TurnContext):
@@ -232,7 +245,7 @@ def make_callbacks(ctx: TurnContext):
         if ctx.metrics["modelCalls"] >= settings.model_calls_per_turn:
             raise ApiError(429, "too_many_steps")
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
-            _scrub_parts(content)
+            scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
         await asyncio.to_thread(bound_input, llm_request)
         # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
@@ -243,8 +256,8 @@ def make_callbacks(ctx: TurnContext):
     async def after_model(callback_context, llm_response: LlmResponse):
         if llm_response.partial:
             return None
-        # Scrub the model's own words before they become conversation history for the next call.
-        _scrub_parts(llm_response.content)
+        # Scrub the model's own words (as one text) before they become history for the next call.
+        scrub_content(llm_response.content)
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
         actual = quota.cost_of(u)

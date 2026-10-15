@@ -85,3 +85,37 @@ def test_whitespace_only_answer_is_consistent(client, started):  # R4
     FakeLlm.behavior = reply(" " * 200, " " * 200)
     live, stored, replay = _texts(uid, sid, str(uuid.uuid4()), client)
     assert live == stored == replay == agentlib.FALLBACK
+
+
+def _multipart(text_parts, with_tool=False):
+    """A finished response whose visible text is split across parts, with a thought part in between."""
+    async def gen(llm_request, stream):
+        if with_tool and any(p.function_response for c in llm_request.contents for p in (c.parts or [])):
+            async for r in reply("all good")(llm_request, stream):
+                yield r
+            return
+        parts = [types.Part(text=text_parts[0]), types.Part(text="thinking…", thought=True),
+                 *[types.Part(text=t) for t in text_parts[1:]]]
+        if with_tool:
+            parts.append(types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"})))
+        yield LlmResponse(content=types.Content(role="model", parts=parts), partial=False)
+    return gen
+
+
+SPLIT = ['Here is the setting: pass' + 'word: "', WORDS, '" then restart the Pi.']
+
+
+def test_multipart_response_never_leaks(client, started):  # R1, completed multipart
+    uid, sid = started, new_session(client)
+    FakeLlm.behavior = _multipart(SPLIT)
+    live, stored, replay = _texts(uid, sid, str(uuid.uuid4()), client)
+    for text in (live, stored, replay):
+        assert MARK not in text
+    assert live == stored == replay
+
+
+def test_multipart_secret_not_sent_back_to_model(client, started):  # R2, completed multipart + tool loop
+    sid = new_session(client)
+    FakeLlm.behavior = _multipart(SPLIT, with_tool=True)
+    events(ask(client, sid))
+    assert len(FakeLlm.log) == 2 and all(MARK not in call["text"] for call in FakeLlm.log)

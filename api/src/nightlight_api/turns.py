@@ -328,17 +328,21 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             if kind == "end":
                 break
             ev = item
-            for part in (ev.content.parts if ev.content else []) or []:
-                if part.thought:
-                    continue
-                if part.text and not ev.partial:
-                    raw += part.text
+            parts = (ev.content.parts if ev.content else None) or []
+            if not ev.partial:
+                # The whole visible text of a finished response is added and scrubbed at once, never part by part.
+                visible = "".join(p.text for p in parts if p.text and not p.thought)
+                if visible:
+                    raw += visible
                     clean = scrub(raw)[0]
                     if clean.strip() and clean.startswith(shown):  # hold whitespace until there's substance
                         piece, shown = clean[len(shown):], clean
                         if first_text_ms is None:
                             first_text_ms = int((time.monotonic() - t0) * 1000)
                         yield out({"type": "text", "delta": piece})
+            for part in parts:
+                if part.thought:
+                    continue
                 if part.function_call and not ev.partial:
                     args, _ = scrub_value(dict(part.function_call.args or {}))
                     tool_calls.append({"name": part.function_call.name, "args": args})
