@@ -18,7 +18,7 @@ from . import actions, db, quota
 from .config import settings
 from .errors import ApiError
 from .fence import turn_fence
-from .redact import scrub_value
+from .redact import scrub, scrub_value
 
 INSTRUCTION = """You are Nightlight, a calm house-sitter for someone's home and small-office servers.
 The person is not technical. Speak plainly: no jargon, no commands, no acronyms without a short explanation.
@@ -218,21 +218,33 @@ def bound_input(req, counter=None) -> None:
     raise ApiError(422, "context_limit")
 
 
+def _scrub_parts(content) -> None:
+    """Scrub visible text in place; opaque protocol fields (thought signatures, call ids) are left untouched."""
+    for part in (content.parts if content else []) or []:
+        if part.text and not part.thought:
+            part.text = scrub(part.text)[0]
+
+
 def make_callbacks(ctx: TurnContext):
     fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
 
-    def before_model(callback_context, llm_request):
+    async def before_model(callback_context, llm_request):
         if ctx.metrics["modelCalls"] >= settings.model_calls_per_turn:
             raise ApiError(429, "too_many_steps")
-        bound_input(llm_request)
+        for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
+            _scrub_parts(content)
+        # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
+        await asyncio.to_thread(bound_input, llm_request)
         # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
-        ctx.reservations.append(quota.reserve(ctx.uid, ctx.ip, fence=fence))
+        ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence))
         ctx.metrics["modelCalls"] += 1
         return None
 
-    def after_model(callback_context, llm_response: LlmResponse):
+    async def after_model(callback_context, llm_response: LlmResponse):
         if llm_response.partial:
             return None
+        # Scrub the model's own words before they become conversation history for the next call.
+        _scrub_parts(llm_response.content)
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
         actual = quota.cost_of(u)
@@ -242,7 +254,7 @@ def make_callbacks(ctx: TurnContext):
             ctx.metrics["tokensThinking"] += u.thoughts_token_count or 0
         if actual is not None:
             ctx.metrics["costUsd"] += actual
-        quota.reconcile(reserved, actual)  # unknown usage keeps the full reservation
+        await asyncio.to_thread(quota.reconcile, reserved, actual)  # unknown usage keeps the full reservation
         return None
 
     def before_tool(tool, args, tool_context):

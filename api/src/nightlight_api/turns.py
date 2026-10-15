@@ -24,7 +24,7 @@ from .config import settings
 from .errors import ApiError, conflict, not_found
 from .fence import turn_fence
 from .ids import new_id
-from .redact import StreamScrubber, scrub, scrub_value
+from .redact import scrub, scrub_value
 
 APP = "nightlight"
 
@@ -270,8 +270,10 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                                generation=c.generation, ip=ip)
     queue: asyncio.Queue = asyncio.Queue()
     lost = asyncio.Event()
-    scrubber = StreamScrubber()
-    final_raw, tool_calls, first_text_ms = None, [], None
+    # Text is released only when a model call has finished, so it is always scrubbed as a whole: a secret can't
+    # leak through a partly-seen value. `shown` is exactly what the browser has; it is what we store and replay.
+    raw, shown, tool_calls, first_text_ms = "", "", [], None
+    last_sent = time.monotonic()
 
     async def produce():
         try:
@@ -304,13 +306,21 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
 
     producer = asyncio.create_task(produce())
     renewer = asyncio.create_task(keep_lease())
+    def out(event: dict) -> str:
+        nonlocal last_sent
+        last_sent = time.monotonic()
+        return sse(event)
+
     try:
         while True:
             if lost.is_set():
                 raise ApiError(409, "stale")
             try:
-                kind, item = await asyncio.wait_for(queue.get(), timeout=15)
+                # Ping after 15 s without bytes on the wire, whatever the model is doing.
+                wait = max(15 - (time.monotonic() - last_sent), 0.05)
+                kind, item = await asyncio.wait_for(queue.get(), timeout=wait)
             except asyncio.TimeoutError:
+                last_sent = time.monotonic()
                 yield ": ping\n\n"
                 continue
             if kind == "error":
@@ -321,33 +331,29 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             for part in (ev.content.parts if ev.content else []) or []:
                 if part.thought:
                     continue
-                if part.text:
-                    if ev.partial:
-                        piece = scrubber.push(part.text)
-                        if piece:
-                            if first_text_ms is None:
-                                first_text_ms = int((time.monotonic() - t0) * 1000)
-                            yield sse({"type": "text", "delta": piece})
-                    else:
-                        final_raw = (final_raw or "") + part.text
+                if part.text and not ev.partial:
+                    raw += part.text
+                    clean = scrub(raw)[0]
+                    if clean.strip() and clean.startswith(shown):  # hold whitespace until there's substance
+                        piece, shown = clean[len(shown):], clean
+                        if first_text_ms is None:
+                            first_text_ms = int((time.monotonic() - t0) * 1000)
+                        yield out({"type": "text", "delta": piece})
                 if part.function_call and not ev.partial:
                     args, _ = scrub_value(dict(part.function_call.args or {}))
                     tool_calls.append({"name": part.function_call.name, "args": args})
-                    yield sse({"type": "tool_call", "name": part.function_call.name, "args": args})
+                    yield out({"type": "tool_call", "name": part.function_call.name, "args": args})
                 if part.function_response:
                     resp = dict(part.function_response.response or {})
-                    yield sse({"type": "tool_result", "name": part.function_response.name,
+                    yield out({"type": "tool_result", "name": part.function_response.name,
                                "summary": _summary(resp), "redacted": ctx.redacted})
                     if part.function_response.name == "rotate_logs" and resp.get("status") == "pending":
-                        yield sse({"type": "approval_request", "actionId": resp.get("actionId")})
-        piece, text = scrubber.finish(final_raw if final_raw is not None else None)
-        if not text.strip():
-            text, piece = agentlib.FALLBACK, agentlib.FALLBACK
-        if piece:
-            if first_text_ms is None:
-                first_text_ms = int((time.monotonic() - t0) * 1000)
-            yield sse({"type": "text", "delta": piece})
-        # `text` is exactly what the browser has received; it is what we store and replay.
+                        yield out({"type": "approval_request", "actionId": resp.get("actionId")})
+        if not shown.strip():
+            shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)
+            first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
+            yield out({"type": "text", "delta": shown})
+        text = shown  # exactly what the browser received; stored and replayed as-is
         metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
                    "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6)}
         await asyncio.to_thread(finish, uid, c, text=text, metrics=metrics, tool_calls=tool_calls,
