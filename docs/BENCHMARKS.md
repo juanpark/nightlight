@@ -11,7 +11,7 @@ Completed runs: 5 of 5. Failures: 0.
 
 Whole story (question + approval + follow-up): about **$0.0012** per run. Approve itself (one Firestore transaction): median 19 ms.
 
-Worst case per model call under the enforced limits (16,000 input tokens, 1,024 output+thinking tokens): $0.00736; the $35 model budget therefore admits at most 4,755 model calls.
+Worst case per model call under the enforced limits (16,000 input tokens, 1,024 output+thinking tokens): $0.00736; the $35 model budget covers 4,755 calls at the full worst-case reservation. Lower actual usage is refunded, which permits more calls, subject to the per-user, per-visitor and daily limits.
 
 ## History
 

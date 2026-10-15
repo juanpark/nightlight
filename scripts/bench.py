@@ -111,8 +111,9 @@ lines += [
     f"Approve itself (one Firestore transaction): median {stat('after approval', 'approveMs', statistics.median) or 0:.0f} ms.",
     "",
     "Worst case per model call under the enforced limits (16,000 input tokens, 1,024 output+thinking tokens): "
-    f"${settings.c_max:.5f}; the ${settings.model_budget_usd:.0f} model budget therefore admits at most "
-    f"{int(settings.model_budget_usd // settings.c_max):,} model calls.",
+    f"${settings.c_max:.5f}; the ${settings.model_budget_usd:.0f} model budget covers "
+    f"{int(settings.model_budget_usd // settings.c_max):,} calls at the full worst-case reservation. Lower actual "
+    "usage is refunded, which permits more calls, subject to the per-user, per-visitor and daily limits.",
     "",
     "## History",
     "",
