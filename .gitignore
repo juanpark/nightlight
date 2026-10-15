@@ -33,3 +33,6 @@ target/
 
 # Agent instruction files stay private
 AGENTS.md
+
+# Emulator logs
+*-debug.log

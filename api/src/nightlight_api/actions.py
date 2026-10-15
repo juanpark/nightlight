@@ -1,0 +1,150 @@
+"""Proposing and deciding actions. The only code that changes simulated device state.
+
+`decide` and the automatic path each run as ONE Firestore transaction: decision, simulator mutation, result, trust
+update, continuation turn and the stored response commit together or not at all.
+"""
+
+from google.cloud import firestore
+
+from . import db, sim, trust as trustlib
+from .errors import ApiError, conflict, not_found
+from .ids import action_id as make_action_id, continuation_turn_id, proposal_key
+
+MAX_ATTEMPTS = 25  # concurrent decides on one action retry until they see the winner's result
+
+
+def _now():
+    return firestore.SERVER_TIMESTAMP
+
+
+def _require_ready(user: dict | None, generation: int | None = None):
+    if not user:
+        raise not_found()
+    if user.get("demo", {}).get("state") != "ready":
+        raise conflict("resetting", retryAfter=5)
+    if generation is not None and user.get("demoGeneration") != generation:
+        raise conflict("stale")
+
+
+def _service_doc(services: list[dict], svc_id: str | None) -> dict | None:
+    return next((s for s in services if s["id"] == svc_id), None)
+
+
+def _finish(tx, uid: str, action: dict, device: dict, trust_doc: dict, trust_ref, decision: str, by: str,
+            note: str | None) -> dict:
+    """Write a decided action and everything that follows from it. Caller has done all reads."""
+    a = dict(action)
+    a["decision"] = {k: v for k, v in {"by": by, "decision": decision, "note": note, "at": _now()}.items()
+                     if v is not None}
+    a["finishedAt"] = _now()
+    if decision == "approve":
+        ok, result, new_device = sim.apply(device, a["type"], a["params"])
+        new_device["version"] = device["version"] + 1
+        new_device["lastSeen"] = _now()
+        # sim.apply consumed any one-shot failure flag; set() replaces the whole device doc.
+        tx.set(db.device(uid, device["id"]), {k: v for k, v in new_device.items() if k != "id"})
+        a["status"] = "done" if ok else "failed"
+        a["result"] = result
+        tx.set(trust_ref, trustlib.after_outcome(trust_doc, a, ok, by, _now()))
+    else:
+        a["status"] = "denied"
+    if by == "user":
+        cont = continuation_turn_id(a["id"])
+        verb = {"done": "was approved and completed", "failed": "was approved but failed",
+                "denied": "was declined"}[a["status"]]
+        summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
+        tx.set(db.turns(uid, a["sessionId"]).document(cont), {
+            "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
+            "actionId": a["id"], "input": f"{sim.ACTIONS[a['type']]['label']} on the {device['name']} {verb}.{summary}",
+            "createdAt": _now()})
+        a["continuationTurnId"] = cont
+        a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": cont}
+    tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
+    return a
+
+
+def _read_context(tx, uid: str, device_id: str, action_type: str):
+    user_snap = db.user(uid).get(transaction=tx)
+    device_snap = db.device(uid, device_id).get(transaction=tx)
+    services = [dict(s.to_dict(), id=s.id) for s in db.services(uid, device_id).get(transaction=tx)]
+    trust_ref = db.trust_doc(uid, "sim", action_type)
+    trust_snap = trust_ref.get(transaction=tx)
+    return user_snap, device_snap, services, trust_ref, trust_snap
+
+
+def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_type: str, device_id: str,
+            params: dict, fence=None) -> dict:
+    """Create (or find) the action for this logical operation. Runs it at once when trust allows.
+
+    `fence(tx)` lets the turn engine abort if its lease or attempt is no longer current.
+    """
+    if action_type not in sim.ACTIONS:
+        raise ApiError(422, "unknown_action")
+
+    @firestore.transactional
+    def run(tx):
+        if fence:
+            fence(tx)
+        user_snap, device_snap, services, trust_ref, trust_snap = _read_context(tx, uid, device_id, action_type)
+        user = user_snap.to_dict() if user_snap.exists else None
+        _require_ready(user, generation)
+        if not device_snap.exists:
+            raise not_found()
+        device = dict(device_snap.to_dict(), id=device_id)
+        c = sim.card(device, action_type, params)
+        key = proposal_key(generation, turn_id, device_id, c["svcId"], action_type, params)
+        aid = make_action_id(key)
+        existing = db.action(uid, aid).get(transaction=tx)
+        if existing.exists:
+            return dict(existing.to_dict(), id=aid)
+        trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action_type, generation)
+        decision = trustlib.resolve(user, trust_doc, device, _service_doc(services, c["svcId"]), action_type, params)
+        action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device_id, "params": params,
+                  **c, "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
+                  "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
+                  "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
+        if decision["auto"]:
+            return _finish(tx, uid, action, device, trust_doc, trust_ref, "approve", "auto", None)
+        tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
+        return action
+
+    return run(db.client().transaction(max_attempts=MAX_ATTEMPTS))
+
+
+def decide(uid: str, action_id_: str, decision: str, note: str | None = None) -> tuple[int, dict]:
+    """Approve or deny a pending card. Returns (HTTP status, body): 202 first time, 200 for a replay."""
+
+    @firestore.transactional
+    def run(tx):
+        action_snap = db.action(uid, action_id_).get(transaction=tx)
+        if not action_snap.exists:
+            raise not_found()
+        action = dict(action_snap.to_dict(), id=action_id_)
+        user_snap, device_snap, services, trust_ref, trust_snap = _read_context(
+            tx, uid, action["deviceId"], action["type"])
+        user = user_snap.to_dict() if user_snap.exists else None
+        status = action["status"]
+        if status != "pending":
+            prior = action.get("decision", {})
+            if status == "stale":
+                raise conflict("stale", actionId=action_id_)
+            if prior.get("by") == "user" and prior.get("decision") == decision and action.get("response"):
+                return 200, action["response"]
+            if prior.get("by") == "user":
+                raise conflict("decision_conflict", actionId=action_id_)
+            raise conflict("illegal_transition", actionId=action_id_)
+        _require_ready(user)
+        device = dict(device_snap.to_dict(), id=action["deviceId"]) if device_snap.exists else None
+        if (action["demoGeneration"] != user.get("demoGeneration") or device is None
+                or device.get("version") != action["deviceVersion"]):
+            tx.update(db.action(uid, action_id_), {"status": "stale", "finishedAt": _now()})
+            return 409, {"error": "conflict", "code": "stale", "actionId": action_id_}
+        trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action["type"],
+                                                                                    action["demoGeneration"])
+        done = _finish(tx, uid, action, device, trust_doc, trust_ref, decision, "user", note)
+        return 202, done["response"]
+
+    status, body = run(db.client().transaction(max_attempts=MAX_ATTEMPTS))
+    if status == 409:
+        raise conflict(body["code"], actionId=body.get("actionId"))
+    return status, body
