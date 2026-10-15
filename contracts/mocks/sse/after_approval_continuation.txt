@@ -1,0 +1,14 @@
+: After POST /api/actions/act_5e9cbab787fa3a7907a7c44fef/decide → 202, the browser opens POST /api/turns/cont_act_5e9cbab787fa3a7907a7c44fef/stream {}
+
+data: {"type": "turn_start", "turnId": "cont_act_5e9cbab787fa3a7907a7c44fef", "attempt": 1, "messageId": "msg_01M52SD6B0XF0WV2T8PZWKA3TM", "at": "2026-10-16T16:41:00.000Z"}
+
+data: {"type": "tool_call", "name": "get_device", "args": {"device_id": "pi-1"}}
+
+data: {"type": "tool_result", "name": "get_device", "summary": "disk 61%", "redacted": 0}
+
+data: {"type": "text", "delta": "Done. The Pi is now 61% full and "}
+
+data: {"type": "text", "delta": "your car logger is recording normally."}
+
+data: {"type": "done", "turnId": "cont_act_5e9cbab787fa3a7907a7c44fef", "metrics": {"latencyMs": 2300, "firstTextMs": 1400, "modelCalls": 2, "toolCalls": 1, "tokensIn": 6100, "tokensOut": 60, "tokensThinking": 90, "costUsd": 0.0052}}
+

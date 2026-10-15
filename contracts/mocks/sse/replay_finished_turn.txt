@@ -1,0 +1,8 @@
+: Same clientRequestId sent again after the turn finished: a short replay of the stored answer
+
+data: {"type": "turn_start", "turnId": "turn_22089855-f474-4ad7-8727-b02863836678", "attempt": 1, "messageId": "msg_01M52SBBR0QA3KMP5VX93B31V8", "at": "2026-10-16T16:40:00.000Z", "replay": true}
+
+data: {"type": "text", "delta": "The Pi's disk is 94% full, mostly from old log files (2.1 GB). If it fills up, your car logger stops recording. I can clean up logs older than 7 days; that frees about 2.1 GB."}
+
+data: {"type": "done", "turnId": "turn_22089855-f474-4ad7-8727-b02863836678", "metrics": {"latencyMs": 3100, "firstTextMs": 900, "modelCalls": 2, "toolCalls": 1, "tokensIn": 5400, "tokensOut": 420, "tokensThinking": 180, "costUsd": 0.0063}}
+

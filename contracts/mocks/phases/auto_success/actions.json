@@ -1,0 +1,184 @@
+[
+  {
+    "id": "act_413627a0ad4aeeb5b0f212e57e",
+    "proposalKey": "413627a0ad4aeeb5b0f212e57eb8aec411703deae3237ea77573b045e2080082",
+    "type": "rotate_logs",
+    "deviceId": "pi-1",
+    "svcId": "teslamate",
+    "params": {},
+    "plan": "Compress and remove log files older than 7 days on the Pi.",
+    "dryRun": "Would free about 2.1 GB (93% → 61% full). No running service is stopped.",
+    "blastRadius": [
+      "pi-1"
+    ],
+    "rollback": "Removed logs are moved to an archive for 24 hours (simulated). Restoring them is not available in this demo.",
+    "riskClass": "routine",
+    "status": "done",
+    "demoGeneration": 3,
+    "deviceVersion": 3,
+    "trustLevelAtProposal": "ask",
+    "resolvedBy": "users.trustDefault",
+    "realm": "sim",
+    "sessionId": "sess_01M52KXDB08TJWB6EH3A30YPTQ",
+    "turnId": "turn_cb23d365-e359-41cf-b7f9-4f3bc95c8898",
+    "turnAttempt": 1,
+    "createdAt": "2026-10-16T15:05:03.000Z",
+    "decision": {
+      "by": "user",
+      "decision": "approve",
+      "at": "2026-10-16T15:06:00.000Z"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Freed 2.1 GB on the Pi.",
+      "before": {
+        "diskPct": 93
+      },
+      "after": {
+        "diskPct": 61
+      }
+    },
+    "continuationTurnId": "cont_act_413627a0ad4aeeb5b0f212e57e",
+    "response": {
+      "actionId": "act_413627a0ad4aeeb5b0f212e57e",
+      "status": "done",
+      "continuationTurnId": "cont_act_413627a0ad4aeeb5b0f212e57e"
+    },
+    "finishedAt": "2026-10-16T15:06:00.000Z"
+  },
+  {
+    "id": "act_a4e3e79f006badd4e382e17267",
+    "proposalKey": "a4e3e79f006badd4e382e1726787ab6f3c49842bc6fe1e0610fb7aad13ddde49",
+    "type": "rotate_logs",
+    "deviceId": "pi-1",
+    "svcId": "teslamate",
+    "params": {},
+    "plan": "Compress and remove log files older than 7 days on the Pi.",
+    "dryRun": "Would free about 2.1 GB (93% → 61% full). No running service is stopped.",
+    "blastRadius": [
+      "pi-1"
+    ],
+    "rollback": "Removed logs are moved to an archive for 24 hours (simulated). Restoring them is not available in this demo.",
+    "riskClass": "routine",
+    "status": "done",
+    "demoGeneration": 3,
+    "deviceVersion": 5,
+    "trustLevelAtProposal": "ask",
+    "resolvedBy": "users.trustDefault",
+    "realm": "sim",
+    "sessionId": "sess_01M52P6N30BVKCY5C60GBW418N",
+    "turnId": "turn_5fc8b3ef-d3a2-4b61-bf44-8290e87a81ad",
+    "turnAttempt": 1,
+    "createdAt": "2026-10-16T15:45:03.000Z",
+    "decision": {
+      "by": "user",
+      "decision": "approve",
+      "at": "2026-10-16T15:46:00.000Z"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Freed 2.1 GB on the Pi.",
+      "before": {
+        "diskPct": 93
+      },
+      "after": {
+        "diskPct": 61
+      }
+    },
+    "continuationTurnId": "cont_act_a4e3e79f006badd4e382e17267",
+    "response": {
+      "actionId": "act_a4e3e79f006badd4e382e17267",
+      "status": "done",
+      "continuationTurnId": "cont_act_a4e3e79f006badd4e382e17267"
+    },
+    "finishedAt": "2026-10-16T15:46:00.000Z"
+  },
+  {
+    "id": "act_5e9cbab787fa3a7907a7c44fef",
+    "proposalKey": "5e9cbab787fa3a7907a7c44fef50369a08848773524e3f682157f7240d52200c",
+    "type": "rotate_logs",
+    "deviceId": "pi-1",
+    "svcId": "teslamate",
+    "params": {},
+    "plan": "Compress and remove log files older than 7 days on the Pi.",
+    "dryRun": "Would free about 2.1 GB (94% → 61% full). No running service is stopped.",
+    "blastRadius": [
+      "pi-1"
+    ],
+    "rollback": "Removed logs are moved to an archive for 24 hours (simulated). Restoring them is not available in this demo.",
+    "riskClass": "routine",
+    "status": "done",
+    "demoGeneration": 3,
+    "deviceVersion": 7,
+    "trustLevelAtProposal": "ask",
+    "resolvedBy": "users.trustDefault",
+    "realm": "sim",
+    "sessionId": "sess_01M52SBBR04TTAHY9K8H4BRVGH",
+    "turnId": "turn_22089855-f474-4ad7-8727-b02863836678",
+    "turnAttempt": 1,
+    "createdAt": "2026-10-16T16:40:03.000Z",
+    "decision": {
+      "by": "user",
+      "decision": "approve",
+      "at": "2026-10-16T16:41:00.000Z"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Freed 2.1 GB on the Pi.",
+      "before": {
+        "diskPct": 94
+      },
+      "after": {
+        "diskPct": 61
+      }
+    },
+    "continuationTurnId": "cont_act_5e9cbab787fa3a7907a7c44fef",
+    "response": {
+      "actionId": "act_5e9cbab787fa3a7907a7c44fef",
+      "status": "done",
+      "continuationTurnId": "cont_act_5e9cbab787fa3a7907a7c44fef"
+    },
+    "finishedAt": "2026-10-16T16:41:00.000Z"
+  },
+  {
+    "id": "act_83d487499ec8cf780468138467",
+    "proposalKey": "83d487499ec8cf7804681384671f363db88224ae0a808b579b7a79b5d95f0bfb",
+    "type": "rotate_logs",
+    "deviceId": "pi-1",
+    "svcId": "teslamate",
+    "params": {},
+    "plan": "Compress and remove log files older than 7 days on the Pi.",
+    "dryRun": "Would free about 2.1 GB (95% → 61% full). No running service is stopped.",
+    "blastRadius": [
+      "pi-1"
+    ],
+    "rollback": "Removed logs are moved to an archive for 24 hours (simulated). Restoring them is not available in this demo.",
+    "riskClass": "routine",
+    "status": "done",
+    "demoGeneration": 3,
+    "deviceVersion": 9,
+    "trustLevelAtProposal": "auto",
+    "resolvedBy": "trust/sim:rotate_logs",
+    "realm": "sim",
+    "sessionId": "sess_01M52WS7C0X6NF3E76G7CXSHCP",
+    "turnId": "turn_e43b0d2c-bc7c-4647-aee5-d79b36057101",
+    "turnAttempt": 1,
+    "createdAt": "2026-10-16T17:40:01.800Z",
+    "decision": {
+      "by": "auto",
+      "decision": "approve",
+      "at": "2026-10-16T17:40:01.800Z"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Freed 2.1 GB on the Pi. Done automatically: you allowed this.",
+      "before": {
+        "diskPct": 95
+      },
+      "after": {
+        "diskPct": 61
+      }
+    },
+    "finishedAt": "2026-10-16T17:40:01.800Z"
+  }
+]

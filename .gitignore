@@ -30,3 +30,6 @@ __pycache__/
 venv/
 target/
 *.class
+
+# Agent instruction files stay private
+AGENTS.md

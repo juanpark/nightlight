@@ -1,0 +1,4 @@
+{
+  "ui": "Show only actions whose demoGeneration equals users/{uid}.demoGeneration (4). The listed actions are generation-3 leftovers, hidden by that filter. The card that was still waiting when Reset was pressed is now status 'stale'; deciding it answers 409 stale.",
+  "staleActionId": "act_5e9cbab787fa3a7907a7c44fef"
+}

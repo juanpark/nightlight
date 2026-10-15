@@ -1,0 +1,26 @@
+[
+  {
+    "id": "sim:rotate_logs",
+    "actionType": "rotate_logs",
+    "label": "Clean up old log files",
+    "level": "ask",
+    "pinned": false,
+    "ceiling": "auto",
+    "riskClass": "routine",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 4
+  },
+  {
+    "id": "sim:disable_password_ssh",
+    "actionType": "disable_password_ssh",
+    "label": "Turn off password login",
+    "level": "ask",
+    "pinned": true,
+    "ceiling": "ask",
+    "riskClass": "destructive",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 4
+  }
+]

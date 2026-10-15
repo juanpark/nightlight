@@ -1,0 +1,30 @@
+[
+  {
+    "id": "sim:rotate_logs",
+    "actionType": "rotate_logs",
+    "label": "Clean up old log files",
+    "level": "ask_new",
+    "pinned": false,
+    "ceiling": "auto",
+    "riskClass": "routine",
+    "successes": [],
+    "failures": 1,
+    "demoGeneration": 3,
+    "promotionAccepted": {
+      "offerId": "offer_01M52SDC6G33AHRG2DTYVGEQ8P",
+      "at": "2026-10-16T16:41:30.000Z"
+    }
+  },
+  {
+    "id": "sim:disable_password_ssh",
+    "actionType": "disable_password_ssh",
+    "label": "Turn off password login",
+    "level": "ask",
+    "pinned": true,
+    "ceiling": "ask",
+    "riskClass": "destructive",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 3
+  }
+]

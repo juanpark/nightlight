@@ -1,0 +1,411 @@
+[
+  {
+    "id": "sess_01M52KXDB08TJWB6EH3A30YPTQ",
+    "title": "Pi disk full (first time)",
+    "createdAt": "2026-10-16T15:05:00.000Z",
+    "demoGeneration": 3,
+    "nextSeq": 5,
+    "activeTurn": null,
+    "lastTurnId": "cont_act_413627a0ad4aeeb5b0f212e57e",
+    "messages": [
+      {
+        "id": "msg_01M52KXDB0WY4J87AKN7XP34M5",
+        "role": "user",
+        "text": "What's wrong with the Pi?",
+        "seq": 1,
+        "turnId": "turn_cb23d365-e359-41cf-b7f9-4f3bc95c8898",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:05:00.000Z"
+      },
+      {
+        "id": "msg_01M52KXG8RP44R48T7BKFMMW48",
+        "role": "assistant",
+        "text": "The Pi's disk is 93% full, mostly from old log files (2.1 GB). If it fills up, your car logger stops recording. I can clean up logs older than 7 days; that frees about 2.1 GB.",
+        "seq": 2,
+        "turnId": "turn_cb23d365-e359-41cf-b7f9-4f3bc95c8898",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:05:03.000Z",
+        "toolCalls": [
+          {
+            "name": "get_device",
+            "args": {
+              "device_id": "pi-1"
+            }
+          }
+        ],
+        "actionIds": []
+      },
+      {
+        "id": "msg_01M52KZ7Y0WNDY1WZ4SV2KT5YS",
+        "role": "system",
+        "text": "You approved: clean up old log files on the Pi.",
+        "seq": 3,
+        "turnId": "cont_act_413627a0ad4aeeb5b0f212e57e",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:06:00.000Z",
+        "actionIds": [
+          "act_413627a0ad4aeeb5b0f212e57e"
+        ]
+      },
+      {
+        "id": "msg_01M52KZA90SMC1FDQP01T3DF2E",
+        "role": "assistant",
+        "text": "Done. The Pi is now 61% full and your car logger is recording normally.",
+        "seq": 4,
+        "turnId": "cont_act_413627a0ad4aeeb5b0f212e57e",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:06:02.400Z"
+      }
+    ],
+    "turns": [
+      {
+        "id": "turn_cb23d365-e359-41cf-b7f9-4f3bc95c8898",
+        "kind": "user",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "clientRequestId": "cb23d365-e359-41cf-b7f9-4f3bc95c8898",
+        "textSha256": "8376c80cd48754b8e84631073b06f6e4efba409018dbde8cb257310f788e3f36",
+        "userMessageId": "msg_01M52KXDB0WY4J87AKN7XP34M5",
+        "createdAt": "2026-10-16T15:05:00.000Z",
+        "startedAt": "2026-10-16T15:05:00.600Z",
+        "finalMessageId": "msg_01M52KXG8RP44R48T7BKFMMW48",
+        "metrics": {
+          "latencyMs": 3100,
+          "firstTextMs": 900,
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "tokensIn": 5400,
+          "tokensOut": 420,
+          "tokensThinking": 180,
+          "costUsd": 0.0063
+        },
+        "finishedAt": "2026-10-16T15:05:03.600Z"
+      },
+      {
+        "id": "cont_act_413627a0ad4aeeb5b0f212e57e",
+        "kind": "continuation",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "actionId": "act_413627a0ad4aeeb5b0f212e57e",
+        "finalMessageId": "msg_01M52KZA90SMC1FDQP01T3DF2E",
+        "metrics": {
+          "latencyMs": 2300,
+          "firstTextMs": 1400,
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "tokensIn": 6100,
+          "tokensOut": 60,
+          "tokensThinking": 90,
+          "costUsd": 0.0052
+        },
+        "createdAt": "2026-10-16T15:06:00.000Z",
+        "startedAt": "2026-10-16T15:06:00.600Z",
+        "finishedAt": "2026-10-16T15:06:03.000Z"
+      }
+    ]
+  },
+  {
+    "id": "sess_01M52P6N30BVKCY5C60GBW418N",
+    "title": "Pi disk full (second time)",
+    "createdAt": "2026-10-16T15:45:00.000Z",
+    "demoGeneration": 3,
+    "nextSeq": 5,
+    "activeTurn": null,
+    "lastTurnId": "cont_act_a4e3e79f006badd4e382e17267",
+    "messages": [
+      {
+        "id": "msg_01M52P6N30NFKYGR8T91RPZGX6",
+        "role": "user",
+        "text": "What's wrong with the Pi?",
+        "seq": 1,
+        "turnId": "turn_5fc8b3ef-d3a2-4b61-bf44-8290e87a81ad",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:45:00.000Z"
+      },
+      {
+        "id": "msg_01M52P6R0RQZV7KZ62AR60241B",
+        "role": "assistant",
+        "text": "The Pi's disk is 93% full, mostly from old log files (2.1 GB). If it fills up, your car logger stops recording. I can clean up logs older than 7 days; that frees about 2.1 GB.",
+        "seq": 2,
+        "turnId": "turn_5fc8b3ef-d3a2-4b61-bf44-8290e87a81ad",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:45:03.000Z",
+        "toolCalls": [
+          {
+            "name": "get_device",
+            "args": {
+              "device_id": "pi-1"
+            }
+          }
+        ],
+        "actionIds": []
+      },
+      {
+        "id": "msg_01M52P8FP0JPX7E6TGCPMPSS0H",
+        "role": "system",
+        "text": "You approved: clean up old log files on the Pi.",
+        "seq": 3,
+        "turnId": "cont_act_a4e3e79f006badd4e382e17267",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:46:00.000Z",
+        "actionIds": [
+          "act_a4e3e79f006badd4e382e17267"
+        ]
+      },
+      {
+        "id": "msg_01M52P8J10Q5SS26S3VZC3R1VQ",
+        "role": "assistant",
+        "text": "Done. The Pi is now 61% full and your car logger is recording normally.",
+        "seq": 4,
+        "turnId": "cont_act_a4e3e79f006badd4e382e17267",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T15:46:02.400Z"
+      }
+    ],
+    "turns": [
+      {
+        "id": "turn_5fc8b3ef-d3a2-4b61-bf44-8290e87a81ad",
+        "kind": "user",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "clientRequestId": "5fc8b3ef-d3a2-4b61-bf44-8290e87a81ad",
+        "textSha256": "8376c80cd48754b8e84631073b06f6e4efba409018dbde8cb257310f788e3f36",
+        "userMessageId": "msg_01M52P6N30NFKYGR8T91RPZGX6",
+        "createdAt": "2026-10-16T15:45:00.000Z",
+        "startedAt": "2026-10-16T15:45:00.600Z",
+        "finalMessageId": "msg_01M52P6R0RQZV7KZ62AR60241B",
+        "metrics": {
+          "latencyMs": 3100,
+          "firstTextMs": 900,
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "tokensIn": 5400,
+          "tokensOut": 420,
+          "tokensThinking": 180,
+          "costUsd": 0.0063
+        },
+        "finishedAt": "2026-10-16T15:45:03.600Z"
+      },
+      {
+        "id": "cont_act_a4e3e79f006badd4e382e17267",
+        "kind": "continuation",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "actionId": "act_a4e3e79f006badd4e382e17267",
+        "finalMessageId": "msg_01M52P8J10Q5SS26S3VZC3R1VQ",
+        "metrics": {
+          "latencyMs": 2300,
+          "firstTextMs": 1400,
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "tokensIn": 6100,
+          "tokensOut": 60,
+          "tokensThinking": 90,
+          "costUsd": 0.0052
+        },
+        "createdAt": "2026-10-16T15:46:00.000Z",
+        "startedAt": "2026-10-16T15:46:00.600Z",
+        "finishedAt": "2026-10-16T15:46:03.000Z"
+      }
+    ]
+  },
+  {
+    "id": "sess_01M52SBBR04TTAHY9K8H4BRVGH",
+    "title": "Pi disk full again",
+    "createdAt": "2026-10-16T16:40:00.000Z",
+    "demoGeneration": 3,
+    "nextSeq": 5,
+    "activeTurn": null,
+    "lastTurnId": "cont_act_5e9cbab787fa3a7907a7c44fef",
+    "messages": [
+      {
+        "id": "msg_01M52SBBR0QA3KMP5VX93B31V8",
+        "role": "user",
+        "text": "What's wrong with the Pi?",
+        "seq": 1,
+        "turnId": "turn_22089855-f474-4ad7-8727-b02863836678",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T16:40:00.000Z"
+      },
+      {
+        "id": "msg_01M52SBENR7RY71HKAKHBDPFYQ",
+        "role": "assistant",
+        "text": "The Pi's disk is 94% full, mostly from old log files (2.1 GB). If it fills up, your car logger stops recording. I can clean up logs older than 7 days; that frees about 2.1 GB.",
+        "seq": 2,
+        "turnId": "turn_22089855-f474-4ad7-8727-b02863836678",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T16:40:03.000Z",
+        "toolCalls": [
+          {
+            "name": "get_device",
+            "args": {
+              "device_id": "pi-1"
+            }
+          }
+        ],
+        "actionIds": [
+          "act_5e9cbab787fa3a7907a7c44fef"
+        ]
+      },
+      {
+        "id": "msg_01M52SD6B0XF0WV2T8PZWKA3TM",
+        "role": "system",
+        "text": "You approved: clean up old log files on the Pi.",
+        "seq": 3,
+        "turnId": "cont_act_5e9cbab787fa3a7907a7c44fef",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T16:41:00.000Z",
+        "actionIds": [
+          "act_5e9cbab787fa3a7907a7c44fef"
+        ]
+      },
+      {
+        "id": "msg_01M52SD8P0WJDFSFDGJXA0RTFJ",
+        "role": "assistant",
+        "text": "Done. The Pi is now 61% full and your car logger is recording normally.",
+        "seq": 4,
+        "turnId": "cont_act_5e9cbab787fa3a7907a7c44fef",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T16:41:02.400Z"
+      }
+    ],
+    "turns": [
+      {
+        "id": "turn_22089855-f474-4ad7-8727-b02863836678",
+        "kind": "user",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "clientRequestId": "22089855-f474-4ad7-8727-b02863836678",
+        "textSha256": "8376c80cd48754b8e84631073b06f6e4efba409018dbde8cb257310f788e3f36",
+        "userMessageId": "msg_01M52SBBR0QA3KMP5VX93B31V8",
+        "createdAt": "2026-10-16T16:40:00.000Z",
+        "startedAt": "2026-10-16T16:40:00.600Z",
+        "finalMessageId": "msg_01M52SBENR7RY71HKAKHBDPFYQ",
+        "metrics": {
+          "latencyMs": 3100,
+          "firstTextMs": 900,
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "tokensIn": 5400,
+          "tokensOut": 420,
+          "tokensThinking": 180,
+          "costUsd": 0.0063
+        },
+        "finishedAt": "2026-10-16T16:40:03.600Z"
+      },
+      {
+        "id": "cont_act_5e9cbab787fa3a7907a7c44fef",
+        "kind": "continuation",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "actionId": "act_5e9cbab787fa3a7907a7c44fef",
+        "finalMessageId": "msg_01M52SD8P0WJDFSFDGJXA0RTFJ",
+        "metrics": {
+          "latencyMs": 2300,
+          "firstTextMs": 1400,
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "tokensIn": 6100,
+          "tokensOut": 60,
+          "tokensThinking": 90,
+          "costUsd": 0.0052
+        },
+        "createdAt": "2026-10-16T16:41:00.000Z",
+        "startedAt": "2026-10-16T16:41:00.600Z",
+        "finishedAt": "2026-10-16T16:41:03.000Z"
+      }
+    ]
+  },
+  {
+    "id": "sess_01M52WS7C0X6NF3E76G7CXSHCP",
+    "title": "Pi disk full, handled automatically",
+    "createdAt": "2026-10-16T17:40:00.000Z",
+    "demoGeneration": 3,
+    "nextSeq": 3,
+    "activeTurn": null,
+    "lastTurnId": "turn_e43b0d2c-bc7c-4647-aee5-d79b36057101",
+    "messages": [
+      {
+        "id": "msg_01M52WS7C0M8QHKMQJ7PB24VDK",
+        "role": "user",
+        "text": "Why is the Pi red again?",
+        "seq": 1,
+        "turnId": "turn_e43b0d2c-bc7c-4647-aee5-d79b36057101",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T17:40:00.000Z"
+      },
+      {
+        "id": "msg_01M52WSA9RB8F71EVHVW6B9Z2M",
+        "role": "assistant",
+        "text": "The Pi's disk was 95% full from old logs. You let me handle this on my own, so I cleaned up logs older than 7 days: it's now 61% full.",
+        "seq": 2,
+        "turnId": "turn_e43b0d2c-bc7c-4647-aee5-d79b36057101",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "createdAt": "2026-10-16T17:40:03.000Z",
+        "toolCalls": [
+          {
+            "name": "get_device",
+            "args": {
+              "device_id": "pi-1"
+            }
+          },
+          {
+            "name": "rotate_logs",
+            "args": {
+              "device_id": "pi-1"
+            }
+          }
+        ],
+        "actionIds": [
+          "act_83d487499ec8cf780468138467"
+        ]
+      }
+    ],
+    "turns": [
+      {
+        "id": "turn_e43b0d2c-bc7c-4647-aee5-d79b36057101",
+        "kind": "user",
+        "status": "done",
+        "attempt": 1,
+        "demoGeneration": 3,
+        "clientRequestId": "e43b0d2c-bc7c-4647-aee5-d79b36057101",
+        "textSha256": "29623c39787ac8c406bd62582b9b8e53e4cb99cb911bdbe2348074558174325a",
+        "userMessageId": "msg_01M52WS7C0M8QHKMQJ7PB24VDK",
+        "createdAt": "2026-10-16T17:40:00.000Z",
+        "startedAt": "2026-10-16T17:40:00.600Z",
+        "finalMessageId": "msg_01M52WSA9RB8F71EVHVW6B9Z2M",
+        "metrics": {
+          "latencyMs": 3600,
+          "firstTextMs": 1700,
+          "modelCalls": 3,
+          "toolCalls": 2,
+          "tokensIn": 7900,
+          "tokensOut": 380,
+          "tokensThinking": 210,
+          "costUsd": 0.0084
+        },
+        "finishedAt": "2026-10-16T17:40:03.600Z"
+      }
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+# Secret-scan config: the default rules plus one narrow exception.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "proposalKey fields are SHA-256 digests of an action's identity, not credentials"
+regexTarget = "line"
+regexes = ['''"proposalKey": "[0-9a-f]{64}"''']

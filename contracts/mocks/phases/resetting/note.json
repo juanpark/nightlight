@@ -1,0 +1,8 @@
+{
+  "ui": "Show a blocking 'Resetting the demo…' state until users/{uid}.demo.state is 'ready'. Every demo write or chat answers 409 resetting meanwhile.",
+  "error_409": {
+    "error": "conflict",
+    "code": "resetting",
+    "retryAfter": 5
+  }
+}

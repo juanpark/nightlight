@@ -1,0 +1,9 @@
+{
+  "apiUrl": "http://localhost:8080",
+  "firebase": {
+    "apiKey": "<FIREBASE_WEB_API_KEY>",
+    "authDomain": "<PROJECT_ID>.firebaseapp.com",
+    "projectId": "<PROJECT_ID>",
+    "appId": "<FIREBASE_WEB_APP_ID>"
+  }
+}

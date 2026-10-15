@@ -1,0 +1,26 @@
+{
+  "default": "before_approval",
+  "order": [
+    "before_approval",
+    "after_approval",
+    "auto_success",
+    "auto_failed",
+    "resetting",
+    "after_reset"
+  ],
+  "transitions": {
+    "before_approval \u2192 after_approval": "POST /api/actions/act_5e9cbab787fa3a7907a7c44fef/decide {\"decision\":\"approve\"}",
+    "after_approval \u2192 auto_success": "accept the promotion offer, inject disk_full, ask again (auto cleanup works)",
+    "after_approval \u2192 auto_failed": "same, but the automatic cleanup fails: trust drops to ask_new",
+    "any \u2192 resetting": "POST /api/demo/reset",
+    "resetting \u2192 after_reset": "the server finishes the reset and sets demo.state = ready"
+  },
+  "sse": {
+    "before_approval": "sse/before_approval_user_turn.txt",
+    "after_approval": "sse/after_approval_continuation.txt",
+    "auto_success": "sse/auto_success_user_turn.txt",
+    "auto_failed": "sse/auto_failed_user_turn.txt",
+    "resetting": "sse/reset_mid_stream.txt",
+    "replay": "sse/replay_finished_turn.txt"
+  }
+}

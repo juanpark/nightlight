@@ -1,0 +1,41 @@
+[
+  {
+    "id": "sim:rotate_logs",
+    "actionType": "rotate_logs",
+    "label": "Clean up old log files",
+    "level": "ask",
+    "pinned": false,
+    "ceiling": "auto",
+    "riskClass": "routine",
+    "successes": [
+      "act_413627a0ad4aeeb5b0f212e57e",
+      "act_a4e3e79f006badd4e382e17267",
+      "act_5e9cbab787fa3a7907a7c44fef"
+    ],
+    "failures": 0,
+    "demoGeneration": 3,
+    "offer": {
+      "offerId": "offer_01M52SDC6G33AHRG2DTYVGEQ8P",
+      "demoGeneration": 3,
+      "successes": [
+        "act_413627a0ad4aeeb5b0f212e57e",
+        "act_a4e3e79f006badd4e382e17267",
+        "act_5e9cbab787fa3a7907a7c44fef"
+      ],
+      "at": "2026-10-16T16:41:06.000Z",
+      "text": "Cleaning up old logs has gone well 3 times. Let me handle it on my own next time?"
+    }
+  },
+  {
+    "id": "sim:disable_password_ssh",
+    "actionType": "disable_password_ssh",
+    "label": "Turn off password login",
+    "level": "ask",
+    "pinned": true,
+    "ceiling": "ask",
+    "riskClass": "destructive",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 3
+  }
+]

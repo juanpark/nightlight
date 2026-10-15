@@ -1,6 +1,7 @@
-# Commodore
+# Nightlight
 
-An AI commander for your server fleet: see every server you run (intranet or public) in one place, and let an agent
-help with scheduled jobs, updates, patches and troubleshooting, semi-autonomously and with your approval.
+A house-sitter for your home and small-office servers. Nightlight shows every device you run, and what runs on it, on
+one friendly map. A Gemini agent keeps watch, explains problems in plain words, and fixes them with your permission.
+It starts by asking about everything and earns more freedom only when you say so.
 
-> Status: started 2026-10-15. Nothing built yet.
+> Status: in development for the Google Cloud AI Builder Cup 2026 (October 2026).

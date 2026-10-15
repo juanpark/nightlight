@@ -1,0 +1,16 @@
+: POST /api/chat/sessions/sess_01M52SBBR04TTAHY9K8H4BRVGH/messages {"text":"What's wrong with the Pi?","clientRequestId":"22089855-f474-4ad7-8727-b02863836678"}
+
+data: {"type": "turn_start", "turnId": "turn_22089855-f474-4ad7-8727-b02863836678", "attempt": 1, "messageId": "msg_01M52SBBR0QA3KMP5VX93B31V8", "at": "2026-10-16T16:40:00.000Z"}
+
+data: {"type": "tool_call", "name": "get_device", "args": {"device_id": "pi-1"}}
+
+data: {"type": "tool_result", "name": "get_device", "summary": "disk 94%, 2.1 GB of old logs", "redacted": 0}
+
+data: {"type": "text", "delta": "The Pi's disk is 94% full, mostly from old log files (2.1 GB). If it fills up, your "}
+
+data: {"type": "text", "delta": "car logger stops recording. I can clean up logs older than 7 days; that frees about 2.1 GB."}
+
+data: {"type": "approval_request", "actionId": "act_5e9cbab787fa3a7907a7c44fef"}
+
+data: {"type": "done", "turnId": "turn_22089855-f474-4ad7-8727-b02863836678", "metrics": {"latencyMs": 3100, "firstTextMs": 900, "modelCalls": 2, "toolCalls": 1, "tokensIn": 5400, "tokensOut": 420, "tokensThinking": 180, "costUsd": 0.0063}}
+

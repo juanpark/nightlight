@@ -1,0 +1,8 @@
+: The demo was reset while this turn was streaming: the stream ends with a terminal error
+
+data: {"type": "turn_start", "turnId": "turn_1ce46fe6-4ea0-4868-8c96-ccdc9d14fdd6", "attempt": 1, "messageId": "msg_01M52Z298GDQTZVK30892K2SHE", "at": "2026-10-16T18:19:54.000Z"}
+
+data: {"type": "text", "delta": "Let me check the backup on the NAS"}
+
+data: {"type": "error", "code": "stale", "message": "The demo was reset. Start a new question.", "retryable": false}
+

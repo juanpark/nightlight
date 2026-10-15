@@ -1,0 +1,13 @@
+{
+  "uid": "uid_demo_01",
+  "createdAt": "2026-10-16T15:00:00.000Z",
+  "isDemo": true,
+  "template": "home-pi",
+  "demoGeneration": 4,
+  "demo": {
+    "state": "resetting",
+    "resetOpId": "reset_01M52Z2F40J69FY4PWX9GPEF2D",
+    "resetLeaseUntil": "2026-10-16T18:21:00.000Z"
+  },
+  "trustDefault": "ask"
+}

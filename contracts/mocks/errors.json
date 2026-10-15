@@ -1,0 +1,82 @@
+{
+  "401": {
+    "error": "unauthorized",
+    "code": "invalid_token"
+  },
+  "403": {
+    "error": "forbidden",
+    "code": "kill_switch"
+  },
+  "404": {
+    "error": "not_found",
+    "code": "not_found"
+  },
+  "409_illegal_transition": {
+    "error": "conflict",
+    "code": "illegal_transition",
+    "actionId": "act_413627a0ad4aeeb5b0f212e57e"
+  },
+  "409_decision_conflict": {
+    "error": "conflict",
+    "code": "decision_conflict",
+    "actionId": "act_413627a0ad4aeeb5b0f212e57e"
+  },
+  "409_stale": {
+    "error": "conflict",
+    "code": "stale",
+    "actionId": "act_5e9cbab787fa3a7907a7c44fef"
+  },
+  "409_turn_in_progress": {
+    "error": "conflict",
+    "code": "turn_in_progress",
+    "turnId": "turn_22089855-f474-4ad7-8727-b02863836678",
+    "retryAfter": 12
+  },
+  "409_offer_obsolete": {
+    "error": "conflict",
+    "code": "offer_obsolete"
+  },
+  "409_request_mismatch": {
+    "error": "conflict",
+    "code": "request_mismatch",
+    "turnId": "turn_22089855-f474-4ad7-8727-b02863836678"
+  },
+  "409_resetting": {
+    "error": "conflict",
+    "code": "resetting",
+    "retryAfter": 5
+  },
+  "409_reset_in_progress": {
+    "error": "conflict",
+    "code": "reset_in_progress",
+    "retryAfter": 5
+  },
+  "422": {
+    "error": "validation_error",
+    "code": "invalid_body",
+    "detail": [
+      {
+        "loc": [
+          "body",
+          "uid"
+        ],
+        "msg": "Extra inputs are not permitted"
+      }
+    ]
+  },
+  "429_uid": {
+    "error": "rate_limited",
+    "code": "quota_uid",
+    "retryAfter": 600
+  },
+  "429_ip": {
+    "error": "rate_limited",
+    "code": "quota_ip",
+    "retryAfter": 600
+  },
+  "429_global": {
+    "error": "rate_limited",
+    "code": "quota_global",
+    "retryAfter": 3600
+  }
+}
