@@ -49,6 +49,21 @@ def resolve(user: dict, trust: dict | None, device: dict, service: dict | None, 
     return {"level": level, "resolvedBy": source, "auto": bool(runs_alone)}
 
 
+def demote(level: str) -> str:
+    return LEVELS[max(LEVELS.index(level) - 1, 0)]
+
+
+def demoted_overrides(doc: dict | None, action_type: str) -> dict | None:
+    """Field updates that drop an unpinned device/service override one step after a failure, or None.
+
+    Without this a scoped "just handle it" would outrank the demoted job level and keep running on its own.
+    """
+    level = (doc or {}).get("trustOverride", {}).get(action_type)
+    if not level or (doc or {}).get("trustPinned", {}).get(action_type):
+        return None
+    return {f"trustOverride.{action_type}": demote(level)}
+
+
 def new_doc(action_type: str, generation: int, realm: str = "sim") -> dict:
     return {"actionType": action_type, "realm": realm, "label": ACTIONS[action_type]["label"],
             "riskClass": ACTIONS[action_type]["riskClass"], "ceiling": ceiling(action_type),
@@ -67,8 +82,9 @@ def after_outcome(trust: dict, action: dict, ok: bool, by: str, now) -> dict:
         t["successes"] = []
         t["approvedScopes"] = []
         t["offer"] = None
+        t["offerDeclined"] = False  # a fresh track record may earn a fresh offer
         if not t.get("pinned"):
-            t["level"] = LEVELS[max(LEVELS.index(t["level"]) - 1, 0)]
+            t["level"] = demote(t["level"])
         return t
     if by != "user":
         return t
@@ -78,7 +94,8 @@ def after_outcome(trust: dict, action: dict, ok: bool, by: str, now) -> dict:
     if s not in t.get("approvedScopes", []):
         t["approvedScopes"] = [*t.get("approvedScopes", []), s]
     eligible = (len(t["successes"]) >= settings.promotion_threshold and not t.get("pinned")
-                and not t.get("offer") and LEVELS.index(t["level"]) < LEVELS.index(t["ceiling"]))
+                and not t.get("offer") and not t.get("offerDeclined")
+                and LEVELS.index(t["level"]) < LEVELS.index(t["ceiling"]))
     if eligible:
         n = len(t["successes"])
         t["offer"] = {"offerId": new_id("offer"), "demoGeneration": t["demoGeneration"],
@@ -104,4 +121,5 @@ def accept_offer(trust: dict, offer_id: str, accept: bool, generation: int, now)
         t["promotionAccepted"] = {"offerId": offer_id, "at": now}
     else:
         t["promotionDeclined"] = {"offerId": offer_id, "at": now}
+        t["offerDeclined"] = True  # offered once; not again until the track record resets
     return t

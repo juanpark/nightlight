@@ -1,11 +1,12 @@
 """Settings read from the environment. No secrets live in code."""
 
 import os
+import re
 from dataclasses import dataclass, field
 
 
 def _list(name: str, default: str = "") -> list[str]:
-    return [v.strip() for v in os.environ.get(name, default).split(",") if v.strip()]
+    return [v for v in re.split(r"[,\s]+", os.environ.get(name, default)) if v]
 
 
 @dataclass(frozen=True)

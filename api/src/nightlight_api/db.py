@@ -1,6 +1,10 @@
 """Firestore client and document paths. Every user path hangs off users/{uid}."""
 
+import random
+import time
 from functools import lru_cache
+
+from google.api_core.exceptions import Aborted
 
 from google.cloud import firestore
 
@@ -62,3 +66,21 @@ def turns(uid: str, session_id: str):
 
 def messages(uid: str, session_id: str):
     return session(uid, session_id).collection("messages")
+
+
+def run_transaction(fn, *, max_attempts: int = 25, outer_tries: int = 6):
+    """Run a @transactional callback, retrying with jittered back-off when contention aborts it.
+
+    The client already retries inside `max_attempts`; under heavy contention a lock timeout can still surface as
+    Aborted, or the attempts run out (ValueError). The callback is pure apart from its transaction writes, so
+    running it again is safe: a retried decide simply sees the winner's committed result.
+    """
+    for attempt in range(outer_tries):
+        try:
+            return fn(client().transaction(max_attempts=max_attempts))
+        except (Aborted, ValueError) as e:
+            if isinstance(e, ValueError) and "does not succeed" not in str(e) and "attempts" not in str(e):
+                raise
+            if attempt == outer_tries - 1:
+                raise
+            time.sleep(random.uniform(0.05, 0.2) * (2 ** attempt))

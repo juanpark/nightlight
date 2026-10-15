@@ -7,7 +7,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from google.cloud import firestore
-from pydantic import BaseModel, ConfigDict, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from . import __version__, actions, db, demo, sim, trust as trustlib
 from .auth import current_uid
@@ -33,9 +35,13 @@ class Empty(Strict):
     pass
 
 
+# Ids become Firestore path segments: letters, digits, '-' and '_' only, never empty.
+Id = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
+
+
 class InjectBody(Strict):
-    kind: str = Field(max_length=40)
-    deviceId: str = Field(max_length=40)
+    kind: Literal[tuple(sorted(sim.INCIDENTS))]
+    deviceId: str = Id
 
 
 class DecideBody(Strict):
@@ -48,9 +54,15 @@ Level = Literal["ask", "ask_new", "auto"]
 
 class TrustBody(Strict):
     level: Level
-    deviceId: str | None = Field(default=None, max_length=40)
-    svcId: str | None = Field(default=None, max_length=40)
+    deviceId: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    svcId: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")
     pinned: bool = False
+
+    @model_validator(mode="after")
+    def service_needs_device(self):
+        if self.svcId and not self.deviceId:
+            raise ValueError("svcId requires deviceId")
+        return self
 
 
 class PromotionBody(Strict):
@@ -80,6 +92,8 @@ def demo_inject(body: InjectBody, uid: str = Depends(current_uid)):
 
 @app.post("/api/actions/{action_id}/decide")
 def decide(action_id: str, body: DecideBody, uid: str = Depends(current_uid)):
+    if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
+        raise not_found()
     status, payload = actions.decide(uid, action_id, body.decision, body.note)
     return JSONResponse(payload, status_code=status)
 
@@ -106,21 +120,19 @@ def set_trust(action_type: str, body: TrustBody, uid: str = Depends(current_uid)
         ref = db.trust_doc(uid, "sim", action_type)
         snap = ref.get(transaction=tx)
         doc = snap.to_dict() if snap.exists else trustlib.new_doc(action_type, user["demoGeneration"])
-        if body.svcId and not body.deviceId:
-            raise ApiError(422, "svc_requires_device")
         if body.deviceId:
             target = (db.services(uid, body.deviceId).document(body.svcId) if body.svcId
                       else db.device(uid, body.deviceId))
             if not target.get(transaction=tx).exists:
                 raise not_found()
-            tx.update(target, {f"trustOverride.{action_type}": level})
+            tx.update(target, {f"trustOverride.{action_type}": level, f"trustPinned.{action_type}": body.pinned})
             return
         doc = {**doc, "level": level, "pinned": body.pinned}
         if body.pinned or level != "auto":
             doc["offer"] = None
         tx.set(ref, doc)
 
-    run(db.client().transaction())
+    db.run_transaction(run)
     return db.trust_doc(uid, "sim", action_type).get().to_dict()
 
 
@@ -133,16 +145,18 @@ def promotion(action_type: str, body: PromotionBody, uid: str = Depends(current_
         user_snap = db.user(uid).get(transaction=tx)
         ref = db.trust_doc(uid, "sim", action_type)
         snap = ref.get(transaction=tx)
-        if not user_snap.exists or not snap.exists:
+        if not user_snap.exists:
             raise not_found()
         user = user_snap.to_dict()
         if user.get("demo", {}).get("state") != "ready":
-            raise conflict("resetting", retryAfter=5)
+            raise conflict("resetting", retryAfter=5)  # before not-found: trust docs vanish mid-reset
+        if not snap.exists:
+            raise conflict("offer_obsolete")
         updated = trustlib.accept_offer(snap.to_dict(), body.offerId, body.accept, user["demoGeneration"],
                                         firestore.SERVER_TIMESTAMP)
         if updated is None:
             raise conflict("offer_obsolete")
         tx.set(ref, updated)
 
-    run(db.client().transaction())
+    db.run_transaction(run)
     return db.trust_doc(uid, "sim", action_type).get().to_dict()

@@ -15,11 +15,18 @@ class ApiError(Exception):
         self.extra = {k: v for k, v in extra.items() if v is not None}
 
     def body(self) -> dict:
+        if self.status == 422:
+            return {"error": "validation_error", "code": "invalid_body",
+                    "detail": [{"loc": self.extra.get("loc", ["body"]), "msg": self.code}]}
         return {"error": _NAMES.get(self.status, "error"), "code": self.code, **self.extra}
 
 
 def not_found() -> ApiError:
     return ApiError(404, "not_found")
+
+
+def invalid(field: str, msg: str) -> ApiError:
+    return ApiError(422, msg, loc=["body", field])
 
 
 def conflict(code: str, **extra) -> ApiError:

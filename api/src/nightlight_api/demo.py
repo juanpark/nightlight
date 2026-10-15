@@ -17,7 +17,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from . import db, sim, trust as trustlib
 from .config import settings
-from .errors import ApiError, conflict, not_found
+from .errors import ApiError, conflict, invalid, not_found
 from .ids import new_id
 from .template import TEMPLATES
 
@@ -59,7 +59,7 @@ def _begin(uid: str, template: str, *, only_if_missing: bool) -> tuple[str, int]
                               "demo": {"state": "resetting", "resetOpId": op, "resetLeaseUntil": _lease()}})
         return op, generation
 
-    return run(db.client().transaction())
+    return db.run_transaction(run)
 
 
 def _fenced(uid: str, op: str, generation: int, work) -> None:
@@ -75,7 +75,7 @@ def _fenced(uid: str, op: str, generation: int, work) -> None:
         work(tx)
         tx.update(db.user(uid), {"demo.resetLeaseUntil": _lease()})
 
-    run(db.client().transaction())
+    db.run_transaction(run)
 
 
 def _chunks(items: list, size: int):
@@ -152,7 +152,7 @@ def _finalize(uid: str, op: str, generation: int, hook) -> None:
             raise Superseded()
         tx.update(db.user(uid), {"demo": {"state": "ready", "resetOpId": op, "resetLeaseUntil": None}})
 
-    run(db.client().transaction())
+    db.run_transaction(run)
 
 
 def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
@@ -207,16 +207,18 @@ def inject(uid: str, kind: str, device_id: str) -> dict:
     def run(tx):
         user_snap = db.user(uid).get(transaction=tx)
         device_snap = db.device(uid, device_id).get(transaction=tx)
-        if not user_snap.exists or not device_snap.exists:
+        if not user_snap.exists:
             raise not_found()
         user = user_snap.to_dict()
         if user.get("demo", {}).get("state") != "ready":
-            raise conflict("resetting", retryAfter=5)
+            raise conflict("resetting", retryAfter=5)  # before not-found: devices vanish mid-reset
+        if not device_snap.exists:
+            raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
         try:
             updated, event = sim.inject(device, kind)
         except ValueError:
-            raise ApiError(422, "incident_not_applicable") from None
+            raise invalid("kind", "incident_not_applicable") from None
         updated.pop("id")
         updated["version"] = device["version"] + 1
         tx.set(db.device(uid, device_id), updated)
@@ -226,4 +228,4 @@ def inject(uid: str, kind: str, device_id: str) -> dict:
                                                     "demoGeneration": user["demoGeneration"]})
         return {"eventId": event_id}
 
-    return run(db.client().transaction())
+    return db.run_transaction(run)

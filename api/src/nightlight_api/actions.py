@@ -30,8 +30,20 @@ def _service_doc(services: list[dict], svc_id: str | None) -> dict | None:
     return next((s for s in services if s["id"] == svc_id), None)
 
 
-def _finish(tx, uid: str, action: dict, device: dict, trust_doc: dict, trust_ref, decision: str, by: str,
-            note: str | None) -> dict:
+def _invalidate_trust(tx, uid: str, action: dict, device: dict, service: dict | None, trust_doc: dict, trust_ref,
+                      by: str, ok: bool) -> None:
+    """Apply an outcome to trust; on failure also demote unpinned device/service overrides for this scope."""
+    tx.set(trust_ref, trustlib.after_outcome(trust_doc, action, ok, by, _now()))
+    if ok:
+        return
+    if (update := trustlib.demoted_overrides(device, action["type"])):
+        tx.update(db.device(uid, device["id"]), update)
+    if service and (update := trustlib.demoted_overrides(service, action["type"])):
+        tx.update(db.services(uid, device["id"]).document(service["id"]), update)
+
+
+def _finish(tx, uid: str, action: dict, device: dict, service: dict | None, trust_doc: dict, trust_ref,
+            decision: str, by: str, note: str | None) -> dict:
     """Write a decided action and everything that follows from it. Caller has done all reads."""
     a = dict(action)
     a["decision"] = {k: v for k, v in {"by": by, "decision": decision, "note": note, "at": _now()}.items()
@@ -39,13 +51,17 @@ def _finish(tx, uid: str, action: dict, device: dict, trust_doc: dict, trust_ref
     a["finishedAt"] = _now()
     if decision == "approve":
         ok, result, new_device = sim.apply(device, a["type"], a["params"])
-        new_device["version"] = device["version"] + 1
-        new_device["lastSeen"] = _now()
-        # sim.apply consumed any one-shot failure flag; set() replaces the whole device doc.
-        tx.set(db.device(uid, device["id"]), {k: v for k, v in new_device.items() if k != "id"})
+        if ok:
+            new_device["version"] = device["version"] + 1  # real change: other open cards for it go stale
+            new_device["lastSeen"] = _now()
+            tx.set(db.device(uid, device["id"]), {k: v for k, v in new_device.items() if k != "id"})
+        else:
+            # Nothing changed on the device. Only the simulator's one-shot failure flag is consumed, and the version
+            # stays, so other open cards for this device remain valid.
+            tx.update(db.device(uid, device["id"]), {"simFailNext": firestore.DELETE_FIELD})
         a["status"] = "done" if ok else "failed"
         a["result"] = result
-        tx.set(trust_ref, trustlib.after_outcome(trust_doc, a, ok, by, _now()))
+        _invalidate_trust(tx, uid, a, device, service, trust_doc, trust_ref, by, ok)
     else:
         a["status"] = "denied"
     if by == "user":
@@ -104,11 +120,12 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
                   "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
                   "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
         if decision["auto"]:
-            return _finish(tx, uid, action, device, trust_doc, trust_ref, "approve", "auto", None)
+            return _finish(tx, uid, action, device, _service_doc(services, c["svcId"]), trust_doc, trust_ref,
+                           "approve", "auto", None)
         tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
         return action
 
-    return run(db.client().transaction(max_attempts=MAX_ATTEMPTS))
+    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
 
 
 def decide(uid: str, action_id_: str, decision: str, note: str | None = None) -> tuple[int, dict]:
@@ -135,16 +152,22 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
             raise conflict("illegal_transition", actionId=action_id_)
         _require_ready(user)
         device = dict(device_snap.to_dict(), id=action["deviceId"]) if device_snap.exists else None
-        if (action["demoGeneration"] != user.get("demoGeneration") or device is None
-                or device.get("version") != action["deviceVersion"]):
-            tx.update(db.action(uid, action_id_), {"status": "stale", "finishedAt": _now()})
-            return 409, {"error": "conflict", "code": "stale", "actionId": action_id_}
+        service = _service_doc(services, action.get("svcId"))
+        current_generation = action["demoGeneration"] == user.get("demoGeneration")
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action["type"],
                                                                                     action["demoGeneration"])
-        done = _finish(tx, uid, action, device, trust_doc, trust_ref, decision, "user", note)
+        if not current_generation or device is None or device.get("version") != action["deviceVersion"]:
+            tx.update(db.action(uid, action_id_), {"status": "stale", "finishedAt": _now()})
+            if current_generation and device is not None:
+                # A card overtaken by events counts like a failure (build plan §4.5): it ends the track record and
+                # withdraws any offer, once (a replay sees status 'stale' and stops above). Old-generation
+                # tombstones never touch the new generation's trust.
+                _invalidate_trust(tx, uid, action, device, service, trust_doc, trust_ref, "user", False)
+            return 409, {"error": "conflict", "code": "stale", "actionId": action_id_}
+        done = _finish(tx, uid, action, device, service, trust_doc, trust_ref, decision, "user", note)
         return 202, done["response"]
 
-    status, body = run(db.client().transaction(max_attempts=MAX_ATTEMPTS))
+    status, body = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
     if status == 409:
         raise conflict(body["code"], actionId=body.get("actionId"))
     return status, body
