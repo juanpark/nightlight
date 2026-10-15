@@ -5,12 +5,13 @@ import pytest
 
 from nightlight_api import actions, db, demo
 from nightlight_api.errors import ApiError
+from nightlight_api.template import HOME_PI
 from conftest import device, propose, trust
 
 
 def test_start_seeds_the_sample_home(started):
     uid = started
-    assert len(db.devices(uid).get()) == 5
+    assert len(db.devices(uid).get()) == len(HOME_PI["devices"]) == 6
     pi = device(uid)
     assert pi["vitals"]["diskPct"] == 94 and pi["status"] == "crit" and pi["demoGeneration"] == 1
     assert trust(uid)["level"] == "ask"

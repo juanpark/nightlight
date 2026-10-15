@@ -41,8 +41,12 @@ def run(path, body):
     return evs
 
 
-print("Q1: What's wrong with my home?")
-evs = run(f"/api/chat/sessions/{sid}/messages", {"text": "Is anything wrong at home?", "clientRequestId": str(uuid.uuid4())})
+QUESTION = os.environ.get("SMOKE_QUESTION", "Is anything wrong at home?")
+if os.environ.get("SMOKE_INJECT"):  # e.g. "server_lagging:game-1"
+    kind, device = os.environ["SMOKE_INJECT"].split(":")
+    print("inject:", c.post("/api/demo/inject", json={"kind": kind, "deviceId": device}).json())
+print("Q:", QUESTION)
+evs = run(f"/api/chat/sessions/{sid}/messages", {"text": QUESTION, "clientRequestId": str(uuid.uuid4())})
 print("  metrics:", evs[-1].get("metrics"))
 card = next((e["actionId"] for e in evs if e["type"] == "approval_request"), None)
 if card:

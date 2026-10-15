@@ -42,7 +42,7 @@ def resolve(user: dict, trust: dict | None, device: dict, service: dict | None, 
     if level == "auto":
         runs_alone = True
     elif level == "ask_new":
-        runs_alone = (ACTIONS[action_type].get("parameterless") and params == {}
+        runs_alone = (ACTIONS[action_type].get("allowlisted") and params == {}
                       and scope(device["id"], service and service["id"]) in trust.get("approvedScopes", []))
     else:
         runs_alone = False

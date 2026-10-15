@@ -146,6 +146,76 @@
     ]
   },
   {
+    "id": "game-1",
+    "name": "Game server",
+    "kind": "gameserver",
+    "os": "Ubuntu 24.04 (simulated)",
+    "purpose": "Hosts your family's Minecraft world.",
+    "status": "warn",
+    "health": "verified",
+    "vitals": {
+      "cpu": 35,
+      "mem": 78,
+      "diskPct": 55,
+      "uptime": 1728000
+    },
+    "version": 1,
+    "lastSeen": "2026-10-16T17:05:00.000Z",
+    "simulated": true,
+    "demoGeneration": 4,
+    "x": 120,
+    "y": 360,
+    "diskConsumers": [
+      {
+        "what": "Minecraft world",
+        "sizeGb": 6.2
+      },
+      {
+        "what": "world backups",
+        "sizeGb": 18.6
+      },
+      {
+        "what": "old log files",
+        "sizeGb": 0.8
+      }
+    ],
+    "services": [
+      {
+        "id": "minecraft",
+        "name": "Minecraft server",
+        "category": "games",
+        "status": "warn",
+        "version": "1.21.4",
+        "latestVersion": "1.21.5",
+        "updateAvailable": true,
+        "players": {
+          "online": 2,
+          "max": 10
+        },
+        "lastBackupDaysAgo": 9,
+        "findings": [
+          {
+            "id": "f_backup_overdue",
+            "check": "backup_overdue",
+            "severity": "warn",
+            "message": "The Minecraft world hasn't been backed up in 9 days.",
+            "evidence": "last world backup: 9 days ago",
+            "svcId": "minecraft"
+          },
+          {
+            "id": "f_update_available",
+            "check": "update_available",
+            "severity": "info",
+            "message": "Minecraft 1.21.5 is available (you have 1.21.4).",
+            "evidence": "installed 1.21.4, latest 1.21.5",
+            "svcId": "minecraft"
+          }
+        ],
+        "demoGeneration": 4
+      }
+    ]
+  },
+  {
     "id": "nvr-1",
     "name": "Camera recorder",
     "kind": "camera",

@@ -107,4 +107,4 @@ def test_killed_reset_recovers(started):
     _expire_lease(uid)
     out = demo.start(uid)
     assert out["demoGeneration"] == 3 and db.user(uid).get().to_dict()["demo"]["state"] == "ready"
-    assert len(db.devices(uid).get()) == 5
+    assert len(db.devices(uid).get()) == 6

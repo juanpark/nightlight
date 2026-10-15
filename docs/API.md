@@ -65,6 +65,25 @@ When trust allows a job to run automatically, there is no card and no follow-up 
 finished, `done` or `failed`, with `decision.by = "auto"`, and the agent explains the outcome in the same reply. A
 failed automatic job lowers its trust level by one step.
 
+## Jobs, incidents and checks
+
+| Job (`actionType`) | What it does | `riskClass` | Can run on its own? |
+|---|---|---|---|
+| `rotate_logs` | clean up log files older than 7 days | `routine` | yes, once trusted |
+| `backup_world` | save a copy of a game world (players keep playing) | `routine` | yes, once trusted |
+| `restart_server` | restart a game server to clear memory (players disconnected ~1 min) | `service` | no, at most "Ask me for new things", and never on its own |
+| `update_server` | back up, then update a game server (players disconnected ~2 min) | `service` | no, as above |
+
+Demo incidents (`POST /api/demo/inject` `kind`): `disk_full`, `logs_locked` (the next job fails), `server_lagging`,
+`backup_overdue`, `update_available`. Game incidents only apply to game servers (`422` otherwise).
+
+Findings (`check`) on devices and services: `disk_over_90`, `memory_high`, `backup_overdue`, `update_available`,
+`backup_never_test_restored`; each has `severity` (`crit`/`warn`/`info`), a plain `message`, `evidence` and the
+`svcId` it concerns. A device's health light reflects its own and its services' findings.
+
+Game services also carry `version`, `latestVersion`, `updateAvailable`, `players {online, max}` and
+`lastBackupDaysAgo`. Services have a `category` (`home`, `network`, `files`, `games`) for the category filter.
+
 ## Trust levels
 
 | Level | Shown as |

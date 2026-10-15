@@ -16,6 +16,42 @@
     }
   },
   {
+    "id": "sim:backup_world",
+    "actionType": "backup_world",
+    "label": "Back up the game world",
+    "level": "ask",
+    "pinned": false,
+    "ceiling": "auto",
+    "riskClass": "routine",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 3
+  },
+  {
+    "id": "sim:restart_server",
+    "actionType": "restart_server",
+    "label": "Restart the game server",
+    "level": "ask",
+    "pinned": false,
+    "ceiling": "ask_new",
+    "riskClass": "service",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 3
+  },
+  {
+    "id": "sim:update_server",
+    "actionType": "update_server",
+    "label": "Update the game server",
+    "level": "ask",
+    "pinned": false,
+    "ceiling": "ask_new",
+    "riskClass": "service",
+    "successes": [],
+    "failures": 0,
+    "demoGeneration": 3
+  },
+  {
     "id": "sim:disable_password_ssh",
     "actionType": "disable_password_ssh",
     "label": "Turn off password login",

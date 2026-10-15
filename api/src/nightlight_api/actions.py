@@ -30,6 +30,10 @@ def _service_doc(services: list[dict], svc_id: str | None) -> dict | None:
     return next((s for s in services if s["id"] == svc_id), None)
 
 
+def _by_id(services: list[dict]) -> dict:
+    return {s["id"]: {k: v for k, v in s.items() if k != "id"} for s in services}
+
+
 def _invalidate_trust(tx, uid: str, action: dict, device: dict, service: dict | None, trust_doc: dict, trust_ref,
                       by: str, ok: bool) -> None:
     """Apply an outcome to trust; on failure also demote unpinned device/service overrides for this scope."""
@@ -42,19 +46,22 @@ def _invalidate_trust(tx, uid: str, action: dict, device: dict, service: dict | 
         tx.update(db.services(uid, device["id"]).document(service["id"]), update)
 
 
-def _finish(tx, uid: str, action: dict, device: dict, service: dict | None, trust_doc: dict, trust_ref,
+def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trust_doc: dict, trust_ref,
             decision: str, by: str, note: str | None) -> dict:
     """Write a decided action and everything that follows from it. Caller has done all reads."""
     a = dict(action)
     a["decision"] = {k: v for k, v in {"by": by, "decision": decision, "note": note, "at": _now()}.items()
                      if v is not None}
     a["finishedAt"] = _now()
+    service = _service_doc(services, a.get("svcId"))
     if decision == "approve":
-        ok, result, new_device = sim.apply(device, a["type"], a["params"])
+        ok, result, new_device, new_services = sim.apply(device, _by_id(services), a["type"], a["params"])
         if ok:
             new_device["version"] = device["version"] + 1  # real change: other open cards for it go stale
             new_device["lastSeen"] = _now()
             tx.set(db.device(uid, device["id"]), {k: v for k, v in new_device.items() if k != "id"})
+            for svc_id, svc in new_services.items():
+                tx.set(db.services(uid, device["id"]).document(svc_id), svc)
         else:
             # Nothing changed on the device. Only the simulator's one-shot failure flag is consumed, and the version
             # stays, so other open cards for this device remain valid.
@@ -110,7 +117,7 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
-        c = sim.card(device, action_type, params)
+        c = sim.card(device, _by_id(services), action_type, params)
         key = proposal_key(generation, turn_id, device_id, c["svcId"], action_type, params)
         aid = make_action_id(key)
         existing = db.action(uid, aid).get(transaction=tx)
@@ -123,8 +130,7 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
                   "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
                   "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
         if decision["auto"]:
-            return _finish(tx, uid, action, device, _service_doc(services, c["svcId"]), trust_doc, trust_ref,
-                           "approve", "auto", None)
+            return _finish(tx, uid, action, device, services, trust_doc, trust_ref, "approve", "auto", None)
         tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
         return action
 
@@ -167,7 +173,7 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
                 # tombstones never touch the new generation's trust.
                 _invalidate_trust(tx, uid, action, device, service, trust_doc, trust_ref, "user", False)
             return 409, {"error": "conflict", "code": "stale", "actionId": action_id_}
-        done = _finish(tx, uid, action, device, service, trust_doc, trust_ref, decision, "user", note)
+        done = _finish(tx, uid, action, device, services, trust_doc, trust_ref, decision, "user", note)
         return 202, done["response"]
 
     status, body = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)

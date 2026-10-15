@@ -27,6 +27,7 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
+ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server"}
 
 
 def _utcnow() -> datetime:
@@ -353,7 +354,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     resp = dict(part.function_response.response or {})
                     yield out({"type": "tool_result", "name": part.function_response.name,
                                "summary": _summary(resp), "redacted": ctx.redacted})
-                    if part.function_response.name == "rotate_logs" and resp.get("status") == "pending":
+                    if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
                         yield out({"type": "approval_request", "actionId": resp.get("actionId")})
         if not shown.strip():
             shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)

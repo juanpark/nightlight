@@ -44,6 +44,22 @@ HOME_PI = {
             ],
         },
         {
+            "id": "game-1", "name": "Game server", "kind": "gameserver", "os": "Ubuntu 24.04 (simulated)",
+            "purpose": "Hosts your family's Minecraft world.", "health": "verified", "x": 120, "y": 360,
+            "diskGb": 120, "baseUsedGb": 40,
+            "diskConsumers": [
+                {"id": "world", "what": "Minecraft world", "sizeGb": 6.2},
+                {"id": "backups", "what": "world backups", "sizeGb": 18.6},
+                {"id": "logs", "what": "old log files", "sizeGb": 0.8},
+            ],
+            "vitals": {"cpu": 35, "mem": 78, "uptime": 1728000},
+            "services": [
+                {"id": "minecraft", "name": "Minecraft server", "category": "games", "status": "ok",
+                 "version": "1.21.4", "latestVersion": "1.21.5", "updateAvailable": True,
+                 "players": {"online": 2, "max": 10}, "lastBackupDaysAgo": 9},
+            ],
+        },
+        {
             "id": "nvr-1", "name": "Camera recorder", "kind": "camera", "os": "Recorder firmware (simulated)",
             "purpose": "Records the front-door camera.", "health": "unknown", "x": 420, "y": 220,
             "diskGb": 1000, "baseUsedGb": 630, "diskConsumers": [],

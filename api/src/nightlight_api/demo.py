@@ -119,20 +119,17 @@ def _seed(uid: str, op: str, generation: int, template: str, hook) -> int:
     def work(tx):
         for raw in t["devices"]:
             device = deepcopy(raw)
-            services = device.pop("services")
+            services = {svc.pop("id"): {**svc, "findings": svc.get("findings", [])}
+                        for svc in deepcopy(device.pop("services"))}
             device_id = device.pop("id")
             device.update(version=1, simulated=True, demoGeneration=generation, lastSeen=firestore.SERVER_TIMESTAMP,
                           findings=[])
-            device = sim.refresh({**device, "id": device_id})
-            device.pop("id")
+            device, services = sim.refresh({**device, "id": device_id}, services)
             if t["initial_incident"]["deviceId"] == device_id:
-                device, _ = sim.inject({**device, "id": device_id}, t["initial_incident"]["kind"])
-                device.pop("id")
+                device, services, _ = sim.inject(device, services, t["initial_incident"]["kind"])
+            device.pop("id")
             tx.set(db.device(uid, device_id), device)
-            for svc in services:
-                svc = deepcopy(svc)
-                svc_id = svc.pop("id")
-                svc.setdefault("findings", [])
+            for svc_id, svc in services.items():
                 tx.set(db.services(uid, device_id).document(svc_id), {**svc, "demoGeneration": generation})
         for action_type in sim.ACTIONS:
             tx.set(db.trust_doc(uid, "sim", action_type), trustlib.new_doc(action_type, generation))
@@ -208,6 +205,7 @@ def inject(uid: str, kind: str, device_id: str) -> dict:
     def run(tx):
         user_snap = db.user(uid).get(transaction=tx)
         device_snap = db.device(uid, device_id).get(transaction=tx)
+        svc_snaps = list(db.services(uid, device_id).get(transaction=tx))
         if not user_snap.exists:
             raise not_found()
         user = user_snap.to_dict()
@@ -216,13 +214,16 @@ def inject(uid: str, kind: str, device_id: str) -> dict:
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
+        services = {s.id: s.to_dict() for s in svc_snaps}
         try:
-            updated, event = sim.inject(device, kind)
+            updated, new_services, event = sim.inject(device, services, kind)
         except ValueError:
             raise invalid("kind", "incident_not_applicable") from None
         updated.pop("id")
         updated["version"] = device["version"] + 1
         tx.set(db.device(uid, device_id), updated)
+        for svc_id, svc in new_services.items():
+            tx.set(db.services(uid, device_id).document(svc_id), svc)
         event_id = new_id("ev")
         tx.set(db.events(uid).document(event_id), {**event, "deviceId": device_id, "source": "demo",
                                                     "at": firestore.SERVER_TIMESTAMP,

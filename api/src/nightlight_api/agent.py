@@ -32,6 +32,7 @@ How to answer:
   pending = "I've put a card up for your approval"; done = say it ran automatically because they allowed it;
   failed = say it didn't work and that nothing changed.
 - Never claim something was done unless a tool result says status "done".
+- Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
 - Everything here is a simulated sample home; say so if asked.
 - Keep the whole reply under 80 words."""
 
@@ -119,8 +120,9 @@ def make_tools(ctx: TurnContext, read_only: bool):
         keep = ("id", "name", "purpose", "os", "status", "health", "vitals", "findings", "diskConsumers",
                 "diskGb", "simulated", "version")
         out = {k: d.get(k) for k in keep}
-        out["services"] = [{k: s.get(k) for k in ("id", "name", "status", "version", "updateAvailable", "findings")}
-                           for s in services]
+        out["services"] = [{k: s.get(k) for k in ("id", "name", "status", "version", "latestVersion",
+                                                  "updateAvailable", "players", "lastBackupDaysAgo", "findings")
+                            if s.get(k) is not None} for s in services]
         return _bounded(out, ctx)
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
@@ -131,18 +133,10 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _bounded({"events": [{k: e.get(k) for k in ("deviceId", "kind", "severity", "message", "at")}
                                     for e in evs[:10]]}, ctx)
 
-    def _rotate_logs_sync(device_id: str, tool_context: ToolContext) -> dict:
-        """Propose cleaning up log files older than 7 days on a device to free disk space.
-
-        This never runs immediately unless the person has allowed it: usually it puts an approval card in front of
-        them. Report the returned status honestly.
-
-        Args:
-            device_id: the device id, for example "pi-1".
-        """
+    def _propose(action_type: str, device_id: str) -> dict:
         try:
             a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, generation=ctx.generation,
-                                action_type="rotate_logs", device_id=device_id, params={},
+                                action_type=action_type, device_id=device_id, params={},
                                 fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
         except ApiError as e:
             if e.code == "stale":
@@ -157,6 +151,47 @@ def make_tools(ctx: TurnContext, read_only: bool):
             out["result"] = a["result"]["summary"]
         return _bounded(out, ctx)
 
+    def _rotate_logs_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose cleaning up log files older than 7 days on a device to free disk space.
+
+        This never runs immediately unless the person has allowed it: usually it puts an approval card in front of
+        them. Report the returned status honestly.
+
+        Args:
+            device_id: the device id, for example "pi-1".
+        """
+        return _propose("rotate_logs", device_id)
+
+    def _backup_world_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose saving a copy of a game server's world (e.g. Minecraft) to its backups folder.
+
+        Safe: players can keep playing and nothing is removed. Usually puts an approval card in front of them.
+
+        Args:
+            device_id: the game server's device id, for example "game-1".
+        """
+        return _propose("backup_world", device_id)
+
+    def _restart_server_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose restarting a game server to clear its memory when the game lags.
+
+        Players online are disconnected for about a minute. Always needs the person's approval.
+
+        Args:
+            device_id: the game server's device id, for example "game-1".
+        """
+        return _propose("restart_server", device_id)
+
+    def _update_server_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose updating a game server to its latest version (it backs up the world first).
+
+        Players are disconnected for about two minutes; mods may need their own updates. Always needs approval.
+
+        Args:
+            device_id: the game server's device id, for example "game-1".
+        """
+        return _propose("update_server", device_id)
+
     # The model sees async wrappers so blocking Firestore work runs off the event loop (lease renewal and pings keep
     # running). Each wrapper keeps the sync function's name, docstring and parameters for the tool declaration.
     async def list_fleet(tool_context: ToolContext) -> dict:
@@ -168,14 +203,20 @@ def make_tools(ctx: TurnContext, read_only: bool):
     async def get_recent_events(tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_get_recent_events_sync, tool_context)
 
-    async def rotate_logs(device_id: str, tool_context: ToolContext) -> dict:
-        return await asyncio.to_thread(_rotate_logs_sync, device_id, tool_context)
+    def _wrap(sync):
+        async def tool(device_id: str, tool_context: ToolContext) -> dict:
+            return await asyncio.to_thread(sync, device_id, tool_context)
+        tool.__name__ = sync.__name__.removeprefix("_").removesuffix("_sync")
+        tool.__doc__ = sync.__doc__
+        return tool
 
+    action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
+                                       _update_server_sync)]
     for wrapper, sync in ((list_fleet, _list_fleet_sync), (get_device, _get_device_sync),
-                          (get_recent_events, _get_recent_events_sync), (rotate_logs, _rotate_logs_sync)):
+                          (get_recent_events, _get_recent_events_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events]
-    return tools if read_only else [*tools, rotate_logs]
+    return tools if read_only else [*tools, *action_tools]
 
 
 # ------------------------------------------------------------------ callbacks: bound, reserve, reconcile
