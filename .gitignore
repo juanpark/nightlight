@@ -1,0 +1,32 @@
+# Private notes and agent context — never in git (see CLAUDE.md, gitignored too)
+private/
+CLAUDE.md
+.claude/
+.agents/
+.codex/
+
+# Secrets: never commit (an exposed secret disqualifies an AI Builder Cup entry)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+*credentials*.json
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Build and dependency output
+node_modules/
+.next/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+*.class
