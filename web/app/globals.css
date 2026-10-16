@@ -232,3 +232,6 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .remove-device { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
 .remove-confirm { padding: 8px 10px; border: 1px solid var(--crit); border-radius: 8px; }
 button.danger { background: var(--crit); color: #fff; border-color: var(--crit); }
+
+.chat-log .past { opacity: .7; }
+.chat-past-note { text-align: center; }

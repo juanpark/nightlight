@@ -55,6 +55,18 @@ export function useServices(uid: string | null, deviceId: string | null): Servic
   return useCollection<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
 }
 
+export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number;
+  toolCalls?: { name: string; args?: Record<string, unknown> }[]; actionIds?: string[] }
+
+/** A chat's saved messages, oldest first (read once when the chat opens). */
+export async function loadMessages(uid: string, sessionId: string): Promise<PastMessage[]> {
+  const { db } = await firebase();
+  const { getDocs } = await import("firebase/firestore");
+  const snap = await getDocs(query(collection(db, "users", uid, "sessions", sessionId, "messages"), orderBy("seq"),
+    limit(200)));
+  return snap.docs.map((d) => plain<PastMessage>(d.id, d.data()));
+}
+
 /** A device's notebook, newest first. */
 export function useNotes(uid: string | null, deviceId: string | null): Note[] {
   return useCollection<Note>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "notes"])

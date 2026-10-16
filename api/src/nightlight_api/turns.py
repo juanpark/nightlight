@@ -108,7 +108,8 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
         msg_id = new_id("msg")
         tx.set(db.messages(uid, session_id).document(msg_id), {
             "role": "user", "text": clean, "seq": seq, "turnId": turn_id, "attempt": 0,
-            "demoGeneration": user["demoGeneration"], "createdAt": firestore.SERVER_TIMESTAMP})
+            "demoGeneration": user["demoGeneration"], "createdAt": firestore.SERVER_TIMESTAMP,
+            "expiresAt": _keep_until()})
         tx.set(t_ref, {"kind": "user", "status": "queued", "attempt": 0, "demoGeneration": user["demoGeneration"],
                        "clientRequestId": client_request_id, "textSha256": text_hash, "userMessageId": msg_id,
                        "input": clean, "createdAt": firestore.SERVER_TIMESTAMP})
@@ -206,7 +207,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
             tx.set(db.messages(uid, c.session_id).document(msg_id), {
                 "role": "assistant", "text": text, "seq": seq, "turnId": c.turn_id, "attempt": c.attempt,
                 "toolCalls": tool_calls, "actionIds": action_ids, "demoGeneration": c.generation,
-                "createdAt": firestore.SERVER_TIMESTAMP})
+                "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": _keep_until()})
             update["finalMessageId"] = msg_id
             session_update["nextSeq"] = seq + 1
         if error:
@@ -417,6 +418,14 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     finally:
         for task in (producer, renewer):
             task.cancel()
+
+
+CHAT_KEEP_DAYS = 30  # conversations are shown again when you come back, then expire (Firestore TTL on expiresAt)
+
+
+def _keep_until():
+    from datetime import datetime, timedelta, timezone
+    return datetime.now(timezone.utc) + timedelta(days=CHAT_KEEP_DAYS)
 
 
 DEVICE_READS = {"look_into", "inspect", "run_playbook"}  # the device answers; slow ones finish in a follow-up

@@ -154,3 +154,13 @@ def test_fleet_summary_goes_into_the_instruction(started):
     from nightlight_api import agent as agentlib_
     text = agentlib_.fleet_summary(started, 1)
     assert "pi-1" in text and "94%" in text and "game-1" in text and "{" not in text and len(text.splitlines()) == 6
+
+
+def test_conversations_are_kept_for_30_days_and_readable_in_order(client, started):
+    from datetime import datetime, timedelta, timezone
+    sid = new_session(client)
+    events(ask(client, sid))
+    msgs = sorted((m.to_dict() for m in db.messages(started, sid).get()), key=lambda m: m["seq"])
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    soon = datetime.now(timezone.utc) + timedelta(days=29)
+    assert all(m["expiresAt"] > soon for m in msgs) and "actionIds" in msgs[1]

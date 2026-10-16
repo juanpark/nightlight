@@ -1,6 +1,7 @@
 "use client";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { chatSession } from "@/lib/session";
+import { loadMessages } from "@/lib/data";
+import { chatSession, newChat, savedSession } from "@/lib/session";
 import { api, ApiError, stream } from "@/lib/api";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import ApprovalCard from "./ApprovalCard";
@@ -8,8 +9,8 @@ import ApprovalCard from "./ApprovalCard";
 export interface ChatHandle { ask: (text: string) => void; followUp: (turnId: string) => void }
 
 type Item =
-  | { kind: "user"; text: string }
-  | { kind: "agent"; text: string; steps: Step[]; cards: string[]; error?: string; busy: boolean };
+  | { kind: "user"; text: string; past?: boolean }
+  | { kind: "agent"; text: string; steps: Step[]; cards: string[]; error?: string; busy: boolean; past?: boolean };
 
 /** One thing Nightlight did while answering, and (once it came back) what it found. */
 interface Step { name: string; label: string; result?: string; details?: string }
@@ -46,7 +47,24 @@ const Chat = forwardRef<ChatHandle, {
     devicesRef.current = devices;
 
     useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" }); }, [items]);
-    useEffect(() => { setItems([]); }, [generation]); // after a reset the old conversation is gone
+    // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
+    useEffect(() => {
+      setItems([]);
+      const sid = savedSession(uid, generation);
+      if (!sid) return;
+      let cancelled = false;
+      loadMessages(uid, sid).then((msgs) => {
+        if (cancelled || !msgs.length) return;
+        const past: Item[] = msgs.map((m) => m.role === "user"
+          ? { kind: "user", text: m.text, past: true }
+          : { kind: "agent", text: m.text, busy: false, past: true, cards: m.actionIds ?? [],
+              steps: (m.toolCalls ?? []).map((t) => ({ name: t.name, result: "",
+                label: step({ type: "tool_call", name: t.name, args: t.args ?? {} } as Extract<StreamEvent, { type: "tool_call" }>,
+                  devicesRef.current) })) });
+        setItems((cur) => [...past, ...cur]);
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }, [uid, generation]);
 
     const update = (fn: (a: Extract<Item, { kind: "agent" }>) => void) =>
       setItems((cur) => {
@@ -138,16 +156,21 @@ const Chat = forwardRef<ChatHandle, {
             <div className="muted small">Ask Nightlight about your home. It explains in plain words and asks before it
               changes anything.</div>
           )}
+          {items.some((it) => it.past) && (
+            <div className="chat-past-note small muted">Earlier in this chat (kept 30 days) ·{" "}
+              <button className="linkish" disabled={busy} onClick={() => { newChat(uid, generation); setItems([]); }}>
+                Start a new chat</button></div>
+          )}
           {items.map((it, i) => it.kind === "user"
-            ? <div key={i} className="bubble user">{it.text}</div>
+            ? <div key={i} className={`bubble user ${it.past ? "past" : ""}`}>{it.text}</div>
             : (
-              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div key={i} className={it.past ? "past" : ""} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {it.steps.length > 0 && (
                   <div className="steps" aria-label="What Nightlight did">
                     {it.steps.map((s, j) => (
                       <div key={j} className="step">
                         <span className={`step-dot ${s.result === undefined ? "busy" : s.result.startsWith("Couldn't") ? "bad" : "ok"}`} />
-                        <span>{s.label.replace(/…$/, "")}{s.result !== undefined && <span className="step-result"> — {s.result}</span>}</span>
+                        <span>{s.label.replace(/…$/, "")}{s.result ? <span className="step-result"> — {s.result}</span> : null}</span>
                         {s.details && <details className="step-details"><summary>details</summary><pre>{s.details}</pre></details>}
                       </div>))}
                   </div>)}

@@ -206,6 +206,11 @@ freed). Permissions: `cleanup` (bool) in `POST /api/devices/{id}/permissions`.
 `update_by_hand` (helper older than 0.9: rerun the install line once), `updates_off`, `device_not_reporting`,
 `resetting`. The result goes to Activity. Permissions add `updates` (default true) and `autoUpdate` (default false).
 
+**Chat history.** Messages live at `users/{uid}/sessions/{sid}/messages/{msgId}`
+`{role, text, seq, turnId, toolCalls?, actionIds?, createdAt, expiresAt}`, readable by the owner through Firestore
+(the web app reads them in `seq` order when the chat opens). `expiresAt` is 30 days after writing; a Firestore TTL
+policy on the `messages` collection group deletes them after that.
+
 **Removing a device.** `POST /api/devices/{id}/remove {}` (signed-in owner; the confirmation in the app is the
 approval) → `202 {removed: "asked_device", actionId}` when the helper (0.9.6+) will uninstall itself, or
 `{removed: "access_cut"}` when the device is silent, revoked or older: tokens revoked and the device archived now.
