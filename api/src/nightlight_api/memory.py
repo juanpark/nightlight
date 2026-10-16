@@ -111,9 +111,9 @@ def remember(uid: str, fact: str, started_epoch: int | None = None) -> dict:
         _purge(uid)  # a purge ran while we were saving: forgetting wins, so purge again
         return {"status": "error", "reason": "memory was just cleared; nothing was saved"}
     with _lock:
-        if uid in _cache:
-            at, ep, facts = _cache[uid]
-            _cache[uid] = (at, ep, [clean, *[f for f in facts if f != clean]][:PER_TURN])
+        hit = _cache.get(uid)
+        if hit and hit[1] == ep:  # only into the cache of the epoch this fact was saved under
+            _cache[uid] = (hit[0], ep, [clean, *[f for f in hit[2] if f != clean]][:PER_TURN])
     return {"status": "saved", "fact": clean}
 
 

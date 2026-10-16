@@ -301,3 +301,17 @@ def test_facts_are_invisible_as_soon_as_a_purge_starts(mem, uid):  # review 7 re
     ep = memory.epoch(uid)
     assert memory.load(uid, ep) == [] and memory.cached(uid, ep) == []  # ...but never recalled or cached again
     assert memory.recall(uid, "preference") == [] and memory.list_all(uid) == []
+
+
+def test_an_old_save_never_lands_in_a_newer_cache(mem, uid):  # review 7 rev3 #1
+    start = memory.epoch(uid)
+    real_create = mem.create
+
+    def create_then_forget_and_reload(**kw):
+        real_create(**kw)
+        memory.forget_all(uid)  # purge lands right after the backend write...
+        memory.load(uid)  # ...and a new turn loads the (empty) new-epoch cache
+
+    mem.create = create_then_forget_and_reload
+    memory.remember(uid, "old preference")  # no started epoch: the end-of-save check can't catch it
+    assert memory.cached(uid, memory.epoch(uid)) == [] and memory.epoch(uid) == start + 1
