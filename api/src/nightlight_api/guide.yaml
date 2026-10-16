@@ -67,7 +67,8 @@ silent_device:
     Nightlight can't reach in, so it reasons from what it knows: when the device last reported and for how long it
     has been silent, and whether other devices in the same place still report. If they do, the internet there is
     probably fine and the likely causes are on the device itself: asleep, turned off, logged out, or off Wi-Fi. These
-    are possibilities, not a diagnosis. History under the device shows the gaps. Things to check at the device: is it
+    are possibilities, not a diagnosis. History under the device shows the gaps. When it reports again, Activity says
+    whether it restarted (a restart or power cut) or was only unreachable. Things to check at the device: is it
     on and awake (Macs: System Settings > Energy, "Prevent automatic sleeping"); is it on the network; on a Mac the
     helper runs while you are logged in.
 

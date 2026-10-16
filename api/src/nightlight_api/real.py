@@ -554,6 +554,25 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
             "blastRadius": [device["id"]], "riskClass": JOBS[action_type]["riskClass"]}
 
 
+def _span(seconds: float) -> str:
+    m = int(seconds // 60)
+    return f"{m} minutes" if m < 120 else f"{m // 60} hours" if m < 2880 else f"{m // 1440} days"
+
+
+def back_words(last_seen, uptime_sec) -> dict:
+    """How a silent device came back: if it has been up for less time than it was silent, it restarted."""
+    if not last_seen:
+        return {"restarted": None, "words": "it was silent."}
+    silent = max(0.0, (_now() - last_seen).total_seconds())
+    if isinstance(uptime_sec, (int, float)) and uptime_sec < silent + 120:
+        return {"restarted": True, "words": f"it restarted about {_span(uptime_sec)} ago, after {_span(silent)} "
+                                            "without a report (a restart or power cut)."}
+    if isinstance(uptime_sec, (int, float)):
+        return {"restarted": False, "words": f"it was unreachable for {_span(silent)} but didn't restart (probably "
+                                             "asleep, logged out or off the network)."}
+    return {"restarted": None, "words": f"it was silent for {_span(silent)}."}
+
+
 def heartbeat(token: str, facts: dict) -> dict:
     tref = tokens_ref().document(_sha(token))
     facts, _ = scrub_value(facts)
@@ -611,7 +630,10 @@ def heartbeat(token: str, facts: dict) -> dict:
             extra["registered"] = True
         if device.get("watchState") == "silent":
             extra["watchState"] = None
-            event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again.")
+            gap = back_words(device.get("lastSeen"), facts.get("uptimeSec"))
+            extra["lastGap"] = {"from": device.get("lastSeen"), "to": _now(), "restarted": gap["restarted"]}
+            event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again: "
+                  + gap["words"])
         tx.update(tref, {"lastSeen": _now()})
         tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
