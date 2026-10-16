@@ -61,7 +61,8 @@ ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspe
 INSPECT = {"disk": "which known folders take the most space", "processes": "which programs use the most memory and CPU",
            "updates": "which updates are waiting (can take up to a minute)", "docker": "how much space Docker uses",
            "network": "whether name lookup (DNS) and the internet work", "load": "how busy the processor is",
-           "failed": "which services or background items keep failing"}
+           "failed": "which services or background items keep failing",
+           "home": "the biggest folders in the home folder (and its Library), outside protected ones"}
 MAX_INSPECT = 4
 
 # Plain names for system services people commonly run at home.

@@ -174,7 +174,7 @@ export type StreamEvent =
   | { type: "turn_start"; turnId: string; replay?: boolean }
   | { type: "text"; delta: string }
   | { type: "tool_call"; name: string; args?: Record<string, unknown> }
-  | { type: "tool_result"; name: string; summary?: string }
+  | { type: "tool_result"; name: string; summary?: string; details?: string | null }
   | { type: "approval_request"; actionId: string }
   | { type: "followup_pending"; turnId: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }

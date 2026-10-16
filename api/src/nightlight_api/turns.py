@@ -376,11 +376,12 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     yield out({"type": "tool_call", "name": part.function_call.name, "args": args})
                 if part.function_response:
                     resp = dict(part.function_response.response or {})
+                    line, details = _commentary(part.function_response.name, resp)
                     yield out({"type": "tool_result", "name": part.function_response.name,
-                               "summary": _summary(resp), "redacted": ctx.redacted})
+                               "summary": line, "details": details, "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
                         yield out({"type": "approval_request", "actionId": resp.get("actionId")})
-                    if part.function_response.name == "look_into" and resp.get("status") == "asked":
+                    if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
         if not shown.strip():
@@ -418,18 +419,46 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             task.cancel()
 
 
-def _summary(resp: dict) -> str:
+DEVICE_READS = {"look_into", "inspect", "run_playbook"}  # the device answers; slow ones finish in a follow-up
+DETAILS_CHARS = 2000
+
+
+def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
+    """One plain line about what a step found (shown live in the chat), plus optional details to expand. Built from
+    the tool result, which is already scrubbed and bounded."""
+    status, reason = resp.get("status"), resp.get("reason") or resp.get("error")
+    if reason and status in (None, "error", "refused"):
+        return f"Couldn't: {reason}", None
+    if status == "asked":
+        return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
     if "devices" in resp:
-        return f"{len(resp['devices'])} devices"
+        bad = [d.get("name") for d in resp["devices"] if d.get("status") not in ("ok", None)]
+        return f"{len(resp['devices'])} devices" + (f"; needs a look: {', '.join(bad[:4])}" if bad else "; all fine"), None
     if "events" in resp:
-        return f"{len(resp['events'])} recent events"
-    if "status" in resp:
-        return f"status {resp['status']}"
-    if "error" in resp:
-        return str(resp["error"])
+        return f"{len(resp['events'])} recent events", None
     if "vitals" in resp:
-        return f"disk {(resp.get('vitals') or {}).get('diskPct')}%"
-    return "ok"
+        v = resp.get("vitals") or {}
+        bits = [f"disk {v.get('diskPct')}%" if v.get("diskPct") is not None else None,
+                f"memory {round(v['mem'])}%" if v.get("mem") is not None else None,
+                f"{len(resp.get('findings') or [])} problem(s)",
+                f"{len(resp.get('notebook') or [])} note(s) in its notebook" if resp.get("notebook") else None]
+        return ", ".join(b for b in bits if b), None
+    if name == "run_playbook" and resp.get("playbook"):
+        text = str(resp["playbook"])
+        lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
+        return (f"Checkup done: {len(lines)} finding(s)" if lines else "Checkup done: nothing stood out"), \
+            text[:DETAILS_CHARS]
+    if name in DEVICE_READS and status in ("done", "failed"):
+        out = resp.get("output") or ""
+        first = next((ln for ln in out.splitlines()[1:] if ln.strip()), "")
+        return (resp.get("summary") or status) + (f": {first[:120]}" if first else ""), (out[:DETAILS_CHARS] or None)
+    if status == "pending":
+        return "Put up a card for your approval", None
+    if status == "saved":
+        return "Saved: " + str(resp.get("note") or resp.get("fact") or "")[:120], None
+    if status:
+        return f"Result: {status}", None
+    return "Done", None
 
 
 def _error_message(code: str) -> str:

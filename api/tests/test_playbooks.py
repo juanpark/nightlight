@@ -45,7 +45,7 @@ def test_run_from_the_app_gives_findings_and_cards_for_allowed_fixes(client, sta
     aid = r.json()["actionId"]
     _again(dev["token"])
     jobs = beat(client, dev["token"], OFFERS).json()["jobs"]
-    assert jobs == [{"id": aid, "type": "inspect", "params": {"what": ["disk", "docker"]}}]
+    assert jobs == [{"id": aid, "type": "inspect", "params": {"what": ["disk", "home", "docker"]}}]
     client.post(f"/helper/jobs/{aid}/result", json={"ok": True, "summary": "Checked", "output": OUTPUT},
                 headers={"X-Device-Token": dev["token"]})
     pb = db.action(started, aid).get().to_dict()["result"]["playbook"]
@@ -139,7 +139,7 @@ def test_empty_dir_never_follows_links(helper, monkeypatch, tmp_path):
     (trash / "sub").mkdir()
     (trash / "sub" / "deep").write_text("x")
     (trash / "link").symlink_to(keep)
-    assert helper._empty_dir([".Trash"]) is True
+    assert helper._empty_dir([".Trash"]) == (True, "")
     assert list(trash.iterdir()) == [] and (keep / "precious").exists()
 
 
@@ -149,10 +149,12 @@ def test_a_linked_parent_folder_is_refused(helper, monkeypatch, tmp_path):  # re
     (home / "Library" / "Developer").symlink_to(keep)  # ~/Library/Developer -> somewhere else
     (keep / "Xcode" / "DerivedData").mkdir(parents=True)
     (keep / "Xcode" / "DerivedData" / "precious").write_text("x")
-    assert helper._empty_dir(["Library", "Developer", "Xcode", "DerivedData"]) is False
+    ok, why = helper._empty_dir(["Library", "Developer", "Xcode", "DerivedData"])
+    assert not ok and "~/Library/Developer is a link" in why
     assert (keep / "Xcode" / "DerivedData" / "precious").exists()
     (home / ".Trash").symlink_to(keep)  # the folder itself swapped for a link
-    assert helper._empty_dir([".Trash"]) is False and (keep / "precious").exists()
+    ok, why = helper._empty_dir([".Trash"])
+    assert not ok and "link" in why and (keep / "precious").exists()
 
 
 def test_a_refused_clean_up_reports_failure(helper, monkeypatch, tmp_path):  # review C #1
@@ -161,7 +163,7 @@ def test_a_refused_clean_up_reports_failure(helper, monkeypatch, tmp_path):  # r
     monkeypatch.setattr(helper.sys, "platform", "darwin")
     helper._save_config({"token": "x", "manage": "strict", "allow": {"fix": ["all"]}, "macPrivateFolders": True})
     ok, summary, _ = helper.run_fix("empty_trash")
-    assert not ok and "didn't fully work" in summary and (keep / "precious").exists()
+    assert not ok and "is a link" in summary and (keep / "precious").exists()
 
 
 def test_no_card_claimed_when_none_could_be_made(client, started, monkeypatch):  # review C #3
@@ -183,3 +185,17 @@ def test_no_card_claimed_when_none_could_be_made(client, started, monkeypatch): 
     assert not [s for s in db.actions(started).get() if s.to_dict().get("type") == "fix"]
     turn = db.turns(started, sid).document(a["continuationTurnId"]).get().to_dict()
     assert "I've put up a card" not in turn["input"] and "no card could be made" in turn["input"]
+
+
+def test_a_failing_item_is_named_with_its_reason(helper, monkeypatch, tmp_path):
+    home, _ = _home(helper, monkeypatch, tmp_path)
+    trash = home / ".Trash"
+    (trash / "locked").mkdir(parents=True)
+    (trash / "locked" / "f").write_text("x")
+    import os
+    os.chmod(trash / "locked", 0o500)  # can't delete inside it
+    try:
+        ok, why = helper._empty_dir([".Trash"])
+    finally:
+        os.chmod(trash / "locked", 0o700)
+    assert not ok and "~/.Trash/locked/f" in why and "permission" in why

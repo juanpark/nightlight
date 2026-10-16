@@ -35,8 +35,8 @@ class Settings:
     model_calls_per_ip_hour: int = int(os.environ.get("MODEL_CALLS_PER_IP_HOUR", "100"))
     model_calls_per_day: int = int(os.environ.get("MODEL_CALLS_PER_DAY", "2000"))
     turns_per_uid_hour: int = int(os.environ.get("TURNS_PER_UID_HOUR", "40"))
-    model_calls_per_turn: int = 6
-    tool_calls_per_turn: int = 6
+    model_calls_per_turn: int = 8  # an investigation: look, measure, maybe look again, then answer
+    tool_calls_per_turn: int = 8
     kill_switch: bool = os.environ.get("MODEL_KILL_SWITCH", "0") == "1"
     ip_hash_salt: str = os.environ.get("IP_HASH_SALT", "nightlight")
     # Turn leases.

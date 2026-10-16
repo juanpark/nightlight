@@ -218,3 +218,13 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 
 .update-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px;
   border: 1px solid var(--line); border-radius: 8px; }
+
+.step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.step-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok, #3a9a5b); flex: none; transform: translateY(-1px); }
+.step-dot.busy { background: var(--muted); animation: pulse 1s infinite alternate; }
+.step-dot.bad { background: var(--crit); }
+.step-result { color: var(--ink); }
+.step-details { flex-basis: 100%; margin-left: 13px; }
+.step-details pre { white-space: pre-wrap; font-size: 11px; max-height: 220px; overflow: auto; margin: 4px 0;
+  padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+@keyframes pulse { from { opacity: .35; } to { opacity: 1; } }

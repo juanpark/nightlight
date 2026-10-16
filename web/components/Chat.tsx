@@ -9,7 +9,10 @@ export interface ChatHandle { ask: (text: string) => void; followUp: (turnId: st
 
 type Item =
   | { kind: "user"; text: string }
-  | { kind: "agent"; text: string; steps: string[]; cards: string[]; error?: string; busy: boolean };
+  | { kind: "agent"; text: string; steps: Step[]; cards: string[]; error?: string; busy: boolean };
+
+/** One thing Nightlight did while answering, and (once it came back) what it found. */
+interface Step { name: string; label: string; result?: string; details?: string }
 
 const SUGGESTIONS = ["Is anything wrong at home?", "My kids say Minecraft is laggy tonight. Can you help?",
   "When was the Minecraft world last backed up?"];
@@ -49,7 +52,7 @@ const Chat = forwardRef<ChatHandle, {
         const next = [...cur];
         const last = next[next.length - 1];
         if (last?.kind === "agent") {
-          const copy = { ...last, steps: [...last.steps], cards: [...last.cards] };
+          const copy = { ...last, steps: last.steps.map((s) => ({ ...s })), cards: [...last.cards] };
           fn(copy);
           next[next.length - 1] = copy;
         }
@@ -71,7 +74,11 @@ const Chat = forwardRef<ChatHandle, {
       try {
         await stream(path, body, (e) => update((a) => {
           if (e.type === "text") a.text += e.delta;
-          else if (e.type === "tool_call") a.steps.push(step(e, devicesRef.current));
+          else if (e.type === "tool_call") a.steps.push({ name: e.name, label: step(e, devicesRef.current) });
+          else if (e.type === "tool_result") {
+            const s = a.steps.find((x) => x.name === e.name && x.result === undefined);
+            if (s) { s.result = e.summary ?? "done"; s.details = e.details ?? undefined; }
+          }
           else if (e.type === "approval_request" && !a.cards.includes(e.actionId)) a.cards.push(e.actionId);
           else if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
           else if (e.type === "error") a.error = e.message || e.code;
@@ -134,7 +141,15 @@ const Chat = forwardRef<ChatHandle, {
             ? <div key={i} className="bubble user">{it.text}</div>
             : (
               <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {it.steps.length > 0 && <div className="steps">{it.steps.map((s, j) => <span key={j}>{s}</span>)}</div>}
+                {it.steps.length > 0 && (
+                  <div className="steps" aria-label="What Nightlight did">
+                    {it.steps.map((s, j) => (
+                      <div key={j} className="step">
+                        <span className={`step-dot ${s.result === undefined ? "busy" : s.result.startsWith("Couldn't") ? "bad" : "ok"}`} />
+                        <span>{s.label.replace(/…$/, "")}{s.result !== undefined && <span className="step-result"> — {s.result}</span>}</span>
+                        {s.details && <details className="step-details"><summary>details</summary><pre>{s.details}</pre></details>}
+                      </div>))}
+                  </div>)}
                 {(it.text || it.busy) && <div className="bubble agent">{it.text || "…"}</div>}
                 {it.cards.map((id) => {
                   const a = actions.find((x) => x.id === id);

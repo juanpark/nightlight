@@ -133,3 +133,18 @@ def test_a_check_starting_near_the_end_gets_only_what_is_left(helper, monkeypatc
     helper._inspect_processes()
     helper.INSPECT["failed"]()
     assert seen and all(t <= 0.5 for t in seen)
+
+
+def test_home_check_skips_protected_folders(helper, monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    for d in ("Documents", "Desktop", ".gradle", "Library/Mail", "Library/Caches", "Library/Containers"):
+        (home / d).mkdir(parents=True)
+    monkeypatch.setattr(helper, "_HOME", str(home))
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    read = []
+    monkeypatch.setattr(helper, "_du", lambda p: read.append(p) or 2048)
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    out = helper._inspect_home()
+    names = {p.replace(str(home), "~") for p in read}
+    assert names == {"~/.gradle", "~/Library/Caches"} and "Biggest folder:" in out

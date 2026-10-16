@@ -15,8 +15,28 @@
   title: Disk filling up
   about: Finds what takes the space and offers safe clean-ups.
   findings: [f_disk]
-  checks: [disk, docker]
+  checks: [disk, home, docker]
   causes:
+    - id: big_folder
+      match: '^Biggest folder: (?P<name>.+?): (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 5
+      say: "{name} is the biggest folder found ({size})."
+      advice: Open it and sort by size; move or delete what you no longer need (Nightlight doesn't delete your own files).
+    - id: gradle
+      match: '^(?:Biggest folder: )?~/\.gradle: (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 2
+      say: Gradle (Android/Java builds) keeps {size} of downloaded libraries and build caches.
+      advice: Delete ~/.gradle/caches when no build is running; Gradle downloads what it needs again.
+    - id: simulators
+      match: '^(?:Biggest folder: )?~/Library/Developer: (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 5
+      say: Apple developer tools (Xcode, simulators) take {size}.
+      advice: In Terminal, "xcrun simctl delete unavailable" removes old simulators; Xcode's build data can be cleared too.
+    - id: user_cache
+      match: '^(?:Biggest folder: )?~/\.cache: (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 2
+      say: Programs' caches in ~/.cache take {size}; they are rebuilt when needed.
+      advice: Look inside ~/.cache and delete the folders of tools you no longer use.
     - id: trash
       match: '^Trash: (?P<size>[\d.]+ [MG]B)'
       min_gb: 0.5

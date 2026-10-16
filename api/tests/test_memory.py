@@ -167,7 +167,7 @@ def test_model_saves_a_fact_with_the_remember_tool(client, started, mem):
     assert ev[-1]["type"] == "done"
     assert mem.store[started] == ["The kids play Minecraft on weekends"]
     result = next(e for e in ev if e["type"] == "tool_result")
-    assert result["name"] == "remember" and result["summary"] == "status saved"
+    assert result["name"] == "remember" and result["summary"].startswith("Saved: ")
     assert "saved" in "".join(e.get("delta", "") for e in ev)
 
 
@@ -185,7 +185,7 @@ def test_memory_failure_does_not_fail_the_turn(client, started, mem):
     sid = new_session(client)
     ev = events(ask(client, sid))
     assert ev[-1]["type"] == "done"
-    assert next(e for e in ev if e["type"] == "tool_result")["summary"] == "status error"
+    assert next(e for e in ev if e["type"] == "tool_result")["summary"].startswith("Couldn't: ")
 
 
 def test_slow_recall_is_skipped(client, started, mem, monkeypatch):

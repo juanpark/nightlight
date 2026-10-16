@@ -197,7 +197,7 @@ def test_trim_never_orphans_a_tool_response():
 def test_parallel_tool_calls_are_capped(client, started):
     sid = new_session(client)
     calls = [types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"}))
-             for _ in range(7)]
+             for _ in range(9)]
 
     async def burst(llm_request, stream):
         if any(p.function_response for c in llm_request.contents for p in (c.parts or [])):
@@ -209,9 +209,9 @@ def test_parallel_tool_calls_are_capped(client, started):
     FakeLlm.behavior = burst
     ev = events(ask(client, sid))
     results = [e for e in ev if e["type"] == "tool_result"]
-    blocked = [e for e in results if e["summary"].startswith("tool limit reached")]
-    assert len(results) == 7 and len(blocked) == 1  # the seventh never ran
-    assert ev[-1]["metrics"]["toolCalls"] == 6
+    blocked = [e for e in results if "tool limit reached" in e["summary"]]
+    assert len(results) == 9 and len(blocked) == 1  # the ninth never ran
+    assert ev[-1]["metrics"]["toolCalls"] == 8
 
 
 def test_tool_result_byte_bound_holds_for_unicode():

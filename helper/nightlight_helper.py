@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -648,7 +648,49 @@ def _inspect_failed():
             ("\nFailing background items: " + ", ".join(agents) if agents else ""))
 
 
-INSPECT = {"disk": _inspect_disk, "processes": _inspect_processes, "updates": _inspect_updates,
+# Folders macOS guards (reading them pops a privacy dialog) or that belong to Apple's own data: never measured from
+# the background. Everything else in the home folder and its Library is fair game for "where did the space go".
+_MAC_GUARDED_TOP = {"Desktop", "Documents", "Downloads", "Movies", "Music", "Pictures", "Library", ".Trash", "Public",
+                    "Applications"}
+_MAC_GUARDED_LIB = {"Mail", "Messages", "Safari", "Containers", "Group Containers", "Cookies", "HomeKit", "Calendars",
+                    "Reminders", "Metadata", "Accounts", "Suggestions", "Biome", "IdentityServices", "Sharing",
+                    "Autosave Information", "PersonalizationPortrait", "Daemon Containers", "Application Scripts",
+                    "Shortcuts", "Trial", "DuetExpertCenter", "CallServices", "Assistant", "Photos", "Weather", "News",
+                    "Stocks", "Passes", "Keychains", "Safari", "SafariSafeBrowsing", "Mobile Documents", "CloudStorage",
+                    "Application Support", "Preferences", "StatusKit", "Contacts", "FaceTime", "Intelligence"}
+
+
+def _inspect_home():
+    """The biggest folders directly in the home folder and in ~/Library (sizes only), skipping protected ones."""
+    h, rows = _HOME, []
+    places = []
+    try:
+        top = sorted(os.listdir(h))
+    except OSError:
+        top = []
+    guarded_top = _MAC_GUARDED_TOP if sys.platform == "darwin" else set()
+    places += [(f"~/{n}", os.path.join(h, n)) for n in top if n not in guarded_top]
+    if sys.platform == "darwin":
+        try:
+            lib = sorted(os.listdir(os.path.join(h, "Library")))
+        except OSError:
+            lib = []
+        places += [(f"~/Library/{n}", os.path.join(h, "Library", n)) for n in lib if n not in _MAC_GUARDED_LIB]
+    for label, path in places:
+        if _left(25) < 1:
+            break
+        mb = _du(path)
+        if mb is not None and mb >= 100:
+            rows.append((mb, label))
+    rows.sort(reverse=True)
+    if not rows:
+        return "Biggest folders in the home folder: nothing over 100 MB outside protected folders"
+    fmt = lambda mb: f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
+    lines = [f"Biggest folder: {rows[0][1]}: {fmt(rows[0][0])}"] + [f"{label}: {fmt(mb)}" for mb, label in rows[1:10]]
+    return "Biggest folders in the home folder (sizes; protected folders not checked):\n" + "\n".join(lines)
+
+
+INSPECT = {"home": _inspect_home, "disk": _inspect_disk, "processes": _inspect_processes, "updates": _inspect_updates,
            "docker": _inspect_docker, "network": _inspect_network, "load": _inspect_load, "failed": _inspect_failed}
 
 
@@ -688,51 +730,77 @@ def _as_root(cmd):
 _DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
+def _why(err, where):
+    """Plain words for why a folder couldn't be used."""
+    import errno
+    code = getattr(err, "errno", None)
+    real = os.path.join(_HOME, where[2:]) if where.startswith("~/") else where
+    if code == errno.ELOOP or (code == errno.ENOTDIR and os.path.islink(real)):
+        return f"{where} is a link to another place, and Nightlight never follows links when deleting"
+    if code == errno.ENOENT:
+        return f"{where} doesn't exist"
+    if code == errno.EPERM and sys.platform == "darwin":
+        return f"macOS privacy protection blocked {where} (allow it once at the Mac with `nightlight settings`)"
+    if code in (errno.EACCES, errno.EPERM):
+        return f"no permission for {where}"
+    return f"{where}: {getattr(err, 'strerror', None) or type(err).__name__}"
+
+
 def _open_under_home(parts):
-    """A descriptor for ~/parts[0]/parts[1]/..., opened one step at a time without following any link (None if any
-    step is missing, a link or not a folder), so a swapped-in link can't send the clean-up somewhere else."""
+    """(descriptor, None) for ~/parts[0]/parts[1]/..., opened one step at a time without following any link, so a
+    swapped-in link can't send the clean-up somewhere else; (None, why) when a step is missing, a link or blocked."""
     fd = os.open(_HOME, _DIR_FLAGS)
+    walked = "~"
     try:
         for part in parts:
+            walked += "/" + part
             nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
             os.close(fd)
             fd = nxt
-        return fd
-    except OSError:
+        return fd, None
+    except OSError as e:
         os.close(fd)
-        return None
+        return None, _why(e, walked)
 
 
-def _clear_fd(fd):
-    """Delete everything inside the open folder `fd`, through descriptors only. Returns how many items failed."""
-    failed = 0
+def _clear_fd(fd, errors, where):
+    """Delete everything inside the open folder `fd`, through descriptors only. Appends (path, error) per failure."""
     with os.scandir(fd) as it:
         entries = list(it)
     for entry in entries:
+        path = f"{where}/{entry.name}"
         try:
             if entry.is_dir(follow_symlinks=False):
                 sub = os.open(entry.name, _DIR_FLAGS, dir_fd=fd)
                 try:
-                    failed += _clear_fd(sub)
+                    _clear_fd(sub, errors, path)
                 finally:
                     os.close(sub)
                 os.rmdir(entry.name, dir_fd=fd)
             else:
                 os.unlink(entry.name, dir_fd=fd)  # a link is removed itself, never what it points to
-        except OSError:
-            failed += 1
-    return failed
+        except OSError as e:
+            errors.append((path, e))
 
 
 def _empty_dir(parts):
-    """Empty ~/parts... (never the folder itself). True when everything went; False when it couldn't be done safely."""
-    fd = _open_under_home(parts)
+    """Empty ~/parts... (never the folder itself). (True, "") when everything went; (False, why) otherwise."""
+    fd, why = _open_under_home(parts)
     if fd is None:
-        return False
+        return False, why
+    errors = []
     try:
-        return _clear_fd(fd) == 0
+        try:
+            _clear_fd(fd, errors, "~/" + "/".join(parts))
+        except OSError as e:  # the folder itself couldn't be listed
+            return False, _why(e, "~/" + "/".join(parts))
     finally:
         os.close(fd)
+    if not errors:
+        return True, ""
+    path, err = errors[0]
+    more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
+    return False, f"{len(errors)} item(s) couldn't be removed; first: {_why(err, path)}{more}"
 
 
 def _fix_cmd(cmd, timeout=300):
@@ -742,18 +810,18 @@ def _fix_cmd(cmd, timeout=300):
         return False, "it couldn't run"
     if r.returncode != 0 and "password" in (r.stderr or "").lower():
         return False, "this device needs a password for it (sudo)"
-    return r.returncode == 0, "" if r.returncode == 0 else "it reported an error"
+    said = scrub(((r.stderr or r.stdout or "").strip().splitlines() or [""])[-1])[0][:140]
+    return r.returncode == 0, "" if r.returncode == 0 else f"it reported an error: {said or 'no details'}"
 
 
 FIXES = {
     "empty_trash": {"when": lambda: sys.platform == "darwin" and _mac_private_ok(),
-                    "run": lambda: (_empty_dir([".Trash"]), "some items couldn't be removed safely")},
+                    "run": lambda: _empty_dir([".Trash"])},
     "brew_cleanup": {"when": lambda: bool(shutil.which("brew")), "run": lambda: _fix_cmd(["brew", "cleanup", "-s"])},
     "npm_cache": {"when": lambda: bool(shutil.which("npm")),
                   "run": lambda: _fix_cmd(["npm", "cache", "clean", "--force"])},
     "xcode_build_data": {"when": lambda: os.path.isdir(f"{_HOME}/Library/Developer/Xcode/DerivedData"),
-                         "run": lambda: (_empty_dir(["Library", "Developer", "Xcode", "DerivedData"]),
-                                         "some items couldn't be removed safely")},
+                         "run": lambda: _empty_dir(["Library", "Developer", "Xcode", "DerivedData"])},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
                      "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
     "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
@@ -790,7 +858,7 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    return ok, ((f"Done.{freed}" if ok else f"It didn't fully work: {why}.{freed}").strip()), None
+    return ok, ((f"Done.{freed}" if ok else f"It didn't work: {why}.{freed}").strip()), None
 
 
 # ------------------------------------------------------------------ update: signed new versions, from the app
