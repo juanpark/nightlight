@@ -36,8 +36,8 @@ function place(devices: Device[], cols: number) {
   return out;
 }
 
-export default function Board({ devices, selected, onSelect }: {
-  devices: Device[]; selected: string | null; onSelect: (id: string) => void;
+export default function Board({ devices, selected, onSelect, settingUp = false }: {
+  devices: Device[]; selected: string | null; onSelect: (id: string) => void; settingUp?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
@@ -122,7 +122,8 @@ export default function Board({ devices, selected, onSelect }: {
           </button>
         );
       })}
-      {devices.length === 0 && (
+      {devices.length === 0 && settingUp && <p className="muted" style={{ padding: 20 }}>Setting up your sample home…</p>}
+      {devices.length === 0 && !settingUp && (
         <p className="muted" style={{ padding: 20 }}>No devices yet. Use <strong>Add a device</strong> to put your first
           one on the map, or switch on the sample home to look around.</p>
       )}

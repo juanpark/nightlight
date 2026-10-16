@@ -139,7 +139,8 @@ export default function Home({ user }: { user: User }) {
               ))}
             </div>
           )}
-          <Board devices={visible} selected={selected} onSelect={setSelected} />
+          <Board devices={visible} selected={selected} onSelect={setSelected}
+            settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
           <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => chat.current?.ask(q)} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} device={devices.find((d) => d.id === selected)!}
