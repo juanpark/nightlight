@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, sim, trust as trustlib
+from . import db, memory, sim, trust as trustlib
 from .config import settings
 from .errors import ApiError, conflict, invalid, not_found
 from .ids import new_id
@@ -195,6 +195,9 @@ def reset(uid: str, hook=_no_hook) -> dict:
     template = snap.to_dict().get("template", "home-pi")
     op, generation = _begin(uid, template, only_if_missing=False)
     _rebuild(uid, op, generation, template, hook)
+    # A reset is a fresh start, so what Nightlight remembered about this person goes too. Best effort and outside the
+    # reset's transactions: memory lives in Memory Bank, not Firestore, and a purge failure must not fail the reset.
+    memory.forget_all(uid)
     return {"ok": True, "demoGeneration": generation}
 
 

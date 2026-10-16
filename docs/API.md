@@ -49,8 +49,24 @@ current.
 | `POST /api/actions/{id}/decide` | `{"decision":"approve"}` or `{"decision":"deny","note":"…"}` | `202 {actionId, status, continuationTurnId}`; retry → `200` same body; `409 decision_conflict` / `stale` / `illegal_transition` |
 | `PUT /api/trust/{actionType}` | `{"level":"auto","deviceId":null,"svcId":null,"pinned":true}` | `200` trust doc |
 | `POST /api/trust/{actionType}/promotion` | `{"accept":true,"offerId":"…"}` | `200` trust doc; `409 offer_obsolete` |
+| `GET /api/me/memories` | | `200 {enabled, memories:[{id, fact, updatedAt}]}`, newest first, at most 50 |
+| `DELETE /api/me/memories` | | `200 {ok}`: forgets everything remembered about the caller (`ok:false` if Memory Bank couldn't be reached) |
 
 While `demo.state` is `resetting`, every demo write and chat answers `409 resetting`.
+
+## What Nightlight remembers (Memory Bank)
+
+The agent can keep short facts about the person between chats, e.g. "the kids play Minecraft on weekends". It saves
+one only when the person tells it something lasting, through a `remember` tool (the stream shows
+`{"type":"tool_call","name":"remember","args":{"fact":"…"}}` and a `tool_result` with summary `status saved`,
+`status refused` or `status error`). Facts are at most 300 characters; a fact that looks like a password, key, token
+or email address is refused, not stored. At the start of each question turn the agent looks up the few facts related
+to the message, once; live device facts always win over a remembered fact.
+
+Facts are kept per user (the uid from the token) in Agent Platform Memory Bank, not in Firestore, so there are no
+listeners: use `GET /api/me/memories` for a "What Nightlight remembers" panel. `POST /api/demo/reset` also forgets
+them. A deletion may take a moment to show in the list. When `enabled` is `false` (memory not configured), the list is
+always empty and the agent has no `remember` tool.
 
 ## The approval flow
 

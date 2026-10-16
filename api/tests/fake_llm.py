@@ -23,6 +23,7 @@ class FakeLlm(BaseLlm):
                                      ) -> AsyncGenerator[LlmResponse, None]:
         tools = sorted(llm_request.tools_dict)
         FakeLlm.log.append({"tools": tools, "contents": len(llm_request.contents),
+                            "system": str(llm_request.config.system_instruction or ""),
                             "text": " ".join(p.text or "" for c in llm_request.contents for p in (c.parts or []))})
         if FakeLlm.behavior:
             async for r in FakeLlm.behavior(llm_request, stream):

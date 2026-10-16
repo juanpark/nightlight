@@ -1,6 +1,7 @@
 """The Nightlight agent: Gemini through ADK, run in-process for one turn at a time.
 
-Tools read the caller's simulated fleet and *propose* actions; they never change anything directly. Every model call
+Tools read the caller's simulated fleet and *propose* actions; they never change anything directly (the one write,
+`remember`, only saves a short fact about the person to Memory Bank, see memory.py). Every model call
 is preceded by a cost reservation and an input-size bound, and followed by reconciliation (quota.py).
 """
 
@@ -14,7 +15,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import ToolContext
 from google.genai import types
 
-from . import actions, db, quota, real
+from . import actions, db, memory, quota, real
 from .config import settings
 from .errors import ApiError
 from .fence import turn_fence
@@ -39,6 +40,13 @@ How to answer:
   Call real containers and services by their names; don't guess what they do.
 - Keep the whole reply under 80 words."""
 
+MEMORY_RULES = """
+- When the person tells you a lasting preference or fact about their home or household (for example "the kids play
+  Minecraft on weekends" or "never restart anything during my work calls"), save it with remember, then say you'll
+  keep it in mind. Never save device state, passwords, keys or addresses.
+- What you remember is background about the person, not about devices: if it conflicts with the live device facts,
+  the device facts win."""
+
 CONTINUATION = """You are Nightlight. A change the person decided on has just finished; the update below says exactly
 what happened and the device's state afterwards. In one or two short, plain sentences, tell them what happened and how
 the device is now. Use only the facts in the update. Do not propose anything new."""
@@ -59,6 +67,7 @@ class TurnContext:
                                                     "tokensThinking": 0, "costUsd": 0.0})
     reservations: list = field(default_factory=list)
     fleet: str = ""  # plain-text summary of the home, put in the instruction so the model needn't list devices
+    memories: list = field(default_factory=list)  # facts recalled once at turn start (memory.recall)
     actions: list = field(default_factory=list)  # action docs proposed this turn
     redacted: int = 0
 
@@ -110,6 +119,12 @@ def fleet_summary(uid: str, generation: int) -> str:
                 f"{why}, health unknown" if s["stale"] else f"last report {s['lastReport']}")
         lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
     text = scrub("\n".join(sorted(lines)))[0]
+    return text.replace("{", "(").replace("}", ")")
+
+
+def memory_summary(facts: list[str]) -> str:
+    """Recalled facts as plain instruction lines, scrubbed and without braces (like fleet_summary)."""
+    text = scrub("\n".join(f"- {f}" for f in facts))[0]
     return text.replace("{", "(").replace("}", ")")
 
 
@@ -245,10 +260,29 @@ def make_tools(ctx: TurnContext, read_only: bool):
     action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
                                        _update_server_sync)]
     action_tools.append(restart_container)
+
+    async def remember(fact: str, tool_context: ToolContext) -> dict:
+        """Save a lasting preference or fact the person tells you about their home or household, so you remember it
+        in later chats. For example: "the kids play Minecraft on weekends" or "don't restart things after 10pm".
+
+        Never save device state (it changes; you can always look it up), passwords, keys or addresses.
+
+        Args:
+            fact: the preference or fact, in one short plain sentence.
+        """
+        try:
+            out = await asyncio.wait_for(asyncio.to_thread(memory.remember, ctx.uid, fact),
+                                         timeout=settings.memory_write_seconds)
+        except Exception:  # timeout or anything else: the turn goes on
+            out = {"status": "error", "reason": "memory is slow right now; it may not have been saved"}
+        return _bounded(out, ctx)
+
     for wrapper, sync in ((list_fleet, _list_fleet_sync), (get_device, _get_device_sync),
                           (get_recent_events, _get_recent_events_sync), (restart_container, _restart_container_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events]
+    if memory.enabled():
+        tools.append(remember)
     return tools if read_only else [*tools, *action_tools]
 
 
@@ -375,8 +409,14 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     """The question agent gets the fleet summary and the tools; the follow-up after an approval gets neither: the
     server already knows the result, so one short model call narrates it."""
     before_model, after_model, before_tool = make_callbacks(ctx)
-    instruction = CONTINUATION if continuation else (
-        INSTRUCTION + "\n\nTheir home right now:\n" + (ctx.fleet or "- no devices"))
+    if continuation:
+        instruction = CONTINUATION
+    else:
+        instruction = INSTRUCTION + (MEMORY_RULES if memory.enabled() else "")
+        instruction += "\n\nTheir home right now:\n" + (ctx.fleet or "- no devices")
+        if ctx.memories:
+            instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
+                            "always win):\n" + memory_summary(ctx.memories))
     return LlmAgent(
         name="nightlight",
         model=model or settings.model,
