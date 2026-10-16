@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
+import Permissions from "./Permissions";
 
 function Vital({ label, value }: { label: string; value?: number | null }) {
   return (
@@ -45,7 +46,6 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
     setEditing(false);
   }
   const real = device.realm === "real";
-  const allowed = device.allowedJobs?.restart_container ?? [];
   return (
     <div className="panel drawer">
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -74,12 +74,6 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
           <div><span className="muted">Containers</span>{device.containerCount != null
             ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
           <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}</div>
-          <div><span className="muted">You allowed here</span>{[
-            allowed.length && `restart ${allowed.join(", ")}`,
-            device.allowedJobs?.restart_service?.length && `restart services ${device.allowedJobs.restart_service.join(", ")}`,
-            device.allowedJobs?.diagnose?.length && `look into ${device.allowedJobs.diagnose.join(", ")}`,
-            device.allowedJobs?.logs?.length && `share logs of ${device.allowedJobs.logs.join(", ")}`,
-          ].filter(Boolean).join("; ") || "nothing (read-only)"}</div>
         </div>
       )}
       <div className="vitals">
@@ -131,6 +125,7 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
           </div>
         ))}
       </div>
+      {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
         <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
         {device.findings?.[0] && <button onClick={() => onAsk(`What should I do about this on my ${device.name}: ${device.findings![0].message}`)}>

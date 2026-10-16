@@ -27,6 +27,17 @@ export interface Service {
   lastBackupDaysAgo?: number;
   detail?: string | null;
   findings?: Finding[];
+  /** For a failed system service (kind "system"): the exact unit name, e.g. "nginx.service". */
+  unit?: string;
+}
+
+/** What the owner lets Nightlight do on an app-managed device (`devices/{id}.permissions`). Names are ones the
+ * device reported: container names, and exact unit names for system services. */
+export interface Permissions {
+  diagnose: boolean;
+  logs: string[];
+  restart_container: string[];
+  restart_service: string[];
 }
 
 export interface Device {
@@ -46,6 +57,10 @@ export interface Device {
   lastSeen?: Date | null;
   revoked?: boolean;
   allowedJobs?: Record<string, string[]>;
+  /** Reported by the helper: "app" lets the owner change permissions here; "strict" only on the device. Missing on
+   * older helpers. */
+  manage?: "app" | "strict";
+  permissions?: Permissions;
   os?: string;
   arch?: string;
   helperVersion?: string;

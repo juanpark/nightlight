@@ -178,3 +178,21 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
   border-color: color-mix(in srgb, var(--glow) 60%, var(--line)); }
 .away .spacer, .needs .spacer { flex: 1; }
 .notify-toggle.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+
+/* what Nightlight may do on a device */
+.perms { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column;
+  gap: 6px; }
+.perms h4 { margin: 0 0 2px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.perms p { margin: 2px 0; }
+.perm-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.perm-switch { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.perm-switch input { flex: none; accent-color: var(--accent); }
+.perm-switch input:disabled + span { opacity: .6; }
+.perm-more { margin-left: 24px; display: flex; flex-direction: column; gap: 4px; }
+.perm-more summary { cursor: pointer; }
+.perm-group { display: flex; flex-direction: column; gap: 4px; }
+.perm-group > .perm-switch, .perm-group > .small { margin-left: 24px; }
+.perm-cmd { display: block; margin-top: 4px; padding: 6px 8px; background: var(--bg); border-radius: 8px;
+  overflow-x: auto; white-space: nowrap; }
+.perm-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.perm-foot .dot { width: 8px; height: 8px; }
