@@ -24,12 +24,16 @@ def dns(monkeypatch):
     return table
 
 
+SEEN = []
+
+
 def _answer(monkeypatch, code=200, fail=False):
-    def get(url, **kw):
+    def handler(request):
+        SEEN.append(request)
         if fail:
             raise httpx.ConnectError("down")
-        return httpx.Response(code)
-    monkeypatch.setattr(watch.httpx, "get", get)
+        return httpx.Response(code, content=b"x" * 1_000_000)
+    monkeypatch.setattr(watch, "_TRANSPORT", httpx.MockTransport(handler))
 
 
 def test_history_is_written_at_most_every_five_minutes(client, started):
@@ -82,6 +86,40 @@ def test_watch_limit(client, started, dns, monkeypatch):
     for i in range(2):
         assert client.post("/api/watches", json={"name": f"w{i}", "url": "https://example.org"}).status_code == 201
     assert client.post("/api/watches", json={"name": "w3", "url": "https://example.org"}).status_code == 429
+
+
+def test_probe_connects_to_the_checked_address_and_skips_the_body(started, dns, monkeypatch):  # review 11 #1,#2
+    _answer(monkeypatch, 204)
+    SEEN.clear()
+    assert watch._probe("https://example.org/status")[0:2] == ("ok", 204)
+    req = SEEN[-1]
+    assert req.url.host == "93.184.216.34" and req.headers["host"] == "example.org"
+    assert req.extensions.get("sni_hostname") == "example.org"
+    dns["example.org"] = "169.254.169.254"  # the name now points somewhere private
+    SEEN.clear()
+    assert watch._probe("https://example.org/status")[0] == "crit" and SEEN == []  # never connected
+
+
+def test_watch_budgets_malformed_urls_and_atomic_removal(client, started, dns, monkeypatch):  # review 11 #3-#5
+    _answer(monkeypatch)
+    r = client.post("/api/watches", json={"name": "x", "url": "https://example.org:notaport/"})
+    assert r.status_code == 422 and r.json()["detail"][0]["msg"] == "bad_url"
+    monkeypatch.setattr(watch, "WATCH_ADDS_PER_DAY", 1)
+    wid = client.post("/api/watches", json={"name": "a", "url": "https://example.org"}).json()["id"]
+    assert client.post("/api/watches", json={"name": "b", "url": "https://example.org"}).json()["code"] == "watch_budget"
+    client.delete(f"/api/watches/{wid}")
+    assert not watch.watch_registry().document(f"{started}__{wid}").get().exists
+
+
+def test_old_watches_retire_and_left_devices_leave_the_registry(client, started, dns, monkeypatch):  # review 11 #3,#4
+    _answer(monkeypatch)
+    wid = client.post("/api/watches", json={"name": "a", "url": "https://example.org"}).json()["id"]
+    watch.watches(started).document(wid).update({"expiresAt": datetime.now(timezone.utc) - timedelta(seconds=1)})
+    dev = enrolled(client)
+    client.post("/helper/leave", json={}, headers={"X-Device-Token": dev["token"]})
+    assert not watch.registry().document(f"{started}__{dev['deviceId']}").get().exists
+    watch.sweep()
+    assert not watch.watches(started).document(wid).get().exists
 
 
 def test_sweep_needs_the_schedulers_signed_token(client):

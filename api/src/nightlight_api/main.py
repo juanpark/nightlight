@@ -167,7 +167,7 @@ def device_issue(device_id: str, finding_id: str, body: IssueBody, uid: str = De
 
 
 @app.post("/api/watches", status_code=201)
-def add_watch(body: WatchBody, uid: str = Depends(current_uid)):
+def add_watch(body: WatchBody, uid: str = Depends(owner_uid)):
     """Watch a public web address (website, game server status page, API): checked every 5 minutes."""
     return watch.add_watch(uid, body.name, body.url, sorted({scrub(t.strip())[0][:20] for t in body.tags if t.strip()}))
 

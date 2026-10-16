@@ -246,6 +246,7 @@ def leave(token: str) -> dict:
         tx.update(tref, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
         if dsnap.exists:
             tx.update(dref, {"status": "offline", "health": "unknown", "revoked": True, "uninstalled": True})
+            tx.delete(db.client().collection("realDevices").document(f"{t['uid']}__{t['deviceId']}"))
             event(tx, t["uid"], t["deviceId"], "left", "info",
                   f"{dsnap.to_dict().get('name', 'A device')} was uninstalled and left your map.", who="device")
 
@@ -266,6 +267,7 @@ def revoke(uid: str, device_id: str) -> dict:
         for t in tokens:
             tx.update(t.reference, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
         tx.update(db.device(uid, device_id), {"status": "offline", "health": "unknown", "revoked": True})
+        tx.delete(db.client().collection("realDevices").document(f"{uid}__{device_id}"))
         event(tx, uid, device_id, "revoked", "info",
               f"You removed {dsnap.to_dict().get('name', 'a device')}'s access.", who="you")
 
@@ -274,6 +276,11 @@ def revoke(uid: str, device_id: str) -> dict:
 
 
 # ------------------------------------------------------------------ heartbeats
+
+def _finding_id(prefix: str, name: str) -> str:
+    """Route-safe and unique per original name (a safe form plus a short hash of the exact name)."""
+    return f"{prefix}{_doc_id(name)[:80]}_{_sha(name)[:8]}"
+
 
 def _doc_id(name: str) -> str:
     """A safe Firestore document id for a container or unit name."""
@@ -299,12 +306,12 @@ def checks(facts: dict) -> list[dict]:
         out.append({"id": "f_mem", "check": "memory_high", "severity": "crit",
                     "message": f"Memory is {mem:.0f}% used.", "evidence": f"memory {mem:.0f}%"})
     for unit in facts.get("failedUnits") or []:
-        out.append({"id": f"f_unit_{_doc_id(unit)}", "check": "service_down", "severity": "warn",
+        out.append({"id": _finding_id("f_unit_", unit), "check": "service_down", "severity": "warn",
                     "message": f"{_friendly(unit)} has stopped working.", "evidence": f"system service {unit}: failed",
                     "svcId": _doc_id(unit)})
     for c in facts.get("containers") or []:
         if c.get("state") not in ("running", None):
-            out.append({"id": f"f_ctr_{_doc_id(c['name'])}", "check": "container_down", "severity": "warn",
+            out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_down", "severity": "warn",
                         "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
                         "svcId": _doc_id(c["name"])})
     pending = facts.get("updatesPending")

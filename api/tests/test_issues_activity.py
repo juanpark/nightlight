@@ -25,7 +25,7 @@ def test_known_problem_stops_lighting_orange_until_it_gets_worse(client, started
     dev = enrolled(client)
     beat(client, dev["token"], ONE_PROBLEM)
     assert _dev(started, dev)["status"] == "warn"
-    fid = "f_unit_pihole-FTL.service"
+    fid = real._finding_id("f_unit_", "pihole-FTL.service")
     r = client.post(f"/api/devices/{dev['deviceId']}/issues/{fid}", json={"state": "known"})
     assert r.status_code == 200 and r.json()["status"] == "ok"
     _again(dev["token"])
@@ -42,7 +42,7 @@ def test_known_problem_stops_lighting_orange_until_it_gets_worse(client, started
 def test_snooze_runs_out(client, started):
     dev = enrolled(client)
     beat(client, dev["token"], ONE_PROBLEM)
-    fid = "f_unit_pihole-FTL.service"
+    fid = real._finding_id("f_unit_", "pihole-FTL.service")
     assert client.post(f"/api/devices/{dev['deviceId']}/issues/{fid}", json={"state": "snoozed"}).status_code == 422
     client.post(f"/api/devices/{dev['deviceId']}/issues/{fid}", json={"state": "snoozed", "days": 3})
     states = _dev(started, dev)["issueStates"]
@@ -82,3 +82,14 @@ def test_tags_checked_after_hiding_secrets_and_odd_unit_names_can_be_acknowledge
     assert client.post(f"/api/devices/{dev['deviceId']}/issues/{fid}", json={"state": "known"}).status_code == 200
     r = client.post(f"/api/devices/{dev['deviceId']}/layout", json={"tags": ["account_secret=123"]})
     assert r.status_code == 422
+
+
+def test_similar_names_never_share_an_acknowledgement(client, started):  # review 10b rev2
+    dev = enrolled(client)
+    beat(client, dev["token"], {**ONE_PROBLEM, "failedUnits": ["demo\\x2dapp.service"]})
+    fid = _dev(started, dev)["findings"][0]["id"]
+    client.post(f"/api/devices/{dev['deviceId']}/issues/{fid}", json={"state": "known"})
+    _again(dev["token"])
+    beat(client, dev["token"], {**ONE_PROBLEM, "failedUnits": ["demo_x2dapp.service"]})
+    d = _dev(started, dev)
+    assert d["findings"][0]["state"] == "new" and d["status"] == "warn"
