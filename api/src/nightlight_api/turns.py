@@ -250,9 +250,10 @@ async def _recall(uid: str, query: str) -> list[str]:
     """Facts remembered about this person that relate to their message; [] if memory is off, slow or failing."""
     if not memory.enabled():
         return []
+    if (facts := memory.cached(uid)) is not None:
+        return facts
     try:
-        return await asyncio.wait_for(asyncio.to_thread(memory.recall, uid, query),
-                                      timeout=settings.memory_recall_seconds)
+        return await asyncio.wait_for(asyncio.to_thread(memory.load, uid), timeout=settings.memory_recall_seconds)
     except Exception:  # a slow or failing memory never holds up or breaks the answer
         return []
 

@@ -49,7 +49,7 @@ class Settings:
     memory_bank_id: str = os.environ.get("MEMORY_BANK_ID", "")
     memory_location: str = os.environ.get("MEMORY_BANK_LOCATION", "global")
     memory_fact_chars: int = 300
-    memory_recall_seconds: float = 1.5
+    memory_recall_seconds: float = 3.0
     memory_write_seconds: float = 10.0
 
     @property

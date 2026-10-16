@@ -10,6 +10,8 @@ can never break a chat turn, a reset or a request.
 
 import logging
 import re
+import threading
+import time
 from functools import lru_cache
 
 from .config import settings
@@ -20,6 +22,12 @@ log = logging.getLogger(__name__)
 APP = "nightlight"
 TTL = "15552000s"  # 180 days
 _UID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")  # also keeps the purge filter free of quotes
+CACHE_SECONDS = 600
+PER_TURN = 10
+# Memory Bank lookups take 1-3 s from Seoul, longer than a turn should wait. Each instance keeps a person's newest
+# facts for a few minutes, loaded when a chat session opens and updated on every save or purge.
+_cache: dict[str, tuple[float, list[str]]] = {}
+_lock = threading.Lock()
 
 
 def enabled() -> bool:
@@ -81,6 +89,10 @@ def remember(uid: str, fact: str) -> dict:
     except Exception as e:  # never let memory break a turn
         log.warning("memory write failed: %s", type(e).__name__)
         return {"status": "error", "reason": "memory is unavailable right now; nothing was saved"}
+    with _lock:
+        if uid in _cache:
+            at, facts = _cache[uid]
+            _cache[uid] = (at, [clean, *[f for f in facts if f != clean]][:PER_TURN])
     return {"status": "saved", "fact": clean}
 
 
@@ -139,9 +151,34 @@ def forget_all(uid: str) -> bool:
     """
     if not _usable(uid):
         return False
+    with _lock:
+        _cache[uid] = (time.monotonic(), [])
     try:
         _api().purge(name=_bank(), filter=f'scope.user_id="{uid}"', force=True)
         return True
     except Exception as e:
         log.warning("memory purge failed: %s", type(e).__name__)
         return False
+
+
+def cached(uid: str) -> list[str] | None:
+    """This person's newest facts if this instance loaded them recently, else None."""
+    with _lock:
+        hit = _cache.get(uid)
+    return hit[1] if hit and time.monotonic() - hit[0] < CACHE_SECONDS else None
+
+
+def load(uid: str) -> list[str]:
+    """Fetch the newest facts (a plain list, no search: faster than recall) and cache them."""
+    if not _usable(uid):
+        return []
+    facts = [m["fact"] for m in list_all(uid, limit=PER_TURN)]
+    with _lock:
+        _cache[uid] = (time.monotonic(), facts)
+    return facts
+
+
+def prefetch(uid: str) -> None:
+    """Warm the cache in the background (e.g. when a chat session opens). Never raises, never blocks."""
+    if _usable(uid) and cached(uid) is None:
+        threading.Thread(target=load, args=(uid,), daemon=True).start()

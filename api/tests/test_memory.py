@@ -61,6 +61,7 @@ def mem(monkeypatch):
     fake = FakeMemories()
     monkeypatch.setattr(settings, "memory_bank_id", "1234567890")
     monkeypatch.setattr(memory, "_api", lambda: fake)
+    memory._cache.clear()
     return fake
 
 
@@ -125,8 +126,11 @@ def test_one_recall_per_turn_goes_into_the_instruction(client, started, mem):
     sid = new_session(client)
     ev = events(ask(client, sid, text="Is the game server okay?"))
     assert ev[-1]["type"] == "done" and ev[-1]["metrics"]["modelCalls"] == 3
-    assert mem.count("retrieve") == 1  # once per turn, not once per model call
-    assert mem.calls[0][2]["search_query"] == "Is the game server okay?"
+    loads = mem.count("retrieve")
+    assert 1 <= loads <= 2  # opening the session prefetches; the turn waits only if that hasn't landed yet
+    assert "page_size" in mem.calls[0][2]  # a plain newest-first list, not a search per turn
+    events(ask(client, sid, text="And the Pi?"))
+    assert mem.count("retrieve") == loads  # later turns use the cached facts
     for call in FakeLlm.log:
         assert "remember" in call["tools"]
         assert "What you remember about this person" in call["system"]
@@ -230,3 +234,13 @@ def test_memories_api_needs_a_token():
     from fastapi.testclient import TestClient
     app.dependency_overrides.clear()
     assert TestClient(app).get("/api/me/memories").status_code == 401
+
+
+def test_cache_follows_saves_and_purges(mem, uid):
+    assert memory.cached(uid) is None
+    mem.store[uid] = ["kids play Minecraft on weekends"]
+    assert memory.load(uid) == ["kids play Minecraft on weekends"]
+    memory.remember(uid, "no restarts after 10pm")
+    assert memory.cached(uid)[0] == "no restarts after 10pm"
+    memory.forget_all(uid)
+    assert memory.cached(uid) == []

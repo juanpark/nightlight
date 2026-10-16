@@ -200,6 +200,7 @@ def _session_id_ok(session_id: str) -> None:
 
 @app.post("/api/chat/sessions", status_code=201)
 def chat_session(body: Empty, uid: str = Depends(current_uid)):
+    memory.prefetch(uid)  # so the first answer doesn't wait for Memory Bank
     return turns.create_session(uid)
 
 
