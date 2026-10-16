@@ -1,0 +1,308 @@
+/* Colours from the mascot artwork. Flat fills only, no gradients on the character. */
+.root {
+  --mascot-ink: #202020;
+  --mascot-crease: #121212;
+  --mascot-face: #fbfaf8;
+  --mascot-eye: #0e0e0e;
+  --mascot-star: #fdd83a;
+  --mascot-shine: #fff0a0;
+  --mascot-string: #242424;
+  --mascot-mark: #f2c21b;
+  --mascot-shadow: rgba(32, 28, 24, 0.1);
+  --mascot-rim: none;
+  --mascot-halo: 0;
+  --mascot-pool: 0;
+  overflow: visible;
+}
+
+/* Night: the star is the nightlight. It lights a warm pool on the floor and
+   catches the edge of the body, so the dark character still reads on navy. */
+:global([data-theme="night"]) .root {
+  --mascot-face: #f3efe6;
+  --mascot-string: #a59fae;
+  --mascot-mark: #fdd83a;
+  --mascot-shadow: rgba(4, 5, 10, 0.4);
+  --mascot-rim: rgba(255, 220, 130, 0.38);
+  --mascot-halo: 1;
+  --mascot-pool: 1;
+}
+
+.shadow {
+  fill: var(--mascot-shadow);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: shadow 3.6s ease-in-out infinite alternate;
+}
+
+/* Warm light the star casts on the floor (night only). */
+.pool {
+  opacity: var(--mascot-pool);
+}
+
+/* Breath: a touch taller and slimmer, anchored at the feet. */
+.breathe {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: breathe 3.6s ease-in-out infinite alternate;
+}
+
+/* The hand rises ~2px on each breath; the balloon follows it. */
+.balloonLift {
+  animation: lift 3.6s ease-in-out infinite alternate;
+}
+
+/* Pendulum sway, pivoting at the hand. */
+.sway {
+  transform-box: view-box;
+  transform-origin: 140.3px 147px;
+  animation: sway 5.2s ease-in-out infinite alternate;
+}
+
+/* The star bobs and tips around its knot, out of step with the sway. */
+.bob {
+  transform-box: view-box;
+  transform-origin: 146.3px 80px;
+  animation: bob 2.9s ease-in-out infinite alternate;
+}
+
+.halo {
+  opacity: var(--mascot-halo);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: halo 3.6s ease-in-out infinite alternate;
+}
+
+.sparkles line {
+  opacity: 0;
+  animation: sparkle 4.8s ease-in-out infinite;
+}
+.sparkles line:nth-child(2) { animation-delay: 1.6s; }
+.sparkles line:nth-child(3) { animation-delay: 3.2s; }
+
+.eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blink 16s infinite;
+}
+
+/* The eyes wander: up at the star, back to you, off to the left, a peek
+   down, then up at the star again. Blinks land on the turns. */
+.glance {
+  animation: glance 16s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  from { transform: scale(1, 1); }
+  to   { transform: scale(0.99, 1.02); }
+}
+@keyframes lift {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-1.8px); }
+}
+@keyframes shadow {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0.97); }
+}
+@keyframes sway {
+  from { transform: rotate(-3deg); }
+  to   { transform: rotate(3.5deg); }
+}
+@keyframes bob {
+  from { transform: translateY(0) rotate(-4deg); }
+  to   { transform: translateY(-3px) rotate(4deg); }
+}
+@keyframes halo {
+  from { transform: scale(0.94); }
+  to   { transform: scale(1.05); }
+}
+@keyframes sparkle {
+  0%, 70%, 100% { opacity: 0; }
+  78%, 88%      { opacity: 0.9; }
+}
+@keyframes blink {
+  0%, 9%, 12%, 34%, 37%, 58%, 61%, 63%, 66%, 84%, 87%, 100% { transform: scaleY(1); }
+  10.5%, 35.5%, 59.5%, 64.5%, 85.5%                         { transform: scaleY(0.08); }
+}
+@keyframes glance {
+  0%, 8%     { transform: translate(0, 0); }
+  12%, 30%   { transform: translate(2.4px, -2.6px); }
+  36%, 50%   { transform: translate(0, 0); }
+  54%, 62%   { transform: translate(-3px, 0.4px); }
+  67%, 74%   { transform: translate(-0.6px, 1.8px); }
+  80%, 86%   { transform: translate(0, 0); }
+  89%, 95%   { transform: translate(2.4px, -2.6px); }
+  100%       { transform: translate(0, 0); }
+}
+
+/* ---- Thinking (Mascot mood="thinking") ---- */
+
+.bubble { display: none; }
+.tilt {
+  transform-box: view-box;
+  transform-origin: 76px 234px;
+}
+/* A chat bubble beside the head with typing dots, popping out from its tail. */
+[data-mood="thinking"] .bubble {
+  display: inline;
+  transform-box: view-box;
+  transform-origin: 54px 89px;
+  animation: bubbleIn 0.35s cubic-bezier(0.3, 1.6, 0.6, 1) both;
+}
+[data-mood="thinking"] .bubble ellipse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: typing 1.2s ease-in-out infinite;
+}
+[data-mood="thinking"] .bubble ellipse:nth-child(2) { animation-delay: 0.15s; }
+[data-mood="thinking"] .bubble ellipse:nth-child(3) { animation-delay: 0.3s; }
+[data-mood="thinking"] .tilt { animation: ponder 4.4s ease-in-out infinite alternate; }
+[data-mood="thinking"] .glance { animation: mull 4.4s ease-in-out infinite alternate; }
+[data-mood="thinking"] .eye { animation: blink 22s infinite; }
+[data-mood="thinking"] .halo { opacity: 1; animation: thinkGlow 1.6s ease-in-out infinite alternate; }
+[data-mood="thinking"] .sparkles line { animation-duration: 2.4s; }
+
+@keyframes bubbleIn {
+  from { opacity: 0; transform: scale(0.3); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes typing {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30%           { transform: translateY(-3px); opacity: 1; }
+}
+@keyframes ponder {
+  from { transform: rotate(-2.5deg); }
+  to   { transform: rotate(1deg); }
+}
+/* Eyes stay up on the star, drifting a little as it thinks. */
+@keyframes mull {
+  from { transform: translate(2.4px, -2.6px); }
+  to   { transform: translate(1.2px, -3px); }
+}
+@keyframes thinkGlow {
+  from { opacity: 0.6; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1.12); }
+}
+
+/* ---- Poses (MascotPose). Pivots come from the pose data as CSS variables. ---- */
+
+.move {
+  transform-box: view-box;
+  transform-origin: var(--feet-x) var(--feet-y);
+}
+.poseSway {
+  transform-box: view-box;
+  transform-origin: var(--hand-x) var(--hand-y);
+  animation: sway 5.2s ease-in-out infinite alternate;
+}
+.poseBob {
+  transform-box: view-box;
+  transform-origin: var(--knot-x) var(--knot-y);
+  animation: tip 2.9s ease-in-out infinite alternate;
+}
+.poseEye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: poseBlink 5.8s infinite;
+}
+.poseGlance {
+  animation: poseGlance 11s ease-in-out infinite;
+}
+.marks path {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: twinkle 2.4s ease-in-out infinite;
+}
+.marks path:nth-child(2) { animation-delay: 0.8s; }
+.marks path:nth-child(3) { animation-delay: 1.6s; }
+.marks path:nth-child(4) { animation-delay: 0.4s; }
+.marks path:nth-child(5) { animation-delay: 1.2s; }
+
+/* Walk: waddle in place, two steps a second. */
+[data-pose="walk"] .move { animation: walk 0.9s ease-in-out infinite; }
+[data-pose="walk"] .shadow { animation: stepShadow 0.45s ease-in-out infinite alternate; }
+[data-pose="walk"] .marks path { animation: flicker 0.45s ease-in-out infinite alternate; }
+
+/* Sit: a slow, contented rock. */
+[data-pose="sit"] .move { animation: rock 4s ease-in-out infinite alternate; }
+
+/* Peek: lying low, inching forward to look. */
+[data-pose="peek"] .move { animation: inch 2.6s ease-in-out infinite; }
+
+/* Happy: eyes stay closed in a smile while it hops; sparks pop at the top. */
+[data-pose="happy"] .move { animation: hop 1.2s ease-in-out infinite; }
+[data-pose="happy"] .shadow { animation: hopShadow 1.2s ease-in-out infinite; }
+[data-pose="happy"] .marks path { animation: pop 1.2s ease-out infinite; }
+[data-pose="happy"] .poseEye,
+[data-pose="happy"] .poseGlance { animation: none; }
+
+/* Wiggle: a quick shimmy, then a rest; motion lines show while it shakes. */
+[data-pose="wiggle"] .move { animation: shimmy 2.4s ease-in-out infinite; }
+[data-pose="wiggle"] .marks path { animation: shake 2.4s ease-in-out infinite; }
+
+@keyframes tip {
+  from { transform: rotate(-4deg); }
+  to   { transform: rotate(4deg); }
+}
+@keyframes poseBlink {
+  0%, 91%, 95%, 100% { transform: scaleY(1); }
+  93%                { transform: scaleY(0.1); }
+}
+@keyframes poseGlance {
+  0%, 52%, 82%, 100% { transform: translate(0, 0); }
+  58%, 76%           { transform: translate(1.6px, -1.8px); }
+}
+@keyframes twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.25; transform: scale(0.7); }
+}
+@keyframes walk {
+  0%, 100% { transform: translateY(0) rotate(-2.5deg); }
+  25%      { transform: translateY(-4px) rotate(0); }
+  50%      { transform: translateY(0) rotate(2.5deg); }
+  75%      { transform: translateY(-4px) rotate(0); }
+}
+@keyframes stepShadow {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0.94); }
+}
+@keyframes flicker {
+  from { opacity: 1; }
+  to   { opacity: 0.2; }
+}
+@keyframes rock {
+  from { transform: rotate(-1.5deg); }
+  to   { transform: rotate(1.5deg); }
+}
+@keyframes inch {
+  0%, 100% { transform: translateX(0) scaleX(1); }
+  35%, 60% { transform: translateX(3px) scaleX(1.03); }
+}
+@keyframes hop {
+  0%, 100% { transform: translateY(0) scale(1.04, 0.95); }
+  35%      { transform: translateY(-14px) scale(0.97, 1.04); }
+  55%      { transform: translateY(-14px) scale(1, 1); }
+  85%      { transform: translateY(0) scale(1.05, 0.94); }
+}
+@keyframes hopShadow {
+  0%, 100%, 85% { transform: scaleX(1); opacity: 1; }
+  35%, 55%      { transform: scaleX(0.8); opacity: 0.6; }
+}
+@keyframes pop {
+  0%, 25%  { opacity: 0; transform: scale(0.5); }
+  45%      { opacity: 1; transform: scale(1.1); }
+  70%      { opacity: 1; transform: scale(1); }
+  90%, 100% { opacity: 0; transform: scale(1); }
+}
+@keyframes shimmy {
+  0%, 45%, 100% { transform: rotate(0); }
+  5%, 15%, 25%, 35% { transform: rotate(-4deg); }
+  10%, 20%, 30%, 40% { transform: rotate(4deg); }
+}
+@keyframes shake {
+  0%, 42%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root * { animation: none !important; }
+}

@@ -1,17 +1,12 @@
-"use client";
-import { useEffect, useState } from "react";
-import { onAuthStateChanged, type User } from "firebase/auth";
-import { firebase } from "@/lib/firebase";
-import SignIn from "@/components/SignIn";
-import Home from "@/components/Home";
+import { AppGate } from "@/src/components/landing/AppGate";
+import { Landing } from "@/src/components/landing/Landing";
 
+// "/" is the landing page and sign-in in one: rendered on the server, and
+// replaced by the app once someone is signed in.
 export default function Page() {
-  const [user, setUser] = useState<User | null | undefined>(undefined);
-  useEffect(() => {
-    let stop = () => {};
-    firebase().then(({ auth }) => { stop = onAuthStateChanged(auth, setUser); });
-    return () => stop();
-  }, []);
-  if (user === undefined) return <div className="signin"><p className="muted">Loading…</p></div>;
-  return user ? <Home user={user} /> : <SignIn />;
+  return (
+    <AppGate>
+      <Landing />
+    </AppGate>
+  );
 }
