@@ -14,6 +14,9 @@ import threading
 import time
 from functools import lru_cache
 
+from google.cloud import firestore
+
+from . import db
 from .config import settings
 from .redact import scrub
 
@@ -25,8 +28,12 @@ _UID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")  # also keeps the purge filter fr
 CACHE_SECONDS = 600
 PER_TURN = 10
 # Memory Bank lookups take 1-3 s from Seoul, longer than a turn should wait. Each instance keeps a person's newest
-# facts for a few minutes, loaded when a chat session opens and updated on every save or purge.
-_cache: dict[str, tuple[float, list[str]]] = {}
+# facts for a few minutes, loaded when a chat session opens and updated on every save.
+#
+# "Forget" must win everywhere, so every purge first bumps `memoryEpoch` on the user's Firestore document. Cache
+# entries and in-flight saves carry the epoch they started under; anything from an older epoch is ignored (a cache
+# entry) or undone (a save that lands after a purge is purged again). All instances read the same epoch.
+_cache: dict[str, tuple[float, int, list[str]]] = {}
 _lock = threading.Lock()
 
 
@@ -70,7 +77,13 @@ def _clean(text: str) -> tuple[str, int]:
     return clean, hidden
 
 
-def remember(uid: str, fact: str) -> dict:
+def epoch(uid: str) -> int:
+    """The user's current memory epoch (bumped by every purge)."""
+    snap = db.user(uid).get()
+    return int((snap.to_dict() or {}).get("memoryEpoch", 0)) if snap.exists else 0
+
+
+def remember(uid: str, fact: str, started_epoch: int | None = None) -> dict:
     """Save one short fact for this person. Returns a status the agent can report honestly.
 
     A fact that looked like it contained a secret (password, key, token, email address...) is not stored at all:
@@ -83,16 +96,21 @@ def remember(uid: str, fact: str) -> dict:
         return {"status": "refused", "reason": "it looked like a password, key or address; those are never kept"}
     if not clean:
         return {"status": "refused", "reason": "nothing to remember"}
+    if started_epoch is not None and epoch(uid) != started_epoch:
+        return {"status": "error", "reason": "memory was just cleared; nothing was saved"}
     try:
         _api().create(name=_bank(), fact=clean, scope=_scope(uid),
                       config={"wait_for_completion": True, "ttl": TTL})
     except Exception as e:  # never let memory break a turn
         log.warning("memory write failed: %s", type(e).__name__)
         return {"status": "error", "reason": "memory is unavailable right now; nothing was saved"}
+    if started_epoch is not None and epoch(uid) != started_epoch:
+        _purge(uid)  # a purge ran while we were saving: forgetting wins, so purge again
+        return {"status": "error", "reason": "memory was just cleared; nothing was saved"}
     with _lock:
         if uid in _cache:
-            at, facts = _cache[uid]
-            _cache[uid] = (at, [clean, *[f for f in facts if f != clean]][:PER_TURN])
+            at, ep, facts = _cache[uid]
+            _cache[uid] = (at, ep, [clean, *[f for f in facts if f != clean]][:PER_TURN])
     return {"status": "saved", "fact": clean}
 
 
@@ -151,34 +169,55 @@ def forget_all(uid: str) -> bool:
     """
     if not _usable(uid):
         return False
-    with _lock:
-        _cache[uid] = (time.monotonic(), [])
     try:
-        _api().purge(name=_bank(), filter=f'scope.user_id="{uid}"', force=True)
+        db.user(uid).set({"memoryEpoch": firestore.Increment(1)}, merge=True)
+    except Exception as e:
+        log.warning("memory epoch bump failed: %s", type(e).__name__)
+    with _lock:
+        _cache.pop(uid, None)
+    return _purge(uid)
+
+
+def _purge(uid: str) -> bool:
+    try:
+        # Started, never awaited: the SDK's default waits on the operation with no deadline.
+        _api().purge(name=_bank(), filter=f'scope.user_id="{uid}"', force=True,
+                     config={"wait_for_completion": False})
         return True
     except Exception as e:
         log.warning("memory purge failed: %s", type(e).__name__)
         return False
 
 
-def cached(uid: str) -> list[str] | None:
-    """This person's newest facts if this instance loaded them recently, else None."""
+def cached(uid: str, current_epoch: int) -> list[str] | None:
+    """This person's newest facts if this instance loaded them recently under the current epoch, else None."""
     with _lock:
         hit = _cache.get(uid)
-    return hit[1] if hit and time.monotonic() - hit[0] < CACHE_SECONDS else None
+    if hit and hit[1] == current_epoch and time.monotonic() - hit[0] < CACHE_SECONDS:
+        return hit[2]
+    return None
 
 
-def load(uid: str) -> list[str]:
-    """Fetch the newest facts (a plain list, no search: faster than recall) and cache them."""
+def load(uid: str, current_epoch: int | None = None) -> list[str]:
+    """Fetch the newest facts (a plain list, no search: faster than recall) and cache them under the epoch read
+    before fetching, so a load that overlaps a purge can never be served afterwards."""
     if not _usable(uid):
         return []
+    ep = epoch(uid) if current_epoch is None else current_epoch
     facts = [m["fact"] for m in list_all(uid, limit=PER_TURN)]
     with _lock:
-        _cache[uid] = (time.monotonic(), facts)
-    return facts
+        _cache[uid] = (time.monotonic(), ep, facts)
+    return facts if epoch(uid) == ep else []
 
 
 def prefetch(uid: str) -> None:
     """Warm the cache in the background (e.g. when a chat session opens). Never raises, never blocks."""
-    if _usable(uid) and cached(uid) is None:
-        threading.Thread(target=load, args=(uid,), daemon=True).start()
+    if _usable(uid):
+        threading.Thread(target=_quiet_load, args=(uid,), daemon=True).start()
+
+
+def _quiet_load(uid: str) -> None:
+    try:
+        load(uid)
+    except Exception as e:
+        log.warning("memory prefetch failed: %s", type(e).__name__)

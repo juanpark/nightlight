@@ -47,7 +47,7 @@ class FakeMemories:
 
     def purge(self, *, name, filter, force=False, config=None):
         uid = re.fullmatch(r'scope\.user_id="([^"]+)"', filter).group(1)
-        self.calls.append(("purge", uid, force))
+        self.calls.append(("purge", uid, force, config))
         self._check(name)
         self.store.pop(uid, None)
         return SimpleNamespace(done=False)
@@ -205,7 +205,7 @@ def test_reset_purges_memories(started, mem):
     mem.store["someone_else"] = ["keep me"]
     demo.reset(started)
     assert started not in mem.store and mem.store["someone_else"] == ["keep me"]
-    assert ("purge", started, True) in mem.calls
+    assert ("purge", started, True, {"wait_for_completion": False}) in mem.calls
     mem.fail = True
     assert demo.reset(started)["ok"] is True  # a purge failure never fails the reset
 
@@ -237,10 +237,51 @@ def test_memories_api_needs_a_token():
 
 
 def test_cache_follows_saves_and_purges(mem, uid):
-    assert memory.cached(uid) is None
+    assert memory.cached(uid, 0) is None
     mem.store[uid] = ["kids play Minecraft on weekends"]
     assert memory.load(uid) == ["kids play Minecraft on weekends"]
     memory.remember(uid, "no restarts after 10pm")
-    assert memory.cached(uid)[0] == "no restarts after 10pm"
+    assert memory.cached(uid, 0)[0] == "no restarts after 10pm"
     memory.forget_all(uid)
-    assert memory.cached(uid) == []
+    assert memory.cached(uid, memory.epoch(uid)) is None and memory.epoch(uid) == 1
+
+
+def test_purge_is_started_not_awaited(mem, uid):  # review 7 #1
+    memory.forget_all(uid)
+    purge = next(c for c in mem.calls if c[0] == "purge")
+    assert purge[3] == {"wait_for_completion": False}
+
+
+def test_a_load_that_overlaps_a_purge_is_never_served(mem, uid):  # review 7 #2
+    mem.store[uid] = ["old fact"]
+    before = memory.epoch(uid)
+    real_list = memory.list_all
+
+    def list_then_purge(u, limit=50):
+        out = real_list(u, limit)  # the old fact was read...
+        memory.forget_all(u)  # ...then the person said "forget everything"
+        return out
+
+    memory.list_all = list_then_purge
+    try:
+        assert memory.load(uid, before) == []  # not returned
+    finally:
+        memory.list_all = real_list
+    assert memory.cached(uid, memory.epoch(uid)) is None  # and not served from the cache under the new epoch
+
+
+def test_a_save_from_before_a_purge_is_refused_or_undone(mem, uid):  # review 7 #3
+    start = memory.epoch(uid)
+    memory.forget_all(uid)
+    assert memory.remember(uid, "kids play on weekends", start)["status"] == "error"  # stale turn: refused
+    start = memory.epoch(uid)
+    real_create = mem.create
+
+    def create_then_purge(**kw):
+        real_create(**kw)
+        memory.forget_all(uid)  # the purge lands while the save is in flight
+
+    mem.create = create_then_purge
+    purges = mem.count("purge")
+    assert memory.remember(uid, "kids play on weekends", start)["status"] == "error"
+    assert mem.count("purge") == purges + 2  # the reset's purge, then ours: forgetting wins

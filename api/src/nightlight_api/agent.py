@@ -70,6 +70,7 @@ class TurnContext:
     reservations: list = field(default_factory=list)
     fleet: str = ""  # plain-text summary of the home, put in the instruction so the model needn't list devices
     memories: list = field(default_factory=list)  # facts recalled once at turn start (memory.recall)
+    memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
     redacted: int = 0
 
@@ -273,7 +274,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             fact: the preference or fact, in one short plain sentence.
         """
         try:
-            out = await asyncio.wait_for(asyncio.to_thread(memory.remember, ctx.uid, fact),
+            out = await asyncio.wait_for(asyncio.to_thread(memory.remember, ctx.uid, fact, ctx.memory_epoch),
                                          timeout=settings.memory_write_seconds)
         except Exception:  # timeout or anything else: the turn goes on
             out = {"status": "error", "reason": "memory is slow right now; it may not have been saved"}

@@ -246,14 +246,14 @@ def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
-async def _recall(uid: str, query: str) -> list[str]:
+async def _recall(uid: str, ep: int) -> list[str]:
     """Facts remembered about this person that relate to their message; [] if memory is off, slow or failing."""
     if not memory.enabled():
         return []
-    if (facts := memory.cached(uid)) is not None:
-        return facts
     try:
-        return await asyncio.wait_for(asyncio.to_thread(memory.load, uid), timeout=settings.memory_recall_seconds)
+        if (facts := memory.cached(uid, ep)) is not None:
+            return facts
+        return await asyncio.wait_for(asyncio.to_thread(memory.load, uid, ep), timeout=settings.memory_recall_seconds)
     except Exception:  # a slow or failing memory never holds up or breaks the answer
         return []
 
@@ -294,8 +294,13 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             if not continuation:
                 # One memory lookup per turn, in parallel with the fleet summary; both go into the instruction and
                 # so through the same exact token bound as everything else.
+                if memory.enabled():
+                    try:
+                        ctx.memory_epoch = await asyncio.to_thread(memory.epoch, uid)
+                    except Exception:  # memory never breaks a turn
+                        pass
                 ctx.fleet, ctx.memories = await asyncio.gather(
-                    asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, c.turn["input"]))
+                    asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, ctx.memory_epoch))
             agent = agentlib.build(ctx, continuation=continuation, model=model)
             sessions = InMemorySessionService()
             runner = Runner(app_name=APP, agent=agent, session_service=sessions)
