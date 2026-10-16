@@ -39,8 +39,8 @@ export default function Activity({ events, actions, devices }: {
           : `You ${verb}: ${what}` });
     }
     for (const e of events) {
-      const w: Who = e.who === "you" ? "you" : e.who === "auto" ? "auto" : "device";
-      out.push({ id: e.id, at: e.at?.getTime() ?? 0, who: w, deviceId: e.deviceId, text: e.message,
+      const w: Who = e.who === "you" || e.who === "auto" || e.who === "nightlight" ? e.who : "device";
+      out.push({ id: e.id, at: e.at?.getTime() ?? 0, who: w, deviceId: e.deviceId ?? undefined, text: e.message,
         dot: e.severity === "info" ? "ok" : e.severity, problem: e.severity !== "info" });
     }
     return out.sort((a, b) => b.at - a.at);

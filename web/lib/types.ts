@@ -90,14 +90,40 @@ export interface TrustDoc {
 
 export interface EventDoc {
   id: string;
-  deviceId?: string;
+  deviceId?: string | null;
   kind: string;
   severity: "crit" | "warn" | "info";
   message: string;
   at?: Date | null;
   demoGeneration?: number;
   realm?: "real";
-  who?: "you" | "device" | "auto";
+  who?: "you" | "device" | "auto" | "nightlight";
+}
+
+/** One history point for a real device: `users/{uid}/devices/{deviceId}/history/{YYYYMMDDTHHMMSS}`, at most one per
+ * 5 minutes, kept 8 days. Percentages, or null when the device didn't report that value. */
+export interface HistoryPoint {
+  id: string;
+  at: Date | null;
+  cpu: number | null;
+  mem: number | null;
+  disk: number | null;
+  status: "ok" | "warn" | "crit";
+  problems: number;
+}
+
+/** A web address Nightlight checks from the internet every 5 minutes: `users/{uid}/watches/{watchId}`.
+ * "ok" means it answered below HTTP 500. */
+export interface Watch {
+  id: string;
+  name: string;
+  url: string;
+  tags?: string[];
+  status: "ok" | "crit" | "unknown";
+  httpStatus?: number | null;
+  latencyMs?: number | null;
+  lastCheckedAt?: Date | null;
+  lastChange?: Date | null;
 }
 
 export interface UserDoc {

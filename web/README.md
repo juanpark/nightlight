@@ -21,6 +21,10 @@ committed. Data shapes and the approval flow: [`../docs/API.md`](../docs/API.md)
 | `lib/firebase.ts`, `lib/api.ts` | runtime config, Firebase, API calls with the ID token, SSE over POST |
 | `lib/data.ts` | live Firestore listeners (own data only), current-generation filter, 5-minute freshness rule |
 | `components/` | `Home` (layout), `Board`, `DeviceDrawer`, `Chat`, `ApprovalCard`, `TrustPanel`, `Activity`, `DemoTools`, `AddDevice`, `PairApprove` |
+| `components/DeviceHistory.tsx`, `Sparkline.tsx` | a real device's last 24 hours / 7 days: status strip and disk, memory and CPU sparklines (`useHistory`, plain SVG) |
+| `components/WatchPanel.tsx`, `WatchedRow.tsx`, `lib/watches.ts` | websites checked from the internet every 5 minutes: add/remove with friendly errors, the "Watched online" row on the board (follows the tag filter) |
+| `lib/notify.ts` | "Notify me": browser notifications for new serious real events while the tab is open (no service worker; switch kept in localStorage) |
+| `components/AwayBanner.tsx` | "N things happened while you were away" after 30+ minutes, with a Summarise button that asks the chat (last visit in localStorage per user) |
 | `app/install.sh`, `app/uninstall.sh`, `lib/installScript.ts` | the one-line installer: downloads `/nightlight_helper.py` from this origin, checks its sha256, then `enrol` (with a code) or `pair`, then `install` |
 | `app/pair` | `/pair?code=…`, the page a phone opens from a device's QR code: Google sign-in, then Approve |
 
