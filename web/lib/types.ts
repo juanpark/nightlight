@@ -44,6 +44,7 @@ export interface Permissions {
 }
 
 export interface Device {
+  archived?: boolean;
   id: string;
   name: string;
   kind?: string;

@@ -32,7 +32,8 @@ CLAIM_MIN_SECONDS = 4
 JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"},
         "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"},
         "fix": {"label": "Clean up space", "riskClass": "service"},
-        "update_helper": {"label": "Update the helper", "riskClass": "service"}}
+        "update_helper": {"label": "Update the helper", "riskClass": "service"},
+        "remove_device": {"label": "Remove a device", "riskClass": "service"}}
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
 FIX = {
@@ -340,8 +341,10 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
     return db.run_transaction(run)
 
 
-def leave(token: str) -> dict:
-    """The helper revokes its own token (on uninstall) and its device goes offline."""
+def leave(token: str, cleanup: str | None = None) -> dict:
+    """The helper revokes its own token (it uninstalled itself, from the app or by hand): the device is archived and
+    a removal the owner asked for is closed, in one transaction."""
+    from . import archive
     tref = tokens_ref().document(_sha(token))
 
     @firestore.transactional
@@ -352,12 +355,10 @@ def leave(token: str) -> dict:
             raise ApiError(401, "invalid_token")
         dref = db.device(t["uid"], t["deviceId"])
         dsnap = dref.get(transaction=tx)
+        if dsnap.exists and not (dsnap.to_dict() or {}).get("archived"):
+            archive.left(tx, t["uid"], t["deviceId"], dsnap, cleanup)  # reads first, then writes
+            tx.update(dref, {"uninstalled": True})
         tx.update(tref, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
-        if dsnap.exists:
-            tx.update(dref, {"status": "offline", "health": "unknown", "revoked": True, "uninstalled": True})
-            tx.delete(db.client().collection("realDevices").document(f"{t['uid']}__{t['deviceId']}"))
-            event(tx, t["uid"], t["deviceId"], "left", "info",
-                  f"{dsnap.to_dict().get('name', 'A device')} was uninstalled and left your map.", who="device")
 
     db.run_transaction(run)
     return {"ok": True}
@@ -509,9 +510,27 @@ def _fix_card(device: dict, params: dict) -> dict:
             "rollback": undo, "blastRadius": [device["id"]], "riskClass": JOBS["fix"]["riskClass"]}
 
 
+def _remove_card(device: dict, params: dict) -> dict:
+    from .archive import ARCHIVE_DAYS, can_self_uninstall
+    if params or device.get("archived") or device.get("kind") == "watched":
+        raise ValueError("not_applicable")
+    name = device.get("name", "this device")
+    itself = not view(device).get("stale") and not device.get("revoked") and can_self_uninstall(device)
+    return {"svcId": None, "plan": f"Remove {name} from Nightlight.",
+            "dryRun": ("The helper on it uninstalls itself (stops its background service, deletes its files and its "
+                       "key) and the device leaves your map." if itself else
+                       "It isn't reporting (or its helper is too old to uninstall itself), so its access is cut now "
+                       "and it leaves your map; to delete the helper's files, run the uninstall line on it."),
+            "rollback": f"Its history, notes and activity are kept for {ARCHIVE_DAYS} days, then deleted. To bring it "
+                        "back, add it again (it becomes a new device).",
+            "blastRadius": [device["id"]], "riskClass": JOBS["remove_device"]["riskClass"]}
+
+
 def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     """The approval card for a real-device job. ValueError when it doesn't apply, including when the device's owner
     hasn't allowed this job on this target on the device itself."""
+    if action_type == "remove_device":
+        return _remove_card(device, params)
     if action_type == "fix":
         return _fix_card(device, params)
     if action_type == "restart_service":
@@ -898,7 +917,9 @@ def view(doc: dict, now: datetime | None = None) -> dict:
 
 
 def is_current(doc: dict, generation: int) -> bool:
-    """Real devices are always part of the home; simulated ones only in the current demo generation."""
+    """Real devices are part of the home until removed (archived); simulated ones only in the current generation."""
+    if doc.get("archived"):
+        return False
     return doc.get("realm") == "real" or doc.get("demoGeneration") == generation
 
 

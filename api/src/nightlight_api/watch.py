@@ -289,6 +289,11 @@ def sweep() -> dict:
             silent += _mark_silent(d["uid"], d["deviceId"])
         except Exception as e:  # one bad record never stops the sweep
             log.warning("sweep device failed: %s", type(e).__name__)
+    try:
+        from . import archive
+        pruned += archive.purge_due()  # removed devices whose 30 days are up
+    except Exception as e:
+        log.warning("sweep purge failed: %s", type(e).__name__)
     rows = list(watch_registry().stream())  # small: at most a few hundred rows
     for r in rows:  # rows from before ordering existed: give them a place in the queue (oldest first)
         if time.monotonic() - started > SWEEP_BUDGET:

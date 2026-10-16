@@ -206,6 +206,16 @@ freed). Permissions: `cleanup` (bool) in `POST /api/devices/{id}/permissions`.
 `update_by_hand` (helper older than 0.9: rerun the install line once), `updates_off`, `device_not_reporting`,
 `resetting`. The result goes to Activity. Permissions add `updates` (default true) and `autoUpdate` (default false).
 
+**Removing a device.** `POST /api/devices/{id}/remove {}` (signed-in owner; the confirmation in the app is the
+approval) → `202 {removed: "asked_device", actionId}` when the helper (0.9.6+) will uninstall itself, or
+`{removed: "access_cut"}` when the device is silent, revoked or older: tokens revoked and the device archived now.
+From chat the agent's `remove_device` tool puts up a pending card; approving it does the same. The helper's
+`POST /helper/leave {"cleanup": "full"|"files_left"}` (body optional) archives the device and closes the removal in one
+transaction. Archived devices carry `archived`, `archivedAt`, `purgeAt` (30 days); they are hidden from the map and
+the agent. `GET /api/devices/removed` lists them; `DELETE /api/devices/{id}` deletes an archived device and its
+services, history, notes, events and actions now (`409 remove_first` if it isn't archived). The sweep purges the
+rest when `purgeAt` passes.
+
 **Notebook.** `users/{uid}/devices/{id}/notes/{noteId}` `{text, by: "nightlight"|"you", at}`, read with Firestore.
 `POST /api/devices/{id}/notes {"text"}` (201; `422` with `msg: "looks_secret"` when it looked like a secret),
 `DELETE /api/devices/{id}/notes/{noteId}`. At most 30 per device.

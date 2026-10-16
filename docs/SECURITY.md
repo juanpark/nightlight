@@ -45,6 +45,7 @@ The server sends a job **name** and a **target**, never a command. The helper (`
 | `diagnose` | `docker inspect` / `systemctl show` (status only); `docker logs --tail 30` / `journalctl -n 30` only with `allow logs` | target is in the local `allow diagnose` list |
 | `fix` | one clean-up from a fixed list: empty `~/.Trash` (macOS), `brew cleanup -s`, `npm cache clean --force`, empty Xcode DerivedData, `docker image prune -af`, `sudo -n apt-get clean`, `sudo -n journalctl --vacuum-size=200M`; directories are emptied without following links | strict: `allow fix all`; app-managed: the "clean up space" switch; always an approval card |
 | `update_helper` | downloads `/helper/release/nightlight_helper.py` and `.sig` (at most 1 MB), verifies the ECDSA P-256 signature with the system `openssl` against the public key built into the running helper, requires a newer version equal to the one asked for and a passing `version` self-test, keeps the previous copy, then restarts in place | app-managed: "updates" on (default) and the owner's tap (or "automatically"); strict: `allow update all` |
+| `remove_device` | tells Nightlight it is leaving (the token is revoked), deletes its own files and config, removes its service definition, then stops its service; on Linux without password-free sudo it leaves a dormant stub that exits at once | always allowed (both modes): it only removes Nightlight itself; always an approval (card or the app's confirmation) |
 | `inspect` | a fixed catalogue of read-only checks, at most 4 per job: `du -sk` over a fixed list of known folders (sizes only, no file names), `ps` (program names only, no arguments), `apt list --upgradable` / `softwareupdate -l` / `brew outdated`, `docker system df`, a DNS lookup and an HTTPS connection to www.google.com, load average, failing services | strict: `allow inspect all`; app-managed: the "check why something stopped" switch |
 
 - Commands are fixed argument lists; nothing from the server reaches a shell. Unknown job types do nothing. The
@@ -69,6 +70,9 @@ The helper itself runs as the owner's normal user (never installed as root; the 
 `NoNewPrivileges=yes`), keeps its config and token in an owner-only directory and file (0700 / 0600, never through a
 symbolic link), talks only HTTPS (plain HTTP only to a local development server on the same machine) and never
 follows redirects.
+
+**Removed or revoked.** A helper whose token is refused (`401`) stops with a clean exit, so the service manager doesn't
+restart it in a loop; it starts again only at the next boot or login, and stops again the same way.
 
 **Signed updates.** The signing key lives only on the maintainer's machine (never in git, the image or the cloud);
 `scripts/sign_helper.sh` signs, and `scripts/deploy_api.sh` refuses to ship a release whose signature doesn't match

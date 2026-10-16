@@ -169,7 +169,7 @@ def _propose_real(tx, uid, user, device, services, action_type, params, generati
     existing = db.action(uid, aid).get(transaction=tx)
     if existing.exists:
         return dict(existing.to_dict(), id=aid)  # recovery first: identity never depends on current state
-    if real.view(device).get("stale"):
+    if real.view(device).get("stale") and action_type != "remove_device":  # removing a silent device is the point
         raise ValueError("device_not_reporting")
     c = real.card(device, _by_id(services), action_type, params)
     action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device["id"], "params": params, **c,
@@ -178,6 +178,35 @@ def _propose_real(tx, uid, user, device, services, action_type, params, generati
               "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
     tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
     return action
+
+
+def approved_job(uid: str, device_id: str, action_type: str, params: dict, *, session_id: str | None,
+                 turn_id: str) -> dict:
+    """A real job the owner asked for directly in the app (their confirmation is the approval): no pending card."""
+
+    @firestore.transactional
+    def run(tx):
+        user = db.user(uid).get(transaction=tx).to_dict()
+        _require_ready(user)
+        dsnap = db.device(uid, device_id).get(transaction=tx)
+        if not dsnap.exists:
+            raise not_found()
+        device = dict(dsnap.to_dict(), id=device_id)
+        generation = user.get("demoGeneration")
+        key = proposal_key(generation, turn_id, device_id, None, action_type, params)
+        aid = make_action_id(key)
+        existing = db.action(uid, aid).get(transaction=tx)
+        if existing.exists and existing.to_dict().get("status") in ("approved", "running"):
+            return dict(existing.to_dict(), id=aid)
+        c = real.card(device, {}, action_type, params)
+        a = {"proposalKey": key, "type": action_type, "deviceId": device_id, "params": params, **c,
+             "status": "approved", "demoGeneration": generation, "deviceVersion": device.get("version"),
+             "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real", "sessionId": session_id,
+             "turnId": turn_id, "decision": {"by": "user", "decision": "approve"}, "createdAt": _now()}
+        tx.set(db.action(uid, aid), a)
+        return dict(a, id=aid)
+
+    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
 
 
 def decide(uid: str, action_id_: str, decision: str, note: str | None = None) -> tuple[int, dict]:

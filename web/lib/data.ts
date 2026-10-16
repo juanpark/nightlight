@@ -48,7 +48,7 @@ const current = (gen: number | undefined) => (d: { realm?: string; demoGeneratio
   d.realm === "real" || d.demoGeneration === gen;
 
 export function useDevices(uid: string | null, gen: number | undefined): Device[] {
-  return useCollection<Device>(uid, ["devices"]).filter(current(gen));
+  return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived).filter(current(gen));
 }
 
 export function useServices(uid: string | null, deviceId: string | null): Service[] {

@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, archive, db, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -287,6 +287,8 @@ def decide(action_id: str, body: DecideBody, uid: str = Depends(current_uid)):
         raise not_found()
     note = scrub(body.note)[0] if body.note else None
     status, payload = actions.decide(uid, action_id, body.decision, note)
+    if body.decision == "approve":
+        archive.after_approval(uid, action_id)  # a removal the device can't do itself finishes now
     return JSONResponse(payload, status_code=status)
 
 
@@ -556,12 +558,38 @@ def pair_decide(code: str, body: PairDecideBody, request: Request, uid: str = De
     return real.pair_decide(uid, _pair_code(code), body.approve)
 
 
+class LeaveBody(Strict):
+    cleanup: Literal["full", "files_left"] | None = None
+
+
 @app.post("/helper/leave")
-def helper_leave(body: Empty, request: Request):
+def helper_leave(body: LeaveBody, request: Request):
     token = request.headers.get("x-device-token", "")
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
-    return real.leave(token)
+    return real.leave(token, body.cleanup)
+
+
+@app.post("/api/devices/{device_id}/remove", status_code=202)
+def remove_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Remove a real device (the owner confirmed in the app): its helper uninstalls itself if it can; otherwise its
+    access is cut now. Either way it leaves the map and is archived for 30 days."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return archive.request(uid, device_id)
+
+
+@app.get("/api/devices/removed")
+def removed_devices(uid: str = Depends(current_uid)):
+    return {"devices": archive.removed(uid)}
+
+
+@app.delete("/api/devices/{device_id}")
+def forget_device(device_id: str, uid: str = Depends(owner_uid)):
+    """Forget a removed device for good: its history, notes and activity are deleted now."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return archive.forget(uid, device_id)
 
 
 @app.post("/helper/enrol", status_code=201)

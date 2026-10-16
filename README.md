@@ -121,6 +121,8 @@ checks every minute (a TCP connect to a port it saw open).
 | Playbooks | known problems (disk filling up, slow, internet, updates) written down once as data (`api/src/nightlight_api/playbooks.yaml`): checks run, causes are matched in code and safe clean-ups come up as cards, with no AI call; "Checkups" in the device drawer, or `run_playbook` in chat |
 | Safe clean-ups | empty the Trash, Homebrew / npm caches, Xcode build data, unused Docker images, apt cache, system journal; each one an approval card that says honestly whether it can be undone, and reports the space freed |
 | Signed updates from the app | "Update available" on a device, one tap; the helper installs a new version only if it is signed with Nightlight's offline release key, is newer and passes a self-test, keeps the old one (`nightlight rollback`); optional "install signed updates automatically" |
+| Remove a device | "Remove Sadika's Mac" in the chat (a card) or "Remove this device…" under the device: the helper uninstalls itself (or, if the device is silent or its helper too old, its access is cut at once) and the device leaves the map; its history, notes and activity stay archived 30 days, then are deleted ("forget for good" deletes them now) |
+| Knows itself | the agent answers questions about Nightlight (adding, removing, updating, uninstalling, remote access, privacy) from the product's own guide (`api/src/nightlight_api/guide.yaml`) through a tool, never from memory |
 | Device notebook | Nightlight notes what it learned about a device (causes, quirks, what worked) and reads it before investigating; owners add their own notes |
 | Known and snoozed problems | "I know, leave it" or "Snooze a week"; the health light counts only problems that still need a look; a problem that gets worse comes back |
 | Activity | who did what (you, the device, Nightlight), filters by device, kind and time, grouped by day |
@@ -228,8 +230,10 @@ contract is in [`docs/API.md`](docs/API.md); sample data for every state is in [
 
 ## Known limits
 
-- Real-device jobs are restarting an allowed container or failed system service, and looking into an allowed target.
-  Everything else is explained, not changed. The trust ladder applies to the sample home only.
+- Real-device jobs are a fixed list: read-only checks, restarting an allowed container or failed system service, safe
+  clean-ups, signed helper updates and removing the device. Everything else is explained, not changed. The trust
+  ladder applies to the sample home only.
+- There is no "delete my account" yet; removed devices are deleted after 30 days or at once with "forget for good".
 - A real job approved while its device is offline waits until the device reports again (or a reset withdraws it).
 - Discovery needs the owner to run it on the device; mDNS discovery is Linux only. Restarting services needs systemd.
 - Browser notifications work only while the tab is open (no push service).

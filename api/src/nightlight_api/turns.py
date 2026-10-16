@@ -28,7 +28,7 @@ from .redact import scrub, scrub_value
 
 APP = "nightlight"
 ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server", "restart_container", "restart_service",
-                "clean_up"}
+                "clean_up", "remove_device"}
 
 
 def _utcnow() -> datetime:

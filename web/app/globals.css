@@ -228,3 +228,7 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .step-details pre { white-space: pre-wrap; font-size: 11px; max-height: 220px; overflow: auto; margin: 4px 0;
   padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
 @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+
+.remove-device { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+.remove-confirm { padding: 8px 10px; border: 1px solid var(--crit); border-radius: 8px; }
+button.danger { background: var(--crit); color: #fff; border-color: var(--crit); }

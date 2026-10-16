@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.5"
+VERSION = "0.9.6"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1094,6 +1094,10 @@ def run_job(job, wait=5):
     """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
     (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
     kind, params = job.get("type"), job.get("params")
+    if kind == "remove_device":  # allowed in both modes: it only removes Nightlight itself
+        ok, summary = remove_from_app()
+        _RESTART.append("exit")  # nothing to restart into: the loop ends after reporting
+        return ok, summary, None
     if kind == "update_helper":
         return self_update(params.get("version") if isinstance(params, dict) else None)
     if kind == "fix":
@@ -1291,6 +1295,11 @@ def _remember_about(cfg, body):
 
 def run(every):
     """Keep reporting; network or server trouble is retried with growing waits, a revoked token stops."""
+    try:
+        if _load().get("removed"):
+            sys.exit(0)  # removed from the app; only the service definition is left (it needs an administrator)
+    except (OSError, ValueError):
+        pass
     wait = every
     while True:
         try:
@@ -1298,8 +1307,12 @@ def run(every):
         except Exception as e:  # never let one bad report end monitoring
             print(f"Report failed: {type(e).__name__}")
             status = 0
-        if status == 401:
-            sys.exit(1)
+        if "exit" in _RESTART:
+            sys.exit(0)
+        if status == 401:  # removed or revoked in the app: stop for good (a clean exit isn't restarted)
+            print("This device was removed from Nightlight; the helper stops here. To delete its files, run the uninstall "
+                  "line from the Nightlight app on this device.")
+            sys.exit(0)
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
             sys.stdout.flush()
             os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
@@ -1739,6 +1752,59 @@ def uninstall():
         except OSError:
             pass
     print("Uninstalled. Nothing of Nightlight is left running on this device.")
+
+
+def _sudo_ok():
+    if os.geteuid() == 0:
+        return True
+    try:
+        return subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def remove_from_app():
+    """The owner removed this device in the app (approved). Tell Nightlight first (that closes the card and archives
+    the device), then delete this helper's files, then its service definition, and stop the service last: stopping
+    it ends this very process. Where the service can't be removed without a password (Linux without password-free
+    sudo), a dormant stub stays and says how to finish; it never runs again. Returns (ok, summary) when it is still
+    alive afterwards."""
+    cfg = _load()
+    linux_full = sys.platform == "darwin" or not os.path.exists(UNIT) or (_unit_is_mine() and _sudo_ok())
+    try:
+        _post(check_api(cfg["api"]) + "/helper/leave", {"cleanup": "full" if linux_full else "files_left"},
+              {"X-Device-Token": cfg["token"]})
+    except (OSError, ValueError, KeyError):
+        pass
+    short = os.path.expanduser("~/.local/bin/nightlight")
+    if _is_our_wrapper(short) and not os.path.islink(os.path.dirname(short)):
+        os.unlink(short)
+    if not linux_full:  # keep the program (the service still points at it) but forget the key: it exits at once
+        _save_config({"removed": True})
+        return True, "Removed from Nightlight. The background service needs an administrator to remove it: run " \
+                     "the uninstall line from the Nightlight app (ask \"how do I uninstall the helper\") on the device."
+    for path in (os.path.join(APP_DIR, "nightlight_helper.py"), os.path.join(APP_DIR, "nightlight_helper.prev.py"),
+                 os.path.join(APP_DIR, ".update.lock"), CONFIG):
+        if os.path.isfile(path) and not os.path.islink(path):
+            os.unlink(path)
+    for d in (APP_DIR, CONFIG_DIR):
+        try:
+            os.rmdir(d)
+        except OSError:
+            pass
+    if sys.platform == "darwin":
+        if os.path.exists(PLIST) and not os.path.islink(PLIST):
+            os.unlink(PLIST)
+        sys.stdout.flush()
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], capture_output=True, check=False)
+    elif os.path.exists(UNIT):
+        subprocess.run(_as_root(["systemctl", "disable", "nightlight-helper.service"]), capture_output=True,
+                       check=False)
+        subprocess.run(_as_root(["rm", "-f", UNIT]), capture_output=True, check=False)
+        subprocess.run(_as_root(["systemctl", "daemon-reload"]), capture_output=True, check=False)
+        sys.stdout.flush()
+        subprocess.run(_as_root(["systemctl", "stop", "nightlight-helper.service"]), capture_output=True, check=False)
+    return True, "Removed: the helper uninstalled itself."
 
 
 WRAPPER_MARK = "# nightlight-helper wrapper (managed; safe to delete with `nightlight uninstall`)"

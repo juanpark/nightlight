@@ -7,6 +7,7 @@ import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
 import HelperUpdate from "./HelperUpdate";
 import Notebook from "./Notebook";
+import RemoveDevice from "./RemoveDevice";
 import Permissions from "./Permissions";
 
 function Vital({ label, value }: { label: string; value?: number | null }) {
@@ -134,6 +135,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, onAsk, 
         actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
       {device.kind !== "watched" && <Notebook uid={uid} deviceId={device.id} />}
       {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
+      {real && device.kind !== "watched" && <RemoveDevice device={device} onRemoved={onClose} />}
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
         <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
         {device.findings?.[0] && <button onClick={() => onAsk(`What should I do about this on my ${device.name}: ${device.findings![0].message}`)}>

@@ -27,6 +27,7 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
     restart_service: `Preparing a fix for the ${name}…`, clean_up: `Preparing a clean-up for the ${name}…`,
     inspect: `Looking around the ${name}…`, run_playbook: `Running a checkup on the ${name}…`,
     write_note: `Noting what I learned about the ${name}…`, how_nightlight_works: "Checking how Nightlight does this…",
+    remove_device: `Preparing to remove the ${name}…`,
   } as Record<string, string>)[e.name] ?? `Working on the ${name}…`;
 }
 
