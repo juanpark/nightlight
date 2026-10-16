@@ -394,8 +394,14 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
                 _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
             tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
             return {"ok": True, "actionId": action_id_, "status": a["status"]}
-        a["result"] = {"ok": ok, "summary": text} if a["type"] == "fix" else \
+        a["result"] = {"ok": ok, "summary": text} if a["type"] in ("fix", "update_helper") else \
             {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
+        if not a.get("sessionId"):  # asked from the app, not from a chat (a helper update): Activity tells it
+            real.event(tx, uid, device_id, a["type"], "info" if ok else "warn",
+                       f"{(dsnap.to_dict() or {}).get('name', 'A device')}: {text}")
+            a["followUp"] = "none"
+            tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
+            return {"ok": True, "actionId": action_id_, "status": a["status"]}
         if ok and a.get("svcId"):
             tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state, "failed": False},
                    merge=True)  # recovered: no new restart card until the device reports it failed again

@@ -215,3 +215,6 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .checkup-result { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
 .checkup-row { padding: 4px 0; border-top: 1px dashed var(--line); }
 .checkup-row:first-of-type { border-top: 0; }
+
+.update-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; padding: 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px; }

@@ -20,6 +20,7 @@ service-account*.json
 .idea/
 
 # Build and dependency output
+api/src/nightlight_api/release/
 node_modules/
 .next/
 dist/

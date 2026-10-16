@@ -5,6 +5,7 @@ import { useServices } from "@/lib/data";
 import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
+import HelperUpdate from "./HelperUpdate";
 import Notebook from "./Notebook";
 import Permissions from "./Permissions";
 
@@ -83,6 +84,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, onAsk, 
         <Vital label="Memory" value={device.vitals?.mem} />
         <Vital label="CPU" value={device.vitals?.cpu} />
       </div>
+      {real && device.kind !== "watched" && <HelperUpdate device={device} actions={actions}
+        origin={typeof window === "undefined" ? "" : window.location.origin} />}
       {real && <DeviceHistory uid={uid} deviceId={device.id} />}
       {(device.findings ?? []).map((f, i) => {
         const state = f.state ?? "new";

@@ -12,9 +12,9 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 import re
 
-from . import db
+from . import db, release
 from .errors import ApiError, not_found
-from .ids import new_id
+from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub_value
 
 CODE_TTL = timedelta(minutes=10)
@@ -31,7 +31,8 @@ CLAIM_MIN_SECONDS = 4
 # that machine; the server sends a job name and a target, never a command.
 JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"},
         "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"},
-        "fix": {"label": "Clean up space", "riskClass": "service"}}
+        "fix": {"label": "Clean up space", "riskClass": "service"},
+        "update_helper": {"label": "Update the helper", "riskClass": "service"}}
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
 FIX = {
@@ -55,7 +56,7 @@ FIX = {
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 READS = {"diagnose": {"label": "Look into", "riskClass": "read"},
          "inspect": {"label": "Look around", "riskClass": "read"}}
-ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix")
+ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
 # The helper's fixed read-only checks (`inspect`); it runs only these names, at most MAX_INSPECT per job.
 INSPECT = {"disk": "which known folders take the most space", "processes": "which programs use the most memory and CPU",
            "updates": "which updates are waiting (can take up to a minute)", "docker": "how much space Docker uses",
@@ -634,8 +635,9 @@ def heartbeat(token: str, facts: dict) -> dict:
         return device_id, _hand_over(tx, approved, user), _poll_every(user), watch_list, about
 
     device_id, jobs, poll, watch_list, about = db.run_transaction(run)
+    offer = release.latest()
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
-            "watch": watch_list, **about}
+            "watch": watch_list, **about, **({"latestHelper": offer["version"]} if offer else {})}
 
 
 SEVERITY = {"info": 1, "warn": 2, "crit": 3}
@@ -675,7 +677,8 @@ def event(tx, uid: str, device_id: str | None, kind: str, severity: str, message
                                                    "at": firestore.SERVER_TIMESTAMP})
 
 
-DEFAULT_PERMISSIONS = {"diagnose": True, "cleanup": False, "logs": [], "restart_container": [], "restart_service": []}
+DEFAULT_PERMISSIONS = {"diagnose": True, "cleanup": False, "updates": True, "autoUpdate": False, "logs": [],
+                       "restart_container": [], "restart_service": []}
 
 
 def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
@@ -698,12 +701,18 @@ def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
                 or not set(perms["logs"]) <= containers | units:
             raise ApiError(422, "unknown_target")  # only things this device reported
         before = d.get("permissions") or DEFAULT_PERMISSIONS
-        clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")), **{k: sorted(set(perms[k])) for k in
+        clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
+                 "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
+                 **{k: sorted(set(perms[k])) for k in
                                                          ("logs", "restart_container", "restart_service")}}
         tx.update(ref, {"permissions": clean})
         words = []
         if clean["diagnose"] != before.get("diagnose"):
             words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
+        if clean["updates"] != (before.get("updates") is not False):
+            words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
+        if clean["autoUpdate"] != bool(before.get("autoUpdate")):
+            words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
         if clean["cleanup"] != bool(before.get("cleanup")):
             words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
         for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
@@ -815,6 +824,51 @@ def inspect_ok(device: dict, what) -> list[str]:
     if any(n not in offered for n in names):
         raise ValueError("not_allowed_on_device")
     return names
+
+
+def request_update(uid: str, device_id: str) -> dict:
+    """The owner taps Update: an approved job (the tap is the approval) to install the signed release on offer."""
+    offer = release.latest()
+    if not offer:
+        raise ApiError(409, "no_release")
+    ref = db.device(uid, device_id)
+
+    @firestore.transactional
+    def run(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("revoked"):
+            raise not_found()
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
+        if user.get("demo", {}).get("state") != "ready":
+            raise ApiError(409, "resetting")
+        if not release.newer(offer["version"], d.get("helperVersion")):
+            raise ApiError(409, "up_to_date")
+        if "signed" not in (d.get("allowedJobs") or {}).get("update", []):
+            raise ApiError(409, "update_by_hand" if not release.newer(d.get("helperVersion"), "0.8.99")
+                           else "updates_off")
+        if view(dict(d, id=device_id)).get("stale"):
+            raise ApiError(409, "device_not_reporting")
+        key = proposal_key(user.get("demoGeneration"), "app_update", device_id, None, "update_helper",
+                           {"version": offer["version"]})
+        aid = make_action_id(key)
+        existing = db.action(uid, aid).get(transaction=tx)
+        if existing.exists and existing.to_dict().get("status") in ("approved", "running"):
+            return dict(existing.to_dict(), id=aid)
+        a = {"proposalKey": key, "type": "update_helper", "deviceId": device_id, "params": {"version": offer["version"]},
+             "svcId": None, "plan": f"Update the Nightlight helper on the {d.get('name')} from "
+             f"{d.get('helperVersion')} to {offer['version']}.",
+             "dryRun": "The helper downloads the new version, installs it only if Nightlight's signature checks out "
+                       "and it passes a self-test, then restarts itself.",
+             "rollback": "On the device: nightlight rollback (the previous version is kept).",
+             "blastRadius": [device_id], "riskClass": "service", "status": "approved", "realm": "real",
+             "demoGeneration": user.get("demoGeneration"), "deviceVersion": d.get("version"),
+             "sessionId": None, "turnId": None, "decision": {"by": "user", "decision": "approve"},
+             "createdAt": _now()}
+        tx.set(db.action(uid, aid), a)
+        return dict(a, id=aid)
+
+    return db.run_transaction(run)
 
 
 def token_owner(tx, token: str) -> tuple[str, str]:

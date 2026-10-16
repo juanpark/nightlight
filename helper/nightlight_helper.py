@@ -50,7 +50,7 @@ import urllib.request
 VERSION = "0.9.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
-JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix")
+JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")  # container names
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")  # containers or system services (units)
 _POLL = {"every": 0}  # the server asks for quicker checks while the owner is chatting
@@ -264,11 +264,13 @@ def _allowed():
         return _from_remote(cfg.get("remote") or {})
     allow = cfg.get("allow") or {}
     out = {k: [n for n in v if _name_re(k).fullmatch(n)][:20] for k, v in allow.items()
-           if k in JOB_TYPES and k not in ("inspect", "fix") and v}
+           if k in JOB_TYPES and k not in ("inspect", "fix", "update") and v}
     if "all" in (allow.get("inspect") or []):
         out["inspect"] = sorted(INSPECT)
     if "all" in (allow.get("fix") or []) and _available_fixes():
         out["fix"] = _available_fixes()
+    if "all" in (allow.get("update") or []):
+        out["update"] = ["signed"]
     return out
 
 
@@ -290,6 +292,8 @@ def _from_remote(remote):
         out["inspect"] = sorted(INSPECT)
     if remote.get("cleanup") is True and _available_fixes():
         out["fix"] = _available_fixes()
+    if remote.get("updates", True) is not False:
+        out["update"] = ["signed"]
     return out
 
 
@@ -336,7 +340,7 @@ def _restart_unit(unit, wait):
 def set_allowed(kind, name, on):
     if kind not in JOB_TYPES:
         sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
-    if kind in ("inspect", "fix") and name != "all":
+    if kind in ("inspect", "fix", "update") and name != "all":
         sys.exit(f"Use: allow {kind} all")
     if not _name_re(kind).fullmatch(name):
         sys.exit("That isn't a valid name.")
@@ -769,10 +773,120 @@ def run_fix(name):
     return ok, ((f"Done.{freed}" if ok else f"It didn't fully work: {why}.{freed}").strip()), None
 
 
+# ------------------------------------------------------------------ update: signed new versions, from the app
+# The server can only offer a file; it is installed only if it is signed with Nightlight's release key (kept offline,
+# never in the cloud), is newer than this one and passes a self-test. A hacked server can't make this run its code.
+
+RELEASE_KEY = """-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHq9FhsTSpuLBzuLSKtoGUdlJWmkr
+2m7CnjJbck5mPP0BZNU1eZjNWa5aFDZJGv3mnZKXHrLTxwIwrsumm7hmGw==
+-----END PUBLIC KEY-----
+"""
+MAX_HELPER_BYTES = 1024 * 1024
+_RESTART = []  # set after a successful update: the loop restarts itself in place once the result is reported
+
+
+def _ver(v):
+    try:
+        return tuple(int(x) for x in str(v).split("."))
+    except ValueError:
+        return ()
+
+
+def update_allowed():
+    try:
+        cfg = _load()
+    except (OSError, ValueError):
+        return False
+    if cfg.get("manage") == "app":
+        return (cfg.get("remote") or {}).get("updates", True) is not False
+    return "all" in ((cfg.get("allow") or {}).get("update") or [])
+
+
+def _get(url, limit):
+    """GET bytes (at most `limit`), no redirects. None on any failure."""
+    try:
+        with _OPENER.open(urllib.request.Request(url, method="GET"), timeout=30) as r:
+            if r.status != 200:
+                return None
+            data = r.read(limit + 1)
+            return data if len(data) <= limit else None
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+        return None
+
+
+def _signed(data, sig):
+    """True only if `sig` is a valid release-key signature over `data` (checked by the system's openssl)."""
+    tool = shutil.which("openssl")
+    if not tool:
+        return False
+    with tempfile.TemporaryDirectory(dir=_own_dir(APP_DIR)) as d:
+        paths = {}
+        for name, content in (("f", data), ("s", sig), ("k", RELEASE_KEY.encode())):
+            paths[name] = os.path.join(d, name)
+            with open(paths[name], "wb") as f:
+                f.write(content)
+        try:
+            r = subprocess.run([tool, "dgst", "-sha256", "-verify", paths["k"], "-signature", paths["s"], paths["f"]],
+                               capture_output=True, text=True, timeout=20, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return r.returncode == 0 and "Verified OK" in r.stdout
+
+
+def self_update(version, api=None):
+    """Install release `version` of the helper. Returns (ok, summary, None)."""
+    if not update_allowed():
+        return False, "Updating from the app isn't allowed on this device (run `nightlight settings`).", None
+    target = os.path.join(APP_DIR, "nightlight_helper.py")
+    if os.path.realpath(sys.argv[0]) != os.path.realpath(target) or os.path.islink(target):
+        return False, "This copy isn't the installed helper, so it wasn't replaced. Run install once.", None
+    if not _ver(version) or _ver(version) <= _ver(VERSION):
+        return False, f"{version} isn't newer than {VERSION}, so nothing changed.", None
+    base = check_api(api or _load()["api"]) + "/helper/release/"
+    data, sig = _get(base + "nightlight_helper.py", MAX_HELPER_BYTES), _get(base + "nightlight_helper.py.sig", 4096)
+    if not data or not sig:
+        return False, "Couldn't download the update; nothing changed.", None
+    if not _signed(data, sig):
+        return False, "The update's signature didn't check out, so it was NOT installed.", None
+    m = re.search(rb'^VERSION = "([0-9.]+)"$', data, re.M)
+    if not m or m.group(1).decode() != version:
+        return False, "The signed file isn't the version that was asked for; nothing changed.", None
+    fd, tmp = tempfile.mkstemp(dir=APP_DIR, prefix=".update-", suffix=".py")
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(tmp, 0o700)
+    try:
+        test = subprocess.run([sys.executable, tmp, "version"], capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        test = None
+    if not test or test.returncode != 0 or test.stdout.strip() != version:
+        os.remove(tmp)
+        return False, "The new version failed its self-test on this device, so it was NOT installed.", None
+    prev = os.path.join(APP_DIR, "nightlight_helper.prev.py")
+    with open(target, "rb") as cur, open(prev + ".tmp", "wb") as out:
+        out.write(cur.read())
+    os.chmod(prev + ".tmp", 0o700)
+    os.replace(prev + ".tmp", prev)  # kept for `nightlight rollback`
+    os.replace(tmp, target)
+    _RESTART.append(True)
+    return True, f"Updated from {VERSION} to {version} (signature checked); restarting.", None
+
+
+def rollback():
+    prev = os.path.join(APP_DIR, "nightlight_helper.prev.py")
+    if not os.path.isfile(prev) or os.path.islink(prev):
+        sys.exit("There is no earlier version to go back to.")
+    os.replace(prev, os.path.join(APP_DIR, "nightlight_helper.py"))
+    print("Back on the earlier version. Restart the background service (or log out and in) to use it.")
+
+
 def run_job(job, wait=5):
     """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
     (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
     kind, params = job.get("type"), job.get("params")
+    if kind == "update_helper":
+        return self_update(params.get("version") if isinstance(params, dict) else None)
     if kind == "fix":
         return run_fix(params.get("recipe") if isinstance(params, dict) else None)
     if kind == "inspect":
@@ -923,6 +1037,11 @@ def once():
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
                 _do_job(api, cfg["token"], job)
+        latest = body.get("latestHelper")
+        fresh = _load()
+        if not _RESTART and isinstance(latest, str) and _ver(latest) > _ver(VERSION) and \
+                fresh.get("manage") == "app" and (fresh.get("remote") or {}).get("autoUpdate") is True:
+            print(self_update(latest, api)[1])  # the owner chose "install signed updates automatically"
     elif status == 401:
         print("This device's access was revoked or is unknown. Enrol again with a new code.")
     else:
@@ -972,6 +1091,9 @@ def run(every):
             status = 0
         if status == 401:
             sys.exit(1)
+        if _RESTART:  # a signed update was installed and reported: become the new version, same process
+            sys.stdout.flush()
+            os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
         wait = every if status == 200 else min(max(wait, every) * 2, 900)
         _wait_and_claim(wait if status == 200 else wait)
 
@@ -1002,6 +1124,8 @@ def _wait_and_claim(seconds):
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
                 _do_job(api, cfg["token"], job)
+        if _RESTART:
+            return  # an update was installed: the loop restarts into it now
 
 
 def _manage():
@@ -1465,7 +1589,7 @@ def status():
     allowed = _allowed()
     words = {"diagnose": "check why it stopped", "logs": "read recent log lines", "restart_container": "restart",
              "restart_service": "restart the service", "inspect": "look around (reads only)",
-             "fix": "clean up space after you approve"}
+             "fix": "clean up space after you approve", "update": "install signed updates from the app"}
     print("  Nightlight may: " + ("; ".join(f"{words.get(k, k)}: {', '.join(v)}" for k, v in allowed.items())
                                   or "nothing yet"))
 
@@ -1483,6 +1607,9 @@ def settings():
                 "updates, network)?", True):
             allow["diagnose"] = [t for t in targets if TARGET_RE.fullmatch(t)][:20]
             allow["inspect"] = ["all"]
+        if _ask("May you install signed Nightlight updates from the app (each one checked against Nightlight's key)?",
+                True):
+            allow["update"] = ["all"]
         if _ask("May Nightlight clean up space after you approve each time (empty the Trash, clear caches that "
                 "rebuild themselves, remove unused Docker images)?", False):
             allow["fix"] = ["all"]
@@ -1514,6 +1641,8 @@ def main():
     sub.add_parser("uninstall")
     sub.add_parser("status")
     sub.add_parser("settings")
+    sub.add_parser("version")
+    sub.add_parser("rollback", help="go back to the version before the last update")
     sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
     dsc.add_argument("--yes", action="store_true", help="send everything found without asking")
@@ -1536,6 +1665,10 @@ def main():
         uninstall()
     elif a.cmd == "status":
         status()
+    elif a.cmd == "version":
+        print(VERSION)
+    elif a.cmd == "rollback":
+        rollback()
     elif a.cmd == "settings":
         settings()
     elif a.cmd == "joined":

@@ -5,13 +5,13 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from google.cloud import firestore
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, memory, notebook, playbooks, quota, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, db, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -55,6 +55,8 @@ class WatchBody(Strict):
 class PermissionsBody(Strict):
     diagnose: bool
     cleanup: bool = False
+    updates: bool = True
+    autoUpdate: bool = False
     logs: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")]] = Field(max_length=20)
     restart_container: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")]] = \
         Field(max_length=20)
@@ -458,7 +460,7 @@ class HeartbeatBody(Strict):
     failedUnits: list[str] = Field(default_factory=list, max_length=50)
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
-    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect", "fix"],
+    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update"],
                       list[str]] = \
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
@@ -476,6 +478,8 @@ class HeartbeatBody(Strict):
                 raise ValueError("allowedJobs: unknown check")
             if kind == "fix" and not all(t in real.FIX for t in targets):
                 raise ValueError("allowedJobs: unknown clean-up")
+            if kind == "update" and targets != ["signed"]:
+                raise ValueError("allowedJobs: update is [\"signed\"]")
             if len(targets) > 20 or not all(pattern.fullmatch(t) for t in targets):
                 raise ValueError("allowedJobs: at most 20 valid names per job")
         return self
@@ -581,6 +585,33 @@ def helper_job_result(action_id: str, body: JobResultBody, request: Request):
     if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
         raise not_found()
     return actions.job_result(token, action_id, body.ok, body.summary, body.state, body.output)
+
+
+@app.get("/helper/release")
+def helper_release():
+    """The signed helper version on offer ({version, sha256}); devices verify the signature themselves."""
+    offer = release.latest()
+    if not offer:
+        raise not_found()
+    return offer
+
+
+@app.get("/helper/release/{name}")
+def helper_release_file(name: str):
+    data = release.read(name)
+    if data is None:
+        raise not_found()
+    kind = "text/x-python; charset=utf-8" if name.endswith(".py") else "application/octet-stream"
+    return Response(content=data, media_type=kind, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/devices/{device_id}/update", status_code=202)
+def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Install the signed helper release on a real device (the owner's tap is the approval)."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    a = real.request_update(uid, device_id)
+    return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
 @app.post("/helper/discoveries")

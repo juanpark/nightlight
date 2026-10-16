@@ -36,6 +36,8 @@ export interface Service {
 export interface Permissions {
   diagnose: boolean;
   cleanup: boolean;
+  updates: boolean;
+  autoUpdate: boolean;
   logs: string[];
   restart_container: string[];
   restart_service: string[];

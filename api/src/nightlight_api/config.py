@@ -52,6 +52,7 @@ class Settings:
     sweep_invoker: str = os.environ.get("SWEEP_INVOKER", "")
     memory_location: str = os.environ.get("MEMORY_BANK_LOCATION", "global")
     memory_fact_chars: int = 300
+    release_dir: str = os.environ.get("RELEASE_DIR", "")  # the signed helper on offer (default: package "release/")
     memory_recall_seconds: float = 3.0
     memory_write_seconds: float = 10.0
 

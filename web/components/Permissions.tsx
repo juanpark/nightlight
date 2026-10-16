@@ -6,12 +6,15 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { Device, Permissions as Perms, Service } from "@/lib/types";
 
-const DEFAULTS: Perms = { diagnose: true, cleanup: false, logs: [], restart_container: [], restart_service: [] };
+const DEFAULTS: Perms = { diagnose: true, cleanup: false, updates: true, autoUpdate: false, logs: [],
+  restart_container: [], restart_service: [] };
 
 function normal(p?: Partial<Perms> | null): Perms {
   return {
     diagnose: p?.diagnose ?? DEFAULTS.diagnose,
     cleanup: p?.cleanup ?? false,
+    updates: p?.updates ?? true,
+    autoUpdate: p?.autoUpdate ?? false,
     logs: p?.logs ?? [],
     restart_container: p?.restart_container ?? [],
     restart_service: p?.restart_service ?? [],
@@ -23,7 +26,8 @@ const sameSet = (a: string[], b: string[]) => {
   return x.size === y.size && [...x].every((v) => y.has(v));
 };
 
-const samePerms = (a: Perms, b: Perms) => a.diagnose === b.diagnose && a.cleanup === b.cleanup && sameSet(a.logs, b.logs)
+const samePerms = (a: Perms, b: Perms) => a.diagnose === b.diagnose && a.cleanup === b.cleanup
+  && a.updates === b.updates && a.autoUpdate === b.autoUpdate && sameSet(a.logs, b.logs)
   && sameSet(a.restart_container, b.restart_container) && sameSet(a.restart_service, b.restart_service);
 
 /** True when what the device reports applying matches the owner's switches ("*" on the device means everything). */
@@ -139,6 +143,12 @@ export default function Permissions({ device, services }: { device: Device; serv
       <Switch on={want.cleanup} label="Clean up space after you approve"
         hint="(empty the Trash, clear caches that rebuild themselves, remove unused Docker images; a card each time)"
         onChange={(on) => save({ ...want, cleanup: on })} />
+
+      <Switch on={want.updates} label="Install Nightlight updates from the app"
+        hint="(only versions signed by Nightlight; checked on the device)"
+        onChange={(on) => save({ ...want, updates: on, autoUpdate: on && want.autoUpdate })} />
+      {want.updates && <Switch on={want.autoUpdate} label="Install signed updates automatically"
+        hint="(otherwise you tap Update each time)" onChange={(on) => save({ ...want, autoUpdate: on })} />}
 
       <Switch on={allLogs} label="Read recent log lines" hint="(private details hidden on the device first)"
         disabled={targets.length === 0} onChange={(on) => save({ ...want, logs: on ? targets : [] })} />

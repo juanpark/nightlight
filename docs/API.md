@@ -200,6 +200,12 @@ one pending `fix` card is created per allowed clean-up. The library is `api/src/
 `allowedJobs.fix` (helper 0.9+). Always an approval card. `result: {ok, summary}` (the summary says how much space was
 freed). Permissions: `cleanup` (bool) in `POST /api/devices/{id}/permissions`.
 
+**Helper updates.** `GET /helper/release` → `{version, sha256}`; `GET /helper/release/nightlight_helper.py` and
+`.sig` (public). Heartbeat responses carry `latestHelper`. `POST /api/devices/{id}/update {}` (signed-in owner) →
+`202 {actionId, version}`, an approved `update_helper` job; `409` codes: `no_release`, `up_to_date`,
+`update_by_hand` (helper older than 0.9: rerun the install line once), `updates_off`, `device_not_reporting`,
+`resetting`. The result goes to Activity. Permissions add `updates` (default true) and `autoUpdate` (default false).
+
 **Notebook.** `users/{uid}/devices/{id}/notes/{noteId}` `{text, by: "nightlight"|"you", at}`, read with Firestore.
 `POST /api/devices/{id}/notes {"text"}` (201; `422` with `msg: "looks_secret"` when it looked like a secret),
 `DELETE /api/devices/{id}/notes/{noteId}`. At most 30 per device.
