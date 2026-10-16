@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-helper.mjs",
     "dev": "next dev -p 3000",
+    "prebuild": "node scripts/copy-helper.mjs",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"

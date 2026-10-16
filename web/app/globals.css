@@ -117,3 +117,21 @@ code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .signin h1 { margin: 6px 0; }
 .list { display: flex; flex-direction: column; gap: 6px; }
 .list .item { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+
+/* add a device + pairing */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.tabs button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.pairbox .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.code-input { font-family: ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase;
+  width: 12ch; flex: 1 1 12ch; font-size: 16px; }
+.live-status { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; font-weight: 600; }
+.live-status.ok { color: var(--ok); }
+.pulse { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+.soon { color: var(--accent); }
+.pair-page { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.pair-page .modal { display: flex; flex-direction: column; gap: 10px; }
+.pair-page h1 { margin: 4px 0 0; font-size: 22px; }
+.pair-page p { margin: 0; }
+.linkbtn { color: var(--accent); font-weight: 600; }

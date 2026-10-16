@@ -20,4 +20,13 @@ committed. Data shapes and the approval flow: [`../docs/API.md`](../docs/API.md)
 |---|---|
 | `lib/firebase.ts`, `lib/api.ts` | runtime config, Firebase, API calls with the ID token, SSE over POST |
 | `lib/data.ts` | live Firestore listeners (own data only), current-generation filter, 5-minute freshness rule |
-| `components/` | `Home` (layout), `Board`, `DeviceDrawer`, `Chat`, `ApprovalCard`, `TrustPanel`, `Activity`, `DemoTools`, `AddDevice` |
+| `components/` | `Home` (layout), `Board`, `DeviceDrawer`, `Chat`, `ApprovalCard`, `TrustPanel`, `Activity`, `DemoTools`, `AddDevice`, `PairApprove` |
+| `app/install.sh`, `app/uninstall.sh`, `lib/installScript.ts` | the one-line installer: downloads `/nightlight_helper.py` from this origin, checks its sha256, then `enrol` (with a code) or `pair`, then `install` |
+| `app/pair` | `/pair?code=…`, the page a phone opens from a device's QR code: Google sign-in, then Approve |
+
+## Device helper
+
+`/install.sh` serves `public/nightlight_helper.py`, which is **not committed**: `npm run dev` and `npm run build` copy
+it from `../helper/` (`scripts/copy-helper.mjs`). A deploy that uploads only `web/` must copy it in first
+(`cp helper/nightlight_helper.py web/public/`); `.gcloudignore` keeps it in the upload. Without it `/install.sh`
+answers 503.

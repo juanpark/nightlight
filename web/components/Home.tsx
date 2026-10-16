@@ -76,7 +76,7 @@ export default function Home({ user }: { user: User }) {
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "memory" && <MemoryPanel />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} />}
+          {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           <Board devices={devices} selected={selected} onSelect={setSelected} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} device={devices.find((d) => d.id === selected)!}
