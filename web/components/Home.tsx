@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
-import { presented, useActions, useDevices, useEvents, useNow, useTrust, useUserDoc, useWatches } from "@/lib/data";
+import { presented, useActions, useDevices, useDiscoveries, useEvents, useNow, useTrust, useUserDoc, useWatches }
+  from "@/lib/data";
+import FoundNearby from "./FoundNearby";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
 import WatchedRow from "./WatchedRow";
@@ -17,7 +19,7 @@ import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
 import MemoryPanel from "./MemoryPanel";
 
-type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch";
+type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
 
 export default function Home({ user }: { user: User }) {
   const uid = user.uid;
@@ -30,6 +32,9 @@ export default function Home({ user }: { user: User }) {
   const events = useEvents(uid, gen);
   const trust = useTrust(uid, gen);
   const watches = useWatches(uid);
+  const discoveries = useDiscoveries(uid);
+  const waitingFound = discoveries.filter((d) => (d.expiresAt?.getTime() ?? 0) > Date.now())
+    .reduce((n, d) => n + d.items.filter((i) => !i.added).length, 0);
   const notify = useNotifySetting();
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
@@ -86,6 +91,7 @@ export default function Home({ user }: { user: User }) {
         <button onClick={() => toggle("memory")}>Memory</button>
         <button onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
+        <button onClick={() => toggle("found")}>Found nearby</button>
         <button onClick={() => toggle("demo")}>Demo tools</button>
         {user.isAnonymous
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
@@ -112,6 +118,15 @@ export default function Home({ user }: { user: User }) {
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "memory" && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
+          {panel === "found" && <FoundNearby discoveries={discoveries} />}
+          {waitingFound > 0 && panel !== "found" && (
+            <div className="panel needs">
+              <span>Your devices found <strong>{waitingFound}</strong> thing{waitingFound === 1 ? "" : "s"} nearby you
+                can add to the map.</span>
+              <span className="spacer" />
+              <button className="primary" onClick={() => setPanel("found")}>Review</button>
+            </div>
+          )}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
             <div className="chips" aria-label="Show only">

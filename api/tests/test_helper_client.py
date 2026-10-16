@@ -396,3 +396,24 @@ def test_a_stalled_command_cannot_hang_the_helper(helper):  # review 10 rev2 #2
     t = time.time()
     helper._run_both([_sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.3)
     assert time.time() - t < 2
+
+
+def test_discovery_sends_only_what_you_pick_and_never_addresses(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.20": "b8:27:eb:11:22:33",
+                                                        "192.168.1.30": "02:11:22:33:44:55"})
+    monkeypatch.setattr(helper, "_mdns", lambda: {"192.168.1.20": {"Home Assistant"}})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.20": [8123, 22]})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "1")
+    helper.discover()
+    assert len(sent) == 1 and len(sent[0]["items"]) == 1
+    item = sent[0]["items"][0]
+    assert item["guess"] == "Home Assistant" and item["vendor"] == "Raspberry Pi"
+    assert "192.168" not in json.dumps(sent) and "b8:27" not in json.dumps(sent)
+    assert helper._load()["found"][item["cid"]]["ip"] == "192.168.1.20"  # the address stays here
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    sent.clear()
+    helper.discover()
+    assert sent == []  # Enter = send nothing

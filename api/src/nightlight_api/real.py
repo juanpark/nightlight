@@ -231,6 +231,65 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
     return db.run_transaction(run)
 
 
+# ------------------------------------------------------------------ discovery and devices watched by a helper
+
+DISCOVERY_TTL = timedelta(hours=24)
+
+
+def discoveries_ref(uid: str):
+    return db.user(uid).collection("discoveries")
+
+
+def save_discoveries(token: str, items: list[dict]) -> dict:
+    """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list."""
+    @firestore.transactional
+    def run(tx):
+        uid, device_id = token_owner(tx, token)
+        dsnap = db.device(uid, device_id).get(transaction=tx)
+        name = (dsnap.to_dict() or {}).get("name", "A device")
+        tx.set(discoveries_ref(uid).document(device_id), {
+            "items": [{**it, "added": False} for it in items], "by": device_id, "byName": name,
+            "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
+        event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
+        return {"ok": True, "items": len(items)}
+
+    return db.run_transaction(run)
+
+
+def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
+    """Put one found thing on the map, watched by the helper that found it (it checks the thing still answers)."""
+    dref = discoveries_ref(uid).document(helper_id)
+    device_id = new_id("dev").lower()
+
+    @firestore.transactional
+    def run(tx):
+        snap = dref.get(transaction=tx)
+        hsnap = db.device(uid, helper_id).get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d["expiresAt"] < _now() or not hsnap.exists:
+            raise not_found()
+        item = next((it for it in d["items"] if it.get("cid") == cid), None)
+        if not item:
+            raise not_found()
+        if item.get("added"):
+            raise ApiError(409, "already_added")
+        port = next((p for p in item.get("ports") or [] if p in (8123, 32400, 25565, 445, 631, 443, 80, 22)), None)
+        helper_name = hsnap.to_dict().get("name", "your device")
+        tx.update(dref, {"items": [{**it, "added": it.get("cid") == cid or it.get("added")} for it in d["items"]]})
+        tx.set(db.device(uid, device_id), {
+            "name": name, "kind": "watched", "purpose": f"{item.get('guess')}, watched by {helper_name}.",
+            "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
+            "vendor": item.get("vendor"), "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
+            "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
+            "registered": True})
+        tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
+               {"uid": uid, "deviceId": device_id})
+        event(tx, uid, device_id, "joined", "info", f"{name} joined your map, watched by {helper_name}.", who="you")
+        return {"ok": True, "deviceId": device_id}
+
+    return db.run_transaction(run)
+
+
 def leave(token: str) -> dict:
     """The helper revokes its own token (on uninstall) and its device goes offline."""
     tref = tokens_ref().document(_sha(token))
@@ -385,6 +444,7 @@ def heartbeat(token: str, facts: dict) -> dict:
         approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
             filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
         user = db.user(uid).get(transaction=tx).to_dict() or {}
+        watched = [w for w in db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)]
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()
@@ -424,10 +484,30 @@ def heartbeat(token: str, facts: dict) -> dict:
                 tx.delete(ref)
         for svc_id, svc in services.items():
             tx.set(db.services(uid, device_id).document(svc_id), svc)
-        return device_id, _hand_over(tx, approved, user), _poll_every(user)
+        results = {r["cid"]: r for r in facts.get("watchResults") or []}
+        for w in watched:
+            wd = w.to_dict()
+            r = results.get(wd.get("cid"))
+            if not r:
+                continue
+            up = r.get("up")
+            what = (f"{wd.get('name')} isn't answering" if not up else None)
+            tx.update(w.reference, {"status": "ok" if up else "crit", "health": "verified", "lastSeen": _now(),
+                                    "vitals": {"latencyMs": r.get("ms")},
+                                    "findings": [] if up else [{"id": "f_watch_down", "check": "watched_down",
+                                                                "severity": "crit", "message": what + ".",
+                                                                "evidence": f"checked by {device.get('name')}",
+                                                                "state": "new"}]})
+            if real_status(wd) != ("ok" if up else "crit"):
+                event(tx, uid, w.id, "status_" + ("ok" if up else "crit"), "info" if up else "crit",
+                      f"{wd.get('name')} " + ("is answering again." if up else "isn't answering."), who="device")
+        watch_list = [{"cid": w.to_dict().get("cid"), "port": w.to_dict().get("checkPort")} for w in watched
+                      if w.to_dict().get("checkPort")][:10]
+        return device_id, _hand_over(tx, approved, user), _poll_every(user), watch_list
 
-    device_id, jobs, poll = db.run_transaction(run)
-    return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll}
+    device_id, jobs, poll, watch_list = db.run_transaction(run)
+    return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
+            "watch": watch_list}
 
 
 SEVERITY = {"info": 1, "warn": 2, "crit": 3}

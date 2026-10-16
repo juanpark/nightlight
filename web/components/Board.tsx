@@ -5,7 +5,7 @@ import type { Device } from "@/lib/types";
 
 const KIND: Record<string, string> = {
   pi: "Raspberry Pi", mac: "Mac", nas: "Storage", gameserver: "Game server", camera: "Cameras", router: "Network",
-  computer: "Computer",
+  computer: "Computer", watched: "Watched",
 };
 
 // Devices sit on a grid so they never overlap. Stored positions are abstract units (x = 120 + 100 per column,

@@ -20,6 +20,7 @@ Usage:
   nightlight_helper.py allow restart_container <NAME>          # allow restarting this container after approval
   nightlight_helper.py allow diagnose <NAME>                   # allow reading why a container/service is down
   nightlight_helper.py allow logs <NAME>                       # ...and its last log lines (scrubbed here first)
+  nightlight_helper.py discover [--yes]                        # find things nearby; you pick what to send
   nightlight_helper.py disallow restart_container <NAME>       # take that back
 
 Python 3.8+, standard library only; uses psutil when it is installed.
@@ -166,7 +167,8 @@ def facts():
     cpu, mem, up = _cpu_mem_uptime()
     return {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
             "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
-            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed()}
+            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
+            "watchResults": _watch_results()}
 
 
 def _allowed():
@@ -451,6 +453,10 @@ def once():
         print(f"Report sent: {body.get('findings', 0)} finding(s).")
         poll = body.get("pollEverySec")
         _POLL["every"] = poll if isinstance(poll, int) and 0 < poll <= 60 else 0
+        watch = body.get("watch")
+        if isinstance(watch, list) and watch != cfg.get("watch"):
+            cfg["watch"] = [w for w in watch if isinstance(w, dict)][:10]
+            _save_config(cfg)  # what to check next time (the owner's choices; addresses stay local)
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -562,6 +568,180 @@ def pair(api, web=None, name=None):
         if st == 401:
             sys.exit("  The code was declined or has expired. Run pair again for a new one.")
     sys.exit("  The code expired. Run pair again for a new one.")
+
+
+# ------------------------------------------------------------------ discovery (owner-run, reviewed here first)
+# What's nearby on this network. Addresses (IP, MAC) and names stay on this device; only a guess of what each thing is
+# ("Home Assistant", "Printer"), its maker and which known services answer are sent, and only the ones you pick.
+
+PORTS = {22: "remote login (SSH)", 80: "web page", 443: "secure web page", 445: "file sharing", 631: "printer",
+         8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
+MDNS = {"_home-assistant._tcp": "Home Assistant", "_plexmediasvr._tcp": "Plex", "_smb._tcp": "file sharing",
+        "_ipp._tcp": "printer", "_printer._tcp": "printer", "_googlecast._tcp": "Chromecast / Google speaker",
+        "_airplay._tcp": "AirPlay speaker or TV", "_hap._tcp": "HomeKit accessory", "_ssh._tcp": "remote login (SSH)",
+        "_raop._tcp": "AirPlay speaker"}
+# A small, public table of makers by the first half of the hardware address (IEEE registry), common in homes.
+VENDORS = {"b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi", "28cdc1": "Raspberry Pi",
+           "d83add": "Raspberry Pi", "2ccf67": "Raspberry Pi", "001132": "Synology", "245ebe": "QNAP",
+           "00089b": "QNAP", "000c29": "VMware virtual machine", "005056": "VMware virtual machine",
+           "001788": "Philips Hue", "000e58": "Sonos", "949f3e": "Sonos", "48a6b8": "Sonos",
+           "240ac4": "Espressif (smart-home gadget)", "30aea4": "Espressif (smart-home gadget)",
+           "84f3eb": "Espressif (smart-home gadget)", "a4cf12": "Espressif (smart-home gadget)",
+           "3c71bf": "Espressif (smart-home gadget)", "bcddc2": "Espressif (smart-home gadget)",
+           "f4f5d8": "Google", "546009": "Google", "3c5ab4": "Google", "44650d": "Amazon", "6854fd": "Amazon",
+           "fc65de": "Amazon", "24a43c": "Ubiquiti", "788a20": "Ubiquiti", "fcecda": "Ubiquiti", "7483c2": "Ubiquiti",
+           "18e829": "Ubiquiti", "98b6e9": "Nintendo"}
+
+
+def _neighbours():
+    """IP -> MAC from the system's neighbour table (no scanning)."""
+    out = {}
+    try:
+        with open("/proc/net/arp") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 4 and parts[3] != "00:00:00:00:00:00":
+                    out[parts[0]] = parts[3].lower()
+        return out
+    except OSError:
+        pass
+    for line in _run(["arp", "-an"]).splitlines():  # macOS: "? (192.168.1.5) at aa:bb:cc:dd:ee:ff on en0 ..."
+        m = re.search(r"\(([\d.]+)\) at ([0-9a-fA-F:]+)", line)
+        if m and m.group(2) != "ff:ff:ff:ff:ff:ff":
+            mac = ":".join(x.zfill(2) for x in m.group(2).lower().split(":"))
+            out[m.group(1)] = mac
+    return out
+
+
+def _mdns():
+    """IP -> set of service kinds announced on the network (avahi on Linux; skipped elsewhere)."""
+    out = {}
+    if not shutil.which("avahi-browse"):
+        return out
+    for line in _run(["avahi-browse", "-aprtk"], timeout=6).splitlines():
+        f = line.split(";")
+        if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS:
+            out.setdefault(f[7], set()).add(MDNS[f[4]])
+    return out
+
+
+def _open_ports(ips):
+    import concurrent.futures
+    import socket as _s
+
+    def probe(pair):
+        ip, port = pair
+        try:
+            with _s.create_connection((ip, port), timeout=0.3):
+                return ip, port
+        except OSError:
+            return None
+
+    pairs = [(ip, p) for ip in list(ips)[:64] for p in PORTS]
+    found = {}
+    with concurrent.futures.ThreadPoolExecutor(32) as ex:
+        for hit in ex.map(probe, pairs):
+            if hit:
+                found.setdefault(hit[0], []).append(hit[1])
+    return found
+
+
+def _vendor(mac):
+    if not mac:
+        return None
+    first = int(mac[:2], 16)
+    if first & 0x02:
+        return "private address (likely a phone or laptop)"
+    return VENDORS.get(mac.replace(":", "")[:6])
+
+
+def _guess(vendor, services, ports):
+    """A plain-words guess of what something is, from what answers on it and who made it."""
+    for service, name in (("Home Assistant", "Home Assistant"), ("Plex", "Plex media server"),
+                          ("Minecraft", "Minecraft server"), ("printer", "Printer"),
+                          ("file sharing", "File share (NAS or computer)")):
+        if service in services:
+            return name
+    if any("speaker" in x or "Chromecast" in x or "TV" in x for x in services):
+        return "Speaker or TV"
+    if vendor in ("Raspberry Pi", "VMware virtual machine"):
+        return vendor
+    if 22 in ports:
+        return "Computer (remote login)"
+    if 80 in ports or 443 in ports:
+        return "Device with a web page"
+    return vendor or "Unknown device"
+
+
+def discover(yes=False):
+    cfg = _load()
+    neigh, mdns = _neighbours(), _mdns()
+    ips = set(neigh) | set(mdns)
+    ports = _open_ports(ips)
+    items, local = [], {}
+    for ip in sorted(ips):
+        vendor = _vendor(neigh.get(ip))
+        services = sorted(mdns.get(ip, set()) | {PORTS[p] for p in ports.get(ip, [])})
+        if not services and not vendor:
+            continue  # nothing to say about it
+        cid = secrets_hex(6)
+        items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
+                      "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
+        local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
+    if not items:
+        print("Didn't find anything to suggest on this network.")
+        return
+    print(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
+    for n, it in enumerate(items, 1):
+        print(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
+              + (f" ({', '.join(it['services'])})" if it["services"] else ""))
+    if yes:
+        chosen = items
+    else:
+        try:
+            ans = input("Send which? (e.g. 1,3 or all; Enter = none): ").strip().lower()
+        except EOFError:
+            ans = ""
+        if ans == "all":
+            chosen = items
+        else:
+            nums = {int(x) for x in re.findall(r"\d+", ans)}
+            chosen = [it for n, it in enumerate(items, 1) if n in nums]
+    if not chosen:
+        print("Nothing sent.")
+        return
+    cfg["found"] = {it["cid"]: local[it["cid"]] for it in chosen}
+    _save_config(cfg)
+    st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
+                     {"X-Device-Token": cfg["token"]})
+    print(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
+          else f"Couldn't send ({st or 'network error'}).")
+
+
+def secrets_hex(n):
+    return os.urandom(n).hex()
+
+
+def _watch_results():
+    """Check the found devices the owner added ("watched by this device"): can we still reach their service?"""
+    import socket as _s
+    try:
+        cfg = _load()
+    except (OSError, ValueError):
+        return []
+    found, out = cfg.get("found") or {}, []
+    for w in (cfg.get("watch") or [])[:10]:
+        target = found.get(w.get("cid"))
+        port = w.get("port")
+        if not target or not isinstance(port, int):
+            continue
+        t = time.time()
+        try:
+            with _s.create_connection((target["ip"], port), timeout=1):
+                out.append({"cid": w["cid"], "up": True, "ms": int((time.time() - t) * 1000)})
+        except OSError:
+            out.append({"cid": w["cid"], "up": False, "ms": None})
+    return out
 
 
 # ------------------------------------------------------------------ running in the background
@@ -754,6 +934,8 @@ def main():
     ins.add_argument("--every", type=int, default=60)
     sub.add_parser("uninstall")
     sub.add_parser("status")
+    dsc = sub.add_parser("discover")
+    dsc.add_argument("--yes", action="store_true", help="send everything found without asking")
     sub.add_parser("once")
     sub.add_parser("show")
     for verb in ("allow", "disallow"):
@@ -773,6 +955,8 @@ def main():
         uninstall()
     elif a.cmd == "status":
         status()
+    elif a.cmd == "discover":
+        discover(a.yes)
     elif a.cmd == "once":
         once()
     elif a.cmd in ("allow", "disallow"):

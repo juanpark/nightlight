@@ -143,3 +143,8 @@ export type StreamEvent =
   | { type: "followup_pending"; turnId: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }
   | { type: "done"; turnId: string; metrics?: Record<string, number> };
+
+export interface FoundItem { cid: string; guess: string; vendor?: string | null; services: string[]; ports: number[];
+  added?: boolean }
+export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
+  expiresAt?: Date | null }

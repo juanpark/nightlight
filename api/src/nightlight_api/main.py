@@ -15,7 +15,7 @@ from . import __version__, actions, db, demo, memory, quota, real, sim, trust as
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
-from .redact import scrub
+from .redact import scrub, scrub_value
 
 app = FastAPI(title="Nightlight API", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_exception_handler(ApiError, api_error_handler)
@@ -350,6 +350,35 @@ class Container(Strict):
     status: str | None = Field(default=None, max_length=64)
 
 
+class WatchResult(Strict):
+    cid: str = Field(pattern=r"^[0-9a-f]{12}$")
+    up: bool
+    ms: int | None = Field(default=None, ge=0, le=60000)
+
+
+class Found(Strict):
+    cid: str = Field(pattern=r"^[0-9a-f]{12}$")
+    guess: str = Field(max_length=60)
+    vendor: str | None = Field(default=None, max_length=60)
+    services: list[str] = Field(default_factory=list, max_length=8)
+    ports: list[int] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def no_addresses(self):
+        text = " ".join([self.guess, self.vendor or "", *self.services])
+        if any(len(s) > 40 for s in self.services) or re.search(r"\d+\.\d+\.\d+\.\d+|([0-9a-fA-F]{2}:){5}", text):
+            raise ValueError("found items carry no addresses")
+        return self
+
+
+class DiscoveriesBody(Strict):
+    items: list[Found] = Field(max_length=30)
+
+
+class AddFoundBody(Strict):
+    name: str = Field(min_length=1, max_length=40)
+
+
 class HeartbeatBody(Strict):
     helperVersion: str = Field(max_length=16)
     os: str | None = Field(default=None, max_length=80)
@@ -363,6 +392,7 @@ class HeartbeatBody(Strict):
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
     allowedJobs: dict[Literal["restart_container", "diagnose", "logs"], list[str]] = Field(default_factory=dict)
+    watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def short_units(self):
@@ -464,6 +494,22 @@ def helper_job_result(action_id: str, body: JobResultBody, request: Request):
     if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
         raise not_found()
     return actions.job_result(token, action_id, body.ok, body.summary, body.state, body.output)
+
+
+@app.post("/helper/discoveries")
+def helper_discoveries(body: DiscoveriesBody, request: Request):
+    token = request.headers.get("x-device-token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
+        raise ApiError(401, "invalid_token")
+    items, _ = scrub_value([i.model_dump() for i in body.items])
+    return real.save_discoveries(token, items)
+
+
+@app.post("/api/discoveries/{helper_id}/{cid}/add", status_code=201)
+def add_found(helper_id: str, cid: str, body: AddFoundBody, uid: str = Depends(current_uid)):
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", helper_id) or not re.fullmatch(r"[0-9a-f]{12}", cid):
+        raise not_found()
+    return real.add_found(uid, helper_id, cid, scrub(body.name)[0])
 
 
 @app.post("/helper/jobs/claim")

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, EventDoc, HistoryPoint, Service, TrustDoc, UserDoc, Watch } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Service, TrustDoc, UserDoc, Watch } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -110,4 +110,8 @@ export function presented(d: Device, now: number): Device {
   if (d.realm !== "real") return d;
   const silent = !d.lastSeen || now - d.lastSeen.getTime() > 5 * 60 * 1000;
   return d.revoked || silent ? { ...d, status: "offline", health: "unknown", findings: [] } : d;
+}
+
+export function useDiscoveries(uid: string | null): Discovery[] {
+  return useCollection<Discovery>(uid, ["discoveries"]);
 }
