@@ -17,6 +17,7 @@ Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # join with a one-time code from the app
   nightlight_helper.py pair <API_URL> [--web URL]              # or: show a code to approve in the app / by phone
   nightlight_helper.py install | uninstall | status            # run in the background (systemd / launchd)
+  nightlight_helper.py settings                                # app-managed or strict; strict: what's allowed
   nightlight_helper.py once                                    # send one report
   nightlight_helper.py run [--every SECONDS]                   # keep reporting (default every 60 s)
   nightlight_helper.py show                                    # print what would be sent, without sending
@@ -46,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs")
@@ -247,17 +248,37 @@ def facts():
             "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
             "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
             "watchResults": _watch_results(), "failedAgents": _failed_agents(),
+            "manage": _manage(),
             "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
                        "sshPasswordLogin": _ssh_password_login()}}
 
 
 def _allowed():
-    """What the owner allowed on this machine (from the local config; the server can't change it)."""
+    """What this device lets Nightlight do. In app-managed mode (chosen on this device) the owner's switches from the
+    app apply; in strict mode only what was allowed here. Either way each action is still checked here before it runs."""
     try:
-        allow = _load().get("allow") or {}
+        cfg = _load()
     except (OSError, ValueError):
         return {}
+    if cfg.get("manage") == "app":
+        return _from_remote(cfg.get("remote") or {})
+    allow = cfg.get("allow") or {}
     return {k: [n for n in v if _name_re(k).fullmatch(n)][:20] for k, v in allow.items() if k in JOB_TYPES and v}
+
+
+def _from_remote(remote):
+    """The app's switches, as an allowlist. Only well-formed names; "check why" covers what this device reports now."""
+    out = {}
+    for key in ("logs", "restart_container", "restart_service"):
+        names = remote.get(key) if isinstance(remote.get(key), list) else []
+        names = [n for n in names if isinstance(n, str) and _name_re(key).fullmatch(n)][:20]
+        if names:
+            out[key] = names
+    if remote.get("diagnose") is True:
+        names = [c["name"] for c in _containers() if NAME_RE.fullmatch(c.get("name", ""))] + _failed_units()
+        if names:
+            out["diagnose"] = names[:20]
+    return out
 
 
 def _name_re(kind):
@@ -572,6 +593,7 @@ def once():
         body = {"error": body.get("error") or "unexpected response"}
     if status == 200:
         print(f"Report sent: {body.get('findings', 0)} finding(s).")
+        _remember_about(cfg, body)
         poll = body.get("pollEverySec")
         _POLL["every"] = poll if isinstance(poll, int) and 0 < poll <= 60 else 0
         watch = body.get("watch")
@@ -605,6 +627,20 @@ def _do_job(api, token, job):
         if status in (200, 401, 404, 409):
             return
         time.sleep(5 * (attempt + 1))
+
+
+def _remember_about(cfg, body):
+    """Keep what `status` shows, and the app's permission switches (used only in app-managed mode)."""
+    about = {"lastReport": {"at": time.strftime("%Y-%m-%d %H:%M"), "result": "ok"}}
+    for key in ("deviceName", "ownerHint"):
+        if isinstance(body.get(key), str):
+            about[key] = body[key][:80]
+    if isinstance(body.get("permissions"), dict):
+        about["remote"] = body["permissions"]
+    if any(cfg.get(k) != v for k, v in about.items() if k != "lastReport") or \
+            time.time() - cfg.get("_aboutSaved", 0) > 600:
+        cfg.update(about, _aboutSaved=int(time.time()))
+        _save_config(cfg)
 
 
 def run(every):
@@ -648,6 +684,23 @@ def _wait_and_claim(seconds):
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
                 _do_job(api, cfg["token"], job)
+
+
+def _manage():
+    try:
+        m = _load().get("manage")
+    except (OSError, ValueError):
+        return None
+    return m if m in ("app", "strict") else None
+
+
+def _ask(question, default_yes):
+    """A yes/no question on the terminal. No terminal (or no answer) = the default."""
+    try:
+        ans = input(question + (" [Y/n] " if default_yes else " [y/N] ")).strip().lower()
+    except EOFError:
+        return default_yes
+    return default_yes if not ans else ans.startswith("y")
 
 
 def default_name():
@@ -935,7 +988,17 @@ def install(every=60):
         _load()
     except (OSError, ValueError):
         sys.exit("Join first: run enrol (with a code from the app) or pair.")
+    cfg = _load()
+    if cfg.get("manage") not in ("app", "strict"):
+        interactive = sys.stdin.isatty()
+        app = interactive and _ask("Let the Nightlight app manage what it may do on this device? You'll switch things "
+                                   "on and off in the app; every restart still asks you first. (n = strict: changes "
+                                   "only on this device)", True)
+        cfg["manage"] = "app" if app else "strict"
+        _save_config(cfg)
+        print("Managed from the app." if app else "Strict: change permissions here with `nightlight settings`.")
     script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
+    _link_command(script, py)
     every = max(int(every), 30)
     if sys.platform == "darwin":
         import plistlib
@@ -1013,6 +1076,9 @@ def uninstall():
     for d in (APP_DIR, CONFIG_DIR):
         if os.path.islink(d) or (os.path.isdir(d) and os.stat(d).st_uid != os.getuid()):
             sys.exit(f"Refusing to clean {d}: it is a link or belongs to another user. The service is stopped.")
+    short = os.path.expanduser("~/.local/bin/nightlight")
+    if os.path.isfile(short) and not os.path.islink(short) and "nightlight_helper.py" in _read(short):
+        os.unlink(short)  # only our own two-line script
     for path in (os.path.join(APP_DIR, "nightlight_helper.py"), CONFIG):
         if os.path.isfile(path) and not os.path.islink(path):
             os.unlink(path)
@@ -1024,12 +1090,40 @@ def uninstall():
     print("Uninstalled. Nothing of Nightlight is left running on this device.")
 
 
+def _link_command(script, py):
+    """A short `nightlight` command in ~/.local/bin (a two-line script; nothing else on the system changes)."""
+    bindir = os.path.expanduser("~/.local/bin")
+    try:
+        _own_dir(bindir)
+        target = os.path.join(bindir, "nightlight")
+        if os.path.islink(target) or (os.path.exists(target) and "nightlight_helper.py" not in _read(target)):
+            return  # something else lives there: leave it alone
+        fd, tmp = tempfile.mkstemp(dir=bindir, prefix=".nightlight-")
+        with os.fdopen(fd, "w") as f:
+            f.write(f'#!/bin/sh\nexec "{py}" "{script}" "$@"\n')
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, target)
+        if bindir not in os.environ.get("PATH", "").split(os.pathsep):
+            print(f"Tip: add {bindir} to your PATH to type `nightlight status` from anywhere.")
+    except (OSError, SystemExit):
+        pass
+
+
 def status():
     try:
         cfg = _load()
-        print(f"Joined as device {cfg.get('deviceId')} ({cfg.get('api')}).")
     except (OSError, ValueError):
-        print("Not joined yet.")
+        print("Not joined yet. Add this device from the Nightlight app.")
+        return
+    mode = {"app": "managed from the Nightlight app", "strict": "strict (changes only on this device)"}.get(
+        cfg.get("manage"), "not chosen yet (run install)")
+    seen = cfg.get("lastReport") or {}
+    print(f"Nightlight helper {VERSION}")
+    print(f"  Connected to:   {cfg.get('api')}")
+    print(f"  This device:    {cfg.get('deviceName') or '?'} ({cfg.get('deviceId')})")
+    print(f"  Owner account:  {cfg.get('ownerHint') or 'shown after the next report'}")
+    print(f"  Last report:    {seen.get('at', 'none yet')} ({seen.get('result', '-')})")
+    print(f"  Permissions:    {mode}")
     if sys.platform == "darwin":
         out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"], capture_output=True, text=True)
         print("Background service: " + ("running" if "state = running" in out.stdout else
@@ -1038,7 +1132,31 @@ def status():
         out = _run(["systemctl", "is-active", "nightlight-helper.service"]).strip()
         print(f"Background service: {out or 'not installed'}")
     allowed = _allowed()
-    print("Jobs you allowed here: " + (", ".join(f"{k} {', '.join(v)}" for k, v in allowed.items()) or "none"))
+    words = {"diagnose": "check why it stopped", "logs": "read recent log lines", "restart_container": "restart",
+             "restart_service": "restart the service"}
+    print("  Nightlight may: " + ("; ".join(f"{words[k]}: {', '.join(v)}" for k, v in allowed.items()) or "nothing yet"))
+
+
+def settings():
+    """Change, on this device, whether the app manages permissions, and (strict mode) what is allowed."""
+    cfg = _load()
+    print(f"Permissions are now {'managed from the app' if cfg.get('manage') == 'app' else 'strict'}.")
+    app = _ask("Let the Nightlight app manage what it may do on this device?", cfg.get("manage") == "app")
+    cfg["manage"] = "app" if app else "strict"
+    if not app:
+        targets = [c["name"] for c in _containers()] + _failed_units()
+        allow = {k: [] for k in JOB_TYPES}
+        if _ask("May Nightlight check why something stopped (reads status only)?", True):
+            allow["diagnose"] = [t for t in targets if TARGET_RE.fullmatch(t)][:20]
+        for t in targets[:20]:
+            if _ask(f"  Read recent log lines of {t}?", False):
+                allow["logs"].append(t)
+            kind = "restart_container" if t in [c["name"] for c in _containers()] else "restart_service"
+            if _ask(f"  Restart {t} when it has stopped (after you approve)?", False):
+                allow[kind].append(t)
+        cfg["allow"] = {k: v for k, v in allow.items() if v}
+    _save_config(cfg)
+    print("Saved. It applies on the next report (within a minute).")
 
 
 def main():
@@ -1056,6 +1174,7 @@ def main():
     ins.add_argument("--every", type=int, default=60)
     sub.add_parser("uninstall")
     sub.add_parser("status")
+    sub.add_parser("settings")
     dsc = sub.add_parser("discover")
     dsc.add_argument("--yes", action="store_true", help="send everything found without asking")
     sub.add_parser("once")
@@ -1077,6 +1196,8 @@ def main():
         uninstall()
     elif a.cmd == "status":
         status()
+    elif a.cmd == "settings":
+        settings()
     elif a.cmd == "discover":
         discover(a.yes)
     elif a.cmd == "once":

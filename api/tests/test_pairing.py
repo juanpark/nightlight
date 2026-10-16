@@ -93,6 +93,7 @@ def test_owner_gate_reads_the_sign_in_provider(monkeypatch):
 
     class Req:
         headers = {"authorization": "Bearer t"}
+        state = type("State", (), {})()
     monkeypatch.setattr(auth, "_app", lambda: None)
     monkeypatch.setattr(auth.fb_auth, "verify_id_token",
                         lambda t, app=None: {"uid": "u1", "firebase": {"sign_in_provider": "anonymous"}})
@@ -138,3 +139,9 @@ def test_guessing_codes_is_budgeted(client, started, monkeypatch):  # review 8 #
         assert client.get("/api/devices/pair/AAAA-AAAA").status_code == 404
     assert client.get("/api/devices/pair/AAAA-AAAA").status_code == 429
     assert client.post("/api/devices/pair/AAAA-AAAA", json={"approve": True}).status_code == 429
+
+
+
+def test_owner_email_is_masked():
+    from nightlight_api.auth import mask_email
+    assert mask_email("juanpark@gmail.com") == "ju***@gmail.com" and mask_email(None) is None

@@ -36,4 +36,13 @@ def owner_uid(request: Request) -> str:
     claims = _claims(request)
     if (claims.get("firebase") or {}).get("sign_in_provider") == "anonymous":
         raise ApiError(403, "sign_in_required")
+    request.state.owner_hint = mask_email(claims.get("email"))
     return claims["uid"]
+
+
+def mask_email(email: str | None) -> str | None:
+    """'juanpark@gmail.com' -> 'ju***@gmail.com': enough for the owner to recognise, not enough to read off."""
+    if not email or "@" not in email:
+        return None
+    name, _, domain = email.partition("@")
+    return f"{name[:2]}***@{domain}"

@@ -560,6 +560,7 @@ def heartbeat(token: str, facts: dict) -> dict:
             "version": device.get("version", 1) + 1,
             "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {},
             "updatesPending": facts.get("updatesPending"), "containerCount": len(facts.get("containers") or []),
+            "manage": facts.get("manage"),
             "containersRunning": sum(1 for c in facts.get("containers") or [] if c.get("state") == "running")})
         for ref in old:
             if ref.id not in services:
@@ -588,11 +589,13 @@ def heartbeat(token: str, facts: dict) -> dict:
                       f"{wd.get('name')} " + ("is answering again." if up else "isn't answering."), who="device")
         watch_list = [{"cid": w.to_dict().get("cid"), "port": w.to_dict().get("checkPort")} for w in watched
                       if w.to_dict().get("checkPort")][:10]
-        return device_id, _hand_over(tx, approved, user), _poll_every(user), watch_list
+        about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
+                 "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
+        return device_id, _hand_over(tx, approved, user), _poll_every(user), watch_list, about
 
-    device_id, jobs, poll, watch_list = db.run_transaction(run)
+    device_id, jobs, poll, watch_list, about = db.run_transaction(run)
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
-            "watch": watch_list}
+            "watch": watch_list, **about}
 
 
 SEVERITY = {"info": 1, "warn": 2, "crit": 3}
@@ -630,6 +633,51 @@ def event(tx, uid: str, device_id: str | None, kind: str, severity: str, message
     tx.set(db.events(uid).document(new_id("ev")), {"deviceId": device_id, "kind": kind, "severity": severity,
                                                    "message": message[:300], "who": who, "realm": "real",
                                                    "at": firestore.SERVER_TIMESTAMP})
+
+
+DEFAULT_PERMISSIONS = {"diagnose": True, "logs": [], "restart_container": [], "restart_service": []}
+
+
+def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
+    """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device
+    reported. The helper applies them on its next report (and still checks each action itself)."""
+    ref = db.device(uid, device_id)
+
+    @firestore.transactional
+    def run(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("revoked"):
+            raise not_found()
+        if d.get("manage") != "app":
+            raise ApiError(409, "strict_device" if d.get("manage") == "strict" else "update_helper")
+        services = {s.id: s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)}
+        containers = {s.get("name") for s in services.values() if s.get("kind") == "container"}
+        units = {s.get("unit") for s in services.values() if s.get("kind") == "system" and s.get("unit")}
+        if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
+                or not set(perms["logs"]) <= containers | units:
+            raise ApiError(422, "unknown_target")  # only things this device reported
+        before = d.get("permissions") or DEFAULT_PERMISSIONS
+        clean = {"diagnose": bool(perms["diagnose"]), **{k: sorted(set(perms[k])) for k in
+                                                         ("logs", "restart_container", "restart_service")}}
+        tx.update(ref, {"permissions": clean})
+        words = []
+        if clean["diagnose"] != before.get("diagnose"):
+            words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
+        for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
+                          ("restart_service", "restart the service")):
+            added = sorted(set(clean[key]) - set(before.get(key, [])))
+            removed = sorted(set(before.get(key, [])) - set(clean[key]))
+            if added:
+                words.append(f"may {what} {', '.join(added)}")
+            if removed:
+                words.append(f"may no longer {what} {', '.join(removed)}")
+        if words:
+            event(tx, uid, device_id, "permissions", "info",
+                  f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+        return {"ok": True, "permissions": clean}
+
+    return db.run_transaction(run)
 
 
 def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days: int | None) -> dict:

@@ -51,6 +51,15 @@ class WatchBody(Strict):
     tags: list[str] = Field(default_factory=list, max_length=6)
 
 
+class PermissionsBody(Strict):
+    diagnose: bool
+    logs: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")]] = Field(max_length=20)
+    restart_container: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")]] = \
+        Field(max_length=20)
+    restart_service: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")]] = \
+        Field(max_length=20)
+
+
 class IssueBody(Strict):
     state: Literal["new", "known", "snoozed"]
     days: int | None = Field(default=None, ge=1, le=90)
@@ -154,6 +163,14 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
         return update
 
     return {"ok": True, **db.run_transaction(run)}
+
+
+@app.post("/api/devices/{device_id}/permissions")
+def device_permissions(device_id: str, body: PermissionsBody, uid: str = Depends(owner_uid)):
+    """The owner's switches for an app-managed device (the device itself chose to be managed from the app)."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return real.set_permissions(uid, device_id, body.model_dump())
 
 
 @app.post("/api/devices/{device_id}/issues/{finding_id}")
@@ -388,6 +405,7 @@ class HeartbeatBody(Strict):
     allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs"], list[str]] = \
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
+    manage: Literal["app", "strict"] | None = None  # chosen on the device; the server can't change it
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
 
@@ -409,8 +427,15 @@ class JobResultBody(Strict):
     output: str | None = Field(default=None, max_length=4000)  # what a read-only look found (scrubbed on the device)
 
 
+def _remember_owner_hint(request: Request, uid: str) -> None:
+    hint = getattr(request.state, "owner_hint", None)
+    if hint:  # shown by `nightlight status` on the owner's devices, so they can check they joined the right account
+        db.user(uid).set({"ownerHint": hint}, merge=True)
+
+
 @app.post("/api/devices/enrol-code", status_code=201)
-def enrol_code(body: Empty, uid: str = Depends(owner_uid)):
+def enrol_code(body: Empty, request: Request, uid: str = Depends(owner_uid)):
+    _remember_owner_hint(request, uid)
     return real.create_code(uid)
 
 
@@ -461,7 +486,8 @@ def pair_preview(code: str, uid: str = Depends(owner_uid)):
 
 
 @app.post("/api/devices/pair/{code}")
-def pair_decide(code: str, body: PairDecideBody, uid: str = Depends(owner_uid)):
+def pair_decide(code: str, body: PairDecideBody, request: Request, uid: str = Depends(owner_uid)):
+    _remember_owner_hint(request, uid)
     return real.pair_decide(uid, _pair_code(code), body.approve)
 
 

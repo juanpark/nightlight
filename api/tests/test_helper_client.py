@@ -505,3 +505,31 @@ def test_ssh_match_blocks_and_dnf_errors_are_unknown(helper, monkeypatch, tmp_pa
     monkeypatch.setattr(helper.shutil, "which", lambda n: "/usr/bin/dnf" if n == "dnf" else None)
     monkeypatch.setattr(helper, "_run_status", lambda cmd, timeout=20: (1, "Error: Failed to download metadata"))
     assert helper._count_updates() is None
+
+
+def test_app_managed_permissions_apply_only_in_app_mode(helper, monkeypatch):
+    remote = {"diagnose": True, "logs": ["web"], "restart_container": ["web", "bad name;"], "restart_service": []}
+    monkeypatch.setattr(helper, "_containers", lambda: [{"name": "web"}])
+    monkeypatch.setattr(helper, "_failed_units", lambda: ["pihole-FTL.service"])
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "strict",
+                         "remote": remote, "allow": {"diagnose": ["web"]}})
+    assert helper._allowed() == {"diagnose": ["web"]}  # strict: the app's switches are ignored
+    cfg = helper._load()
+    cfg["manage"] = "app"
+    helper._save_config(cfg)
+    got = helper._allowed()
+    assert got["restart_container"] == ["web"] and got["logs"] == ["web"]
+    assert got["diagnose"] == ["web", "pihole-FTL.service"]
+
+
+def test_install_without_a_terminal_chooses_strict(helper, monkeypatch, tmp_path):
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(helper, "APP_DIR", str(tmp_path / "app"))
+    monkeypatch.setattr(helper, "PLIST", str(tmp_path / "LaunchAgents" / "x.plist"))
+    monkeypatch.setattr(helper, "_link_command", lambda *a: None)
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    helper.install()
+    assert helper._load()["manage"] == "strict"
