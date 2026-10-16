@@ -2,8 +2,9 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
-import type { Device } from "@/lib/types";
+import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
+import Checkups from "./Checkups";
 import Notebook from "./Notebook";
 import Permissions from "./Permissions";
 
@@ -29,8 +30,8 @@ function ago(d?: Date | null) {
   return s < 90 ? `${s} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : d.toLocaleString();
 }
 
-export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
-  uid: string; device: Device; onAsk: (q: string) => void; onClose: () => void;
+export default function DeviceDrawer({ uid, generation, device, actions, onAsk, onClose }: {
+  uid: string; generation?: number; device: Device; actions: Action[]; onAsk: (q: string) => void; onClose: () => void;
 }) {
   const services = useServices(uid, device.id);
   const [editing, setEditing] = useState(false);
@@ -126,6 +127,8 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
           </div>
         ))}
       </div>
+      {real && device.kind !== "watched" && <Checkups uid={uid} generation={generation} deviceId={device.id}
+        actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
       {device.kind !== "watched" && <Notebook uid={uid} deviceId={device.id} />}
       {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>

@@ -6,11 +6,12 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { Device, Permissions as Perms, Service } from "@/lib/types";
 
-const DEFAULTS: Perms = { diagnose: true, logs: [], restart_container: [], restart_service: [] };
+const DEFAULTS: Perms = { diagnose: true, cleanup: false, logs: [], restart_container: [], restart_service: [] };
 
 function normal(p?: Partial<Perms> | null): Perms {
   return {
     diagnose: p?.diagnose ?? DEFAULTS.diagnose,
+    cleanup: p?.cleanup ?? false,
     logs: p?.logs ?? [],
     restart_container: p?.restart_container ?? [],
     restart_service: p?.restart_service ?? [],
@@ -22,7 +23,7 @@ const sameSet = (a: string[], b: string[]) => {
   return x.size === y.size && [...x].every((v) => y.has(v));
 };
 
-const samePerms = (a: Perms, b: Perms) => a.diagnose === b.diagnose && sameSet(a.logs, b.logs)
+const samePerms = (a: Perms, b: Perms) => a.diagnose === b.diagnose && a.cleanup === b.cleanup && sameSet(a.logs, b.logs)
   && sameSet(a.restart_container, b.restart_container) && sameSet(a.restart_service, b.restart_service);
 
 /** True when what the device reports applying matches the owner's switches ("*" on the device means everything). */
@@ -34,7 +35,8 @@ function applied(want: Perms, jobs: Record<string, string[]> = {}, nothingHere =
   // With nothing to check on the device, "check why" has nothing to apply: on and empty counts as applied.
   const diagnoseOk = want.diagnose === (jobs.diagnose?.length ?? 0) > 0 || (want.diagnose && nothingHere);
   const lookOk = want.diagnose || !jobs.inspect?.length; // the same switch covers looking around (helper 0.8+)
-  return diagnoseOk && lookOk && has("logs", want.logs)
+  const cleanOk = want.cleanup === (jobs.fix?.length ?? 0) > 0;
+  return diagnoseOk && lookOk && cleanOk && has("logs", want.logs)
     && has("restart_container", want.restart_container) && has("restart_service", want.restart_service);
 }
 
@@ -45,6 +47,7 @@ function Applies({ jobs = {} }: { jobs?: Record<string, string[]> }) {
   const rows = [
     jobs.diagnose?.length ? "Check why something stopped (reads status only)" : null,
     jobs.inspect?.length ? "Look around when asked: disk use, busiest programs, updates, network (reads only)" : null,
+    jobs.fix?.length ? "Clean up space after you approve (Trash, caches that rebuild themselves, unused images)" : null,
     jobs.logs?.length ? `Read recent log lines of ${list(jobs.logs)}` : null,
     jobs.restart_container?.length ? `Restart ${list(jobs.restart_container)} after you approve` : null,
     jobs.restart_service?.length ? `Restart the system service ${list(jobs.restart_service)} after you approve` : null,
@@ -132,6 +135,10 @@ export default function Permissions({ device, services }: { device: Device; serv
       <Switch on={want.diagnose} label="Check why something stopped and look around"
         hint="(reads only: status, disk use, busiest programs, updates, network)"
         onChange={(on) => save({ ...want, diagnose: on })} />
+
+      <Switch on={want.cleanup} label="Clean up space after you approve"
+        hint="(empty the Trash, clear caches that rebuild themselves, remove unused Docker images; a card each time)"
+        onChange={(on) => save({ ...want, cleanup: on })} />
 
       <Switch on={allLogs} label="Read recent log lines" hint="(private details hidden on the device first)"
         disabled={targets.length === 0} onChange={(on) => save({ ...want, logs: on ? targets : [] })} />

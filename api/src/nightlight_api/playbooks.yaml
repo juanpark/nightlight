@@ -1,0 +1,119 @@
+# Playbooks: what an expert does for a common problem, written down once so it runs the same way every time without
+# asking the AI. Each one runs some of the helper's read-only checks, matches known causes in their output (regular
+# expressions, in code), and offers the helper's fixed clean-ups as approval cards. Gemini is only needed for what no
+# playbook recognises.
+#
+#   id, title, about: names and one line for the app
+#   findings: the device findings this playbook answers (it is suggested next to them)
+#   checks: helper inspect checks to run (at most 4)
+#   causes: tried in order; `match` runs per line, `size` (if captured) must reach `min_gb`
+#     say: plain words, {size} and other named groups are filled in
+#     fix: a helper clean-up (optional); advice: what the person can do themselves (optional)
+#   nothing: said when no cause matched
+
+- id: disk_full
+  title: Disk filling up
+  about: Finds what takes the space and offers safe clean-ups.
+  findings: [f_disk]
+  checks: [disk, docker]
+  causes:
+    - id: trash
+      match: '^Trash: (?P<size>[\d.]+ [MG]B)'
+      min_gb: 0.5
+      say: The Trash holds {size}.
+      fix: empty_trash
+    - id: xcode
+      match: '^Xcode build data: (?P<size>[\d.]+ [MG]B)'
+      min_gb: 1
+      say: Xcode's build data takes {size}; Xcode rebuilds it when needed.
+      fix: xcode_build_data
+    - id: brew
+      match: '^Homebrew cache: (?P<size>[\d.]+ [MG]B)'
+      min_gb: 0.5
+      say: Homebrew keeps {size} of old downloads.
+      fix: brew_cleanup
+    - id: npm
+      match: '^npm cache: (?P<size>[\d.]+ [MG]B)'
+      min_gb: 0.5
+      say: The npm cache takes {size}.
+      fix: npm_cache
+    - id: docker_images
+      match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[MG]B)'
+      min_gb: 1
+      say: Docker has {size} of images that no container uses.
+      fix: docker_prune
+    - id: apt
+      match: '^Package cache \(apt\): (?P<size>[\d.]+ [MG]B)'
+      min_gb: 0.3
+      say: Downloaded system updates take {size}.
+      fix: apt_clean
+    - id: journal
+      match: '^System journal: (?P<size>[\d.]+\s*[MG])'
+      min_gb: 0.5
+      say: The system log takes {size}.
+      fix: journal_vacuum
+    - id: app_caches
+      match: '^App caches: (?P<size>[\d.]+ [MG]B)'
+      min_gb: 2
+      say: App caches take {size}. Apps rebuild them, but clearing them is best done app by app.
+      advice: In each app's settings, look for "Clear cache"; or quit an app and remove its folder in ~/Library/Caches.
+    - id: downloads
+      match: '^Downloads: (?P<size>[\d.]+ [MG]B)'
+      min_gb: 2
+      say: The Downloads folder holds {size}.
+      advice: Sort Downloads by size and delete the installers and videos you no longer need.
+  nothing: None of the usual places is large. The space is probably in your own files (Documents, Movies, Photos).
+
+- id: slow
+  title: Running slowly
+  about: Finds what keeps it busy.
+  findings: [f_mem]
+  checks: [processes, load]
+  causes:
+    - id: busy_program
+      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>.+)$'
+      min_value: {mem: 15}
+      say: "{name} uses {mem}% of the memory."
+      advice: Quit {name} if you don't need it now, or restart it if it has been open for days.
+    - id: busy_cpu
+      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>.+)$'
+      min_value: {cpu: 80}
+      say: "{name} keeps a processor core busy ({cpu}% CPU)."
+      advice: If {name} isn't doing something you asked for, quit or restart it.
+  nothing: No single program stands out right now; it may have been a short burst.
+
+- id: no_internet
+  title: Internet problems
+  about: Checks name lookup (DNS) and the connection.
+  findings: []
+  checks: [network]
+  causes:
+    - id: dns
+      match: '^Name lookup \(DNS\): (FAILED|no answer)'
+      say: The device can't look up names (DNS), so websites won't open even if the line works.
+      advice: Restart the router; if it keeps happening, set the DNS server to 1.1.1.1 or 8.8.8.8.
+    - id: offline
+      match: '^Internet \(HTTPS\): NOT reachable'
+      say: Names resolve, but the device can't reach the internet.
+      advice: Check the cable or Wi-Fi, then restart the router.
+  nothing: Name lookup and the internet both work from this device right now.
+
+- id: updates
+  title: Updates waiting
+  about: Lists what is waiting to be installed.
+  findings: [f_updates, f_uptime]
+  checks: [updates]
+  causes:
+    - id: macos
+      match: '^macOS updates: (?P<list>(?!none).+)$'
+      say: "System updates are waiting: {list}."
+      advice: Install them from System Settings > General > Software Update when a restart suits you.
+    - id: apt
+      match: '^(?P<count>[1-9]\d*) package updates waiting'
+      say: "{count} package updates are waiting."
+      advice: Run "sudo apt update && sudo apt upgrade" when nothing important is running.
+    - id: brew
+      match: '^Homebrew outdated \((?P<count>[1-9]\d*)\)'
+      say: "{count} Homebrew packages have newer versions."
+      advice: Run "brew upgrade" when you have a few minutes.
+  nothing: Nothing is waiting to be installed.

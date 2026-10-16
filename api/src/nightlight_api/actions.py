@@ -94,6 +94,9 @@ def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
         verb = "finished" if a["status"] == "done" else "couldn't finish"
         summary = (f" (checked: {target}). What it found: {a['result']['summary']}\n"
                    f"{a['result'].get('output') or ''}").rstrip()
+        if a["result"].get("playbook"):
+            from . import playbooks
+            summary = f" (checked: {target}).\n{playbooks.summary(a['result']['playbook'])}"
     tx.set(db.turns(uid, a["sessionId"]).document(cont), {
         "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
         "actionId": a["id"], "input": f"{label(a['type'])} on the {device_name} {verb}.{summary}",
@@ -256,15 +259,15 @@ def request_diagnosis(uid: str, *, session_id: str, turn_id: str, generation: in
 
 
 def request_inspection(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, what: list,
-                       fence=None) -> dict:
+                       fence=None, extra: dict | None = None) -> dict:
     """Ask a real device to run some of its fixed read-only checks (disk use, programs, updates...). Like diagnose:
     allowed by the owner on the device, so no card."""
     return _request_read(uid, "inspect", {"what": what}, session_id=session_id, turn_id=turn_id,
-                         generation=generation, device_id=device_id, fence=fence)
+                         generation=generation, device_id=device_id, fence=fence, extra=extra)
 
 
 def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id: str, generation: int,
-                  device_id: str, fence=None) -> dict:
+                  device_id: str, fence=None, extra: dict | None = None) -> dict:
 
     @firestore.transactional
     def run(tx):
@@ -301,7 +304,8 @@ def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id
                   "plan": plan, "dryRun": dry, "rollback": "Nothing to undo.", "blastRadius": [device_id],
                   "riskClass": "read", "status": "approved", "realm": "real", "demoGeneration": generation,
                   "deviceVersion": device["version"], "sessionId": session_id, "turnId": turn_id,
-                  "decision": {"by": "owner_allowed_on_device", "decision": "approve"}, "createdAt": _now()}
+                  "decision": {"by": "owner_allowed_on_device", "decision": "approve"}, "createdAt": _now(),
+                  **(extra or {})}
         tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
         return action
 
@@ -349,13 +353,18 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         if a["type"] in real.READS:
             found, hidden = scrub(output or "")
             a["result"] = {"ok": ok, "summary": text, "output": found[:4000], "hidden": hidden}
+            from . import playbooks  # here, not at the top: playbooks uses this module
+            if a.get("playbook") in playbooks.library() and ok:  # matched here, in code: no AI needed
+                a["result"]["playbook"] = playbooks.evaluate(playbooks.library()[a["playbook"]], found,
+                                                             dsnap.to_dict() or {})
             current = user.get("demo", {}).get("state") == "ready" and \
                 a.get("demoGeneration") == user.get("demoGeneration")
             if a.get("followUp") == "wanted" and current:  # the turn that asked has already ended
                 _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
             tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
             return {"ok": True, "actionId": action_id_, "status": a["status"]}
-        a["result"] = {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
+        a["result"] = {"ok": ok, "summary": text} if a["type"] == "fix" else \
+            {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
         if ok and a.get("svcId"):
             tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state, "failed": False},
                    merge=True)  # recovered: no new restart card until the device reports it failed again

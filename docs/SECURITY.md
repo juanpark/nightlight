@@ -43,6 +43,7 @@ The server sends a job **name** and a **target**, never a command. The helper (`
 | `restart_container` | `docker start NAME`, then checks the state 5 s later | NAME is in the local `allow restart_container` list and the container exists and isn't running |
 | `restart_service` | `sudo -n systemctl restart UNIT` (no sudo as root), 60 s timeout | UNIT is in the local `allow restart_service` list and `systemctl is-failed` says `failed` |
 | `diagnose` | `docker inspect` / `systemctl show` (status only); `docker logs --tail 30` / `journalctl -n 30` only with `allow logs` | target is in the local `allow diagnose` list |
+| `fix` | one clean-up from a fixed list: empty `~/.Trash` (macOS), `brew cleanup -s`, `npm cache clean --force`, empty Xcode DerivedData, `docker image prune -af`, `sudo -n apt-get clean`, `sudo -n journalctl --vacuum-size=200M`; directories are emptied without following links | strict: `allow fix all`; app-managed: the "clean up space" switch; always an approval card |
 | `inspect` | a fixed catalogue of read-only checks, at most 4 per job: `du -sk` over a fixed list of known folders (sizes only, no file names), `ps` (program names only, no arguments), `apt list --upgradable` / `softwareupdate -l` / `brew outdated`, `docker system df`, a DNS lookup and an HTTPS connection to www.google.com, load average, failing services | strict: `allow inspect all`; app-managed: the "check why something stopped" switch |
 
 - Commands are fixed argument lists; nothing from the server reaches a shell. Unknown job types do nothing. The
@@ -55,7 +56,7 @@ The server sends a job **name** and a **target**, never a command. The helper (`
     approve its own cards. It still cannot run any other command, touch unreported targets, change the mode, or
     read files. The helper re-checks every action (exact target, failed state, fixed argv) in both modes.
   Approval cards live on the server, so they protect against mistakes, not against a compromised server.
-- Restart jobs always need a tap on an approval card; no trust level skips it on a real device. `diagnose` is
+- Restart and clean-up jobs always need a tap on an approval card; no trust level skips it on a real device. `diagnose` is
   read-only and allowed per target by the owner on the device, so it runs without a card.
 - A job is handed to the device at most once (in the same transaction that marks it `running`). Only that device can
   report its result, once.

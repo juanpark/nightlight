@@ -30,12 +30,32 @@ CLAIM_MIN_SECONDS = 4
 # Jobs a real device can run. The helper has its own copy and runs only these, only on targets its owner allowed on
 # that machine; the server sends a job name and a target, never a command.
 JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"},
-        "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"}}
+        "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"},
+        "fix": {"label": "Clean up space", "riskClass": "service"}}
+# The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
+# own, except the Trash (what the owner already threw away). Words for the approval card.
+FIX = {
+    "empty_trash": ("Empty the Trash", "Deletes everything in the Trash", "Can't be undone: files in the Trash are "
+                    "deleted for good. Look in the Trash first if you're unsure."),
+    "brew_cleanup": ("Clear Homebrew's old downloads", "Runs \"brew cleanup -s\": removes old versions and cached "
+                     "downloads", "Nothing to undo: Homebrew downloads again what it needs."),
+    "npm_cache": ("Clear the npm cache", "Runs \"npm cache clean --force\"",
+                  "Nothing to undo: npm downloads packages again when needed."),
+    "xcode_build_data": ("Clear Xcode's build data", "Empties Xcode's DerivedData folder",
+                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower)."),
+    "docker_prune": ("Remove unused Docker images", "Runs \"docker image prune -af\": removes images that no "
+                     "container (running or stopped) uses", "Can't be undone, but Docker downloads an image again "
+                     "when something needs it. Containers are not touched."),
+    "apt_clean": ("Clear downloaded system updates", "Runs \"sudo apt-get clean\": removes downloaded package files",
+                  "Nothing to undo: installed software is not touched."),
+    "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "
+                       "200 MB of system logs", "Can't be undone: older log entries are deleted."),
+}
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 READS = {"diagnose": {"label": "Look into", "riskClass": "read"},
          "inspect": {"label": "Look around", "riskClass": "read"}}
-ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect")
+ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix")
 # The helper's fixed read-only checks (`inspect`); it runs only these names, at most MAX_INSPECT per job.
 INSPECT = {"disk": "which known folders take the most space", "processes": "which programs use the most memory and CPU",
            "updates": "which updates are waiting (can take up to a minute)", "docker": "how much space Docker uses",
@@ -476,9 +496,22 @@ def _unit_card(device: dict, services: dict, params: dict) -> dict:
             "blastRadius": [device["id"]], "riskClass": JOBS["restart_service"]["riskClass"]}
 
 
+def _fix_card(device: dict, params: dict) -> dict:
+    if set(params) != {"recipe"} or params["recipe"] not in FIX:
+        raise ValueError("bad_target")
+    if params["recipe"] not in (device.get("allowedJobs") or {}).get("fix", []):
+        raise ValueError("not_allowed_on_device")
+    title, what, undo = FIX[params["recipe"]]
+    return {"svcId": None, "plan": f"{title} on the {device['name']}.",
+            "dryRun": f"{what}. The helper reports how much space it freed. Nothing else is touched.",
+            "rollback": undo, "blastRadius": [device["id"]], "riskClass": JOBS["fix"]["riskClass"]}
+
+
 def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     """The approval card for a real-device job. ValueError when it doesn't apply, including when the device's owner
     hasn't allowed this job on this target on the device itself."""
+    if action_type == "fix":
+        return _fix_card(device, params)
     if action_type == "restart_service":
         return _unit_card(device, services, params)
     if action_type not in JOBS or set(params) != {"container"}:
@@ -642,7 +675,7 @@ def event(tx, uid: str, device_id: str | None, kind: str, severity: str, message
                                                    "at": firestore.SERVER_TIMESTAMP})
 
 
-DEFAULT_PERMISSIONS = {"diagnose": True, "logs": [], "restart_container": [], "restart_service": []}
+DEFAULT_PERMISSIONS = {"diagnose": True, "cleanup": False, "logs": [], "restart_container": [], "restart_service": []}
 
 
 def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
@@ -665,12 +698,14 @@ def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
                 or not set(perms["logs"]) <= containers | units:
             raise ApiError(422, "unknown_target")  # only things this device reported
         before = d.get("permissions") or DEFAULT_PERMISSIONS
-        clean = {"diagnose": bool(perms["diagnose"]), **{k: sorted(set(perms[k])) for k in
+        clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")), **{k: sorted(set(perms[k])) for k in
                                                          ("logs", "restart_container", "restart_service")}}
         tx.update(ref, {"permissions": clean})
         words = []
         if clean["diagnose"] != before.get("diagnose"):
             words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
+        if clean["cleanup"] != bool(before.get("cleanup")):
+            words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
         for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
                           ("restart_service", "restart the service")):
             added = sorted(set(clean[key]) - set(before.get(key, [])))

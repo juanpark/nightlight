@@ -27,7 +27,8 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
-ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server", "restart_container", "restart_service"}
+ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server", "restart_container", "restart_service",
+                "clean_up"}
 
 
 def _utcnow() -> datetime:

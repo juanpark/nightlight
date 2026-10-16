@@ -1,0 +1,128 @@
+"""Playbooks (playbooks.yaml): known problems solved the same way every time, without the AI. A run asks the device
+for the playbook's read-only checks; when they come back, causes are matched here, in code, and the clean-ups the
+device allows are put up as approval cards. Gemini is only needed for what no playbook recognises."""
+
+import logging
+import re
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
+
+from . import actions, db, real
+
+log = logging.getLogger(__name__)
+
+_UNIT_GB = {"k": 1 / 1024 ** 2, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
+
+
+@lru_cache(maxsize=1)
+def library() -> dict[str, dict]:
+    books = yaml.safe_load((Path(__file__).with_name("playbooks.yaml")).read_text())
+    out = {}
+    for b in books:
+        assert set(b["checks"]) <= set(real.INSPECT) and 1 <= len(b["checks"]) <= real.MAX_INSPECT, b["id"]
+        for c in b["causes"]:
+            assert c.get("fix") is None or c["fix"] in real.FIX, (b["id"], c["id"])
+            c["_re"] = re.compile(c["match"], re.M)
+        out[b["id"]] = b
+    return out
+
+
+def _gb(text: str) -> float | None:
+    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmMgGtT])?i?B?\s*", text or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1)) * _UNIT_GB[(m.group(2) or "g").lower()]
+    except ValueError:
+        return None
+
+
+def _fits(cause: dict, m: re.Match) -> bool:
+    groups = m.groupdict()
+    if "min_gb" in cause:
+        size = _gb(groups.get("size") or "")
+        if size is None or size < cause["min_gb"]:
+            return False
+    for key, least in (cause.get("min_value") or {}).items():
+        try:
+            if float(groups.get(key) or "nan") < least:
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def evaluate(book: dict, output: str, device: dict) -> dict:
+    """Which known causes the checks' output shows, in the playbook's order; at most one hit per cause."""
+    allowed = set((device.get("allowedJobs") or {}).get("fix", []))
+    found = []
+    for cause in book["causes"]:
+        hit = next((m for m in cause["_re"].finditer(output or "") if _fits(cause, m)), None)
+        if not hit:
+            continue
+        words = {k: (v or "").strip()[:80] for k, v in hit.groupdict().items()}
+        row = {"cause": cause["id"], "say": cause["say"].format(**words)}
+        if cause.get("advice"):
+            row["advice"] = cause["advice"].format(**words)
+        if cause.get("fix"):
+            row["fix"] = cause["fix"]
+            row["fixAllowed"] = cause["fix"] in allowed
+        found.append(row)
+    return {"id": book["id"], "title": book["title"], "found": found,
+            "nothing": None if found else book.get("nothing")}
+
+
+def offered(device: dict) -> list[dict]:
+    """The playbooks this device can run (it offers all their checks), suggested first when a finding matches."""
+    if device.get("realm") != "real":
+        return []
+    checks = set((device.get("allowedJobs") or {}).get("inspect", []))
+    findings = {f.get("id") for f in device.get("findings") or [] if (f.get("state") or "new") == "new"}
+    out = [{"id": b["id"], "title": b["title"], "about": b["about"], "suggested": bool(findings & set(b["findings"]))}
+           for b in library().values() if set(b["checks"]) <= checks]
+    return sorted(out, key=lambda b: not b["suggested"])
+
+
+def start(uid: str, device_id: str, book_id: str, *, session_id: str, turn_id: str, generation: int,
+          fence=None) -> dict:
+    book = library().get(book_id)
+    if not book:
+        raise ValueError("unknown_playbook")
+    return actions.request_inspection(uid, session_id=session_id, turn_id=turn_id, generation=generation,
+                                      device_id=device_id, what=book["checks"], fence=fence,
+                                      extra={"playbook": book_id})
+
+
+def summary(result: dict) -> str:
+    """The playbook's findings in plain sentences (for the chat follow-up and the agent)."""
+    pb = result or {}
+    lines = [f"Playbook \"{pb.get('title')}\":"]
+    for f in pb.get("found") or []:
+        tail = ""
+        if f.get("fix"):
+            tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("fixAllowed")
+                    else " A clean-up exists, but \"clean up space\" isn't switched on for this device.")
+        lines.append(f"- {f['say']}{tail}" + (f" {f['advice']}" if f.get("advice") else ""))
+    if pb.get("nothing"):
+        lines.append(pb["nothing"])
+    return "\n".join(lines)
+
+
+def propose_fixes(uid: str, action_id_: str) -> list[str]:
+    """After a playbook's checks came back: one approval card per allowed clean-up it found. Best effort."""
+    a = db.action(uid, action_id_).get().to_dict() or {}
+    pb = (a.get("result") or {}).get("playbook") or {}
+    ids = []
+    for f in pb.get("found") or []:
+        if not f.get("fixAllowed"):
+            continue
+        try:
+            card = actions.propose(uid, session_id=a["sessionId"], turn_id=f"{a['turnId']}:{action_id_}",
+                                   generation=a["demoGeneration"], action_type="fix", device_id=a["deviceId"],
+                                   params={"recipe": f["fix"]})
+            ids.append(card["id"])
+        except Exception as e:  # a card that can't be made (device went quiet, reset) leaves the findings as words
+            log.info("playbook fix not proposed: %s", type(e).__name__)
+    return ids

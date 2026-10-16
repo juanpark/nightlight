@@ -69,7 +69,7 @@ def helper(tmp_path, monkeypatch):
     mod = importlib.util.module_from_spec(SPEC)
     SPEC.loader.exec_module(mod)
     monkeypatch.setattr(mod, "_containers", lambda: [])
-    monkeypatch.setattr(mod, "_failed_units", lambda: [])
+    monkeypatch.setattr(mod, "_failed_units", lambda **k: [])
     return mod
 
 
@@ -123,3 +123,13 @@ def test_job_budget_skips_what_is_left_and_dedupes(helper, monkeypatch):  # revi
     monkeypatch.setitem(helper.INSPECT, "failed", lambda: calls.append("failed") or "x")
     ok, summary, out = helper.run_inspect(["load", "load", ["x"], "failed"])
     assert calls == ["load"] and "failed: skipped (out of time)" in out and summary == "Checked: load, failed"
+
+
+def test_a_check_starting_near_the_end_gets_only_what_is_left(helper, monkeypatch):  # review A rev2
+    import time
+    seen = []
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: seen.append(timeout) or "")
+    helper._inspect_until[0] = time.time() + 0.5
+    helper._inspect_processes()
+    helper.INSPECT["failed"]()
+    assert seen and all(t <= 0.5 for t in seen)

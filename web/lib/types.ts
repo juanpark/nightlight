@@ -35,6 +35,7 @@ export interface Service {
  * device reported: container names, and exact unit names for system services. */
 export interface Permissions {
   diagnose: boolean;
+  cleanup: boolean;
   logs: string[];
   restart_container: string[];
   restart_service: string[];
@@ -85,10 +86,21 @@ export interface Action {
   realm?: "sim" | "real";
   demoGeneration?: number;
   decision?: { by: "user" | "auto"; decision: "approve" | "deny"; note?: string };
-  result?: { ok: boolean; summary: string };
+  result?: { ok: boolean; summary: string; playbook?: PlaybookResult };
+  playbook?: string;
+  params?: Record<string, unknown>;
   continuationTurnId?: string;
   createdAt?: Date | null;
 }
+
+export interface PlaybookResult {
+  id: string;
+  title: string;
+  found: { cause: string; say: string; advice?: string; fix?: string; fixAllowed?: boolean }[];
+  nothing: string | null;
+}
+
+export interface PlaybookOffer { id: string; title: string; about: string; suggested: boolean }
 
 export interface TrustDoc {
   id: string;

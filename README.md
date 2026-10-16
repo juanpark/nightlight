@@ -118,6 +118,9 @@ checks every minute (a TCP connect to a port it saw open).
 | Trust ladder | per kind of job, device or service; pinning; promotion offers after 3 successes (sample home) |
 | Look into | "why is it down?" on real devices: status, exit-code meaning, out-of-memory, restarts, optional log lines; answered in the chat or by one follow-up |
 | Investigates first | before answering "why is it full / slow / offline?", the agent runs the helper's fixed read-only checks (biggest known folders, busiest programs, waiting updates, Docker disk use, DNS and internet, load, failing services) and answers with names and sizes |
+| Playbooks | known problems (disk filling up, slow, internet, updates) written down once as data (`api/src/nightlight_api/playbooks.yaml`): checks run, causes are matched in code and safe clean-ups come up as cards, with no AI call; "Checkups" in the device drawer, or `run_playbook` in chat |
+| Safe clean-ups | empty the Trash, Homebrew / npm caches, Xcode build data, unused Docker images, apt cache, system journal; each one an approval card that says honestly whether it can be undone, and reports the space freed |
+| Device notebook | Nightlight notes what it learned about a device (causes, quirks, what worked) and reads it before investigating; owners add their own notes |
 | Known and snoozed problems | "I know, leave it" or "Snooze a week"; the health light counts only problems that still need a look; a problem that gets worse comes back |
 | Activity | who did what (you, the device, Nightlight), filters by device, kind and time, grouped by day |
 | History | per real device, last 24 hours or 7 days: status strip and disk, memory, CPU sparklines (points every 5 minutes, kept 8 days) |

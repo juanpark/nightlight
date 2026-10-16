@@ -143,7 +143,7 @@ export default function Home({ user }: { user: User }) {
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
           <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => chat.current?.ask(q)} />
           {selected && devices.find((d) => d.id === selected) && (
-            <DeviceDrawer uid={uid} device={devices.find((d) => d.id === selected)!}
+            <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
               onAsk={(q) => chat.current?.ask(q)} onClose={() => setSelected(null)} />
           )}
         </section>

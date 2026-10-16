@@ -25,8 +25,10 @@ def _clean(text: str) -> tuple[str, int]:
     return (clean[:NOTE_CHARS - 1].rstrip() + "…" if len(clean) > NOTE_CHARS else clean), hidden
 
 
-def add(uid: str, device_id: str, text: str, by: str, generation: int | None) -> dict:
-    """Add a note. by is "nightlight" or "you". Something that looks like a secret is refused, not stored."""
+def add(uid: str, device_id: str, text: str, by: str, generation: int | None, fence=None) -> dict:
+    """Add a note. by is "nightlight" or "you". Something that looks like a secret is refused, not stored.
+    Like every other write, it waits out a reset and belongs to the current generation; `fence(tx)` lets a turn
+    abort if it is no longer the current attempt."""
     clean, hidden = _clean(text)
     if hidden:
         raise ValueError("looks_secret")
@@ -35,8 +37,13 @@ def add(uid: str, device_id: str, text: str, by: str, generation: int | None) ->
 
     @firestore.transactional
     def run(tx):
+        if fence:
+            fence(tx)
+        user = db.user(uid).get(transaction=tx).to_dict()
+        from .actions import _require_ready  # not at the top: actions is the heavier module
+        _require_ready(user, generation)
         snap = db.device(uid, device_id).get(transaction=tx)
-        if not snap.exists or (generation is not None and not real.is_current(snap.to_dict(), generation)):
+        if not snap.exists or not real.is_current(snap.to_dict(), user.get("demoGeneration")):
             raise not_found()
         d = snap.to_dict()
         old = list(db.notes(uid, device_id).get(transaction=tx))
@@ -63,8 +70,10 @@ def remove(uid: str, device_id: str, note_id: str) -> dict:
     return {"ok": True}
 
 
-def recent(uid: str, device_id: str, n: int = SHOWN) -> list[dict]:
-    notes = [s.to_dict() for s in db.notes(uid, device_id).get()]
+def recent(uid: str, device_id: str, generation: int | None, n: int = SHOWN) -> list[dict]:
+    """Newest first; a sample device's notes only from the current generation (in case a reset raced a write)."""
+    notes = [x for x in (s.to_dict() for s in db.notes(uid, device_id).get())
+             if "demoGeneration" not in x or x["demoGeneration"] == generation]
     notes.sort(key=lambda x: str(x.get("at")), reverse=True)
     return [{"text": x["text"], "by": x.get("by"), "on": x["at"].date().isoformat() if hasattr(x.get("at"), "date")
              else None} for x in notes[:n]]

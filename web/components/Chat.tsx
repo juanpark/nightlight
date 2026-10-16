@@ -1,5 +1,6 @@
 "use client";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { chatSession } from "@/lib/session";
 import { api, ApiError, stream } from "@/lib/api";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import ApprovalCard from "./ApprovalCard";
@@ -80,15 +81,7 @@ const Chat = forwardRef<ChatHandle, {
       }
     }, []);
 
-    async function session(): Promise<string> {
-      const key = `nl_session_${uid}_${generation ?? 0}`; // a reset deletes old chats: a new generation, a new chat
-      let sid = null;
-      try { sid = localStorage.getItem(key); } catch { /* private mode */ }
-      if (sid) return sid;
-      const r = await api<{ sessionId: string }>("POST", "/api/chat/sessions", {});
-      try { localStorage.setItem(key, r.sessionId); } catch { /* private mode */ }
-      return r.sessionId;
-    }
+    const session = () => chatSession(uid, generation);
 
     const ask = useCallback(async (q: string) => {
       if (!q.trim() || busy) return;

@@ -11,10 +11,11 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, memory, notebook, quota, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, db, demo, memory, notebook, playbooks, quota, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
+from .ids import new_id
 from .redact import scrub, scrub_value
 
 app = FastAPI(title="Nightlight API", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
@@ -53,6 +54,7 @@ class WatchBody(Strict):
 
 class PermissionsBody(Strict):
     diagnose: bool
+    cleanup: bool = False
     logs: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")]] = Field(max_length=20)
     restart_container: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")]] = \
         Field(max_length=20)
@@ -205,6 +207,36 @@ def delete_note(device_id: str, note_id: str, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id) or not re.fullmatch(r"note_[0-9A-Za-z]{26}", note_id):
         raise not_found()
     return notebook.remove(uid, device_id, note_id)
+
+
+class PlaybookRunBody(Strict):
+    sessionId: str = Field(pattern=r"^sess_[0-9A-Z]{26}$")
+
+
+@app.get("/api/devices/{device_id}/playbooks")
+def device_playbooks(device_id: str, uid: str = Depends(current_uid)):
+    """The playbooks this device can run, suggested ones (matching a current problem) first."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    snap = db.device(uid, device_id).get()
+    if not snap.exists:
+        raise not_found()
+    return {"playbooks": playbooks.offered(snap.to_dict())}
+
+
+@app.post("/api/devices/{device_id}/playbooks/{book_id}/run", status_code=202)
+def run_playbook(device_id: str, book_id: str, body: PlaybookRunBody, uid: str = Depends(current_uid)):
+    """Run a playbook on a real device: its read-only checks now (no card), then cards for the clean-ups it finds."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id) or book_id not in playbooks.library():
+        raise not_found()
+    if not db.session(uid, body.sessionId).get().exists:
+        raise not_found()
+    try:
+        a = playbooks.start(uid, device_id, book_id, session_id=body.sessionId, turn_id=new_id("pbrun"),
+                            generation=_generation(uid))
+    except ValueError as e:
+        raise ApiError(409, str(e)) from None
+    return {"actionId": a["id"], "status": a["status"]}
 
 
 @app.post("/api/watches", status_code=201)
@@ -426,7 +458,8 @@ class HeartbeatBody(Strict):
     failedUnits: list[str] = Field(default_factory=list, max_length=50)
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
-    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect"], list[str]] = \
+    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect", "fix"],
+                      list[str]] = \
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
     manage: Literal["app", "strict"] | None = None  # chosen on the device; the server can't change it
@@ -441,6 +474,8 @@ class HeartbeatBody(Strict):
             pattern = real.CONTAINER_NAME if kind == "restart_container" else real.TARGET_NAME
             if kind == "inspect" and not all(t in real.INSPECT for t in targets):
                 raise ValueError("allowedJobs: unknown check")
+            if kind == "fix" and not all(t in real.FIX for t in targets):
+                raise ValueError("allowedJobs: unknown clean-up")
             if len(targets) > 20 or not all(pattern.fullmatch(t) for t in targets):
                 raise ValueError("allowedJobs: at most 20 valid names per job")
         return self
@@ -545,7 +580,13 @@ def helper_job_result(action_id: str, body: JobResultBody, request: Request):
         raise ApiError(401, "invalid_token")
     if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
         raise not_found()
-    return actions.job_result(token, action_id, body.ok, body.summary, body.state, body.output)
+    out = actions.job_result(token, action_id, body.ok, body.summary, body.state, body.output)
+    playbooks.propose_fixes(_uid_of_token(token), action_id)  # a playbook's checks came back: cards for its fixes
+    return out
+
+
+def _uid_of_token(token: str) -> str:
+    return (real.tokens_ref().document(real._sha(token)).get().to_dict() or {}).get("uid", "")
 
 
 @app.post("/helper/discoveries")

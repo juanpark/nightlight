@@ -189,6 +189,21 @@ arrives: open that turn's stream once the action has `continuationTurnId` (retry
 questions about space, speed, connectivity or updates. `updates` can take up to a minute, so it usually ends in a
 follow-up.
 
+**Playbooks.** `GET /api/devices/{id}/playbooks` lists what a real device can run (`suggested` when a current
+problem matches). `POST /api/devices/{id}/playbooks/{playbookId}/run {"sessionId"}` → `202 {actionId}`: an
+`inspect` action with `playbook` set. When the device answers, `result.playbook` holds
+`{id, title, found: [{cause, say, advice?, fix?, fixAllowed?}], nothing}` (matched on the server, no model call) and
+one pending `fix` card is created per allowed clean-up. The library is `api/src/nightlight_api/playbooks.yaml`.
+
+**Clean-ups (`fix`).** `params {"recipe": name}`, one of `empty_trash`, `brew_cleanup`, `npm_cache`,
+`xcode_build_data`, `docker_prune`, `apt_clean`, `journal_vacuum`, only when the device lists it in
+`allowedJobs.fix` (helper 0.9+). Always an approval card. `result: {ok, summary}` (the summary says how much space was
+freed). Permissions: `cleanup` (bool) in `POST /api/devices/{id}/permissions`.
+
+**Notebook.** `users/{uid}/devices/{id}/notes/{noteId}` `{text, by: "nightlight"|"you", at}`, read with Firestore.
+`POST /api/devices/{id}/notes {"text"}` (201; `422` with `msg: "looks_secret"` when it looked like a secret),
+`DELETE /api/devices/{id}/notes/{noteId}`. At most 30 per device.
+
 ## Keeping watch
 
 - **Sweep:** Cloud Scheduler calls `POST /internal/sweep` every 5 minutes with a Google-signed OIDC token (audience

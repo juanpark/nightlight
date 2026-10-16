@@ -47,10 +47,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
-JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect")
+JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")  # container names
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")  # containers or system services (units)
 _POLL = {"every": 0}  # the server asks for quicker checks while the owner is chatting
@@ -163,10 +163,10 @@ def _image_name(ref):
     return ref.rsplit("/", 1)[-1][:128]
 
 
-def _failed_units():
+def _failed_units(timeout=20):
     if not shutil.which("systemctl"):
         return []
-    out = _run(["systemctl", "--failed", "--plain", "--no-legend", "--no-pager"])
+    out = _run(["systemctl", "--failed", "--plain", "--no-legend", "--no-pager"], timeout=timeout)
     return [line.split()[0][:128] for line in out.splitlines() if line.strip()][:50]
 
 
@@ -201,12 +201,12 @@ def _updates_pending():
     return _hourly("updates", _count_updates)
 
 
-def _failed_agents():
+def _failed_agents(timeout=20):
     """macOS: your own background items (not Apple's) whose last run failed."""
     if sys.platform != "darwin" or not shutil.which("launchctl"):
         return []
     out = []
-    for line in _run(["launchctl", "list"]).splitlines()[1:]:
+    for line in _run(["launchctl", "list"], timeout=timeout).splitlines()[1:]:
         parts = line.split("\t")
         if len(parts) == 3 and parts[1] not in ("0", "-") and not parts[2].startswith(("com.apple.", "application.")):
             out.append(parts[2][:100])
@@ -264,9 +264,11 @@ def _allowed():
         return _from_remote(cfg.get("remote") or {})
     allow = cfg.get("allow") or {}
     out = {k: [n for n in v if _name_re(k).fullmatch(n)][:20] for k, v in allow.items()
-           if k in JOB_TYPES and k != "inspect" and v}
+           if k in JOB_TYPES and k not in ("inspect", "fix") and v}
     if "all" in (allow.get("inspect") or []):
         out["inspect"] = sorted(INSPECT)
+    if "all" in (allow.get("fix") or []) and _available_fixes():
+        out["fix"] = _available_fixes()
     return out
 
 
@@ -286,6 +288,8 @@ def _from_remote(remote):
         out["diagnose"] = sorted(containers | units)[:20]
     if remote.get("diagnose") is True:
         out["inspect"] = sorted(INSPECT)
+    if remote.get("cleanup") is True and _available_fixes():
+        out["fix"] = _available_fixes()
     return out
 
 
@@ -332,8 +336,8 @@ def _restart_unit(unit, wait):
 def set_allowed(kind, name, on):
     if kind not in JOB_TYPES:
         sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
-    if kind == "inspect" and name != "all":
-        sys.exit("Use: allow inspect all")
+    if kind in ("inspect", "fix") and name != "all":
+        sys.exit(f"Use: allow {kind} all")
     if not _name_re(kind).fullmatch(name):
         sys.exit("That isn't a valid name.")
     def change(cfg):
@@ -538,7 +542,7 @@ def _inspect_disk():
 
 
 def _inspect_processes():
-    out = _run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=10).splitlines()[1:]
+    out = _run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]
     rows = []
     for line in out:
         parts = line.split(None, 2)
@@ -614,8 +618,8 @@ def _inspect_load():
 
 
 def _inspect_failed():
-    units = _failed_units()
-    agents = _failed_agents()
+    units = _failed_units(timeout=_left(10))
+    agents = _failed_agents(timeout=_left(10))
     return ("Failed system services: " + (", ".join(units) or "none") +
             ("\nFailing background items: " + ", ".join(agents) if agents else ""))
 
@@ -649,10 +653,94 @@ def run_inspect(names):
         f"\n({hidden} private values hidden)" if hidden else "")
 
 
+# ------------------------------------------------------------------ fix: safe clean-ups, each after the owner approves
+# A fixed catalogue like inspect. Each removes only things that are rebuilt or re-downloaded on their own (or, for the
+# Trash, what the owner already threw away). Allowed by strict `allow fix all` or the app's "clean up space" switch.
+
+def _as_root(cmd):
+    return cmd if os.geteuid() == 0 else ["sudo", "-n", *cmd]
+
+
+def _empty_dir(path):
+    """Delete what is inside `path` (never `path` itself), never following links. Returns how many items failed."""
+    failed = 0
+    if not os.path.isdir(path) or os.path.islink(path):
+        return 0
+    for entry in os.scandir(path):
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.path)
+            else:
+                os.remove(entry.path)
+        except OSError:
+            failed += 1
+    return failed
+
+
+def _fix_cmd(cmd, timeout=300):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False, "it couldn't run"
+    if r.returncode != 0 and "password" in (r.stderr or "").lower():
+        return False, "this device needs a password for it (sudo)"
+    return r.returncode == 0, "" if r.returncode == 0 else "it reported an error"
+
+
+FIXES = {
+    "empty_trash": {"when": lambda: sys.platform == "darwin",
+                    "run": lambda: (_empty_dir(f"{_HOME}/.Trash") == 0, "some items couldn't be removed")},
+    "brew_cleanup": {"when": lambda: bool(shutil.which("brew")), "run": lambda: _fix_cmd(["brew", "cleanup", "-s"])},
+    "npm_cache": {"when": lambda: bool(shutil.which("npm")),
+                  "run": lambda: _fix_cmd(["npm", "cache", "clean", "--force"])},
+    "xcode_build_data": {"when": lambda: os.path.isdir(f"{_HOME}/Library/Developer/Xcode/DerivedData"),
+                         "run": lambda: (_empty_dir(f"{_HOME}/Library/Developer/Xcode/DerivedData") == 0,
+                                         "some items couldn't be removed")},
+    "docker_prune": {"when": lambda: bool(shutil.which("docker")),
+                     "run": lambda: _fix_cmd(["docker", "image", "prune", "-af"])},
+    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
+    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")),
+                       "run": lambda: _fix_cmd(_as_root(["journalctl", "--vacuum-size=200M"]))},
+}
+
+
+def _available_fixes():
+    out = []
+    for name, f in FIXES.items():
+        try:
+            if f["when"]():
+                out.append(name)
+        except Exception:
+            pass
+    return sorted(out)
+
+
+def _free_gb():
+    try:
+        return shutil.disk_usage(_HOME if sys.platform == "darwin" else "/").free / 1024 ** 3
+    except OSError:
+        return None
+
+
+def run_fix(name):
+    if not isinstance(name, str) or name not in FIXES or name not in _allowed().get("fix", []):
+        return False, "This clean-up isn't allowed on this device, so nothing was done.", None
+    before = _free_gb()
+    try:
+        ok, why = FIXES[name]["run"]()
+    except Exception as e:
+        ok, why = False, f"it hit an error ({type(e).__name__})"
+    after = _free_gb()
+    freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
+    return ok, ((f"Done.{freed}" if ok else f"It didn't fully work: {why}.{freed}").strip()), None
+
+
 def run_job(job, wait=5):
     """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
     (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
     kind, params = job.get("type"), job.get("params")
+    if kind == "fix":
+        return run_fix(params.get("recipe") if isinstance(params, dict) else None)
     if kind == "inspect":
         return run_inspect(params.get("what") if isinstance(params, dict) else None)
     if kind == "diagnose":
@@ -1342,7 +1430,8 @@ def status():
         print(f"Background service: {out or 'not installed'}")
     allowed = _allowed()
     words = {"diagnose": "check why it stopped", "logs": "read recent log lines", "restart_container": "restart",
-             "restart_service": "restart the service", "inspect": "look around (reads only)"}
+             "restart_service": "restart the service", "inspect": "look around (reads only)",
+             "fix": "clean up space after you approve"}
     print("  Nightlight may: " + ("; ".join(f"{words.get(k, k)}: {', '.join(v)}" for k, v in allowed.items())
                                   or "nothing yet"))
 
@@ -1360,6 +1449,9 @@ def settings():
                 "updates, network)?", True):
             allow["diagnose"] = [t for t in targets if TARGET_RE.fullmatch(t)][:20]
             allow["inspect"] = ["all"]
+        if _ask("May Nightlight clean up space after you approve each time (empty the Trash, clear caches that "
+                "rebuild themselves, remove unused Docker images)?", False):
+            allow["fix"] = ["all"]
         for t in targets[:20]:
             if _ask(f"  Read recent log lines of {t}?", False):
                 allow["logs"].append(t)
