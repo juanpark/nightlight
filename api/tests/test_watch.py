@@ -173,3 +173,16 @@ def test_a_slow_name_lookup_cannot_hold_the_probe(monkeypatch):  # review 11 rev
     monkeypatch.setattr(watch, "_resolve", lambda url: (_t.sleep(1.0), None)[1])
     t = _t.monotonic()
     assert watch.probe("https://example.org")[0] == "crit" and _t.monotonic() - t < 0.6
+
+
+
+def test_a_late_name_lookup_is_dropped_quietly(monkeypatch):  # review 11 rev5
+    import threading
+    import time as _t
+    monkeypatch.setattr(watch, "PROBE_BUDGET", 0.05)
+    errors = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: errors.append(args.exc_value))
+    monkeypatch.setattr(watch, "_resolve", lambda url: (_t.sleep(0.3), (None, 0, "1.2.3.4"))[1])
+    assert watch.probe("https://example.org")[0] == "crit"
+    _t.sleep(0.5)  # let the lookup finish after the deadline
+    assert errors == []

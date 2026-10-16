@@ -164,9 +164,11 @@ async def _resolve_bounded(url: str):
 
     def work():
         try:
-            fut.set_result(_resolve(url))
+            result, error = _resolve(url), None
         except BaseException as e:  # handed to the waiting coroutine
-            fut.set_exception(e)
+            result, error = None, e
+        if fut.set_running_or_notify_cancel():  # False if the deadline already cancelled it: drop the late answer
+            fut.set_exception(error) if error else fut.set_result(result)
 
     threading.Thread(target=work, daemon=True, name="watch-dns").start()
     return await asyncio.wrap_future(fut)
