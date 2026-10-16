@@ -203,11 +203,14 @@ def _container_state(name):
 # ------------------------------------------------------------------ read-only looks (diagnose)
 # Scrubbed here, before anything leaves the device (the server scrubs again). Best effort: logs can contain things no
 # pattern recognises, which is why sending log lines needs its own `allow logs NAME`.
+_CONTROLS = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|[\x00-\x08\x0b-\x1f\x7f]")
+_SECRET_WORD = r"[A-Za-z0-9_.-]*(?:pass(?:word)?|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth|credential)[A-Za-z0-9_.-]*"
 _SCRUB = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), "[hidden]"),
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [hidden]"),
-    (re.compile(r"(?i)\b(pass(word)?|passwd|secret|token|api[_-]?key|access[_-]?key|auth)\b(\s*[=:]\s*)\S+"),
-     r"\1\3[hidden]"),
+    # KEY=value, KEY: value, "key": "value", 'key'='value', DB_PASSWORD=..., --password value
+    (re.compile(r"(?i)([\"']?" + _SECRET_WORD + r"[\"']?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;}&]+)"), r"\1[hidden]"),
+    (re.compile(r"(?i)(--?" + _SECRET_WORD + r"[ =])(\S+)"), r"\1[hidden]"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "[hidden]"),
     (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{35}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b"), "[hidden]"),
     (re.compile(r"([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@"), r"\1[hidden]@"),
@@ -215,15 +218,16 @@ _SCRUB = [
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[ip]"),
     (re.compile(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b"), "[mac]"),
     (re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}\b"), "[ip]"),
+    (re.compile(r"(?<![\w:])(?:[0-9a-fA-F]{1,4}:){1,7}:(?:[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*)?(?![\w:])"), "[ip]"),
     (re.compile(r"\b[0-9a-fA-F]{32,}\b|\b[A-Za-z0-9+/_-]{40,}={0,2}"), "[hidden]"),
     (re.compile(r"/(home|Users)/[^/\s]+"), r"/\1/[user]"),
-    (re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\x0b-\x1f\x7f]"), ""),
 ]
 
 
 def scrub(text):
     """Returns (clean text, how many things were hidden)."""
     hidden = 0
+    text = _CONTROLS.sub("", text)  # first: colour codes could otherwise split a keyword from its value
     for pattern, repl in _SCRUB:
         text, n = pattern.subn(repl, text)
         if repl and "hidden" in repl:
@@ -239,13 +243,27 @@ def _tail(text, lines=30, width=200, limit=3000):
     return "\n".join(out)
 
 
-def _run_both(cmd, timeout=15):
-    """stdout and stderr together, whatever the exit code ('' if it couldn't run)."""
+def _run_both(cmd, timeout=15, cap=256 * 1024):
+    """stdout and stderr together, whatever the exit code ('' if it couldn't run). Reads at most `cap` bytes (the
+    newest part is kept by the caller), then stops the command, so a huge log can't fill the helper's memory."""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-        return (r.stdout or "") + (r.stderr or "")
-    except (OSError, subprocess.SubprocessError):
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError:
         return ""
+    chunks, size, deadline = [], 0, time.time() + timeout
+    try:
+        while size < cap and time.time() < deadline:
+            block = p.stdout.read1(65536) if hasattr(p.stdout, "read1") else p.stdout.read(65536)
+            if not block:
+                break
+            chunks.append(block)
+            size += len(block)
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.stdout.close()
+        p.wait()
+    return b"".join(chunks)[:cap].decode("utf-8", "replace")
 
 
 EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was stopped forcibly (often out of memory, "
@@ -269,7 +287,7 @@ def _look_container(name, logs):
         lines.append(f"error: {st['Error'][:200]}")
     summary = f"{name} {meaning}" + (", out of memory" if st.get("OOMKilled") else "")
     if logs:
-        lines += ["last log lines:", _tail(_run_both(["docker", "logs", "--tail", "30", "--timestamps", name]))]
+        lines += ["last log lines:", _tail(scrub(_run_both(["docker", "logs", "--tail", "30", "--timestamps", name]))[0])]
     return summary, "\n".join(lines)
 
 
@@ -283,8 +301,8 @@ def _look_unit(name, logs):
     summary = f"{unit} is {info.get('ActiveState')} ({info.get('Result', '')}, exit status {info.get('ExecMainStatus')})"
     lines = [f"{k}: {v}" for k, v in info.items()]
     if logs:
-        lines += ["last log lines:", _tail(_run_both(["journalctl", "-u", unit, "-n", "30", "--no-pager",
-                                                      "-o", "short-iso"]))]
+        lines += ["last log lines:", _tail(scrub(_run_both(["journalctl", "-u", unit, "-n", "30", "--no-pager",
+                                                            "-o", "short-iso"]))[0])]
     return summary, "\n".join(lines)
 
 
@@ -303,7 +321,8 @@ def look_into(target):
         return False, f"Couldn't find a container or service named {target} here.", None
     summary, detail = found
     text, hidden = scrub(detail)
-    return True, summary[:200], _tail(text, lines=60, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
+    return True, scrub(summary)[0][:200], _tail(text, lines=60, limit=3500) + (
+        f"\n({hidden} private values hidden)" if hidden else "")
 
 
 def run_job(job, wait=5):
@@ -316,7 +335,7 @@ def run_job(job, wait=5):
             return False, "That isn't something this helper can look into.", None
         return look_into(target)
     name = params.get("container") if isinstance(params, dict) else None
-    if kind not in JOB_TYPES or not isinstance(name, str) or name not in _allowed().get(kind, []):
+    if kind != "restart_container" or not isinstance(name, str) or name not in _allowed().get(kind, []):
         return False, "This job isn't allowed on this device, so nothing was done.", None
     if not shutil.which("docker"):
         return False, "Docker isn't available on this device, so nothing was done.", None

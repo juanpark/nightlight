@@ -345,3 +345,41 @@ def test_look_into_needs_local_permission_and_reads_only(helper, monkeypatch):
     assert all(c[0] == "docker" and c[1] in ("inspect", "logs") for c in calls)  # read-only commands only
     job = {"id": "act_" + "b" * 26, "type": "diagnose", "params": {"target": "grafana; rm -rf /"}}
     assert helper.run_job(job)[0] is False
+
+
+def test_a_logs_permission_never_starts_a_container(helper, monkeypatch):  # review 10 #1
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    helper.set_allowed("logs", "grafana", True)
+    calls = []
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: calls.append(cmd) or "exited\n")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    for kind in ("logs", "diagnose_x", "restart_container"):
+        job = {"id": "act_" + "c" * 26, "type": kind, "params": {"container": "grafana"}}
+        assert helper.run_job(job, wait=0)[0] is False
+    assert not any(c[:2] == ["docker", "start"] for c in calls)
+
+
+def test_what_leaves_the_device_is_scrubbed(helper, monkeypatch):  # review 10 #2: at the upload boundary
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    helper.set_allowed("diagnose", "web", True)
+    helper.set_allowed("logs", "web", True)
+    secrets = ['{"password": "s3cr3tvalue1"}', "DB_PASSWORD=s3cr3tvalue2", "pass\x1b[0mword=s3cr3tvalue3",
+               "client 2001:db8::1 connected", "--api-key s3cr3tvalue4", "MY_TOKEN: 's3cr3tvalue5'"]
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20:
+                        '{"Status":"exited","ExitCode":1,"OOMKilled":false} 0' if cmd[1] == "inspect" else "")
+    monkeypatch.setattr(helper, "_run_both", lambda cmd, timeout=15: "\n".join(secrets))
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(json.dumps(body)) or (200, {}))
+    helper._do_job("https://api.example.com", "t" * 43, {"id": "act_" + "d" * 26, "type": "diagnose",
+                                                          "params": {"target": "web"}})
+    out = sent[0]
+    for leaked in ("s3cr3tvalue1", "s3cr3tvalue2", "s3cr3tvalue3", "2001:db8::1", "s3cr3tvalue4", "s3cr3tvalue5"):
+        assert leaked not in out
+    assert helper.scrub("at 12:30:45")[0] == "at 12:30:45"
+
+
+def test_reading_a_huge_log_is_bounded(helper):  # review 10 #5
+    import sys as _sys
+    out = helper._run_both([_sys.executable, "-c", "import sys; sys.stdout.write('x' * 5_000_000)"], cap=100_000)
+    assert 0 < len(out) <= 100_000

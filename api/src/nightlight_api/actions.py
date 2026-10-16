@@ -294,6 +294,8 @@ def await_diagnosis(uid: str, action_id_: str) -> dict | None:
     def run(tx):
         ref = db.action(uid, action_id_)
         a = ref.get(transaction=tx).to_dict() or {}
+        if a.get("followUp") == "wanted":
+            return None  # already handed to the follow-up (e.g. by an earlier attempt of this turn)
         if a.get("status") in ("done", "failed"):
             return a
         tx.update(ref, {"followUp": "wanted"})

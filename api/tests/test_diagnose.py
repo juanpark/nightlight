@@ -87,3 +87,15 @@ def test_quick_checks_while_chatting(client, started):
     assert r.status_code == 200 and [j["id"] for j in r.json()["jobs"]] == [a["id"]]
     assert client.post("/helper/jobs/claim", json={}, headers=h).status_code == 429  # too soon
     assert client.post("/helper/jobs/claim", json={}, headers={"X-Device-Token": "x" * 43}).status_code == 401
+
+
+def test_once_handed_to_a_follow_up_a_retry_never_narrates_it(client, started):  # review 10 #3
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _ask(started, dev["deviceId"])
+    assert actions.await_diagnosis(started, a["id"]) is None  # attempt 1 gave up waiting
+    _again(dev["token"])
+    beat(client, dev["token"], ALLOW)
+    _result(client, dev["token"], a["id"], output="exit code 1")
+    assert actions.await_diagnosis(started, a["id"]) is None  # a retry sees the hand-off, not the result
+    assert db.action(started, a["id"]).get().to_dict()["continuationTurnId"]

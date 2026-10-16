@@ -31,6 +31,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
     const log = useRef<HTMLDivElement>(null);
     const streamed = useRef(new Set<string>());
     const pending = useRef(new Set<string>()); // follow-ups promised by a device that hasn't answered yet
+    const [pendingTick, setPendingTick] = useState(0); // re-check actions when a new promise arrives
     const devicesRef = useRef(devices);
     devicesRef.current = devices;
 
@@ -48,14 +49,24 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
         return next;
       });
 
-    const run = useCallback(async (path: string, body: unknown) => {
+    const run = useCallback(async (path: string, body: unknown, retries = 0) => {
+      // A follow-up can't start while the turn that asked is still finishing (409): wait and try again.
+      for (let i = 0; i < retries; i++) {
+        try {
+          await stream(path, body, () => {});
+          break;
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 409)) break;
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
       setItems((cur) => [...cur, { kind: "agent", text: "", steps: [], cards: [], busy: true }]);
       try {
         await stream(path, body, (e) => update((a) => {
           if (e.type === "text") a.text += e.delta;
           else if (e.type === "tool_call") a.steps.push(step(e, devicesRef.current));
           else if (e.type === "approval_request" && !a.cards.includes(e.actionId)) a.cards.push(e.actionId);
-          else if (e.type === "followup_pending") pending.current.add(e.turnId);
+          else if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
           else if (e.type === "error") a.error = e.message || e.code;
         }));
       } catch (e) {
@@ -98,11 +109,11 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
           pending.current.delete(a.continuationTurnId);
           if (!streamed.current.has(a.continuationTurnId)) {
             streamed.current.add(a.continuationTurnId);
-            run(`/api/turns/${a.continuationTurnId}/stream`, {});
+            run(`/api/turns/${a.continuationTurnId}/stream`, {}, 20);
           }
         }
       }
-    }, [actions, run]);
+    }, [actions, run, pendingTick]);
 
     const followUp = useCallback((turnId: string) => {
       if (streamed.current.has(turnId)) return;
