@@ -96,3 +96,30 @@ def test_helper_check_output_is_scrubbed_and_home_hidden(helper, monkeypatch):
     monkeypatch.setitem(helper.INSPECT, "disk", lambda: 1 / 0)
     ok, _, out = helper.run_inspect(["load", "disk"])
     assert ok and helper._HOME not in out and "me@example.com" not in out and "disk: couldn't check" in out
+
+
+def test_status_shows_look_around(helper, capsys):  # review A #2
+    helper._save_config({"token": "x", "manage": "strict", "allow": {"inspect": ["all"]}})
+    helper.status()
+    assert "look around (reads only)" in capsys.readouterr().out
+
+
+def test_a_hanging_name_lookup_doesnt_hold_the_job(helper, monkeypatch):  # review A #1
+    import socket
+    import time
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: time.sleep(30))
+    helper._inspect_until[0] = time.time() + 2
+    t = time.time()
+    out = helper._inspect_network()
+    assert time.time() - t < 3 and "no answer" in out
+
+
+def test_job_budget_skips_what_is_left_and_dedupes(helper, monkeypatch):  # review A #1
+    import time
+    helper._save_config({"token": "x", "manage": "strict", "allow": {"inspect": ["all"]}})
+    calls = []
+    monkeypatch.setattr(helper, "INSPECT_BUDGET", 1)
+    monkeypatch.setitem(helper.INSPECT, "load", lambda: calls.append("load") or time.sleep(1.1) or "slow")
+    monkeypatch.setitem(helper.INSPECT, "failed", lambda: calls.append("failed") or "x")
+    ok, summary, out = helper.run_inspect(["load", "load", ["x"], "failed"])
+    assert calls == ["load"] and "failed: skipped (out of time)" in out and summary == "Checked: load, failed"

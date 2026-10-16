@@ -485,14 +485,22 @@ def look_into(target):
 # scrubbed here. Allowed whenever "check why something stopped" is on (app-managed) or `allow inspect all` (strict).
 
 _HOME = os.path.expanduser("~")
+INSPECT_BUDGET = 80  # seconds for a whole inspect job, so the helper's report loop is never held up for long
+_inspect_until = [0.0]
+
+
+def _left(cap):
+    """Seconds a step may take: at most `cap`, never past the job's budget (0 when it's used up)."""
+    return max(0.0, min(cap, _inspect_until[0] - time.time()))
 
 
 def _du(path):
     """Size of a folder in MB (or None), never following links, bounded in time."""
-    if not os.path.isdir(path) or os.path.islink(path):
+    if not os.path.isdir(path) or os.path.islink(path) or _left(25) < 1:
         return None
     try:  # du exits non-zero when a few files can't be read; the total it prints is still right for what it could read
-        out = subprocess.run(["du", "-sk", path], capture_output=True, text=True, timeout=25, check=False).stdout
+        out = subprocess.run(["du", "-sk", path], capture_output=True, text=True, timeout=_left(25),
+                             check=False).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     first = out.split()[:1]
@@ -522,8 +530,8 @@ def _inspect_disk():
             rows.append((mb, label))
     rows.sort(reverse=True)
     lines = [f"{label}: {mb / 1024:.1f} GB" if mb >= 1024 else f"{label}: {mb} MB" for mb, label in rows[:12]]
-    if shutil.which("journalctl"):
-        j = _run(["journalctl", "--disk-usage"], timeout=10).strip()
+    if shutil.which("journalctl") and _left(10) >= 1:
+        j = _run(["journalctl", "--disk-usage"], timeout=_left(10)).strip()
         if j:
             lines.append("System journal: " + j.split("take up", 1)[-1].split("in the file system")[0].strip())
     return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
@@ -546,13 +554,14 @@ def _inspect_processes():
 
 def _inspect_updates():
     if shutil.which("apt"):
-        names = [ln.split("/")[0] for ln in _run(["apt", "list", "--upgradable"], timeout=60).splitlines()
+        names = [ln.split("/")[0] for ln in _run(["apt", "list", "--upgradable"], timeout=_left(60)).splitlines()
                  if "upgradable from" in ln]
         return f"{len(names)} package updates waiting: " + ", ".join(names[:25])
     if sys.platform == "darwin" and shutil.which("softwareupdate"):
-        out = _run_both(["softwareupdate", "-l"], timeout=90)
+        out = _run_both(["softwareupdate", "-l"], timeout=_left(60))
         labels = [ln.split("Label:", 1)[1].strip() for ln in out.splitlines() if "Label:" in ln]
-        brew = _run(["brew", "outdated", "--quiet"], timeout=60).split() if shutil.which("brew") else []
+        brew = _run(["brew", "outdated", "--quiet"], timeout=_left(30)).split() \
+            if shutil.which("brew") and _left(30) >= 1 else []
         return (f"macOS updates: {', '.join(labels) or 'none'}\nHomebrew outdated ({len(brew)}): "
                 + ", ".join(brew[:25]))
     return "No update tool found on this device."
@@ -561,23 +570,36 @@ def _inspect_updates():
 def _inspect_docker():
     if not shutil.which("docker"):
         return "Docker isn't installed here."
-    out = _run(["docker", "system", "df"], timeout=30).strip()
+    out = _run(["docker", "system", "df"], timeout=_left(30)).strip()
     return "Docker disk use:\n" + out if out else "Docker is installed but not running (or not reachable)."
 
 
 def _inspect_network():
     import socket as _s
-    lines = []
+    import threading
+    found = []
+
+    def look():  # getaddrinfo has no timeout of its own: run it aside and stop waiting after a few seconds
+        try:
+            found.extend(_s.getaddrinfo("www.google.com", 443, type=_s.SOCK_STREAM))
+        except OSError:
+            pass
+
     t = time.time()
-    try:
-        _s.getaddrinfo("www.google.com", 443)
-        lines.append(f"Name lookup (DNS): ok in {int((time.time() - t) * 1000)} ms")
-    except OSError:
-        lines.append("Name lookup (DNS): FAILED")
+    worker = threading.Thread(target=look, daemon=True)
+    worker.start()
+    worker.join(_left(4))
+    if not found:
+        return "Name lookup (DNS): " + ("FAILED" if not worker.is_alive() else "no answer within 4 seconds") + \
+            "\nInternet (HTTPS): not tried (no address)"
+    lines = [f"Name lookup (DNS): ok in {int((time.time() - t) * 1000)} ms"]
+    family, kind, proto, _, addr = found[0]
     t = time.time()
-    try:
-        with _s.create_connection(("www.google.com", 443), timeout=4):
-            lines.append(f"Internet (HTTPS): reachable in {int((time.time() - t) * 1000)} ms")
+    try:  # connect to the address just found, so no second (unbounded) lookup happens
+        with _s.socket(family, kind, proto) as sock:
+            sock.settimeout(max(0.5, _left(4)))
+            sock.connect(addr)
+        lines.append(f"Internet (HTTPS): reachable in {int((time.time() - t) * 1000)} ms")
     except OSError:
         lines.append("Internet (HTTPS): NOT reachable")
     return "\n".join(lines)
@@ -609,11 +631,15 @@ def inspect_allowed():
 def run_inspect(names):
     if not inspect_allowed():
         return False, "Looking around isn't allowed on this device, so nothing was read.", None
-    names = [n for n in names if n in INSPECT][:4] if isinstance(names, list) else []
+    names = list(dict.fromkeys(n for n in names if isinstance(n, str) and n in INSPECT))[:4] if isinstance(names, list) else []
     if not names:
         return False, "Nothing this helper knows how to check was asked for.", None
+    _inspect_until[0] = time.time() + INSPECT_BUDGET
     parts = []
     for n in names:
+        if _left(INSPECT_BUDGET) <= 0:
+            parts.append(f"{n}: skipped (out of time)")
+            continue
         try:
             parts.append(INSPECT[n]())
         except Exception as e:  # one failing check never hides the others
@@ -1316,8 +1342,9 @@ def status():
         print(f"Background service: {out or 'not installed'}")
     allowed = _allowed()
     words = {"diagnose": "check why it stopped", "logs": "read recent log lines", "restart_container": "restart",
-             "restart_service": "restart the service"}
-    print("  Nightlight may: " + ("; ".join(f"{words[k]}: {', '.join(v)}" for k, v in allowed.items()) or "nothing yet"))
+             "restart_service": "restart the service", "inspect": "look around (reads only)"}
+    print("  Nightlight may: " + ("; ".join(f"{words.get(k, k)}: {', '.join(v)}" for k, v in allowed.items())
+                                  or "nothing yet"))
 
 
 def settings():
