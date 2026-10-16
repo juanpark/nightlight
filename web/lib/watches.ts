@@ -32,7 +32,10 @@ const ERRORS: Record<string, string> = {
 };
 
 export function watchError(e: unknown): string {
-  return (e instanceof ApiError && ERRORS[e.code]) || "Something went wrong. Please try again.";
+  if (!(e instanceof ApiError)) return "Something went wrong. Please try again.";
+  // 422 reasons come in the standard validation shape: detail[0].msg
+  const detail = (e.body.detail as { msg?: string }[] | undefined)?.[0]?.msg;
+  return ERRORS[e.code] || (detail && ERRORS[detail]) || "Something went wrong. Please try again.";
 }
 
 /** Adds https:// when the owner typed just "example.com". */
