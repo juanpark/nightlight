@@ -157,15 +157,30 @@ def test_a_linked_parent_never_leads_into_a_protected_folder(helper, monkeypatch
     (home / "Library" / "Developer").symlink_to(home / "Documents")
     monkeypatch.setattr(helper, "_HOME", str(home))
     monkeypatch.setattr(helper.sys, "platform", "darwin")
-    ran = []
-    real_run = helper.subprocess.run
-    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **k: ran.append(cmd) or real_run(cmd, **k))
     import time
     helper._inspect_until[0] = time.time() + 30
-    helper._inspect_disk()
-    helper._inspect_home()
-    assert not [c for c in ran if c[:1] == ["du"] and "Documents" in " ".join(c)]
-    assert not [c for c in ran if c[:1] == ["du"] and "Developer" in " ".join(c)]
+    assert helper._du(str(home / "Library" / "Developer" / "Xcode" / "DerivedData")) is None  # linked parent
+    assert helper._du(str(home / "Documents")) is None  # protected, not allowed at the Mac
+    assert helper._listdir(str(home / "Library" / "Developer")) == []
+
+
+def test_du_measures_the_pinned_folder_even_if_swapped(helper, monkeypatch, tmp_path):  # review 0.9.4 #2
+    home = tmp_path / "home"
+    (home / "dev").mkdir(parents=True)
+    (home / "dev" / "f").write_bytes(b"x" * 4096)
+    (home / "Documents").mkdir()
+    (home / "Documents" / "big").write_bytes(b"x" * 4 * 1024 * 1024)
+    monkeypatch.setattr(helper, "_HOME", str(home))
+    real_run = helper.subprocess.run
+
+    def swap_then_run(cmd, **k):  # the name is swapped for a link to Documents just before du starts
+        (home / "dev").rename(home / "dev.old")
+        (home / "dev").symlink_to(home / "Documents")
+        return real_run(cmd, **k)
+    monkeypatch.setattr(helper.subprocess, "run", swap_then_run)
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    assert helper._du(str(home / "dev")) == 0  # measured the pinned (small) folder, not Documents (4 MB)
 
 
 def test_folder_names_cannot_forge_lines(helper, monkeypatch, tmp_path):  # review 0.9.3 #3
@@ -186,3 +201,14 @@ def test_failure_text_is_scrubbed_before_it_leaves(helper, monkeypatch):  # revi
     monkeypatch.setitem(helper.FIXES, "npm_cache", {"when": lambda: True, "run": lambda: (False, f"~/{secret}/f")})
     ok, summary, _ = helper.run_fix("npm_cache")
     assert not ok and "abcdef0123456789abcdef" not in summary
+
+
+def test_unicode_line_separators_cannot_forge_lines(helper):  # review 0.9.4 #3
+    for sep in ("\x85", "\u2028", "\u2029", "\x1c", "\x0b"):
+        assert len(helper._one_line(f"x{sep}npm cache: 20 GB").splitlines()) == 1
+
+
+def test_scrub_runs_before_escaping(helper):  # review 0.9.4 #1
+    secret = "hunter2" + "hunter2hunter2"
+    assert secret not in helper._one_line(f"pass\x1b[0mword={secret}", 300)
+    assert secret not in helper._one_line(f"password={secret}", 300)

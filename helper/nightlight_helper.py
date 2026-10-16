@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -502,29 +502,74 @@ def _left(cap):
     return max(0.0, min(cap, _inspect_until[0] - time.time()))
 
 
-def _plain_path(path):
-    """True when no part of `path` is a link (so it is exactly where it says) and, unless allowed at the Mac, it isn't
-    inside a folder macOS protects."""
-    real = os.path.realpath(path)
-    if real != os.path.abspath(path):
+def _guarded(path):
+    """True when `path` (as written: no link is followed when it is opened) is inside a folder macOS protects and the
+    owner hasn't allowed those at the Mac."""
+    if sys.platform != "darwin" or _mac_private_ok():
         return False
-    if sys.platform == "darwin" and not _mac_private_ok():
-        for _label, guarded in _mac_private_places():
-            g = os.path.realpath(guarded)
-            if real == g or real.startswith(g + os.sep):
-                return False
+    a = os.path.abspath(path)
+    return any(a == g or a.startswith(g + os.sep) for g in (os.path.abspath(x) for _l, x in _mac_private_places()))
+
+
+def _pin(path):
+    """A descriptor for `path`, opened from / one component at a time without following any link, or None. What is
+    measured or listed afterwards is this exact folder, even if a name is swapped for a link a moment later."""
+    a = os.path.abspath(path)
+    try:
+        fd = os.open("/", _DIR_FLAGS)
+    except OSError:
+        return None
+    try:
+        for part in [x for x in a.split(os.sep) if x]:
+            nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except OSError:
+        os.close(fd)
+        return None
+
+
+def _plain_path(path):
+    """True when `path` can be pinned (no link anywhere on the way) and isn't in a protected folder."""
+    if _guarded(path):
+        return False
+    fd = _pin(path)
+    if fd is None:
+        return False
+    os.close(fd)
     return True
 
 
+def _listdir(path):
+    """Names in a pinned, unprotected folder ([] otherwise)."""
+    if _guarded(path):
+        return []
+    fd = _pin(path)
+    if fd is None:
+        return []
+    try:
+        return sorted(os.listdir(fd))
+    except OSError:
+        return []
+    finally:
+        os.close(fd)
+
+
 def _du(path):
-    """Size of a folder in MB (or None), never following links, bounded in time."""
-    if not os.path.isdir(path) or not _plain_path(path) or _left(25) < 1:
+    """Size of a folder in MB (or None): `du` runs inside the pinned folder (measuring "."), never following links."""
+    if _guarded(path) or _left(25) < 1:
+        return None
+    fd = _pin(path)
+    if fd is None:
         return None
     try:  # du exits non-zero when a few files can't be read; the total it prints is still right for what it could read
-        out = subprocess.run(["du", "-sk", path], capture_output=True, text=True, timeout=_left(25),
-                             check=False).stdout
+        out = subprocess.run(["du", "-sk", "-x", "."], capture_output=True, text=True, timeout=_left(25), check=False,
+                             pass_fds=(fd,), preexec_fn=lambda: os.fchdir(fd)).stdout
     except (OSError, subprocess.SubprocessError):
         return None
+    finally:
+        os.close(fd)
     first = out.split()[:1]
     return round(int(first[0]) / 1024) if first and first[0].isdigit() else None
 
@@ -674,26 +719,22 @@ _MAC_GUARDED_LIB = {"Mail", "Messages", "Safari", "Containers", "Group Container
                     "Application Support", "Preferences", "StatusKit", "Contacts", "FaceTime", "Intelligence"}
 
 
-def _one_line(name):
-    """A file name as a short single-line label: control characters (new lines) can't start a line of their own."""
-    return re.sub(r"[\x00-\x1f\x7f]", "?", name)[:60]
+def _one_line(name, limit=60):
+    """A short single-line label: scrubbed first (as a whole), then every control character and every line separator
+    Python knows (also U+0085, U+2028, U+2029) becomes "?", so nothing in a name can start a line of its own."""
+    clean = scrub(name)[0]
+    return re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", "?", clean)[:limit]
 
 
 def _inspect_home():
     """The biggest folders directly in the home folder and in ~/Library (sizes only), skipping protected ones."""
     h, rows = _HOME, []
     places = []
-    try:
-        top = sorted(os.listdir(h)) if _plain_path(h) else []
-    except OSError:
-        top = []
+    top = _listdir(h)
     guarded_top = _MAC_GUARDED_TOP if sys.platform == "darwin" else set()
     places += [(f"~/{_one_line(n)}", os.path.join(h, n)) for n in top if n not in guarded_top]
     if sys.platform == "darwin":
-        try:
-            lib = sorted(os.listdir(os.path.join(h, "Library"))) if _plain_path(os.path.join(h, "Library")) else []
-        except OSError:
-            lib = []
+        lib = _listdir(os.path.join(h, "Library"))
         places += [(f"~/Library/{_one_line(n)}", os.path.join(h, "Library", n)) for n in lib
                    if n not in _MAC_GUARDED_LIB]
     for label, path in places:
@@ -831,7 +872,7 @@ def _fix_cmd(cmd, timeout=300):
     if r.returncode != 0 and "password" in (r.stderr or "").lower():
         return False, "this device needs a password for it (sudo)"
     full = scrub(r.stderr or r.stdout or "")[0]  # scrub the whole text first, then pick the last line
-    said = _one_line((full.strip().splitlines() or [""])[-1])[:140]
+    said = _one_line((full.strip().splitlines() or [""])[-1], 140)
     return r.returncode == 0, "" if r.returncode == 0 else f"it reported an error: {said or 'no details'}"
 
 
@@ -880,8 +921,8 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    text = (f"Done.{freed}" if ok else f"It didn't work: {_one_line(str(why))}.{freed}").strip()
-    return ok, scrub(text)[0], None
+    text = (f"Done.{freed}" if ok else f"It didn't work: {_one_line(str(why), 300)}.{freed}").strip()
+    return ok, scrub(text)[0], None  # scrubbed again at the boundary
 
 
 # ------------------------------------------------------------------ update: signed new versions, from the app
