@@ -26,12 +26,14 @@ const samePerms = (a: Perms, b: Perms) => a.diagnose === b.diagnose && sameSet(a
   && sameSet(a.restart_container, b.restart_container) && sameSet(a.restart_service, b.restart_service);
 
 /** True when what the device reports applying matches the owner's switches ("*" on the device means everything). */
-function applied(want: Perms, jobs: Record<string, string[]> = {}): boolean {
+function applied(want: Perms, jobs: Record<string, string[]> = {}, nothingHere = false): boolean {
   const has = (k: string, names: string[]) => {
     const got = jobs[k] ?? [];
     return got.includes("*") ? names.length > 0 : sameSet(got, names);
   };
-  return (want.diagnose === (jobs.diagnose?.length ?? 0) > 0) && has("logs", want.logs)
+  // With nothing to check on the device, "check why" has nothing to apply: on and empty counts as applied.
+  const diagnoseOk = want.diagnose === (jobs.diagnose?.length ?? 0) > 0 || (want.diagnose && nothingHere);
+  return diagnoseOk && has("logs", want.logs)
     && has("restart_container", want.restart_container) && has("restart_service", want.restart_service);
 }
 
@@ -121,7 +123,7 @@ export default function Permissions({ device, services }: { device: Device; serv
     }
   }
 
-  const inForce = applied(want, jobs);
+  const inForce = applied(want, jobs, containers.length === 0 && units.length === 0);
   return (
     <section className="perms">
       <h4>What Nightlight may do here</h4>
@@ -130,6 +132,8 @@ export default function Permissions({ device, services }: { device: Device; serv
 
       <Switch on={allLogs} label="Read recent log lines" hint="(private details hidden on the device first)"
         disabled={targets.length === 0} onChange={(on) => save({ ...want, logs: on ? targets : [] })} />
+      {targets.length === 0 && <div className="small muted perm-note">Nothing to read here yet: this appears when an
+        app or service on this device can be checked (containers, or a system service that stopped).</div>}
       {targets.length > 0 && (
         <details className="perm-more small">
           <summary className="muted">{allLogs ? "For everything it checks" : want.logs.length
@@ -142,7 +146,7 @@ export default function Permissions({ device, services }: { device: Device; serv
       <div className="perm-group">
         <div>Restart a stopped app after you approve</div>
         {containers.length === 0 && units.length === 0 && (
-          <div className="small muted">No apps reported on this device yet.</div>)}
+          <div className="small muted">Nothing to restart right now: this lists containers and services that stopped.</div>)}
         {containers.map((c) => <Switch key={c} on={want.restart_container.includes(c)} label={c}
           onChange={(on) => save({ ...want, restart_container: toggle(want.restart_container, c, on) })} />)}
         {units.length > 0 && <>
