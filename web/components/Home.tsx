@@ -3,7 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
-import { presented, useActions, useDevices, useEvents, useNow, useTrust, useUserDoc } from "@/lib/data";
+import { presented, useActions, useDevices, useEvents, useNow, useTrust, useUserDoc, useWatches } from "@/lib/data";
+import { useEventNotifications, useNotifySetting } from "@/lib/notify";
+import WatchPanel from "./WatchPanel";
+import WatchedRow from "./WatchedRow";
+import AwayBanner from "./AwayBanner";
 import Board from "./Board";
 import DeviceDrawer from "./DeviceDrawer";
 import Chat, { type ChatHandle } from "./Chat";
@@ -13,7 +17,7 @@ import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
 import MemoryPanel from "./MemoryPanel";
 
-type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory";
+type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch";
 
 export default function Home({ user }: { user: User }) {
   const uid = user.uid;
@@ -25,6 +29,9 @@ export default function Home({ user }: { user: User }) {
   const actions = useActions(uid, gen);
   const events = useEvents(uid, gen);
   const trust = useTrust(uid, gen);
+  const watches = useWatches(uid);
+  const notify = useNotifySetting();
+  useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
   const chat = useRef<ChatHandle>(null);
@@ -47,10 +54,15 @@ export default function Home({ user }: { user: User }) {
   }
 
   const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const allTags = useMemo(() => [...new Set(devices.flatMap((d) => d.tags ?? []))].sort(), [devices]);
+  const allTags = useMemo(() => [...new Set([...devices, ...watches].flatMap((d) => d.tags ?? []))].sort(),
+    [devices, watches]);
   const visible = tagFilter.length === 0 ? devices : devices.filter((d) => tagFilter.some((t) =>
     t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t)));
-  const needs = visible.filter((d) => d.status === "crit" || d.status === "warn").length;
+  // Watched websites are never samples: under a filter they show only when they carry one of its tags.
+  const visibleWatches = tagFilter.length === 0 ? watches
+    : watches.filter((w) => tagFilter.some((t) => (w.tags ?? []).includes(t)));
+  const needs = visible.filter((d) => d.status === "crit" || d.status === "warn").length
+    + visibleWatches.filter((w) => w.status === "crit").length;
   const pending = actions.filter((a) => a.status === "pending").length;
   const resetting = me?.demo?.state === "resetting";
   const toggle = (p: Panel) => setPanel((cur) => (cur === p ? "none" : p));
@@ -73,6 +85,7 @@ export default function Home({ user }: { user: User }) {
         <button onClick={() => toggle("activity")}>Activity</button>
         <button onClick={() => toggle("memory")}>Memory</button>
         <button onClick={() => toggle("add")}>Add a device</button>
+        <button onClick={() => toggle("watch")}>Watch a website</button>
         <button onClick={() => toggle("demo")}>Demo tools</button>
         {user.isAnonymous
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
@@ -81,16 +94,24 @@ export default function Home({ user }: { user: User }) {
       </header>
       <div className="main">
         <section className="left">
+          <AwayBanner uid={uid} events={events} onSummarise={(q) => chat.current?.ask(q)} />
           <div className="panel needs">
             <strong>{needs ? `${needs} ${needs === 1 ? "thing needs" : "things need"} you` : "All quiet at home"}</strong>
             {pending > 0 && <span className="pill">{pending} waiting for your approval</span>}
             <span className="spacer" />
+            {notify.supported && (
+              <button className={`small notify-toggle ${notify.on ? "on" : ""}`} onClick={notify.toggle}
+                aria-pressed={notify.on} title={notify.denied
+                  ? "Notifications are blocked for this site in your browser settings"
+                  : "Show a notification when something goes wrong, while this tab is open"}>
+                {notify.on ? "Notifying you" : "Notify me"}</button>)}
             <button onClick={() => chat.current?.ask("Is anything wrong at home?")}>Check-up now</button>
           </div>
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "memory" && <MemoryPanel />}
+          {panel === "watch" && <WatchPanel watches={watches} now={now} />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
             <div className="chips" aria-label="Show only">
@@ -102,6 +123,7 @@ export default function Home({ user }: { user: User }) {
             </div>
           )}
           <Board devices={visible} selected={selected} onSelect={setSelected} />
+          <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => chat.current?.ask(q)} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} device={devices.find((d) => d.id === selected)!}
               onAsk={(q) => chat.current?.ask(q)} onClose={() => setSelected(null)} />

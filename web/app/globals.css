@@ -151,3 +151,30 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .issue-actions { margin-left: 8px; display: inline-flex; gap: 10px; }
 .node .known { color: var(--muted); }
 .tags-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+
+/* keeps watch: history sparklines, watched websites, away banner, notify switch */
+.history { margin: 10px 0 4px; display: flex; flex-direction: column; gap: 6px; }
+.history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.history-head .tabs { margin: 0 0 0 auto; }
+.history-head .tabs button { padding: 2px 10px; }
+.sparks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 520px) { .sparks { grid-template-columns: 1fr; } }
+.spark-head { display: flex; justify-content: space-between; gap: 6px; }
+.spark svg { display: block; overflow: visible; }
+.spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.spark-base { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.status-strip { display: block; border-radius: 3px; background: var(--line); }
+.watched { display: flex; flex-direction: column; gap: 8px; }
+.watch-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 99px; padding: 5px 12px;
+  font-size: 13px; box-shadow: var(--shadow); }
+.watch-chip.crit { border-color: var(--crit); }
+.watch-chip.sel { outline: 2px solid var(--accent); }
+.watch-details a { color: var(--accent); word-break: break-all; }
+.watch-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-form input { flex: 1 1 180px; min-width: 0; }
+.list .item a { word-break: break-all; }
+.away { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border-color: color-mix(in srgb, var(--glow) 60%, var(--line)); }
+.away .spacer, .needs .spacer { flex: 1; }
+.notify-toggle.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }

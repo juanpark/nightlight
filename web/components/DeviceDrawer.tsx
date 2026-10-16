@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
+import DeviceHistory from "./DeviceHistory";
 
 function Vital({ label, value }: { label: string; value?: number | null }) {
   return (
@@ -81,6 +82,7 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
         <Vital label="Memory" value={device.vitals?.mem} />
         <Vital label="CPU" value={device.vitals?.cpu} />
       </div>
+      {real && <DeviceHistory uid={uid} deviceId={device.id} />}
       {(device.findings ?? []).map((f, i) => {
         const state = f.state ?? "new";
         return (

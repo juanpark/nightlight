@@ -1,9 +1,9 @@
 "use client";
 // Live, read-only Firestore listeners for the signed-in user's own data (rules allow nothing else).
 import { useEffect, useState } from "react";
-import { collection, doc, onSnapshot, Timestamp, type DocumentData } from "firebase/firestore";
+import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, EventDoc, Service, TrustDoc, UserDoc } from "./types";
+import type { Action, Device, EventDoc, HistoryPoint, Service, TrustDoc, UserDoc, Watch } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -66,6 +66,33 @@ export function useEvents(uid: string | null, gen: number | undefined): EventDoc
 
 export function useTrust(uid: string | null, gen: number | undefined): TrustDoc[] {
   return useCollection<TrustDoc>(uid, ["trust"]).filter((t) => t.demoGeneration === gen);
+}
+
+/** The last 7 days of a real device's history, oldest first (at most one point per 5 minutes, ~2016 a week).
+ * Pass a null deviceId for sample devices: they have no history. */
+export function useHistory(uid: string | null, deviceId: string | null): HistoryPoint[] {
+  const [rows, setRows] = useState<HistoryPoint[]>([]);
+  useEffect(() => {
+    setRows([]);
+    if (!uid || !deviceId) return;
+    let stop = () => {};
+    let cancelled = false;
+    firebase().then(({ db }) => {
+      if (cancelled) return;
+      const since = Timestamp.fromMillis(Date.now() - 7 * 86400000);
+      const q = query(collection(db, "users", uid, "devices", deviceId, "history"),
+        where("at", ">=", since), orderBy("at"), limit(2100));
+      stop = onSnapshot(q, (snap) => setRows(snap.docs.map((d) => plain<HistoryPoint>(d.id, d.data()))),
+        (err) => console.warn("history listener", err));
+    });
+    return () => { cancelled = true; stop(); };
+  }, [uid, deviceId]);
+  return rows;
+}
+
+/** Web addresses the owner asked Nightlight to keep an eye on, sorted by name. */
+export function useWatches(uid: string | null): Watch[] {
+  return useCollection<Watch>(uid, ["watches"]).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
 }
 
 /** A real device that hasn't reported for 5 minutes is offline with unknown health (docs/API.md). Re-checked
