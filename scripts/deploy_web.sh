@@ -11,6 +11,7 @@ CFG=$(curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token)" -H 
   "https://firebase.googleapis.com/v1beta1/projects/${PROJECT}/webApps/${WEB_APP_ID}/config")
 val() { python3 -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])" "$CFG" "$1"; }
 ./scripts/secret_scan.sh
+cp helper/nightlight_helper.py web/public/nightlight_helper.py  # served for /install.sh (not committed)
 gcloud run deploy nightlight-web --source web --project "$PROJECT" --region "$REGION" \
   --allow-unauthenticated --min-instances 0 --max-instances 3 --cpu 1 --memory 512Mi \
   --set-env-vars "^@^API_URL=${API_URL}@FIREBASE_API_KEY=$(val apiKey)@FIREBASE_AUTH_DOMAIN=$(val authDomain)@FIREBASE_PROJECT_ID=$(val projectId)@FIREBASE_APP_ID=$(val appId)"
