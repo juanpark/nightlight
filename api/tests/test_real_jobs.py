@@ -113,3 +113,11 @@ def test_silent_device_gets_no_new_jobs(client, started):
 def test_allowlist_in_reports_is_strict(client, started, allowed):
     dev = enrolled(client)
     assert beat(client, dev["token"], {**FACTS, "allowedJobs": allowed}).status_code == 422
+
+
+def test_every_action_tool_raises_an_approval_card_event():
+    from nightlight_api import agent as agentlib, turns
+    ctx = agentlib.TurnContext.__new__(agentlib.TurnContext)
+    names = {t.__name__ for t in agentlib.make_tools(ctx, read_only=False)}
+    read = {t.__name__ for t in agentlib.make_tools(ctx, read_only=True)}
+    assert names - read == turns.ACTION_TOOLS
