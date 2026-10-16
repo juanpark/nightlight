@@ -110,5 +110,6 @@ export type StreamEvent =
   | { type: "tool_call"; name: string; args?: Record<string, unknown> }
   | { type: "tool_result"; name: string; summary?: string }
   | { type: "approval_request"; actionId: string }
+  | { type: "followup_pending"; turnId: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }
   | { type: "done"; turnId: string; metrics?: Record<string, number> };

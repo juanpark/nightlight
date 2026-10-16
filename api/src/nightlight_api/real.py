@@ -22,10 +22,18 @@ CODES_PER_HOUR = 10
 HEARTBEAT_MIN_SECONDS = 20
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no look-alikes (0/O, 1/I/L)
 CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+TARGET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")  # a container or a system service (unit) name
+CHAT_ACTIVE = timedelta(minutes=5)  # while the owner chats, helpers check for work every few seconds
+FAST_POLL_SECONDS = 5
+CLAIM_MIN_SECONDS = 4
 
 # Jobs a real device can run. The helper has its own copy and runs only these, only on targets its owner allowed on
 # that machine; the server sends a job name and a target, never a command.
 JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"}}
+# Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
+# last log lines (scrubbed on the device); without it only structured status leaves the device.
+READS = {"diagnose": {"label": "Look into", "riskClass": "read"}}
+ALLOW_KEYS = ("restart_container", "diagnose", "logs")
 
 # Plain names for system services people commonly run at home.
 FRIENDLY = {
@@ -367,7 +375,6 @@ def heartbeat(token: str, facts: dict) -> dict:
         approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
             filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
         user = db.user(uid).get(transaction=tx).to_dict() or {}
-        ready = user.get("demo", {}).get("state") == "ready"
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()
@@ -385,17 +392,61 @@ def heartbeat(token: str, facts: dict) -> dict:
                 tx.delete(ref)
         for svc_id, svc in services.items():
             tx.set(db.services(uid, device_id).document(svc_id), svc)
-        # Approved jobs are handed over once (at most once: a job claimed here is never handed out again).
-        jobs = []
-        for a in approved:
-            if not ready or a.get("demoGeneration") != user.get("demoGeneration"):
-                continue  # a reset is withdrawing it (or has): never hand it out
-            tx.update(a.reference, {"status": "running", "claimedAt": firestore.SERVER_TIMESTAMP})
-            jobs.append({"id": a.id, "type": a.get("type"), "params": a.get("params")})
-        return device_id, jobs
+        return device_id, _hand_over(tx, approved, user), _poll_every(user)
 
-    device_id, jobs = db.run_transaction(run)
-    return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs}
+    device_id, jobs, poll = db.run_transaction(run)
+    return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll}
+
+
+def _hand_over(tx, approved, user: dict) -> list[dict]:
+    """Approved jobs are handed over once (at most once: a job claimed here is never handed out again)."""
+    ready = user.get("demo", {}).get("state") == "ready"
+    jobs = []
+    for a in approved:
+        if not ready or a.get("demoGeneration") != user.get("demoGeneration"):
+            continue  # a reset is withdrawing it (or has): never hand it out
+        tx.update(a.reference, {"status": "running", "claimedAt": firestore.SERVER_TIMESTAMP})
+        jobs.append({"id": a.id, "type": a.get("type"), "params": a.get("params")})
+    return jobs
+
+
+def _poll_every(user: dict) -> int:
+    last = user.get("lastChatAt")
+    return FAST_POLL_SECONDS if last and _now() - last < CHAT_ACTIVE else 0
+
+
+def claim(token: str) -> dict:
+    """A light check for approved work between reports (only used while the owner is chatting)."""
+    tref = tokens_ref().document(_sha(token))
+
+    @firestore.transactional
+    def run(tx):
+        snap = tref.get(transaction=tx)
+        t = snap.to_dict() if snap.exists else None
+        if not t or t.get("revoked"):
+            raise ApiError(401, "invalid_token")
+        last = t.get("lastClaimAt")
+        if last and (_now() - last).total_seconds() < CLAIM_MIN_SECONDS:
+            raise ApiError(429, "too_frequent", retryAfter=CLAIM_MIN_SECONDS)
+        uid, device_id = t["uid"], t["deviceId"]
+        approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+            filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
+        tx.update(tref, {"lastClaimAt": _now()})
+        return _hand_over(tx, approved, user), _poll_every(user)
+
+    jobs, poll = db.run_transaction(run)
+    return {"ok": True, "jobs": jobs, "pollEverySec": poll}
+
+
+def diagnose_target_ok(device: dict, services: dict, target: str) -> None:
+    """ValueError unless the owner allowed looking into this target on the device and the device reported it."""
+    if not isinstance(target, str) or not TARGET_NAME.fullmatch(target):
+        raise ValueError("bad_target")
+    if target not in (device.get("allowedJobs") or {}).get("diagnose", []):
+        raise ValueError("not_allowed_on_device")
+    if _doc_id(target) not in services and _doc_id(target + ".service") not in services:
+        raise ValueError("no_such_target")
 
 
 def token_owner(tx, token: str) -> tuple[str, str]:

@@ -19,6 +19,7 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
   return ({
     list_fleet: "Looking over your home…", get_device: `Checking the ${name}…`,
     get_recent_events: "Reading what happened recently…", restart_container: `Preparing a fix for the ${name}…`,
+    look_into: `Asking the ${name} what happened to ${(e.args?.target as string) ?? "it"}…`, remember: "Making a note…",
   } as Record<string, string>)[e.name] ?? `Preparing a fix for the ${name}…`;
 }
 
@@ -29,6 +30,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
     const [busy, setBusy] = useState(false);
     const log = useRef<HTMLDivElement>(null);
     const streamed = useRef(new Set<string>());
+    const pending = useRef(new Set<string>()); // follow-ups promised by a device that hasn't answered yet
     const devicesRef = useRef(devices);
     devicesRef.current = devices;
 
@@ -53,6 +55,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
           if (e.type === "text") a.text += e.delta;
           else if (e.type === "tool_call") a.steps.push(step(e, devicesRef.current));
           else if (e.type === "approval_request" && !a.cards.includes(e.actionId)) a.cards.push(e.actionId);
+          else if (e.type === "followup_pending") pending.current.add(e.turnId);
           else if (e.type === "error") a.error = e.message || e.code;
         }));
       } catch (e) {
@@ -87,6 +90,19 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
     }, [busy, run, uid]);
 
     useImperativeHandle(ref, () => ({ ask }), [ask]);
+
+    // When a slow device answers, its action gets the follow-up turn: open it.
+    useEffect(() => {
+      for (const a of actions) {
+        if (a.continuationTurnId && pending.current.has(a.continuationTurnId)) {
+          pending.current.delete(a.continuationTurnId);
+          if (!streamed.current.has(a.continuationTurnId)) {
+            streamed.current.add(a.continuationTurnId);
+            run(`/api/turns/${a.continuationTurnId}/stream`, {});
+          }
+        }
+      }
+    }, [actions, run]);
 
     const followUp = useCallback((turnId: string) => {
       if (streamed.current.has(turnId)) return;

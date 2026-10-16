@@ -80,7 +80,7 @@ def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trus
 
 
 def label(action_type: str) -> str:
-    return (sim.ACTIONS.get(action_type) or real.JOBS[action_type])["label"]
+    return (sim.ACTIONS.get(action_type) or real.JOBS.get(action_type) or real.READS[action_type])["label"]
 
 
 def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
@@ -89,6 +89,11 @@ def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
     verb = {"done": "was approved and completed", "failed": "was approved but failed",
             "denied": "was declined"}[a["status"]]
     summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
+    if a["type"] in real.READS:
+        target = a["params"].get("target")
+        verb = "finished" if a["status"] == "done" else "couldn't finish"
+        summary = (f" (target: {target}). What it found: {a['result']['summary']}\n"
+                   f"{a['result'].get('output') or ''}").rstrip()
     tx.set(db.turns(uid, a["sessionId"]).document(cont), {
         "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
         "actionId": a["id"], "input": f"{label(a['type'])} on the {device_name} {verb}.{summary}",
@@ -242,7 +247,63 @@ def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str,
     return 202, a["response"]
 
 
-def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None) -> dict:
+def request_diagnosis(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, target: str,
+                      fence=None) -> dict:
+    """Ask a real device to look into one target. Read-only and allowed by the owner on the device, so it is created
+    already approved (no card); the helper picks it up on its next check."""
+
+    @firestore.transactional
+    def run(tx):
+        if fence:
+            fence(tx)
+        user_snap, device_snap, services, _, _ = _read_context(tx, uid, device_id, "diagnose")
+        user = user_snap.to_dict() if user_snap.exists else None
+        _require_ready(user, generation)
+        if not device_snap.exists:
+            raise not_found()
+        device = dict(device_snap.to_dict(), id=device_id)
+        if device.get("realm") != "real":
+            raise ValueError("not_applicable")
+        params = {"target": target}
+        key = proposal_key(generation, turn_id, device_id, None, "diagnose", params)
+        aid = make_action_id(key)
+        existing = db.action(uid, aid).get(transaction=tx)
+        if existing.exists:
+            return dict(existing.to_dict(), id=aid)
+        if real.view(device).get("stale"):
+            raise ValueError("device_not_reporting")
+        real.diagnose_target_ok(device, _by_id(services), target)
+        action = {"id": aid, "proposalKey": key, "type": "diagnose", "deviceId": device_id, "params": params,
+                  "plan": f"Look into {target} on the {device['name']} (read-only).", "dryRun": "Reads its status"
+                  + (" and its last log lines" if target in (device.get("allowedJobs") or {}).get("logs", []) else "")
+                  + "; changes nothing.", "rollback": "Nothing to undo.", "blastRadius": [device_id],
+                  "riskClass": "read", "status": "approved", "realm": "real", "demoGeneration": generation,
+                  "deviceVersion": device["version"], "sessionId": session_id, "turnId": turn_id,
+                  "decision": {"by": "owner_allowed_on_device", "decision": "approve"}, "createdAt": _now()}
+        tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
+        return action
+
+    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+
+
+def await_diagnosis(uid: str, action_id_: str) -> dict | None:
+    """Called when the in-turn wait runs out: returns the result if it just arrived, else asks for a follow-up turn
+    when it does (decided in one transaction with job_result, so exactly one of the two narrates it)."""
+
+    @firestore.transactional
+    def run(tx):
+        ref = db.action(uid, action_id_)
+        a = ref.get(transaction=tx).to_dict() or {}
+        if a.get("status") in ("done", "failed"):
+            return a
+        tx.update(ref, {"followUp": "wanted"})
+        return None
+
+    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+
+
+def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None,
+               output: str | None = None) -> dict:
     """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once."""
 
     @firestore.transactional
@@ -261,6 +322,15 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         text = scrub(summary)[0][:200]
         a["status"] = "done" if ok else "failed"
         a["finishedAt"] = _now()
+        if a["type"] in real.READS:
+            found, hidden = scrub(output or "")
+            a["result"] = {"ok": ok, "summary": text, "output": found[:4000], "hidden": hidden}
+            current = user.get("demo", {}).get("state") == "ready" and \
+                a.get("demoGeneration") == user.get("demoGeneration")
+            if a.get("followUp") == "wanted" and current:  # the turn that asked has already ended
+                _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
+            tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
+            return {"ok": True, "actionId": action_id_, "status": a["status"]}
         a["result"] = {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
         if ok and a.get("svcId"):
             tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state}, merge=True)

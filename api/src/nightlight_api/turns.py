@@ -114,6 +114,7 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
         tx.set(turn_index(uid, turn_id), {"sessionId": session_id, "demoGeneration": user["demoGeneration"]})
         title = clean[:40] + ("…" if len(clean) > 40 else "") if seq == 1 else session.get("title")
         tx.update(db.session(uid, session_id), {"nextSeq": seq + 1, "lastTurnId": turn_id, "title": title})
+        tx.update(db.user(uid), {"lastChatAt": firestore.SERVER_TIMESTAMP})  # helpers check for work faster now
         tx.set(q_ref, {"count": count})
 
     db.run_transaction(run)
@@ -376,6 +377,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                                "summary": _summary(resp), "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
                         yield out({"type": "approval_request", "actionId": resp.get("actionId")})
+                    if part.function_response.name == "look_into" and resp.get("status") == "asked":
+                        # The device answers later; the browser opens this follow-up turn once it exists.
+                        yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
         if not shown.strip():
             shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)
             first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)

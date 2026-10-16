@@ -18,6 +18,8 @@ Usage:
   nightlight_helper.py run [--every SECONDS]                   # keep reporting (default every 60 s)
   nightlight_helper.py show                                    # print what would be sent, without sending
   nightlight_helper.py allow restart_container <NAME>          # allow restarting this container after approval
+  nightlight_helper.py allow diagnose <NAME>                   # allow reading why a container/service is down
+  nightlight_helper.py allow logs <NAME>                       # ...and its last log lines (scrubbed here first)
   nightlight_helper.py disallow restart_container <NAME>       # take that back
 
 Python 3.8+, standard library only; uses psutil when it is installed.
@@ -39,11 +41,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
-JOB_TYPES = ("restart_container",)
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+JOB_TYPES = ("restart_container", "diagnose", "logs")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")  # container names
+TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")  # containers or system services (units)
+_POLL = {"every": 0}  # the server asks for quicker checks while the owner is chatting
 ACTION_RE = re.compile(r"^act_[0-9a-f]{26}$")
 STATES = ("created", "restarting", "running", "removing", "paused", "exited", "dead")  # Docker's own words
 
@@ -171,14 +175,18 @@ def _allowed():
         allow = _load().get("allow") or {}
     except (OSError, ValueError):
         return {}
-    return {k: [n for n in v if NAME_RE.fullmatch(n)][:20] for k, v in allow.items() if k in JOB_TYPES and v}
+    return {k: [n for n in v if _name_re(k).fullmatch(n)][:20] for k, v in allow.items() if k in JOB_TYPES and v}
+
+
+def _name_re(kind):
+    return NAME_RE if kind == "restart_container" else TARGET_RE
 
 
 def set_allowed(kind, name, on):
     if kind not in JOB_TYPES:
         sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
-    if not NAME_RE.fullmatch(name):
-        sys.exit("That isn't a valid container name.")
+    if not _name_re(kind).fullmatch(name):
+        sys.exit("That isn't a valid name.")
     cfg = _load()
     names = set((cfg.get("allow") or {}).get(kind, []))
     names = names | {name} if on else names - {name}
@@ -192,10 +200,121 @@ def _container_state(name):
     return out[:32] or None
 
 
+# ------------------------------------------------------------------ read-only looks (diagnose)
+# Scrubbed here, before anything leaves the device (the server scrubs again). Best effort: logs can contain things no
+# pattern recognises, which is why sending log lines needs its own `allow logs NAME`.
+_SCRUB = [
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), "[hidden]"),
+    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [hidden]"),
+    (re.compile(r"(?i)\b(pass(word)?|passwd|secret|token|api[_-]?key|access[_-]?key|auth)\b(\s*[=:]\s*)\S+"),
+     r"\1\3[hidden]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "[hidden]"),
+    (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{35}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b"), "[hidden]"),
+    (re.compile(r"([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@"), r"\1[hidden]@"),
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "[email]"),
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[ip]"),
+    (re.compile(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b"), "[mac]"),
+    (re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}\b"), "[ip]"),
+    (re.compile(r"\b[0-9a-fA-F]{32,}\b|\b[A-Za-z0-9+/_-]{40,}={0,2}"), "[hidden]"),
+    (re.compile(r"/(home|Users)/[^/\s]+"), r"/\1/[user]"),
+    (re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\x0b-\x1f\x7f]"), ""),
+]
+
+
+def scrub(text):
+    """Returns (clean text, how many things were hidden)."""
+    hidden = 0
+    for pattern, repl in _SCRUB:
+        text, n = pattern.subn(repl, text)
+        if repl and "hidden" in repl:
+            hidden += n
+    return text, hidden
+
+
+def _tail(text, lines=30, width=200, limit=3000):
+    """The newest lines, each cut to `width`, the whole kept under `limit` bytes (cutting from the top)."""
+    out = [ln[:width] for ln in text.splitlines()[-lines:]]
+    while out and len("\n".join(out).encode()) > limit:
+        out.pop(0)
+    return "\n".join(out)
+
+
+def _run_both(cmd, timeout=15):
+    """stdout and stderr together, whatever the exit code ('' if it couldn't run)."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return (r.stdout or "") + (r.stderr or "")
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was stopped forcibly (often out of memory, "
+                "or someone stopped it)", 143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
+                127: "couldn't find its program"}
+
+
+def _look_container(name, logs):
+    raw = _run(["docker", "inspect", "--format", "{{json .State}} {{.RestartCount}}", name]).strip()
+    try:
+        state_json, restarts = raw.rsplit(" ", 1)
+        st = json.loads(state_json)
+    except ValueError:
+        return None
+    code = st.get("ExitCode")
+    status = st.get("Status", "unknown")
+    meaning = EXIT_MEANING.get(code, f"exited with code {code}") if status != "running" else "is running"
+    lines = [f"status: {status}", f"exit code: {code} ({meaning})", f"out of memory: {'yes' if st.get('OOMKilled') else 'no'}",
+             f"restarts: {restarts}", f"started: {st.get('StartedAt', '')[:19]}", f"stopped: {st.get('FinishedAt', '')[:19]}"]
+    if st.get("Error"):
+        lines.append(f"error: {st['Error'][:200]}")
+    summary = f"{name} {meaning}" + (", out of memory" if st.get("OOMKilled") else "")
+    if logs:
+        lines += ["last log lines:", _tail(_run_both(["docker", "logs", "--tail", "30", "--timestamps", name]))]
+    return summary, "\n".join(lines)
+
+
+def _look_unit(name, logs):
+    unit = name if "." in name else name + ".service"
+    props = _run(["systemctl", "show", unit, "-p", "ActiveState,SubState,Result,ExecMainStatus,NRestarts,"
+                  "StateChangeTimestamp", "--no-pager"])
+    info = dict(line.split("=", 1) for line in props.splitlines() if "=" in line)
+    if not info.get("ActiveState"):
+        return None
+    summary = f"{unit} is {info.get('ActiveState')} ({info.get('Result', '')}, exit status {info.get('ExecMainStatus')})"
+    lines = [f"{k}: {v}" for k, v in info.items()]
+    if logs:
+        lines += ["last log lines:", _tail(_run_both(["journalctl", "-u", unit, "-n", "30", "--no-pager",
+                                                      "-o", "short-iso"]))]
+    return summary, "\n".join(lines)
+
+
+def look_into(target):
+    """Read-only: why is this container or service down? Only for targets the owner allowed here."""
+    allowed = _allowed()
+    if target not in allowed.get("diagnose", []):
+        return False, "Looking into this isn't allowed on this device, so nothing was read.", None
+    logs = target in allowed.get("logs", [])
+    found = None
+    if shutil.which("docker") and NAME_RE.fullmatch(target):
+        found = _look_container(target, logs)
+    if found is None and shutil.which("systemctl"):
+        found = _look_unit(target, logs)
+    if found is None:
+        return False, f"Couldn't find a container or service named {target} here.", None
+    summary, detail = found
+    text, hidden = scrub(detail)
+    return True, summary[:200], _tail(text, lines=60, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
+
+
 def run_job(job, wait=5):
     """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
     (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
     kind, params = job.get("type"), job.get("params")
+    if kind == "diagnose":
+        target = params.get("target") if isinstance(params, dict) else None
+        if not isinstance(target, str) or not TARGET_RE.fullmatch(target):
+            return False, "That isn't something this helper can look into.", None
+        return look_into(target)
     name = params.get("container") if isinstance(params, dict) else None
     if kind not in JOB_TYPES or not isinstance(name, str) or name not in _allowed().get(kind, []):
         return False, "This job isn't allowed on this device, so nothing was done.", None
@@ -305,6 +424,8 @@ def once():
         body = {"error": body.get("error") or "unexpected response"}
     if status == 200:
         print(f"Report sent: {body.get('findings', 0)} finding(s).")
+        poll = body.get("pollEverySec")
+        _POLL["every"] = poll if isinstance(poll, int) and 0 < poll <= 60 else 0
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -318,14 +439,17 @@ def once():
 
 def _do_job(api, token, job):
     try:
-        ok, summary, state = run_job(job)
+        ok, summary, extra = run_job(job)
     except Exception as e:  # report a crash as a failed job rather than leaving it unfinished
-        ok, summary, state = False, f"The helper hit an error ({type(e).__name__}).", None
+        ok, summary, extra = False, f"The helper hit an error ({type(e).__name__}).", None
     print(("Job done: " if ok else "Job failed: ") + summary)
+    body = {"ok": ok, "summary": summary[:200]}
+    if job.get("type") == "diagnose":
+        body["output"] = (extra or "")[:4000] or None  # what the look found (already scrubbed here)
+    else:
+        body["state"] = extra if extra in STATES else None
     for attempt in range(3):
-        status, _ = _post(f"{api}/helper/jobs/{job['id']}/result",
-                          {"ok": ok, "summary": summary[:200], "state": state if state in STATES else None},
-                          {"X-Device-Token": token})
+        status, _ = _post(f"{api}/helper/jobs/{job['id']}/result", body, {"X-Device-Token": token})
         if status in (200, 401, 404, 409):
             return
         time.sleep(5 * (attempt + 1))
@@ -343,7 +467,35 @@ def run(every):
         if status == 401:
             sys.exit(1)
         wait = every if status == 200 else min(max(wait, every) * 2, 900)
-        time.sleep(wait)
+        _wait_and_claim(wait if status == 200 else wait)
+
+
+def _wait_and_claim(seconds):
+    """Sleep until the next report; while the owner is chatting, check for approved work every few seconds."""
+    if not _POLL["every"]:
+        time.sleep(seconds)
+        return
+    end = time.time() + seconds
+    while time.time() < end:
+        step = _POLL["every"]
+        if not step:
+            time.sleep(max(0.0, end - time.time()))
+            return
+        time.sleep(min(step, max(0.0, end - time.time())))
+        try:
+            cfg = _load()
+            api = check_api(cfg["api"])
+            st, body = _post(api + "/helper/jobs/claim", {}, {"X-Device-Token": cfg["token"]})
+        except Exception:
+            continue
+        if st != 200:
+            continue
+        poll = body.get("pollEverySec")
+        _POLL["every"] = poll if isinstance(poll, int) and 0 < poll <= 60 else 0
+        jobs = body.get("jobs")
+        for job in jobs if isinstance(jobs, list) else []:
+            if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
+                _do_job(api, cfg["token"], job)
 
 
 def default_name():

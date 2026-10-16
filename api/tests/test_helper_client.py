@@ -312,3 +312,36 @@ def test_macos_install_never_writes_through_a_plist_link(helper, monkeypatch, tm
     monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
     helper.install()
     assert notes.read_text() == "mine" and not os.path.islink(helper.PLIST)
+
+
+@pytest.mark.parametrize("raw,gone", [
+    ("password=hunter2", "hunter2"), ("Authorization: Bearer abcdefghijklmnop", "abcdefghijklmnop"),
+    ("from 192.168.1.20 port 22", "192.168.1.20"), ("mac 00:11:22:33:44:55", "00:11:22:33:44:55"),
+    ("open /home/juan/secret.txt", "juan"), ("token eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4", "eyJhbGci"),
+    ("\x1b[31mred\x1b[0m", "\x1b"), ("mail me@example.com", "me@example.com"),
+])
+def test_device_side_scrub(helper, raw, gone):
+    assert gone not in helper.scrub(raw)[0]
+
+
+def test_look_into_needs_local_permission_and_reads_only(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    calls = []
+
+    def fake_run(cmd, timeout=20):
+        calls.append(cmd)
+        return '{"Status":"exited","ExitCode":137,"OOMKilled":true,"StartedAt":"x","FinishedAt":"y"} 3\n'
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper, "_run_both", lambda cmd, timeout=15: calls.append(cmd) or "line password=x1\n")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    assert helper.look_into("grafana")[0] is False and calls == []  # not allowed: nothing runs
+    helper.set_allowed("diagnose", "grafana", True)
+    ok, summary, out = helper.look_into("grafana")
+    assert ok and "out of memory" in summary and "last log lines" not in out  # logs need their own permission
+    helper.set_allowed("logs", "grafana", True)
+    ok, summary, out = helper.look_into("grafana")
+    assert "last log lines" in out and "x1" not in out
+    assert all(c[0] == "docker" and c[1] in ("inspect", "logs") for c in calls)  # read-only commands only
+    job = {"id": "act_" + "b" * 26, "type": "diagnose", "params": {"target": "grafana; rm -rf /"}}
+    assert helper.run_job(job)[0] is False
