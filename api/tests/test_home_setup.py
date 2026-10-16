@@ -34,3 +34,10 @@ def test_move_and_rename(client, started):
     assert client.post("/api/devices/pi-1/layout", json={"name": "x"}).status_code == 422  # samples keep names
     assert client.post("/api/devices/nope-9/layout", json={"x": 1}).status_code == 404
     assert client.post("/api/devices/pi-1/layout", json={"x": -5}).status_code == 422
+
+
+def test_moving_a_sample_device_respects_the_reset_barrier(client, started):  # review 8 rev2 #2
+    db.user(started).update({"demo.state": "resetting"})
+    assert client.post("/api/devices/pi-1/layout", json={"x": 520}).status_code == 409
+    db.user(started).update({"demo.state": "ready", "demoGeneration": 99})
+    assert client.post("/api/devices/pi-1/layout", json={"x": 520}).status_code == 404  # an old generation's device

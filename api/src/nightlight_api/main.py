@@ -111,18 +111,28 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
         raise not_found()
     ref = db.device(uid, device_id)
-    snap = ref.get()
-    d = snap.to_dict() if snap.exists else None
-    if not d:
-        raise not_found()
-    update = {k: v for k, v in (("x", body.x), ("y", body.y)) if v is not None}
-    if body.name is not None:
-        if d.get("realm") != "real":
-            raise ApiError(422, "sample_devices_keep_their_names")
-        update["name"] = scrub(body.name)[0]
-    if update:
-        ref.update(update)
-    return {"ok": True, **update}
+    name = scrub(body.name)[0] if body.name is not None else None
+
+    @firestore.transactional
+    def run(tx):
+        user = (db.user(uid).get(transaction=tx).to_dict() or {})
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d:
+            raise not_found()
+        if d.get("realm") != "real":  # sample devices: same barrier as every other demo write
+            if user.get("demo", {}).get("state") != "ready":
+                raise conflict("resetting", retryAfter=5)
+            if d.get("demoGeneration") != user.get("demoGeneration"):
+                raise not_found()
+            if name is not None:
+                raise ApiError(422, "sample_devices_keep_their_names")
+        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name)) if v is not None}
+        if update:
+            tx.update(ref, update)
+        return update
+
+    return {"ok": True, **db.run_transaction(run)}
 
 
 @app.post("/api/demo/reset")

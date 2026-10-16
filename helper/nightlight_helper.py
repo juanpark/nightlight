@@ -460,13 +460,19 @@ def install(every=60):
     every = max(int(every), 30)
     if sys.platform == "darwin":
         import plistlib
-        os.makedirs(os.path.dirname(PLIST), exist_ok=True)
+        agents = os.path.dirname(PLIST)
+        if os.path.islink(agents) or (os.path.exists(agents) and os.stat(agents).st_uid != os.getuid()):
+            sys.exit(f"Refusing to use {agents}: it is a link or belongs to another user.")
+        os.makedirs(agents, exist_ok=True)
         logs = os.path.expanduser("~/Library/Logs/nightlight-helper.log")
-        with open(PLIST, "wb") as f:
+        fd, tmp = tempfile.mkstemp(dir=agents, prefix=".nightlight-", suffix=".plist")
+        with os.fdopen(fd, "wb") as f:
             plistlib.dump({"Label": LABEL, "ProgramArguments": [py, script, "run", "--every", str(every)],
                            "EnvironmentVariables": {"NIGHTLIGHT_HOME": home}, "RunAtLoad": True,
                            "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 30,
                            "StandardOutPath": logs, "StandardErrorPath": logs}, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, PLIST)  # replaces the entry itself, never writes through a link
         domain = f"gui/{os.getuid()}"
         subprocess.run(["launchctl", "bootout", domain, PLIST], capture_output=True, check=False)
         subprocess.run(["launchctl", "bootstrap", domain, PLIST], check=True)

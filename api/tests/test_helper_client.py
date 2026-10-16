@@ -295,3 +295,20 @@ def test_uninstall_recognises_a_service_from_before_the_owner_mark(helper, monke
     assert not os.path.exists(helper.CONFIG)
     unit.write_text("[Service]\nUser=someoneelse\nExecStart=/x\n")
     assert helper._unit_is_mine() is False
+
+
+
+def test_macos_install_never_writes_through_a_plist_link(helper, monkeypatch, tmp_path):  # review 8 rev2 #1
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    notes = tmp_path / "notes.txt"
+    notes.write_text("mine")
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    (agents / "com.nightlight.helper.plist").symlink_to(notes)
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    monkeypatch.setattr(helper, "APP_DIR", str(tmp_path / "app"))
+    monkeypatch.setattr(helper, "PLIST", str(agents / "com.nightlight.helper.plist"))
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    helper.install()
+    assert notes.read_text() == "mine" and not os.path.islink(helper.PLIST)
