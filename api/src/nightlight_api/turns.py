@@ -357,6 +357,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 # The whole visible text of a finished response is added and scrubbed at once, never part by part.
                 visible = "".join(p.text for p in parts if p.text and not p.thought)
                 if visible:
+                    if raw.strip() and not raw.endswith(("\n", " ")) and not visible.startswith(("\n", " ")):
+                        raw += "\n\n"  # a new model call's words start a new paragraph, not mid-sentence
                     raw += visible
                     clean = scrub(raw)[0]
                     if clean.strip() and clean.startswith(shown):  # hold whitespace until there's substance
