@@ -145,7 +145,7 @@ Helper on each real device ── HTTPS + device token ──► /helper/* route
 
 | Service | Use |
 |---|---|
-| Gemini on Google Agent Platform | reasoning and plain-language explanations (3.5 Flash-Lite, minimal thinking; model, thinking level and prices are set together at deploy) |
+| Gemini on Google Agent Platform | reasoning and plain-language explanations (3.5 Flash-Lite, low thinking; model, thinking level and prices are set together at deploy) |
 | Agent Development Kit (ADK, Python) | tools, the agent loop and streaming |
 | Agent Platform Memory Bank | what Nightlight remembers about each person, scoped per user |
 | Cloud Run | hosts the API and the web app; scales to zero |
@@ -194,8 +194,8 @@ the facts from the device data.
 ## Performance
 
 Measured 2026-10-15 (UTC) against the real model with `scripts/bench.py` on the sample home (details in
-[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)): question about 3.8 s, follow-up after approval about 1.6 s, about
-$0.0012 for the whole story. Not re-measured since real devices were added.
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)): question about 5.2 s (median), follow-up after approval about 2.1 s, about
+$0.0036 for the whole story (measured 2026-10-16 with the current feature set).
 
 ## Run locally
 
