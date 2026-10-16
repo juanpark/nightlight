@@ -193,7 +193,7 @@ the facts from the device data.
 
 ## Performance
 
-Measured 2026-10-15 (UTC) against the real model with `scripts/bench.py` on the sample home (details in
+Measured against the real model with `scripts/bench.py` on the sample home (details in
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)): question about 5.2 s (median), follow-up after approval about 2.1 s, about
 $0.0036 for the whole story (measured 2026-10-16 with the current feature set).
 
