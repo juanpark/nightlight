@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -502,9 +502,23 @@ def _left(cap):
     return max(0.0, min(cap, _inspect_until[0] - time.time()))
 
 
+def _plain_path(path):
+    """True when no part of `path` is a link (so it is exactly where it says) and, unless allowed at the Mac, it isn't
+    inside a folder macOS protects."""
+    real = os.path.realpath(path)
+    if real != os.path.abspath(path):
+        return False
+    if sys.platform == "darwin" and not _mac_private_ok():
+        for _label, guarded in _mac_private_places():
+            g = os.path.realpath(guarded)
+            if real == g or real.startswith(g + os.sep):
+                return False
+    return True
+
+
 def _du(path):
     """Size of a folder in MB (or None), never following links, bounded in time."""
-    if not os.path.isdir(path) or os.path.islink(path) or _left(25) < 1:
+    if not os.path.isdir(path) or not _plain_path(path) or _left(25) < 1:
         return None
     try:  # du exits non-zero when a few files can't be read; the total it prints is still right for what it could read
         out = subprocess.run(["du", "-sk", path], capture_output=True, text=True, timeout=_left(25),
@@ -660,22 +674,28 @@ _MAC_GUARDED_LIB = {"Mail", "Messages", "Safari", "Containers", "Group Container
                     "Application Support", "Preferences", "StatusKit", "Contacts", "FaceTime", "Intelligence"}
 
 
+def _one_line(name):
+    """A file name as a short single-line label: control characters (new lines) can't start a line of their own."""
+    return re.sub(r"[\x00-\x1f\x7f]", "?", name)[:60]
+
+
 def _inspect_home():
     """The biggest folders directly in the home folder and in ~/Library (sizes only), skipping protected ones."""
     h, rows = _HOME, []
     places = []
     try:
-        top = sorted(os.listdir(h))
+        top = sorted(os.listdir(h)) if _plain_path(h) else []
     except OSError:
         top = []
     guarded_top = _MAC_GUARDED_TOP if sys.platform == "darwin" else set()
-    places += [(f"~/{n}", os.path.join(h, n)) for n in top if n not in guarded_top]
+    places += [(f"~/{_one_line(n)}", os.path.join(h, n)) for n in top if n not in guarded_top]
     if sys.platform == "darwin":
         try:
-            lib = sorted(os.listdir(os.path.join(h, "Library")))
+            lib = sorted(os.listdir(os.path.join(h, "Library"))) if _plain_path(os.path.join(h, "Library")) else []
         except OSError:
             lib = []
-        places += [(f"~/Library/{n}", os.path.join(h, "Library", n)) for n in lib if n not in _MAC_GUARDED_LIB]
+        places += [(f"~/Library/{_one_line(n)}", os.path.join(h, "Library", n)) for n in lib
+                   if n not in _MAC_GUARDED_LIB]
     for label, path in places:
         if _left(25) < 1:
             break
@@ -810,7 +830,8 @@ def _fix_cmd(cmd, timeout=300):
         return False, "it couldn't run"
     if r.returncode != 0 and "password" in (r.stderr or "").lower():
         return False, "this device needs a password for it (sudo)"
-    said = scrub(((r.stderr or r.stdout or "").strip().splitlines() or [""])[-1])[0][:140]
+    full = scrub(r.stderr or r.stdout or "")[0]  # scrub the whole text first, then pick the last line
+    said = _one_line((full.strip().splitlines() or [""])[-1])[:140]
     return r.returncode == 0, "" if r.returncode == 0 else f"it reported an error: {said or 'no details'}"
 
 
@@ -820,7 +841,8 @@ FIXES = {
     "brew_cleanup": {"when": lambda: bool(shutil.which("brew")), "run": lambda: _fix_cmd(["brew", "cleanup", "-s"])},
     "npm_cache": {"when": lambda: bool(shutil.which("npm")),
                   "run": lambda: _fix_cmd(["npm", "cache", "clean", "--force"])},
-    "xcode_build_data": {"when": lambda: os.path.isdir(f"{_HOME}/Library/Developer/Xcode/DerivedData"),
+    "xcode_build_data": {"when": lambda: os.path.isdir(f"{_HOME}/Library/Developer/Xcode/DerivedData")
+                         and _plain_path(f"{_HOME}/Library/Developer/Xcode/DerivedData"),
                          "run": lambda: _empty_dir(["Library", "Developer", "Xcode", "DerivedData"])},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
                      "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
@@ -858,7 +880,8 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    return ok, ((f"Done.{freed}" if ok else f"It didn't work: {why}.{freed}").strip()), None
+    text = (f"Done.{freed}" if ok else f"It didn't work: {_one_line(str(why))}.{freed}").strip()
+    return ok, scrub(text)[0], None
 
 
 # ------------------------------------------------------------------ update: signed new versions, from the app

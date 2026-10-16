@@ -148,3 +148,41 @@ def test_home_check_skips_protected_folders(helper, monkeypatch, tmp_path):
     out = helper._inspect_home()
     names = {p.replace(str(home), "~") for p in read}
     assert names == {"~/.gradle", "~/Library/Caches"} and "Biggest folder:" in out
+
+
+def test_a_linked_parent_never_leads_into_a_protected_folder(helper, monkeypatch, tmp_path):  # review 0.9.3 #2
+    home = tmp_path / "home"
+    (home / "Documents" / "Xcode" / "DerivedData").mkdir(parents=True)
+    (home / "Library").mkdir(parents=True)
+    (home / "Library" / "Developer").symlink_to(home / "Documents")
+    monkeypatch.setattr(helper, "_HOME", str(home))
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    ran = []
+    real_run = helper.subprocess.run
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **k: ran.append(cmd) or real_run(cmd, **k))
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    helper._inspect_disk()
+    helper._inspect_home()
+    assert not [c for c in ran if c[:1] == ["du"] and "Documents" in " ".join(c)]
+    assert not [c for c in ran if c[:1] == ["du"] and "Developer" in " ".join(c)]
+
+
+def test_folder_names_cannot_forge_lines(helper, monkeypatch, tmp_path):  # review 0.9.3 #3
+    home = tmp_path / "home"
+    (home / "x\nnpm cache: 20 GB").mkdir(parents=True)
+    monkeypatch.setattr(helper, "_HOME", str(home))
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper, "_du", lambda p: 2048)
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    out = helper._inspect_home()
+    assert not any(line.startswith("npm cache") for line in out.splitlines())
+
+
+def test_failure_text_is_scrubbed_before_it_leaves(helper, monkeypatch):  # review 0.9.3 #1
+    helper._save_config({"token": "x", "manage": "strict", "allow": {"fix": ["all"]}})
+    secret = "token=" + "abcdef0123456789abcdef"
+    monkeypatch.setitem(helper.FIXES, "npm_cache", {"when": lambda: True, "run": lambda: (False, f"~/{secret}/f")})
+    ok, summary, _ = helper.run_fix("npm_cache")
+    assert not ok and "abcdef0123456789abcdef" not in summary
