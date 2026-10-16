@@ -194,3 +194,19 @@ def test_result_state_is_a_known_word_and_summary_is_scrubbed(client, started): 
                 headers=h)
     done = _action(started, a["id"])
     assert "abcd1234efgh5678" not in done["result"]["summary"] and done["result"]["after"]["state"] == "running"
+
+
+def test_restart_a_failed_service_only_when_allowed(client, started):  # slice 14
+    dev = enrolled(client)
+    facts = {**FACTS, "allowedJobs": {"restart_service": ["pihole-FTL.service"]}}
+    beat(client, dev["token"], facts)
+    a = actions.propose(started, session_id="sess_test", turn_id="t_svc", generation=generation(started),
+                        action_type="restart_service", device_id=dev["deviceId"], params={"unit": "pihole-FTL.service"})
+    assert a["status"] == "pending" and "sudo systemctl restart pihole-FTL.service" in a["dryRun"]
+    with pytest.raises(ValueError, match="not_allowed_on_device"):
+        actions.propose(started, session_id="sess_test", turn_id="t_svc2", generation=generation(started),
+                        action_type="restart_service", device_id=dev["deviceId"], params={"unit": "ssh.service"})
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    _again(dev["token"])
+    jobs = beat(client, dev["token"], facts).json()["jobs"]
+    assert jobs[0]["type"] == "restart_service" and jobs[0]["params"] == {"unit": "pihole-FTL.service"}

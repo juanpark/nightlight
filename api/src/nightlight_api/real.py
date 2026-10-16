@@ -29,11 +29,12 @@ CLAIM_MIN_SECONDS = 4
 
 # Jobs a real device can run. The helper has its own copy and runs only these, only on targets its owner allowed on
 # that machine; the server sends a job name and a target, never a command.
-JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"}}
+JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"},
+        "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"}}
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 READS = {"diagnose": {"label": "Look into", "riskClass": "read"}}
-ALLOW_KEYS = ("restart_container", "diagnose", "logs")
+ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs")
 
 # Plain names for system services people commonly run at home.
 FRIENDLY = {
@@ -421,13 +422,34 @@ def checks(facts: dict) -> list[dict]:
 
 
 def service_for(params: dict) -> str | None:
-    name = params.get("container")
+    name = params.get("container") or params.get("unit")
     return _doc_id(name) if isinstance(name, str) else None
+
+
+def _unit_card(device: dict, services: dict, params: dict) -> dict:
+    if set(params) != {"unit"}:
+        raise ValueError("not_applicable")
+    unit = params["unit"]
+    if not isinstance(unit, str) or not TARGET_NAME.fullmatch(unit):
+        raise ValueError("bad_target")
+    if unit not in (device.get("allowedJobs") or {}).get("restart_service", []):
+        raise ValueError("not_allowed_on_device")
+    svc = services.get(_doc_id(unit))
+    if not svc or svc.get("kind") != "system":
+        raise ValueError("not_failed")  # only a service the device reports as failed
+    friendly = _friendly(unit)
+    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} ({unit}) on the {device['name']}.",
+            "dryRun": f"The helper on the device runs \"sudo systemctl restart {unit}\" and checks it is still running "
+                      f"a few seconds later. Nothing else is touched.",
+            "rollback": "Nothing to undo: if it fails again, it simply stays stopped and you'll see why.",
+            "blastRadius": [device["id"]], "riskClass": JOBS["restart_service"]["riskClass"]}
 
 
 def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     """The approval card for a real-device job. ValueError when it doesn't apply, including when the device's owner
     hasn't allowed this job on this target on the device itself."""
+    if action_type == "restart_service":
+        return _unit_card(device, services, params)
     if action_type not in JOBS or set(params) != {"container"}:
         raise ValueError("not_applicable")
     name = params["container"]

@@ -18,6 +18,7 @@ Usage:
   nightlight_helper.py run [--every SECONDS]                   # keep reporting (default every 60 s)
   nightlight_helper.py show                                    # print what would be sent, without sending
   nightlight_helper.py allow restart_container <NAME>          # allow restarting this container after approval
+  nightlight_helper.py allow restart_service <UNIT>            # allow restarting this system service after approval
   nightlight_helper.py allow diagnose <NAME>                   # allow reading why a container/service is down
   nightlight_helper.py allow logs <NAME>                       # ...and its last log lines (scrubbed here first)
   nightlight_helper.py discover [--yes]                        # find things nearby; you pick what to send
@@ -42,10 +43,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
-JOB_TYPES = ("restart_container", "diagnose", "logs")
+JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")  # container names
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")  # containers or system services (units)
 _POLL = {"every": 0}  # the server asks for quicker checks while the owner is chatting
@@ -251,6 +252,33 @@ def _name_re(kind):
     return NAME_RE if kind == "restart_container" else TARGET_RE
 
 
+def _unit_active(unit):
+    return _run(["systemctl", "is-active", unit]).strip() or "unknown"
+
+
+def _restart_unit(unit, wait):
+    """Restart one system service the owner allowed here; needs sudo without a password for it (or root)."""
+    if unit not in _allowed().get("restart_service", []):
+        return False, "Restarting this service isn't allowed on this device, so nothing was done.", None
+    if not shutil.which("systemctl"):
+        return False, "This device has no systemd, so nothing was done.", None
+    if _unit_active(unit) == "active":
+        return True, f"{unit} was already running; nothing needed doing.", "running"
+    cmd = ["systemctl", "restart", unit] if os.geteuid() == 0 else ["sudo", "-n", "systemctl", "restart", unit]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False, f"Couldn't run the restart for {unit}.", None
+    if r.returncode != 0 and "password" in (r.stderr or "").lower():
+        return False, ("This device needs a password to restart services, so nothing was done. "
+                       "See 'Allow restarting a service' in the Nightlight README."), None
+    time.sleep(wait)
+    state = _unit_active(unit)
+    if state == "active":
+        return True, f"Restarted {unit}; it was still running {wait} seconds later.", "running"
+    return False, f"Tried to restart {unit}, but it is {state}.", "exited"
+
+
 def set_allowed(kind, name, on):
     if kind not in JOB_TYPES:
         sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
@@ -409,6 +437,11 @@ def run_job(job, wait=5):
         if not isinstance(target, str) or not TARGET_RE.fullmatch(target):
             return False, "That isn't something this helper can look into.", None
         return look_into(target)
+    if kind == "restart_service":
+        unit = params.get("unit") if isinstance(params, dict) else None
+        if not isinstance(unit, str) or not TARGET_RE.fullmatch(unit):
+            return False, "That isn't a service this helper can restart.", None
+        return _restart_unit(unit, wait)
     name = params.get("container") if isinstance(params, dict) else None
     if kind != "restart_container" or not isinstance(name, str) or name not in _allowed().get(kind, []):
         return False, "This job isn't allowed on this device, so nothing was done.", None

@@ -67,6 +67,20 @@ python3 nightlight_helper.py run                       # keep reporting
 python3 nightlight_helper.py allow restart_container <NAME>   # optional: allow restarting this container
 ```
 
+### Allow restarting a service
+
+Restarting a system service needs administrator rights. The helper uses `sudo -n` (it never asks for or stores a
+password), so allow it for that one service only, once, on the device:
+
+```bash
+python3 ~/.local/share/nightlight/nightlight_helper.py allow restart_service pihole-FTL.service
+echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart pihole-FTL.service" \
+  | sudo tee /etc/sudoers.d/nightlight-pihole && sudo chmod 0440 /etc/sudoers.d/nightlight-pihole
+```
+
+Raspberry Pi OS's default user can already use `sudo` without a password (Nightlight reports this as a safety
+finding), so there the first line is enough. Either way, every restart still waits for your tap on the approval card.
+
 ## Architecture
 
 ```

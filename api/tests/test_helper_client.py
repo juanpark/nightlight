@@ -458,3 +458,25 @@ def test_ssh_settings_with_includes_are_unknown_and_dnf_counts(helper, monkeypat
     monkeypatch.setattr(helper, "_run_both", lambda cmd, timeout=15: "\nkernel.x86_64  6.5.1-1.fc39  updates\n"
                         "vim.x86_64 2:9.0-1.fc39 updates\n")
     assert helper._count_updates() == 2
+
+
+def test_restart_service_needs_local_permission(helper, monkeypatch):  # slice 14
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    state = {"v": "failed"}
+    calls = []
+
+    def fake_sp(cmd, **kw):
+        calls.append(cmd)
+        state["v"] = "active"
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: state["v"] + "\n")
+    monkeypatch.setattr(helper.subprocess, "run", fake_sp)
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 1000)
+    job = {"id": "act_" + "e" * 26, "type": "restart_service", "params": {"unit": "pihole-FTL.service"}}
+    assert helper.run_job(job, wait=0)[0] is False and calls == []
+    helper.set_allowed("restart_service", "pihole-FTL.service", True)
+    ok, summary, _ = helper.run_job(job, wait=0)
+    assert ok and calls == [["sudo", "-n", "systemctl", "restart", "pihole-FTL.service"]]

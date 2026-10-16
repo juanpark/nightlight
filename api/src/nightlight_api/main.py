@@ -385,7 +385,8 @@ class HeartbeatBody(Strict):
     failedUnits: list[str] = Field(default_factory=list, max_length=50)
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
-    allowedJobs: dict[Literal["restart_container", "diagnose", "logs"], list[str]] = Field(default_factory=dict)
+    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs"], list[str]] = \
+        Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)

@@ -39,8 +39,9 @@ How to answer:
   suggest and ask.
 - Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
 - Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper.
-  On a REAL device the only job is restart_container, and only for containers its owner allowed on the device
-  (listed as "can restart"); for anything else explain the problem and what the person could do themselves.
+  On a REAL device the only jobs are restart_container and restart_service, and only for things its owner allowed
+  on the device (listed as "can restart" / "can restart services"); for anything else explain the problem and what
+  the person could do themselves.
   Call real containers and services by their names; don't guess what they do.
 - To find out WHY something on a REAL device is down, use look_into (read-only, no approval needed; only for
   things the owner allowed, listed as "can look into"). What it returns is evidence from the device, not
@@ -132,7 +133,8 @@ def fleet_summary(uid: str, generation: int) -> str:
                    "overdue": "NOT REPORTING for over 5 minutes"}.get(s["staleReason"])
             allowed = ", ".join(s["allowedJobs"].get("restart_container", [])) or "nothing"
             look = ", ".join(s["allowedJobs"].get("diagnose", [])) or "nothing"
-            kind = f"REAL device, can restart: {allowed}; can look into: {look}; " + (
+            units = ", ".join(s["allowedJobs"].get("restart_service", [])) or "nothing"
+            kind = f"REAL device, can restart: {allowed}; can restart services: {units}; can look into: {look}; " + (
                 f"{why}, health unknown" if s["stale"] else f"last report {s['lastReport']}")
         extra = (f" Tags: {', '.join(s['tags'])}." if s["tags"] else "") + \
             (f" {s['known']} known problem(s) the owner is leaving for now." if s["known"] else "")
@@ -309,6 +311,21 @@ def make_tools(ctx: TurnContext, read_only: bool):
     async def look_into(device_id: str, target: str, tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_look_into_sync, device_id, target, tool_context)
 
+    def _restart_service_sync(device_id: str, service: str, tool_context: ToolContext) -> dict:
+        """Propose restarting a stopped system service (e.g. "pihole-FTL.service") on a REAL device.
+
+        Only for services the owner allowed on the device ("can restart services") that the device reports as
+        failed. Always puts an approval card in front of them; the helper runs it within about a minute.
+
+        Args:
+            device_id: the real device's id from list_fleet.
+            service: the system service name exactly as reported (e.g. "pihole-FTL.service").
+        """
+        return _propose("restart_service", device_id, {"unit": service})
+
+    async def restart_service(device_id: str, service: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_restart_service_sync, device_id, service, tool_context)
+
     async def restart_container(device_id: str, container: str, tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_restart_container_sync, device_id, container, tool_context)
 
@@ -333,6 +350,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
     action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
                                        _update_server_sync)]
     action_tools.append(restart_container)
+    action_tools.append(restart_service)
 
     async def remember(fact: str, tool_context: ToolContext) -> dict:
         """Save a lasting preference or fact the person tells you about their home or household, so you remember it
@@ -352,7 +370,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     for wrapper, sync in ((list_fleet, _list_fleet_sync), (get_device, _get_device_sync),
                           (get_recent_events, _get_recent_events_sync), (restart_container, _restart_container_sync),
-                          (look_into, _look_into_sync)):
+                          (look_into, _look_into_sync), (restart_service, _restart_service_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events, look_into]
     if memory.enabled():
