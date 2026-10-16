@@ -29,6 +29,8 @@ const ERRORS: Record<string, string> = {
   private_address: "That is a private or home address, so it can't be reached from the internet. Addresses inside "
     + "your home are watched by the Nightlight helper on one of your devices, not from here.",
   too_many_watches: `You can watch up to ${MAX_WATCHES} addresses. Remove one to add another.`,
+  watch_budget: "That's a lot of changes for one day. Please try again tomorrow.",
+  sign_in_required: "Watching websites needs a Google account. Use Save with Google first.",
 };
 
 export function watchError(e: unknown): string {
