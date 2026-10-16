@@ -442,6 +442,14 @@ def _read(path):
         return ""
 
 
+def _unit_is_mine():
+    """Our service file: it carries this user's owner mark, or (installed by helper 0.3.0, before the mark) runs this
+    user's own helper copy as this user."""
+    text = _read(UNIT)
+    legacy = f"User={_me()}\n" in text and os.path.join(APP_DIR, "nightlight_helper.py") in text
+    return f"# nightlight-owner={os.getuid()}" in text or legacy
+
+
 def install(every=60):
     """Run the helper in the background from now on (and after restarts). Needs the device to be joined first."""
     try:
@@ -468,7 +476,7 @@ def install(every=60):
         sys.exit("This system has no systemd. Keep `python3 nightlight_helper.py run` running another way.")
     if os.geteuid() == 0:
         sys.exit("Run install as your normal user (not with sudo); it asks for your password when it needs it.")
-    if os.path.exists(UNIT) and f"# nightlight-owner={os.getuid()}" not in _read(UNIT):
+    if os.path.exists(UNIT) and not _unit_is_mine():
         sys.exit("Another user's Nightlight helper is installed on this machine; uninstall it there first.")
     q = _systemd_value
     unit = (
@@ -509,7 +517,7 @@ def uninstall():
                 sys.exit("Couldn't stop the background service; nothing was removed. Try again or restart first.")
             os.unlink(PLIST)
     elif os.path.exists(UNIT):
-        if f"# nightlight-owner={os.getuid()}" not in _read(UNIT):
+        if not _unit_is_mine():
             sys.exit("The installed service belongs to another user on this machine; nothing was removed.")
         stop = subprocess.run(_sudo(["systemctl", "disable", "--now", "nightlight-helper.service"]), check=False)
         if stop.returncode != 0:

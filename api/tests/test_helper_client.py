@@ -278,3 +278,20 @@ def test_uninstall_keeps_files_when_the_service_wont_stop(helper, monkeypatch, t
     with pytest.raises(SystemExit):
         helper.uninstall()
     assert unit.exists() and os.path.exists(helper.CONFIG)
+
+
+
+def test_uninstall_recognises_a_service_from_before_the_owner_mark(helper, monkeypatch, tmp_path):
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    unit = tmp_path / "nightlight-helper.service"
+    script = os.path.join(helper.APP_DIR, "nightlight_helper.py")
+    unit.write_text(f'[Service]\nUser={helper._me()}\nExecStart="/usr/bin/python3" "{script}" run\n')
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper, "UNIT", str(unit))
+    monkeypatch.setattr(helper, "_post", lambda *a, **k: (200, {"ok": True}))
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    helper.uninstall()
+    assert not os.path.exists(helper.CONFIG)
+    unit.write_text("[Service]\nUser=someoneelse\nExecStart=/x\n")
+    assert helper._unit_is_mine() is False
