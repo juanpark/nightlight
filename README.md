@@ -117,6 +117,7 @@ checks every minute (a TCP connect to a port it saw open).
 | Approval cards | plan, dry run, what it touches, how to undo, risk badge; one tap approves or declines |
 | Trust ladder | per kind of job, device or service; pinning; promotion offers after 3 successes (sample home) |
 | Look into | "why is it down?" on real devices: status, exit-code meaning, out-of-memory, restarts, optional log lines; answered in the chat or by one follow-up |
+| Investigates first | before answering "why is it full / slow / offline?", the agent runs the helper's fixed read-only checks (biggest known folders, busiest programs, waiting updates, Docker disk use, DNS and internet, load, failing services) and answers with names and sizes |
 | Known and snoozed problems | "I know, leave it" or "Snooze a week"; the health light counts only problems that still need a look; a problem that gets worse comes back |
 | Activity | who did what (you, the device, Nightlight), filters by device, kind and time, grouped by day |
 | History | per real device, last 24 hours or 7 days: status strip and disk, memory, CPU sparklines (points every 5 minutes, kept 8 days) |

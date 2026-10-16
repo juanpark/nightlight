@@ -43,9 +43,10 @@ The server sends a job **name** and a **target**, never a command. The helper (`
 | `restart_container` | `docker start NAME`, then checks the state 5 s later | NAME is in the local `allow restart_container` list and the container exists and isn't running |
 | `restart_service` | `sudo -n systemctl restart UNIT` (no sudo as root), 60 s timeout | UNIT is in the local `allow restart_service` list and `systemctl is-failed` says `failed` |
 | `diagnose` | `docker inspect` / `systemctl show` (status only); `docker logs --tail 30` / `journalctl -n 30` only with `allow logs` | target is in the local `allow diagnose` list |
+| `inspect` | a fixed catalogue of read-only checks, at most 4 per job: `du -sk` over a fixed list of known folders (sizes only, no file names), `ps` (program names only, no arguments), `apt list --upgradable` / `softwareupdate -l` / `brew outdated`, `docker system df`, a DNS lookup and an HTTPS connection to www.google.com, load average, failing services | strict: `allow inspect all`; app-managed: the "check why something stopped" switch |
 
 - Commands are fixed argument lists; nothing from the server reaches a shell. Unknown job types do nothing. The
-  `logs` and `diagnose` permissions can never start anything.
+  `logs`, `diagnose` and `inspect` permissions can never start anything.
 - **The device chooses who may widen permissions**, once, at install (`nightlight settings` to change):
   - **Strict:** the local allowlist is final; the server cannot widen it.
   - **Managed from the app (delegated):** the owner's switches in the app are applied by the helper. This is a
@@ -84,6 +85,9 @@ Only when the owner acts on the device:
   (guess, maker, service words, ports from a list of 8). The server accepts only that vocabulary. Addresses stay in
   the helper's local config.
 - `allow logs NAME`: the last 30 log lines of that target, sent only when the agent looks into it.
+- `inspect` (when allowed): folder sizes for the fixed list of places, top program names with CPU/memory percent,
+  names of waiting updates, Docker's disk summary, DNS/internet reachability, load. Scrubbed on the device like
+  diagnose output, the home path shown as `~`, at most about 3.5 KB.
 
 ## Scrubbing (best effort)
 

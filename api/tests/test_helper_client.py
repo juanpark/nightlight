@@ -560,7 +560,7 @@ def test_app_grants_only_for_things_this_device_reports(helper, monkeypatch):  #
     monkeypatch.setattr(helper, "_failed_units", lambda: [])
     got = helper._from_remote({"diagnose": True, "logs": ["web", "other"], "restart_container": ["unreported", "web"],
                                "restart_service": ["ssh.service"]})
-    assert got == {"logs": ["web"], "restart_container": ["web"], "diagnose": ["web"]}
+    assert got == {"logs": ["web"], "restart_container": ["web"], "diagnose": ["web"], "inspect": sorted(helper.INSPECT)}
 
 
 def test_wrapper_is_quoted_and_never_clobbers_other_files(helper, monkeypatch, tmp_path):  # review 15 #3,#4

@@ -90,9 +90,9 @@ def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
             "denied": "was declined"}[a["status"]]
     summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
     if a["type"] in real.READS:
-        target = a["params"].get("target")
+        target = a["params"].get("target") or ", ".join(a["params"].get("what") or [])
         verb = "finished" if a["status"] == "done" else "couldn't finish"
-        summary = (f" (target: {target}). What it found: {a['result']['summary']}\n"
+        summary = (f" (checked: {target}). What it found: {a['result']['summary']}\n"
                    f"{a['result'].get('output') or ''}").rstrip()
     tx.set(db.turns(uid, a["sessionId"]).document(cont), {
         "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
@@ -251,12 +251,26 @@ def request_diagnosis(uid: str, *, session_id: str, turn_id: str, generation: in
                       fence=None) -> dict:
     """Ask a real device to look into one target. Read-only and allowed by the owner on the device, so it is created
     already approved (no card); the helper picks it up on its next check."""
+    return _request_read(uid, "diagnose", {"target": target}, session_id=session_id, turn_id=turn_id,
+                         generation=generation, device_id=device_id, fence=fence)
+
+
+def request_inspection(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, what: list,
+                       fence=None) -> dict:
+    """Ask a real device to run some of its fixed read-only checks (disk use, programs, updates...). Like diagnose:
+    allowed by the owner on the device, so no card."""
+    return _request_read(uid, "inspect", {"what": what}, session_id=session_id, turn_id=turn_id,
+                         generation=generation, device_id=device_id, fence=fence)
+
+
+def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id: str, generation: int,
+                  device_id: str, fence=None) -> dict:
 
     @firestore.transactional
     def run(tx):
         if fence:
             fence(tx)
-        user_snap, device_snap, services, _, _ = _read_context(tx, uid, device_id, "diagnose")
+        user_snap, device_snap, services, _, _ = _read_context(tx, uid, device_id, kind)
         user = user_snap.to_dict() if user_snap.exists else None
         _require_ready(user, generation)
         if not device_snap.exists:
@@ -264,19 +278,27 @@ def request_diagnosis(uid: str, *, session_id: str, turn_id: str, generation: in
         device = dict(device_snap.to_dict(), id=device_id)
         if device.get("realm") != "real":
             raise ValueError("not_applicable")
-        params = {"target": target}
-        key = proposal_key(generation, turn_id, device_id, None, "diagnose", params)
+        clean = dict(params)
+        if kind == "inspect":
+            clean["what"] = real.inspect_ok(device, params.get("what"))
+        key = proposal_key(generation, turn_id, device_id, None, kind, clean)
         aid = make_action_id(key)
         existing = db.action(uid, aid).get(transaction=tx)
         if existing.exists:
             return dict(existing.to_dict(), id=aid)
         if real.view(device).get("stale"):
             raise ValueError("device_not_reporting")
-        real.diagnose_target_ok(device, _by_id(services), target)
-        action = {"id": aid, "proposalKey": key, "type": "diagnose", "deviceId": device_id, "params": params,
-                  "plan": f"Look into {target} on the {device['name']} (read-only).", "dryRun": "Reads its status"
-                  + (" and its last log lines" if target in (device.get("allowedJobs") or {}).get("logs", []) else "")
-                  + "; changes nothing.", "rollback": "Nothing to undo.", "blastRadius": [device_id],
+        if kind == "diagnose":
+            target = clean["target"]
+            real.diagnose_target_ok(device, _by_id(services), target)
+            plan = f"Look into {target} on the {device['name']} (read-only)."
+            dry = "Reads its status" + (" and its last log lines" if target in
+                                         (device.get("allowedJobs") or {}).get("logs", []) else "") + "; changes nothing."
+        else:
+            plan = f"Look around the {device['name']}: {', '.join(clean['what'])} (read-only)."
+            dry = "Runs the helper's fixed read-only checks; changes nothing."
+        action = {"id": aid, "proposalKey": key, "type": kind, "deviceId": device_id, "params": clean,
+                  "plan": plan, "dryRun": dry, "rollback": "Nothing to undo.", "blastRadius": [device_id],
                   "riskClass": "read", "status": "approved", "realm": "real", "demoGeneration": generation,
                   "deviceVersion": device["version"], "sessionId": session_id, "turnId": turn_id,
                   "decision": {"by": "owner_allowed_on_device", "decision": "approve"}, "createdAt": _now()}

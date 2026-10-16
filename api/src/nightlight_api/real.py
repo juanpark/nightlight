@@ -33,8 +33,15 @@ JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass
         "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"}}
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
-READS = {"diagnose": {"label": "Look into", "riskClass": "read"}}
-ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs")
+READS = {"diagnose": {"label": "Look into", "riskClass": "read"},
+         "inspect": {"label": "Look around", "riskClass": "read"}}
+ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect")
+# The helper's fixed read-only checks (`inspect`); it runs only these names, at most MAX_INSPECT per job.
+INSPECT = {"disk": "which known folders take the most space", "processes": "which programs use the most memory and CPU",
+           "updates": "which updates are waiting (can take up to a minute)", "docker": "how much space Docker uses",
+           "network": "whether name lookup (DNS) and the internet work", "load": "how busy the processor is",
+           "failed": "which services or background items keep failing"}
+MAX_INSPECT = 4
 
 # Plain names for system services people commonly run at home.
 FRIENDLY = {
@@ -760,6 +767,19 @@ def diagnose_target_ok(device: dict, services: dict, target: str) -> None:
         raise ValueError("not_allowed_on_device")
     if _doc_id(target) not in services and _doc_id(target + ".service") not in services:
         raise ValueError("no_such_target")
+
+
+def inspect_ok(device: dict, what) -> list[str]:
+    """The checks to run (deduplicated, in order); ValueError unless the device offers every one of them."""
+    if not isinstance(what, list) or not what or not all(isinstance(w, str) for w in what):
+        raise ValueError("bad_target")
+    names = list(dict.fromkeys(what))
+    if len(names) > MAX_INSPECT or any(n not in INSPECT for n in names):
+        raise ValueError("bad_target")
+    offered = (device.get("allowedJobs") or {}).get("inspect", [])
+    if any(n not in offered for n in names):
+        raise ValueError("not_allowed_on_device")
+    return names
 
 
 def token_owner(tx, token: str) -> tuple[str, str]:

@@ -47,10 +47,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
-JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs")
+JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")  # container names
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,99}$")  # containers or system services (units)
 _POLL = {"every": 0}  # the server asks for quicker checks while the owner is chatting
@@ -263,7 +263,11 @@ def _allowed():
     if cfg.get("manage") == "app":
         return _from_remote(cfg.get("remote") or {})
     allow = cfg.get("allow") or {}
-    return {k: [n for n in v if _name_re(k).fullmatch(n)][:20] for k, v in allow.items() if k in JOB_TYPES and v}
+    out = {k: [n for n in v if _name_re(k).fullmatch(n)][:20] for k, v in allow.items()
+           if k in JOB_TYPES and k != "inspect" and v}
+    if "all" in (allow.get("inspect") or []):
+        out["inspect"] = sorted(INSPECT)
+    return out
 
 
 def _from_remote(remote):
@@ -280,6 +284,8 @@ def _from_remote(remote):
             out[key] = names
     if remote.get("diagnose") is True and (containers or units):
         out["diagnose"] = sorted(containers | units)[:20]
+    if remote.get("diagnose") is True:
+        out["inspect"] = sorted(INSPECT)
     return out
 
 
@@ -326,6 +332,8 @@ def _restart_unit(unit, wait):
 def set_allowed(kind, name, on):
     if kind not in JOB_TYPES:
         sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
+    if kind == "inspect" and name != "all":
+        sys.exit("Use: allow inspect all")
     if not _name_re(kind).fullmatch(name):
         sys.exit("That isn't a valid name.")
     def change(cfg):
@@ -472,10 +480,155 @@ def look_into(target):
         f"\n({hidden} private values hidden)" if hidden else "")
 
 
+# ------------------------------------------------------------------ inspect: read-only checks, like an expert would run
+# A fixed catalogue. The server can only ask for these names; each is a fixed command list with a timeout; output is
+# scrubbed here. Allowed whenever "check why something stopped" is on (app-managed) or `allow inspect all` (strict).
+
+_HOME = os.path.expanduser("~")
+
+
+def _du(path):
+    """Size of a folder in MB (or None), never following links, bounded in time."""
+    if not os.path.isdir(path) or os.path.islink(path):
+        return None
+    try:  # du exits non-zero when a few files can't be read; the total it prints is still right for what it could read
+        out = subprocess.run(["du", "-sk", path], capture_output=True, text=True, timeout=25, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    first = out.split()[:1]
+    return round(int(first[0]) / 1024) if first and first[0].isdigit() else None
+
+
+def _disk_places():
+    h = _HOME
+    if sys.platform == "darwin":
+        places = [("Downloads", f"{h}/Downloads"), ("Desktop", f"{h}/Desktop"), ("Documents", f"{h}/Documents"),
+                  ("Movies", f"{h}/Movies"), ("Trash", f"{h}/.Trash"), ("App caches", f"{h}/Library/Caches"),
+                  ("Xcode build data", f"{h}/Library/Developer/Xcode/DerivedData"),
+                  ("iPhone backups", f"{h}/Library/Application Support/MobileSync/Backup"),
+                  ("Docker Desktop", f"{h}/Library/Containers/com.docker.docker"),
+                  ("Homebrew cache", f"{h}/Library/Caches/Homebrew"), ("npm cache", f"{h}/.npm")]
+    else:
+        places = [("System logs", "/var/log"), ("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
+                  ("Downloads", f"{h}/Downloads"), ("Temporary files", "/tmp"), ("npm cache", f"{h}/.npm")]
+    return places
+
+
+def _inspect_disk():
+    rows = []
+    for label, path in _disk_places():
+        mb = _du(path)
+        if mb is not None and mb >= 50:
+            rows.append((mb, label))
+    rows.sort(reverse=True)
+    lines = [f"{label}: {mb / 1024:.1f} GB" if mb >= 1024 else f"{label}: {mb} MB" for mb, label in rows[:12]]
+    if shutil.which("journalctl"):
+        j = _run(["journalctl", "--disk-usage"], timeout=10).strip()
+        if j:
+            lines.append("System journal: " + j.split("take up", 1)[-1].split("in the file system")[0].strip())
+    return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
+
+
+def _inspect_processes():
+    out = _run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=10).splitlines()[1:]
+    rows = []
+    for line in out:
+        parts = line.split(None, 2)
+        if len(parts) == 3:
+            try:
+                rows.append((float(parts[1]), float(parts[0]), os.path.basename(parts[2])[:40]))
+            except ValueError:
+                pass
+    rows.sort(reverse=True)
+    return "Top programs by memory (memory %, CPU %, program):\n" + "\n".join(
+        f"{m:.1f}% mem, {c:.1f}% cpu, {name}" for m, c, name in rows[:10])
+
+
+def _inspect_updates():
+    if shutil.which("apt"):
+        names = [ln.split("/")[0] for ln in _run(["apt", "list", "--upgradable"], timeout=60).splitlines()
+                 if "upgradable from" in ln]
+        return f"{len(names)} package updates waiting: " + ", ".join(names[:25])
+    if sys.platform == "darwin" and shutil.which("softwareupdate"):
+        out = _run_both(["softwareupdate", "-l"], timeout=90)
+        labels = [ln.split("Label:", 1)[1].strip() for ln in out.splitlines() if "Label:" in ln]
+        brew = _run(["brew", "outdated", "--quiet"], timeout=60).split() if shutil.which("brew") else []
+        return (f"macOS updates: {', '.join(labels) or 'none'}\nHomebrew outdated ({len(brew)}): "
+                + ", ".join(brew[:25]))
+    return "No update tool found on this device."
+
+
+def _inspect_docker():
+    if not shutil.which("docker"):
+        return "Docker isn't installed here."
+    out = _run(["docker", "system", "df"], timeout=30).strip()
+    return "Docker disk use:\n" + out if out else "Docker is installed but not running (or not reachable)."
+
+
+def _inspect_network():
+    import socket as _s
+    lines = []
+    t = time.time()
+    try:
+        _s.getaddrinfo("www.google.com", 443)
+        lines.append(f"Name lookup (DNS): ok in {int((time.time() - t) * 1000)} ms")
+    except OSError:
+        lines.append("Name lookup (DNS): FAILED")
+    t = time.time()
+    try:
+        with _s.create_connection(("www.google.com", 443), timeout=4):
+            lines.append(f"Internet (HTTPS): reachable in {int((time.time() - t) * 1000)} ms")
+    except OSError:
+        lines.append("Internet (HTTPS): NOT reachable")
+    return "\n".join(lines)
+
+
+def _inspect_load():
+    try:
+        one, five, fifteen = os.getloadavg()
+    except OSError:
+        return "Load: unknown"
+    return f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {os.cpu_count()} CPU cores"
+
+
+def _inspect_failed():
+    units = _failed_units()
+    agents = _failed_agents()
+    return ("Failed system services: " + (", ".join(units) or "none") +
+            ("\nFailing background items: " + ", ".join(agents) if agents else ""))
+
+
+INSPECT = {"disk": _inspect_disk, "processes": _inspect_processes, "updates": _inspect_updates,
+           "docker": _inspect_docker, "network": _inspect_network, "load": _inspect_load, "failed": _inspect_failed}
+
+
+def inspect_allowed():
+    return bool(_allowed().get("inspect"))
+
+
+def run_inspect(names):
+    if not inspect_allowed():
+        return False, "Looking around isn't allowed on this device, so nothing was read.", None
+    names = [n for n in names if n in INSPECT][:4] if isinstance(names, list) else []
+    if not names:
+        return False, "Nothing this helper knows how to check was asked for.", None
+    parts = []
+    for n in names:
+        try:
+            parts.append(INSPECT[n]())
+        except Exception as e:  # one failing check never hides the others
+            parts.append(f"{n}: couldn't check ({type(e).__name__})")
+    text, hidden = scrub("\n\n".join(parts).replace(_HOME, "~"))
+    return True, f"Checked: {', '.join(names)}", _tail(text, lines=80, limit=3500) + (
+        f"\n({hidden} private values hidden)" if hidden else "")
+
+
 def run_job(job, wait=5):
     """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
     (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
     kind, params = job.get("type"), job.get("params")
+    if kind == "inspect":
+        return run_inspect(params.get("what") if isinstance(params, dict) else None)
     if kind == "diagnose":
         target = params.get("target") if isinstance(params, dict) else None
         if not isinstance(target, str) or not TARGET_RE.fullmatch(target):
@@ -636,7 +789,7 @@ def _do_job(api, token, job):
         ok, summary, extra = False, f"The helper hit an error ({type(e).__name__}).", None
     print(("Job done: " if ok else "Job failed: ") + summary)
     body = {"ok": ok, "summary": summary[:200]}
-    if job.get("type") == "diagnose":
+    if job.get("type") in ("diagnose", "inspect"):
         body["output"] = (extra or "")[:4000] or None  # what the look found (already scrubbed here)
     else:
         body["state"] = extra if extra in STATES else None
@@ -1176,8 +1329,10 @@ def settings():
     if not app:
         targets = [c["name"] for c in _containers()] + _failed_units()
         allow = {k: [] for k in JOB_TYPES}
-        if _ask("May Nightlight check why something stopped (reads status only)?", True):
+        if _ask("May Nightlight check why something stopped and look around (reads only: disk use, programs, "
+                "updates, network)?", True):
             allow["diagnose"] = [t for t in targets if TARGET_RE.fullmatch(t)][:20]
+            allow["inspect"] = ["all"]
         for t in targets[:20]:
             if _ask(f"  Read recent log lines of {t}?", False):
                 allow["logs"].append(t)

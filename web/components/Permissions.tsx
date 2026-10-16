@@ -33,7 +33,8 @@ function applied(want: Perms, jobs: Record<string, string[]> = {}, nothingHere =
   };
   // With nothing to check on the device, "check why" has nothing to apply: on and empty counts as applied.
   const diagnoseOk = want.diagnose === (jobs.diagnose?.length ?? 0) > 0 || (want.diagnose && nothingHere);
-  return diagnoseOk && has("logs", want.logs)
+  const lookOk = want.diagnose || !jobs.inspect?.length; // the same switch covers looking around (helper 0.8+)
+  return diagnoseOk && lookOk && has("logs", want.logs)
     && has("restart_container", want.restart_container) && has("restart_service", want.restart_service);
 }
 
@@ -43,6 +44,7 @@ const list = (names: string[]) => names.includes("*") ? "everything it checks" :
 function Applies({ jobs = {} }: { jobs?: Record<string, string[]> }) {
   const rows = [
     jobs.diagnose?.length ? "Check why something stopped (reads status only)" : null,
+    jobs.inspect?.length ? "Look around when asked: disk use, busiest programs, updates, network (reads only)" : null,
     jobs.logs?.length ? `Read recent log lines of ${list(jobs.logs)}` : null,
     jobs.restart_container?.length ? `Restart ${list(jobs.restart_container)} after you approve` : null,
     jobs.restart_service?.length ? `Restart the system service ${list(jobs.restart_service)} after you approve` : null,
@@ -127,7 +129,8 @@ export default function Permissions({ device, services }: { device: Device; serv
   return (
     <section className="perms">
       <h4>What Nightlight may do here</h4>
-      <Switch on={want.diagnose} label="Check why something stopped" hint="(reads status only)"
+      <Switch on={want.diagnose} label="Check why something stopped and look around"
+        hint="(reads only: status, disk use, busiest programs, updates, network)"
         onChange={(on) => save({ ...want, diagnose: on })} />
 
       <Switch on={allLogs} label="Read recent log lines" hint="(private details hidden on the device first)"

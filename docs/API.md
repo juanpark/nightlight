@@ -183,6 +183,12 @@ answers in time, the agent explains it in the same reply. Otherwise the action g
 sends `{"type":"followup_pending","turnId":"cont_act_…"}`, and exactly one follow-up turn is queued when the result
 arrives: open that turn's stream once the action has `continuationTurnId` (retry on `409 turn_in_progress`).
 
+**Look around (`inspect`).** Same flow, read-only and without a card. `params: {"what": [names]}`, 1 to 4 of `disk`,
+`processes`, `updates`, `docker`, `network`, `load`, `failed`, each one the device lists in `allowedJobs.inspect`
+(helper 0.8+, reported when "check why something stopped" is on). The agent's `inspect` tool uses it before answering
+questions about space, speed, connectivity or updates. `updates` can take up to a minute, so it usually ends in a
+follow-up.
+
 ## Keeping watch
 
 - **Sweep:** Cloud Scheduler calls `POST /internal/sweep` every 5 minutes with a Google-signed OIDC token (audience

@@ -402,7 +402,7 @@ class HeartbeatBody(Strict):
     failedUnits: list[str] = Field(default_factory=list, max_length=50)
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
-    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs"], list[str]] = \
+    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect"], list[str]] = \
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
     manage: Literal["app", "strict"] | None = None  # chosen on the device; the server can't change it
@@ -415,6 +415,8 @@ class HeartbeatBody(Strict):
             raise ValueError("unit names must be at most 128 characters")
         for kind, targets in self.allowedJobs.items():
             pattern = real.CONTAINER_NAME if kind == "restart_container" else real.TARGET_NAME
+            if kind == "inspect" and not all(t in real.INSPECT for t in targets):
+                raise ValueError("allowedJobs: unknown check")
             if len(targets) > 20 or not all(pattern.fullmatch(t) for t in targets):
                 raise ValueError("allowedJobs: at most 20 valid names per job")
         return self
