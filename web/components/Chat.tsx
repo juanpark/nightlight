@@ -21,8 +21,10 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
     list_fleet: "Looking over your home…", get_device: `Checking the ${name}…`,
     get_recent_events: "Reading what happened recently…", restart_container: `Preparing a fix for the ${name}…`,
     look_into: `Asking the ${name} what happened to ${(e.args?.target as string) ?? "it"}…`, remember: "Making a note…",
-    restart_service: `Preparing a fix for the ${name}…`,
-  } as Record<string, string>)[e.name] ?? `Preparing a fix for the ${name}…`;
+    restart_service: `Preparing a fix for the ${name}…`, clean_up: `Preparing a clean-up for the ${name}…`,
+    inspect: `Looking around the ${name}…`, run_playbook: `Running a checkup on the ${name}…`,
+    write_note: `Noting what I learned about the ${name}…`,
+  } as Record<string, string>)[e.name] ?? `Working on the ${name}…`;
 }
 
 const Chat = forwardRef<ChatHandle, {

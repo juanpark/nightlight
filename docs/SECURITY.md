@@ -92,6 +92,9 @@ Only when the owner acts on the device:
   (guess, maker, service words, ports from a list of 8). The server accepts only that vocabulary. Addresses stay in
   the helper's local config.
 - `allow logs NAME`: the last 30 log lines of that target, sent only when the agent looks into it.
+- macOS protected folders (Downloads, Desktop, Documents, Movies, Trash, iPhone backups, Docker Desktop) are never
+  read from the background unless the owner said yes at the Mac (`nightlight settings`, which raises macOS's own
+  prompts right then), so the helper never pops a privacy dialog on a Mac nobody is watching.
 - `inspect` (when allowed): folder sizes for the fixed list of places, top program names with CPU/memory percent,
   names of waiting updates, Docker's disk summary, DNS/internet reachability, load. Scrubbed on the device like
   diagnose output, the home path shown as `~`, at most about 3.5 KB.

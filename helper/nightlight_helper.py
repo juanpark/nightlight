@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -515,15 +515,32 @@ def _du(path):
     return round(int(first[0]) / 1024) if first and first[0].isdigit() else None
 
 
+def _mac_private_places():
+    """Folders macOS guards with a privacy prompt ("python would like to access..."). Reading them from the background
+    would pop a dialog on a Mac nobody may be watching, and wait for it, so they are read only after the owner said
+    yes at the Mac (`nightlight settings`)."""
+    h = _HOME
+    return [("Downloads", f"{h}/Downloads"), ("Desktop", f"{h}/Desktop"), ("Documents", f"{h}/Documents"),
+            ("Movies", f"{h}/Movies"), ("Trash", f"{h}/.Trash"),
+            ("iPhone backups", f"{h}/Library/Application Support/MobileSync/Backup"),
+            ("Docker Desktop", f"{h}/Library/Containers/com.docker.docker")]
+
+
+def _mac_private_ok():
+    try:
+        return _load().get("macPrivateFolders") is True
+    except (OSError, ValueError):
+        return False
+
+
 def _disk_places():
     h = _HOME
     if sys.platform == "darwin":
-        places = [("Downloads", f"{h}/Downloads"), ("Desktop", f"{h}/Desktop"), ("Documents", f"{h}/Documents"),
-                  ("Movies", f"{h}/Movies"), ("Trash", f"{h}/.Trash"), ("App caches", f"{h}/Library/Caches"),
+        places = [("App caches", f"{h}/Library/Caches"),
                   ("Xcode build data", f"{h}/Library/Developer/Xcode/DerivedData"),
-                  ("iPhone backups", f"{h}/Library/Application Support/MobileSync/Backup"),
-                  ("Docker Desktop", f"{h}/Library/Containers/com.docker.docker"),
                   ("Homebrew cache", f"{h}/Library/Caches/Homebrew"), ("npm cache", f"{h}/.npm")]
+        if _mac_private_ok():
+            places = _mac_private_places() + places
     else:
         places = [("System logs", "/var/log"), ("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
                   ("Downloads", f"{h}/Downloads"), ("Temporary files", "/tmp"), ("npm cache", f"{h}/.npm")]
@@ -542,6 +559,9 @@ def _inspect_disk():
         j = _run(["journalctl", "--disk-usage"], timeout=_left(10)).strip()
         if j:
             lines.append("System journal: " + j.split("take up", 1)[-1].split("in the file system")[0].strip())
+    if sys.platform == "darwin" and not _mac_private_ok():
+        lines.append("Not checked (macOS privacy): Downloads, Desktop, Documents, Movies, Trash. Allow once at the Mac "
+                     "with `nightlight settings`.")
     return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
 
 
@@ -726,7 +746,7 @@ def _fix_cmd(cmd, timeout=300):
 
 
 FIXES = {
-    "empty_trash": {"when": lambda: sys.platform == "darwin",
+    "empty_trash": {"when": lambda: sys.platform == "darwin" and _mac_private_ok(),
                     "run": lambda: (_empty_dir([".Trash"]), "some items couldn't be removed safely")},
     "brew_cleanup": {"when": lambda: bool(shutil.which("brew")), "run": lambda: _fix_cmd(["brew", "cleanup", "-s"])},
     "npm_cache": {"when": lambda: bool(shutil.which("npm")),
@@ -854,17 +874,25 @@ def self_update(version, api=None, auto=False):
     target = os.path.join(APP_DIR, "nightlight_helper.py")
     if os.path.realpath(sys.argv[0]) != os.path.realpath(target) or os.path.islink(target):
         return False, "This copy isn't the installed helper, so it wasn't replaced. Run install once.", None
-    import fcntl
-    lock = open(os.path.join(_own_dir(APP_DIR), ".update.lock"), "a")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        lock.close()
+    lock = _update_lock(wait=False)
+    if lock is None:
         return False, "Another update is running right now; nothing changed.", None
     try:
         return _install(version, api, auto, target)
     finally:
         lock.close()  # releases the lock
+
+
+def _update_lock(wait):
+    """The one lock for changing the installed helper (updates and rollback). None if busy and not waiting."""
+    import fcntl
+    lock = open(os.path.join(_own_dir(APP_DIR), ".update.lock"), "a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except OSError:
+        lock.close()
+        return None
+    return lock
 
 
 def _install(version, api, auto, target):
@@ -894,6 +922,10 @@ def _install(version, api, auto, target):
     if not test or test.returncode != 0 or test.stdout.strip() != version:
         os.remove(tmp)
         return False, "The new version failed its self-test on this device, so it was NOT installed.", None
+    fresh = _load()
+    if auto and (fresh.get("autoPaused") or version in (fresh.get("skipVersions") or [])):
+        os.remove(tmp)  # the owner rolled back while this was downloading: their choice wins
+        return False, "Automatic updates were paused during the download; nothing changed.", None
     prev = os.path.join(APP_DIR, "nightlight_helper.prev.py")
     with open(target, "rb") as cur, open(prev + ".tmp", "wb") as out:
         out.write(cur.read())
@@ -910,13 +942,18 @@ def _install(version, api, auto, target):
 def rollback():
     prev = os.path.join(APP_DIR, "nightlight_helper.prev.py")
     target = os.path.join(APP_DIR, "nightlight_helper.py")
-    if not os.path.isfile(prev) or os.path.islink(prev):
-        sys.exit("There is no earlier version to go back to.")
-    rejected = _file_version(target)
-    os.replace(prev, target)
-    # Remember the rejected version and pause automatic updates until the owner asks for an update again.
-    _update_config(lambda c: (c.__setitem__("autoPaused", True), c.__setitem__(
-        "skipVersions", sorted(set((c.get("skipVersions") or []) + ([rejected] if rejected else [])))[-10:])))
+    lock = _update_lock(wait=True)  # waits for an update in progress, so it can't undo this rollback
+    try:
+        if not os.path.isfile(prev) or os.path.islink(prev):
+            sys.exit("There is no earlier version to go back to.")
+        rejected = _file_version(target)
+        # Pause first, then swap: an automatic update that checks after this sees the pause.
+        _update_config(lambda c: (c.__setitem__("autoPaused", True), c.__setitem__(
+            "skipVersions", sorted(set((c.get("skipVersions") or []) + ([rejected] if rejected else [])))[-10:])))
+        os.replace(prev, target)
+    finally:
+        if lock:
+            lock.close()
     print(f"Back on the earlier version (automatic updates paused; {rejected} won't install by itself). Restart the "
           "background service (or log out and in) to use it.")
 
@@ -1180,8 +1217,9 @@ def _ask(question, default_yes):
     """A yes/no question on the terminal. No terminal (or no answer) = the default."""
     try:
         ans = input(question + (" [Y/n] " if default_yes else " [y/N] ")).strip().lower()
-    except EOFError:
-        return default_yes
+    except EOFError:  # Ctrl-D: stop without changing anything
+        print()
+        sys.exit("No answer; nothing was changed.")
     return default_yes if not ans else ans.startswith("y")
 
 
@@ -1640,6 +1678,15 @@ def settings():
         sys.exit("Run `nightlight settings` in a terminal: it asks before changing anything.")
     cfg = _load()
     print(f"Permissions are now {'managed from the app' if cfg.get('manage') == 'app' else 'strict'}.")
+    if sys.platform == "darwin":
+        if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
+                "ask you to allow each one now; click Allow.", cfg.get("macPrivateFolders") is True):
+            _inspect_until[0] = time.time() + 120
+            for _label, path in _mac_private_places():
+                _du(path)  # raises macOS's prompts now, while you're here to answer them
+            _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
+        else:
+            _update_config(lambda c: c.pop("macPrivateFolders", None))
     app = _ask("Let the Nightlight app manage what it may do on this device?", cfg.get("manage") == "app")
     cfg["manage"] = "app" if app else "strict"
     if not app:

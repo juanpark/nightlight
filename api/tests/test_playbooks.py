@@ -159,7 +159,7 @@ def test_a_refused_clean_up_reports_failure(helper, monkeypatch, tmp_path):  # r
     home, keep = _home(helper, monkeypatch, tmp_path)
     (home / ".Trash").symlink_to(keep)
     monkeypatch.setattr(helper.sys, "platform", "darwin")
-    helper._save_config({"token": "x", "manage": "strict", "allow": {"fix": ["all"]}})
+    helper._save_config({"token": "x", "manage": "strict", "allow": {"fix": ["all"]}, "macPrivateFolders": True})
     ok, summary, _ = helper.run_fix("empty_trash")
     assert not ok and "didn't fully work" in summary and (keep / "precious").exists()
 

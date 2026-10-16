@@ -63,6 +63,10 @@
       min_gb: 2
       say: The Downloads folder holds {size}.
       advice: Sort Downloads by size and delete the installers and videos you no longer need.
+    - id: mac_private
+      match: '^Not checked \(macOS privacy\)'
+      say: Downloads, Desktop, Documents, Movies and the Trash weren't checked, because macOS asks the person at the Mac first.
+      advice: To include them, run "nightlight settings" once at the Mac and click Allow when macOS asks.
   nothing: None of the usual places is large. The space is probably in your own files (Documents, Movies, Photos).
 
 - id: slow

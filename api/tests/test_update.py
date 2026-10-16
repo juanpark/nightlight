@@ -198,3 +198,47 @@ def test_settings_without_a_terminal_changes_nothing(helper, monkeypatch):  # re
     with pytest.raises(SystemExit):
         helper.settings()
     assert helper._load()["allow"] == {}
+
+
+def test_rollback_during_an_automatic_download_wins(helper, tmp_path, monkeypatch):  # review D rev2 #1
+    target = _installed(helper, monkeypatch)
+    before = Path(target).read_text()
+    helper._save_config({"token": "t" * 43, "manage": "app", "remote": {"autoUpdate": True}})
+    srv, api = _release(helper, tmp_path, "9.9.9")
+    real_get = helper._get
+
+    def get_then_rollback(url, limit):  # the owner pauses while the file downloads
+        helper._update_config(lambda c: c.__setitem__("autoPaused", True))
+        return real_get(url, limit)
+    monkeypatch.setattr(helper, "_get", get_then_rollback)
+    ok, summary, _ = helper.self_update("9.9.9", api, auto=True)
+    srv.shutdown()
+    assert not ok and "paused during the download" in summary and Path(target).read_text() == before
+
+
+def test_ctrl_d_in_settings_changes_nothing(helper, monkeypatch):  # review D rev2 #2
+    helper._save_config({"token": "t" * 43, "manage": "strict", "allow": {}})
+    monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: True, raising=False)
+
+    def eof(*a):
+        raise EOFError
+    monkeypatch.setattr("builtins.input", eof)
+    with pytest.raises(SystemExit):
+        helper.settings()
+    assert helper._load()["allow"] == {} and helper._load()["manage"] == "strict"
+
+
+def test_mac_private_folders_are_never_read_unless_allowed_at_the_mac(helper, monkeypatch):
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    read = []
+    monkeypatch.setattr(helper, "_du", lambda path: read.append(path) or None)
+    helper._save_config({"token": "t" * 43})
+    helper._inspect_until[0] = __import__("time").time() + 30
+    out = helper._inspect_disk()
+    private = {p for _, p in helper._mac_private_places()}
+    assert not private & set(read) and "Not checked (macOS privacy)" in out
+    assert "empty_trash" not in helper._available_fixes()
+    helper._save_config({"token": "t" * 43, "macPrivateFolders": True})
+    read.clear()
+    helper._inspect_disk()
+    assert private <= set(read)
