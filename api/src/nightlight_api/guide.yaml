@@ -1,0 +1,115 @@
+# How Nightlight works: the product's own guide. The agent reads it through the `how_nightlight_works` tool and
+# repeats it instead of inventing steps; the same text can render a Help page. Keep each topic short, exact and in
+# plain words. {web} is replaced by the app's address.
+
+add_device:
+  title: Add a device
+  text: |
+    In the app, choose "Add a device". Copy the one line it shows and paste it into the Terminal on that device
+    (Mac: Terminal app; Raspberry Pi or Linux: a terminal or SSH session) and press Enter. The device shows a short
+    code; approve it in the app. The helper then installs itself as a background service and the device appears on
+    the map within a minute. It asks one question: whether the app may manage what Nightlight is allowed to do there.
+    Nightlight never logs in to your devices: the helper on the device dials out to Nightlight, nothing dials in.
+
+remove_device:
+  title: Remove a device
+  text: |
+    Ask in the chat ("remove Sadika's Mac") or open the device and choose "Remove this device…". You get a card to
+    approve. If the device is reporting, its helper uninstalls itself (stops the background service, deletes its
+    files and its key) and the device leaves the map. If it isn't reporting, its access is cut at once and the helper
+    stops by itself when it next wakes up; to clean the files off it, run this on the device:
+    curl -fsSL {web}/uninstall.sh | sh
+    A removed device's history, notes and activity are kept (archived) for 30 days, then deleted; "Forget for good"
+    deletes them at once. Adding the same machine again later makes it a new device.
+
+uninstall_by_hand:
+  title: Uninstall the helper by hand
+  text: |
+    On the device, in a terminal: curl -fsSL {web}/uninstall.sh | sh
+    It stops the background service, deletes the helper's files and tells Nightlight the device left.
+
+update_helper:
+  title: Update the helper
+  text: |
+    When a new helper is released, the device shows "Update available" in the app; tap Update. The device downloads
+    it, installs it only if it carries Nightlight's signature (checked on the device), is newer and passes a
+    self-test, then restarts itself. The previous version is kept: on the device, `nightlight rollback` goes back.
+    You can let a device install signed updates automatically (device settings in the app). Helpers older than 0.9
+    can't update themselves: run the add-device line on them once.
+
+what_the_helper_does:
+  title: What the helper can and can't do
+  text: |
+    It reports health every minute (disk, memory, processor, containers, failed services, updates waiting) and runs
+    only a fixed list of jobs: read-only checks (why something stopped, disk use, busiest programs, network, updates),
+    restarting a stopped container or system service, and safe clean-ups (empty the Trash, clear caches that rebuild
+    themselves, remove Docker's leftover images). Anything that changes something needs your tap on a card. It can't
+    run any other command, open a remote shell, read your files or move them. The cloud sends job names, never
+    commands, and the device checks every job against what its owner allowed.
+
+ssh_and_remote_access:
+  title: Remote access (SSH, screen sharing)
+  text: |
+    Nightlight has no way into your devices, on purpose: no SSH, no remote shell, no open ports. The helper only dials
+    out. That is why a stolen Nightlight account or a hacked server can't take over your machines. To get a shell on
+    a device, use your own tools (SSH, Screen Sharing, a keyboard at the machine); Nightlight tells you what to look
+    at and runs its fixed checks and fixes for you.
+
+silent_device:
+  title: A device stopped reporting
+  text: |
+    Nightlight can't reach in, so it reasons from what it knows: when the device last reported and for how long it
+    has been silent; whether other devices in the same place still report (if they do, the internet and power there
+    are fine and the device itself is asleep, off, logged out or off Wi-Fi); what History showed just before. When it
+    comes back, Nightlight says whether it restarted or was only unreachable. Things to check at the device: is it on
+    and awake (Macs: System Settings > Energy, "Prevent automatic sleeping"); is it on the network; on a Mac the
+    helper runs while you are logged in.
+
+permissions:
+  title: What Nightlight may do on a device
+  text: |
+    Each device chose once, at install: "managed from the app" (switches under the device in the app: check why
+    something stopped and look around, read recent log lines, clean up space, restart specific apps, install signed
+    updates) or "strict" (only what was allowed on the device itself; change it there with `nightlight settings`).
+    Restarts and clean-ups always ask you with a card, in both modes.
+
+mac_privacy:
+  title: Mac privacy prompts
+  text: |
+    macOS protects Downloads, Desktop, Documents, Movies and the Trash with a prompt. Nightlight never reads them from
+    the background, so no dialog pops up on a Mac nobody is watching. To include them in disk checks (and allow
+    emptying the Trash), run `nightlight settings` once at the Mac and click Allow when macOS asks.
+
+what_leaves_the_device:
+  title: What leaves the device
+  text: |
+    Health numbers, container and service names and states, the number of updates waiting, and results of checks you
+    allowed (folder sizes, program names, update names). Never passwords, keys, files, host names or addresses;
+    anything that looks like a secret is hidden on the device before it is sent, and again in the cloud.
+
+memories:
+  title: What Nightlight remembers
+  text: |
+    Three kinds: the conversation (this chat, kept 30 days and shown again when you come back); each device's
+    notebook (what Nightlight learned there, and your own notes; under the device in the app); and things about you
+    (preferences such as "never restart anything during my work calls", saved only when you tell it, forgotten with
+    "Forget what you know about me").
+
+checkups_and_cleanups:
+  title: Checkups and clean-ups
+  text: |
+    A checkup is a playbook: an expert's steps for a common problem (disk filling up, running slowly, internet
+    problems, updates waiting) that run the same way every time without AI: it measures, recognises the usual causes
+    and puts up a card for each safe clean-up the device allows. Open a device and use "Checkups", or ask in the chat.
+
+approvals_and_trust:
+  title: Approval cards and trust
+  text: |
+    Every change on a real device is a card: what it will do, what it touches, how to undo it. Nothing runs until you
+    tap Approve. On the sample home, kinds of jobs you approve often can be allowed to run on their own.
+
+sample_home:
+  title: The sample home
+  text: |
+    A simulated home (a Raspberry Pi, a NAS, a game server...) to try Nightlight without installing anything. Show or
+    hide it from the menu; "Reset" starts it over. Real devices you add are never touched by a reset.
