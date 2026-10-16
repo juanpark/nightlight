@@ -393,6 +393,8 @@ class HeartbeatBody(Strict):
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
     allowedJobs: dict[Literal["restart_container", "diagnose", "logs"], list[str]] = Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
+    failedAgents: list[str] = Field(default_factory=list, max_length=20)
+    safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def short_units(self):

@@ -42,7 +42,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "diagnose", "logs")
@@ -156,11 +156,76 @@ def _failed_units():
     return [line.split()[0][:128] for line in out.splitlines() if line.strip()][:50]
 
 
-def _updates_pending():
+_SLOW = {}  # slow checks are re-run at most hourly
+
+
+def _hourly(key, fn):
+    hit = _SLOW.get(key)
+    if hit and time.time() - hit[0] < 3600:
+        return hit[1]
+    value = fn()
+    _SLOW[key] = (time.time(), value)
+    return value
+
+
+def _count_updates():
     if shutil.which("apt"):
         out = _run(["apt", "list", "--upgradable"], timeout=60)
         return sum(1 for line in out.splitlines() if "upgradable from" in line)
+    if shutil.which("dnf"):
+        return sum(1 for line in _run(["dnf", "-q", "check-update"], timeout=60).splitlines() if line.strip())
+    if sys.platform == "darwin" and shutil.which("softwareupdate"):
+        out = _run_both(["softwareupdate", "-l"], timeout=90)
+        return sum(1 for line in out.splitlines() if line.strip().startswith("* Label:"))
     return None
+
+
+def _updates_pending():
+    return _hourly("updates", _count_updates)
+
+
+def _failed_agents():
+    """macOS: your own background items (not Apple's) whose last run failed."""
+    if sys.platform != "darwin" or not shutil.which("launchctl"):
+        return []
+    out = []
+    for line in _run(["launchctl", "list"]).splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[1] not in ("0", "-") and not parts[2].startswith(("com.apple.", "application.")):
+            out.append(parts[2][:100])
+    return out[:20]
+
+
+def _passwordless_sudo():
+    """True if this account can become administrator without a password (sudo -k ignores a recent password)."""
+    if not shutil.which("sudo") or os.geteuid() == 0:
+        return None
+    try:
+        r = subprocess.run(["sudo", "-k", "-n", "true"], capture_output=True, timeout=5, check=False)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _ssh_password_login():
+    """True if the SSH server allows password logins (keys are safer). None if there's no SSH server config."""
+    paths = ["/etc/ssh/sshd_config"]
+    try:
+        paths += sorted(os.path.join("/etc/ssh/sshd_config.d", f) for f in os.listdir("/etc/ssh/sshd_config.d"))
+    except OSError:
+        pass
+    seen = False
+    for path in paths:
+        try:
+            with open(path) as f:
+                for line in f:
+                    words = line.split()
+                    if len(words) >= 2 and words[0].lower() == "passwordauthentication":
+                        return words[1].lower() == "yes"  # sshd uses the first value it finds
+            seen = True
+        except OSError:
+            continue
+    return True if seen and sys.platform != "darwin" else None  # Debian's default is yes
 
 
 def facts():
@@ -168,7 +233,9 @@ def facts():
     return {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
             "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
             "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
-            "watchResults": _watch_results()}
+            "watchResults": _watch_results(), "failedAgents": _failed_agents(),
+            "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
+                       "sshPasswordLogin": _ssh_password_login()}}
 
 
 def _allowed():

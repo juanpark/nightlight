@@ -373,6 +373,20 @@ def checks(facts: dict) -> list[dict]:
             out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_down", "severity": "warn",
                         "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
                         "svcId": _doc_id(c["name"])})
+    agents = facts.get("failedAgents") or []
+    if agents:
+        out.append({"id": "f_agents", "check": "background_items_failing", "severity": "info",
+                    "message": f"{len(agents)} background item(s) on this Mac keep failing.",
+                    "evidence": ", ".join(a[:60] for a in agents[:3])})
+    safety = facts.get("safety") or {}
+    if safety.get("passwordlessSudo"):
+        out.append({"id": "f_sudo_nopasswd", "check": "passwordless_admin", "severity": "warn",
+                    "message": "Anything running as this account can take full control without a password.",
+                    "evidence": "administrator (sudo) works with no password"})
+    if safety.get("sshPasswordLogin"):
+        out.append({"id": "f_ssh_password", "check": "ssh_password_login", "severity": "info",
+                    "message": "Remote login accepts passwords; keys are safer against guessing.",
+                    "evidence": "SSH PasswordAuthentication yes"})
     pending = facts.get("updatesPending")
     if pending:
         out.append({"id": "f_updates", "check": "updates_pending", "severity": "info",

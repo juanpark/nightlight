@@ -93,3 +93,14 @@ def test_similar_names_never_share_an_acknowledgement(client, started):  # revie
     beat(client, dev["token"], {**ONE_PROBLEM, "failedUnits": ["demo_x2dapp.service"]})
     d = _dev(started, dev)
     assert d["findings"][0]["state"] == "new" and d["status"] == "warn"
+
+
+def test_safety_and_mac_checks_in_plain_words(client, started):
+    dev = enrolled(client)
+    beat(client, dev["token"], {**ONE_PROBLEM, "failedUnits": [], "failedAgents": ["org.example.sync"],
+                                "safety": {"passwordlessSudo": True, "sshPasswordLogin": True}})
+    checks = {f["check"]: f for f in _dev(started, dev)["findings"]}
+    assert "take full control without a password" in checks["passwordless_admin"]["message"]
+    assert checks["ssh_password_login"]["severity"] == "info" and "background_items_failing" in checks
+    assert client.post("/helper/heartbeat", json={**FACTS, "safety": {"rootkit": True}},
+                       headers={"X-Device-Token": dev["token"]}).status_code == 422

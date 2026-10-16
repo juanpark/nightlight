@@ -417,3 +417,21 @@ def test_discovery_sends_only_what_you_pick_and_never_addresses(helper, monkeypa
     sent.clear()
     helper.discover()
     assert sent == []  # Enter = send nothing
+
+
+def test_safety_facts(helper, monkeypatch, tmp_path):
+    import subprocess
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/usr/bin/" + n)
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 1000)
+    seen = []
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
+                        subprocess.CompletedProcess(cmd, 0, b"", b""))
+    assert helper._passwordless_sudo() is True and seen[-1] == ["sudo", "-k", "-n", "true"]
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, b"", b""))
+    assert helper._passwordless_sudo() is False
+    cfg = tmp_path / "sshd_config"
+    cfg.write_text("# comment\nPasswordAuthentication no\n")
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(cfg if p == "/etc/ssh/sshd_config" else p, *a, **k))
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    assert helper._ssh_password_login() is False
