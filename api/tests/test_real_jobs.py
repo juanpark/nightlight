@@ -210,3 +210,13 @@ def test_restart_a_failed_service_only_when_allowed(client, started):  # slice 1
     _again(dev["token"])
     jobs = beat(client, dev["token"], facts).json()["jobs"]
     assert jobs[0]["type"] == "restart_service" and jobs[0]["params"] == {"unit": "pihole-FTL.service"}
+
+
+
+def test_restart_needs_the_exact_failed_unit(client, started):  # review 14 #1
+    dev = enrolled(client)
+    facts = {**FACTS, "failedUnits": ["demo:app.service"], "allowedJobs": {"restart_service": ["demo_app.service"]}}
+    beat(client, dev["token"], facts)
+    with pytest.raises(ValueError, match="not_failed"):
+        actions.propose(started, session_id="sess_test", turn_id="t_x", generation=generation(started),
+                        action_type="restart_service", device_id=dev["deviceId"], params={"unit": "demo_app.service"})

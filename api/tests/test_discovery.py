@@ -79,3 +79,19 @@ def test_rediscovery_capacity_and_recovery(client, started, monkeypatch):  # rev
     _again(dev["token"])
     beat(client, dev["token"], {**FACTS, "watchResults": [{"cid": ITEM["cid"], "up": True, "ms": 5}]})
     assert db.device(started, wid).get().to_dict()["watchState"] is None
+
+
+
+def test_removing_a_watched_device_frees_its_place(client, started, monkeypatch):  # review 12 rev2
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], FACTS)
+    h = {"X-Device-Token": dev["token"]}
+    monkeypatch.setattr(real, "WATCHED_PER_HELPER", 1)
+    other = {**ITEM, "cid": "000000000009"}
+    client.post("/helper/discoveries", json={"items": [ITEM, other]}, headers=h)
+    wid = client.post(f"/api/discoveries/{dev['deviceId']}/{ITEM['cid']}/add", json={"name": "HA"}).json()["deviceId"]
+    assert client.post(f"/api/discoveries/{dev['deviceId']}/000000000009/add", json={"name": "x"}).status_code == 429
+    assert client.post(f"/api/devices/{wid}/revoke", json={}).status_code == 200
+    assert client.post(f"/api/discoveries/{dev['deviceId']}/000000000009/add", json={"name": "x"}).status_code == 201
+    _again(dev["token"])
+    assert all(w["cid"] != ITEM["cid"] for w in beat(client, dev["token"], FACTS).json()["watch"])

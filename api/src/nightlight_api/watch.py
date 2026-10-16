@@ -4,6 +4,7 @@ A Cloud Scheduler job calls `POST /internal/sweep` every 5 minutes with a Google
 reads two small registries (real devices, watched addresses) instead of scanning every user.
 """
 
+import asyncio
 import ipaddress
 import logging
 import socket
@@ -142,43 +143,39 @@ def remove_watch(uid: str, wid: str) -> dict:
     return {"ok": True}
 
 
-import concurrent.futures
-
-_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="watch")
-
 
 def probe(url: str) -> tuple[str, int | None, int | None]:
-    """_probe with a hard overall deadline (name lookup included): a slow or trickling server counts as down."""
-    fut = _POOL.submit(_probe, url)
-    try:
-        return fut.result(timeout=PROBE_BUDGET)
-    except concurrent.futures.TimeoutError:
-        return "crit", None, None
+    """One check with a hard overall deadline. Runs as async I/O so the deadline really cancels it (the connection
+    is closed), name lookup included; a slow or trickling server counts as down."""
+    async def bounded():
+        try:
+            return await asyncio.wait_for(_aprobe(url), timeout=PROBE_BUDGET)
+        except asyncio.TimeoutError:
+            return "crit", None, None
+    return asyncio.run(bounded())
 
 
-def _probe(url: str) -> tuple[str, int | None, int | None]:
+async def _aprobe(url: str) -> tuple[str, int | None, int | None]:
     """(status, http code, milliseconds). Up = any answer below 500 (redirects not followed).
 
     The connection goes to the very IP that was just checked to be public (Host header and TLS name stay the real
     host), so DNS can't redirect it somewhere private between check and connect. Only the status line is read:
     the body is never downloaded."""
     try:
-        u, port, ip = _resolve(url)  # re-checked each time: a name can start pointing somewhere private later
+        u, port, ip = await asyncio.to_thread(_resolve, url)  # re-checked each time
     except ApiError:
         return "crit", None, None
     host = f"[{ip}]" if ":" in ip else ip
     target = urllib.parse.urlunsplit((u.scheme, f"{host}:{port}", u.path or "/", u.query, ""))
     t = time.monotonic()
-    timeout = httpx.Timeout(CHECK_TIMEOUT, pool=CHECK_TIMEOUT)
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=False, transport=_TRANSPORT) as c:
-            with c.stream("GET", target, headers={"Host": u.netloc.split("@")[-1], "User-Agent":
-                                                  "Nightlight-uptime-check"},
-                          extensions={"sni_hostname": u.hostname}) as r:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(CHECK_TIMEOUT), follow_redirects=False,
+                                     transport=_TRANSPORT) as c:
+            async with c.stream("GET", target, headers={"Host": u.netloc.split("@")[-1],
+                                                        "User-Agent": "Nightlight-uptime-check"},
+                                extensions={"sni_hostname": u.hostname}) as r:
                 code = r.status_code  # headers only; leaving the block closes the connection unread
         ms = int((time.monotonic() - t) * 1000)
-        if ms > PROBE_BUDGET * 1000:
-            return "crit", code, ms
         return ("ok" if code < 500 else "crit"), code, ms
     except (httpx.HTTPError, OSError):
         return "crit", None, None
@@ -232,16 +229,13 @@ def _mark_silent(uid: str, device_id: str) -> bool:
 def _adopt_legacy(uid: str, wid: str) -> None:
     """Watches from before the global count get counted and a retirement date (once)."""
     ref = watches(uid).document(wid)
-    total = db.client().collection("watchStats").document("global")
 
     @firestore.transactional
     def run(tx):
         w = ref.get(transaction=tx).to_dict()
-        g = total.get(transaction=tx)
         if not w or w.get("counted"):
             return
         tx.update(ref, {"counted": True, "expiresAt": w.get("expiresAt") or _now() + WATCH_LIFETIME})
-        tx.set(total, {"active": (g.to_dict() or {}).get("active", 0) + 1})
 
     db.run_transaction(run)
 
@@ -262,9 +256,14 @@ def sweep() -> dict:
             silent += _mark_silent(d["uid"], d["deviceId"])
         except Exception as e:  # one bad record never stops the sweep
             log.warning("sweep device failed: %s", type(e).__name__)
-    legacy = [r for r in watch_registry().stream() if "lastCheckedAt" not in (r.to_dict() or {})]
-    for r in legacy:  # rows from before ordering existed: give them a place in the queue (oldest first)
-        r.reference.set({"lastCheckedAt": datetime(2000, 1, 1, tzinfo=timezone.utc)}, merge=True)
+    rows = list(watch_registry().stream())  # small: at most a few hundred rows
+    for r in rows:  # rows from before ordering existed: give them a place in the queue (oldest first)
+        if time.monotonic() - started > SWEEP_BUDGET:
+            break
+        if "lastCheckedAt" not in (r.to_dict() or {}):
+            r.reference.set({"lastCheckedAt": datetime(2000, 1, 1, tzinfo=timezone.utc)}, merge=True)
+    # The global count is re-derived from the registry each sweep, so any drift heals itself.
+    db.client().collection("watchStats").document("global").set({"active": len(rows)})
     for r in watch_registry().order_by("lastCheckedAt").limit(WATCHES_TOTAL).stream():
         if time.monotonic() - started > SWEEP_BUDGET:
             break  # the rest waits for the next sweep

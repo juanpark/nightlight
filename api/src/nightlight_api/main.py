@@ -418,6 +418,9 @@ def enrol_code(body: Empty, uid: str = Depends(owner_uid)):
 def revoke_device(device_id: str, body: Empty, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
         raise not_found()
+    snap = db.device(uid, device_id).get()
+    if snap.exists and (snap.to_dict() or {}).get("kind") == "watched":
+        return real.remove_watched(uid, device_id)  # watched devices have no token: just stop watching
     return real.revoke(uid, device_id)
 
 

@@ -288,9 +288,9 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
         item = next((it for it in d["items"] if it.get("cid") == cid), None)
         if not item:
             raise not_found()
-        if item.get("added") or any(w.get("cid") == cid for w in watched):
+        if item.get("added") or any(w.get("cid") == cid and not w.get("revoked") for w in watched):
             raise ApiError(409, "already_added")
-        if sum(1 for w in watched if not w.get("revoked")) >= WATCHED_PER_HELPER:
+        if sum(1 for w in watched if not w.get("revoked")) >= WATCHED_PER_HELPER:  # removed ones free a place
             raise ApiError(429, "watch_capacity")
         port = next((p for p in (8123, 32400, 25565, 445, 631, 443, 80, 22) if p in (item.get("ports") or [])), None)
         if port is None:
@@ -332,6 +332,30 @@ def leave(token: str) -> dict:
 
     db.run_transaction(run)
     return {"ok": True}
+
+
+def remove_watched(uid: str, device_id: str) -> dict:
+    """Take a device watched by a helper off the map: its helper stops checking it, and its place is freed."""
+    ref = db.device(uid, device_id)
+
+    @firestore.transactional
+    def run(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d.get("kind") != "watched" or d.get("revoked"):
+            raise not_found()
+        dref = discoveries_ref(uid).document(d.get("watchedBy", "_"))
+        disc = dref.get(transaction=tx)
+        tx.update(ref, {"revoked": True, "status": "offline", "health": "unknown", "watchedBy": None})
+        tx.delete(db.client().collection("realDevices").document(f"{uid}__{device_id}"))
+        if disc.exists:
+            items = disc.to_dict().get("items") or []
+            tx.update(dref, {"items": [{**it, "added": False if it.get("cid") == d.get("cid") else it.get("added")}
+                                       for it in items]})
+        event(tx, uid, device_id, "removed", "info", f"You took {d.get('name', 'a device')} off the map.", who="you")
+        return {"ok": True, "deviceId": device_id}
+
+    return db.run_transaction(run)
 
 
 def revoke(uid: str, device_id: str) -> dict:
@@ -435,8 +459,8 @@ def _unit_card(device: dict, services: dict, params: dict) -> dict:
     if unit not in (device.get("allowedJobs") or {}).get("restart_service", []):
         raise ValueError("not_allowed_on_device")
     svc = services.get(_doc_id(unit))
-    if not svc or svc.get("kind") != "system":
-        raise ValueError("not_failed")  # only a service the device reports as failed
+    if not svc or svc.get("kind") != "system" or svc.get("unit") != unit or not svc.get("failed"):
+        raise ValueError("not_failed")  # only the exact service the device reports as failed
     friendly = _friendly(unit)
     return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} ({unit}) on the {device['name']}.",
             "dryRun": f"The helper on the device runs \"sudo systemctl restart {unit}\" and checks it is still running "
@@ -481,7 +505,8 @@ def heartbeat(token: str, facts: dict) -> dict:
                                "version": image.rsplit(":", 1)[1] if ":" in image else None,
                                "detail": c.get("status"), "findings": []}
     for unit in facts.get("failedUnits") or []:
-        services[_doc_id(unit)] = {"name": _friendly(unit), "category": "system", "kind": "system", "status": "warn",
+        services[_doc_id(unit)] = {"name": _friendly(unit), "unit": unit, "category": "system", "kind": "system",
+                                   "status": "warn", "failed": True,
                           "findings": [f for f in findings if f.get("svcId") == unit]}
 
     @firestore.transactional
@@ -500,7 +525,8 @@ def heartbeat(token: str, facts: dict) -> dict:
         approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
             filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
         user = db.user(uid).get(transaction=tx).to_dict() or {}
-        watched = [w for w in db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)]
+        watched = [w for w in db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)
+                   if not (w.to_dict() or {}).get("revoked")]
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()

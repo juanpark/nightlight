@@ -91,13 +91,13 @@ def test_watch_limit(client, started, dns, monkeypatch):
 def test_probe_connects_to_the_checked_address_and_skips_the_body(started, dns, monkeypatch):  # review 11 #1,#2
     _answer(monkeypatch, 204)
     SEEN.clear()
-    assert watch._probe("https://example.org/status")[0:2] == ("ok", 204)
+    assert watch.probe("https://example.org/status")[0:2] == ("ok", 204)
     req = SEEN[-1]
     assert req.url.host == "93.184.216.34" and req.headers["host"] == "example.org"
     assert req.extensions.get("sni_hostname") == "example.org"
     dns["example.org"] = "169.254.169.254"  # the name now points somewhere private
     SEEN.clear()
-    assert watch._probe("https://example.org/status")[0] == "crit" and SEEN == []  # never connected
+    assert watch.probe("https://example.org/status")[0] == "crit" and SEEN == []  # never connected
 
 
 def test_watch_budgets_malformed_urls_and_atomic_removal(client, started, dns, monkeypatch):  # review 11 #3-#5
@@ -130,7 +130,12 @@ def test_sweep_needs_the_schedulers_signed_token(client):
 def test_probe_has_a_hard_deadline(monkeypatch):  # review 11 rev2 #1
     import time as _t
     monkeypatch.setattr(watch, "PROBE_BUDGET", 0.2)
-    monkeypatch.setattr(watch, "_probe", lambda url: (_t.sleep(1.5), ("ok", 200, 1))[1])
+    import asyncio
+
+    async def stuck(url):
+        await asyncio.sleep(1.5)
+        return "ok", 200, 1
+    monkeypatch.setattr(watch, "_aprobe", stuck)
     t = _t.monotonic()
     assert watch.probe("https://example.org")[0] == "crit" and _t.monotonic() - t < 1
 
@@ -150,3 +155,13 @@ def test_every_watch_gets_its_turn_and_legacy_ones_are_counted(client, started, 
         watch.sweep()
     assert set(ids) | {"w_legacy"} <= set(seen)
     assert legacy.get().to_dict()["counted"] is True and legacy.get().to_dict()["expiresAt"]
+
+
+
+def test_counter_heals_from_the_registry(client, started, dns, monkeypatch):  # review 11 rev3 #2
+    _answer(monkeypatch)
+    client.post("/api/watches", json={"name": "a", "url": "https://example.org"})
+    db.client().collection("watchStats").document("global").set({"active": 99})
+    watch.sweep()
+    rows = len(list(watch.watch_registry().stream()))
+    assert db.client().collection("watchStats").document("global").get().to_dict()["active"] == rows

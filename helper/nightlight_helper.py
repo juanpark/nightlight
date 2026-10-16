@@ -54,6 +54,15 @@ ACTION_RE = re.compile(r"^act_[0-9a-f]{26}$")
 STATES = ("created", "restarting", "running", "removing", "paused", "exited", "dead")  # Docker's own words
 
 
+def _run_status(cmd, timeout=20):
+    """(exit code, stdout) or (None, '') if it couldn't run or timed out."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return out.returncode, out.stdout
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+
+
 def _run(cmd, timeout=20):
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
@@ -173,8 +182,10 @@ def _count_updates():
     if shutil.which("apt"):
         out = _run(["apt", "list", "--upgradable"], timeout=60)
         return sum(1 for line in out.splitlines() if "upgradable from" in line)
-    if shutil.which("dnf"):  # exit 100 means "updates available", so read the output whatever the code
-        out = _run_both(["dnf", "-q", "check-update"], timeout=60)
+    if shutil.which("dnf"):  # exit 100 = updates available, 0 = none; anything else = couldn't tell
+        code, out = _run_status(["dnf", "-q", "check-update"], timeout=60)
+        if code not in (0, 100):
+            return None
         return sum(1 for line in out.splitlines() if len(line.split()) == 3 and "." in line.split()[0])
     if sys.platform == "darwin" and shutil.which("softwareupdate"):
         out = _run_both(["softwareupdate", "-l"], timeout=90)
@@ -217,13 +228,11 @@ def _ssh_password_login():
             lines = f.read().splitlines()
     except OSError:
         return None
-    for line in lines:
-        words = line.split()
-        if not words or words[0].startswith("#"):
-            continue
+    active = [ln.split() for ln in lines if ln.split() and not ln.split()[0].startswith("#")]
+    if any(w[0].lower() in ("include", "match") for w in active):
+        return None  # the effective setting depends on includes or conditions: don't guess
+    for words in active:
         key = words[0].lower()
-        if key in ("include", "match"):
-            return None  # the effective setting depends on includes or conditions: don't guess
         if key == "passwordauthentication" and len(words) >= 2:
             return words[1].lower() == "yes"  # sshd uses the first value it finds
     return True if sys.platform != "darwin" else None  # Debian's default is yes
@@ -252,8 +261,15 @@ def _name_re(kind):
     return NAME_RE if kind == "restart_container" else TARGET_RE
 
 
+def _unit_failed(unit):
+    """True only when systemd positively says the unit has failed (not merely stopped on purpose)."""
+    code, out = _run_status(["systemctl", "is-failed", unit])
+    return code == 0 and out.strip() == "failed"
+
+
 def _unit_active(unit):
-    return _run(["systemctl", "is-active", unit]).strip() or "unknown"
+    code, out = _run_status(["systemctl", "is-active", unit])
+    return out.strip() or "unknown"
 
 
 def _restart_unit(unit, wait):
@@ -264,6 +280,8 @@ def _restart_unit(unit, wait):
         return False, "This device has no systemd, so nothing was done.", None
     if _unit_active(unit) == "active":
         return True, f"{unit} was already running; nothing needed doing.", "running"
+    if not _unit_failed(unit):
+        return False, f"{unit} isn't in a failed state (it may be stopped on purpose), so nothing was done.", None
     cmd = ["systemctl", "restart", unit] if os.geteuid() == 0 else ["sudo", "-n", "systemctl", "restart", unit]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
