@@ -160,7 +160,7 @@ export function House({ viewBox }: { viewBox: string }) {
         </filter>
       </defs>
 
-      <g className={s.camera}>
+      <g className={s.camera} data-camera>
         {/* Land: far hills, drifting fog, near ground, trees. */}
         <path
           className={s.hillFar}

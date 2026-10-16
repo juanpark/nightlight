@@ -161,16 +161,14 @@
 [data-beat="3"][data-fixed="true"] .asHappy,
 [data-beat="4"] .asSit { opacity: 1; }
 
-/* Camera: push into the attic for beats 1-3, pull back to the lit house for 4. */
-.camera {
-  transform-box: view-box;
-  transform-origin: 0 0;
-  transition: transform 1.6s cubic-bezier(0.22, 0.8, 0.16, 1);
+/* Camera: GSAP moves it with the scroll (see Story). Under reduced motion it
+   cuts straight to the framing instead: the attic for beats 1-3. */
+@media (prefers-reduced-motion: reduce) {
+  .camera { transform-box: view-box; transform-origin: 0 0; }
+  [data-beat="1"] .camera,
+  [data-beat="2"] .camera,
+  [data-beat="3"] .camera { transform: var(--attic-cam); }
 }
-[data-beat="1"] .camera,
-[data-beat="2"] .camera,
-[data-beat="3"] .camera { transform: var(--attic-cam); }
-[data-beat="4"] .camera { transform: var(--wide-cam); }
 
 @keyframes needs {
   0%, 100% { opacity: 0.16; transform: scale(0.9); }
@@ -186,7 +184,7 @@
 /* Still frames: no round, no camera moves; the house is checked and calm. */
 @media (prefers-reduced-motion: reduce) {
   .scene * { animation: none !important; }
-  .camera, .lit, .cast > g > g { transition: none; }
+  .lit, .cast > g > g { transition: none; }
   [data-beat="0"] .lit { opacity: 1; }
   [data-beat="0"] .round { display: none; }
   [data-beat="0"] .still { display: inline; }

@@ -1,11 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
+import Lenis from "lenis";
+import "lenis/dist/lenis.css";
 import { House } from "./House";
 import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, type TrustState } from "./StoryCards";
 import s from "./Story.module.css";
 
+gsap.registerPlugin(ScrollTrigger, useGSAP);
+
 const WIDE = "-560 40 1600 720";
+
+// Camera framings in the house's own coordinates: the whole house, and pushed
+// into the attic beside the Pi (a different crop on phones).
+const HOME = { x: 0, y: 0, scale: 1 };
+const ATTIC = { x: -466, y: -209, scale: 1.85 };
+const ATTIC_NARROW = { x: -442, y: -102, scale: 1.85 };
 const NARROW = "30 96 980 640";
 
 function subscribeNarrow(cb: () => void) {
@@ -34,30 +47,82 @@ const BEATS = [
 ];
 
 // The night story: a sticky stage with the house, and four beats that scroll
-// past it. The beat in the middle of the screen drives the stage.
+// past it. ScrollTrigger tells the stage which beat is being read and moves
+// the camera with the scroll; Lenis smooths the scrolling itself.
 export function Story({ hero }: { hero: ReactNode }) {
   const [beat, setBeat] = useState(0);
   const [approval, setApproval] = useState<ApprovalState>("waiting");
   const [trust, setTrust] = useState<TrustState>("offer");
-  const track = useRef<HTMLDivElement>(null);
+  const world = useRef<HTMLElement>(null);
   const narrow = useSyncExternalStore(
     subscribeNarrow,
     () => window.matchMedia("(max-width: 760px)").matches,
     () => false,
   );
 
-  useEffect(() => {
-    const items = track.current?.querySelectorAll<HTMLElement>("[data-step]");
-    if (!items) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) if (e.isIntersecting) setBeat(Number(e.target.getAttribute("data-step")));
-      },
-      { rootMargin: "-50% 0px -40% 0px" },
-    );
-    items.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, []);
+  useGSAP(
+    () => {
+      const root = world.current;
+      if (!root) return;
+      const steps = gsap.utils.toArray<HTMLElement>("[data-step]", root);
+
+      // The beat whose text crosses the middle of the screen drives the stage.
+      for (const el of steps) {
+        ScrollTrigger.create({
+          trigger: el,
+          start: "top 55%",
+          end: "bottom 55%",
+          onToggle: (self) => self.isActive && setBeat(Number(el.dataset.step)),
+        });
+      }
+
+      const mm = gsap.matchMedia();
+
+      // Smooth, weighted scrolling for mouse and trackpad; touch keeps its own.
+      mm.add("(pointer: fine) and (prefers-reduced-motion: no-preference)", () => {
+        const lenis = new Lenis({ anchors: true, autoRaf: false });
+        lenis.on("scroll", ScrollTrigger.update);
+        const raf = (time: number) => lenis.raf(time * 1000);
+        gsap.ticker.add(raf);
+        gsap.ticker.lagSmoothing(0);
+        return () => {
+          gsap.ticker.remove(raf);
+          gsap.ticker.lagSmoothing(500, 33);
+          lenis.destroy();
+        };
+      });
+
+      // The camera rides the scroll: it pushes into the attic as the first beat
+      // arrives and pulls back to the lit house for the last one.
+      mm.add(
+        { wide: "(min-width: 761px) and (prefers-reduced-motion: no-preference)", narrow: "(max-width: 760px) and (prefers-reduced-motion: no-preference)" },
+        (ctx) => {
+          const cam = root.querySelector("[data-camera]");
+          const attic = ctx.conditions?.narrow ? ATTIC_NARROW : ATTIC;
+          const [, first, , , last] = steps;
+          if (!cam || !first || !last) return;
+          gsap.set(cam, { svgOrigin: "0 0", ...HOME });
+          const ride = { ease: "power2.inOut", immediateRender: false };
+          gsap.fromTo(cam, HOME, { ...attic, ...ride, scrollTrigger: { trigger: first, start: "top 95%", end: "top 30%", scrub: 0.8 } });
+          gsap.fromTo(cam, attic, { ...HOME, ...ride, scrollTrigger: { trigger: last, start: "top 95%", end: "top 30%", scrub: 0.8 } });
+
+          // Each beat's words and card rise in as they reach the reading line.
+          for (const el of steps.slice(1)) {
+            gsap.from(el.children, {
+              y: 36,
+              opacity: 0,
+              duration: 0.9,
+              ease: "power3.out",
+              stagger: 0.12,
+              scrollTrigger: { trigger: el, start: "top 72%", once: true },
+            });
+          }
+        },
+      );
+      return () => mm.revert();
+    },
+    { scope: world },
+  );
 
   useEffect(() => {
     if (approval !== "running") return;
@@ -66,7 +131,7 @@ export function Story({ hero }: { hero: ReactNode }) {
   }, [approval]);
 
   return (
-    <section className={s.world} aria-label="How Nightlight looks after a home">
+    <section ref={world} className={s.world} aria-label="How Nightlight looks after a home">
       <div className={s.stage} data-beat={beat} data-fixed={beat === 4 || approval === "done"}>
         <Sky />
         <House viewBox={narrow ? NARROW : WIDE} />
@@ -77,7 +142,7 @@ export function Story({ hero }: { hero: ReactNode }) {
         </p>
       </div>
 
-      <div className={s.track} ref={track}>
+      <div className={s.track}>
         <div className={s.hero} data-step="0">
           {hero}
         </div>

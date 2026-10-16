@@ -1,0 +1,436 @@
+/* Glow variant: a 3D night scene behind the page. Night tokens, same as "/". */
+.page {
+  --night: #11141f;
+  --surface: #1b2030;
+  --surface-2: #232940;
+  --line: #2c3349;
+  --line-strong: #3d4563;
+  --text: #f3efe6;
+  --muted: #aeb2c2;
+  --star: #fdd83a;
+  --star-ink: #1c1600;
+  --ok: #8fd6a8;
+  --warn: #f5b84a;
+  --gutter: clamp(16px, 3.4vw, 48px);
+  --col: 30rem;
+  --logo-light: #fdd83a;
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--night);
+  color: var(--text);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+:global(html):has(.page),
+:global(html):has(.page) :global(body) {
+  background: #11141f;
+}
+
+.page ::selection { background: rgb(253 216 58 / 0.85); color: var(--star-ink); }
+.page :focus-visible { outline: 2px solid var(--star); outline-offset: 3px; border-radius: 6px; }
+.page a { color: inherit; }
+
+.skip {
+  position: absolute;
+  left: 16px;
+  top: -60px;
+  z-index: 50;
+  padding: 10px 14px;
+  background: var(--star);
+  color: var(--star-ink) !important;
+  border-radius: 10px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.skip:focus { top: 12px; }
+
+/* ---------- The scene, fixed behind everything ---------- */
+.scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 1.4s ease;
+}
+.page[data-gl="on"] .scene { opacity: 1; }
+/* No WebGL: a quiet warm glow where the house would be. */
+.page[data-gl="off"] .scene { display: none; }
+.page[data-gl="off"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(60% 45% at 50% 72%, rgb(255 198 90 / 0.16), transparent 70%);
+}
+/* Keeps the top copy and the edges readable over the scene. */
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(70% 38% at 50% 0%, rgb(17 20 31 / 0.85), transparent 75%),
+    linear-gradient(90deg, rgb(17 20 31 / 0.82), rgb(17 20 31 / 0.5) 22%, transparent 38%, transparent 72%, rgb(17 20 31 / 0.35));
+}
+
+/* ---------- Nav: links, logo centred, actions ---------- */
+.nav {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 20;
+  height: 76px;
+  padding-inline: var(--gutter);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  background: linear-gradient(rgb(17 20 31 / 0.92), rgb(17 20 31 / 0.6) 60%, transparent);
+}
+.links { display: flex; gap: 28px; }
+.links a {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--muted);
+  transition: color 0.2s ease;
+}
+.links a:hover { color: var(--text); }
+.brand { display: inline-flex; color: var(--text); }
+.navActions { justify-self: end; }
+
+/* ---------- Buttons (AuthButtons reads these names) ---------- */
+.actions { display: grid; gap: 10px; justify-items: center; }
+.actionsSmall { display: grid; }
+.actionRow { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; align-items: center; }
+.primary,
+.secondary {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+.actions .primary,
+.actions .secondary { font-size: 1rem; font-weight: 600; padding: 13px 22px; }
+.actionsSmall .primary,
+.actionsSmall .secondary { font-size: 0.8125rem; font-weight: 600; padding: 10px 18px; letter-spacing: 0.02em; }
+.primary {
+  background: var(--star);
+  color: var(--star-ink);
+  border: 1px solid var(--star);
+  box-shadow: 0 0 0 0 rgb(253 216 58 / 0);
+}
+.primary:hover { box-shadow: 0 0 28px 2px rgb(253 216 58 / 0.35); }
+.primary svg { transition: transform 0.2s ease; }
+.primary:hover svg { transform: translateX(2px); }
+.primary:active,
+.secondary:active { transform: translateY(1px); }
+.secondary {
+  background: rgb(35 41 64 / 0.7);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  backdrop-filter: blur(8px);
+}
+.secondary:hover { border-color: var(--muted); }
+.primary:disabled,
+.secondary:disabled { cursor: progress; opacity: 0.7; }
+.error { margin: 0; font-size: 0.875rem; color: #ffb4a3; max-width: 26rem; text-align: center; }
+.actionsSmall .error {
+  position: absolute;
+  right: var(--gutter);
+  top: 72px;
+  max-width: 20rem;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  text-align: left;
+}
+
+/* ---------- Hero ---------- */
+.main { position: relative; z-index: 1; }
+.hero {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 22px;
+  padding: clamp(112px, 17vh, 160px) var(--gutter) 40px;
+  text-align: center;
+}
+.h1 {
+  margin: 0;
+  max-width: 15ch;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(2.5rem, 6.4vw, 5.6rem);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.lede {
+  margin: 0;
+  max-width: 34rem;
+  font-size: clamp(1.0625rem, 1.4vw, 1.25rem);
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.cue {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  translate: -50% 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--text);
+  white-space: nowrap;
+}
+.sample {
+  position: absolute;
+  right: var(--gutter);
+  bottom: 36px;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.sampleDot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; }
+
+/* ---------- Story: a pinned rail on the left, a card per step on the right ---------- */
+.story { position: relative; }
+/* The rail sticks to the bottom of the screen only while the story is on screen. */
+.railWrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: clamp(32px, 7vh, 72px);
+  pointer-events: none;
+  z-index: 2;
+}
+.rail {
+  position: sticky;
+  bottom: clamp(32px, 7vh, 72px);
+  margin-left: var(--gutter);
+  width: min(26rem, 34vw);
+  opacity: 0;
+  translate: 0 16px;
+  transition: opacity 0.5s ease, translate 0.5s ease;
+}
+.rail[data-show="true"] { opacity: 1; translate: 0 0; pointer-events: auto; }
+.rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rail a {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  text-decoration: none;
+  padding: 4px 0;
+}
+.num {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  transition: background-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
+}
+.railTitle {
+  font-size: 0.9375rem;
+  color: var(--muted);
+  transition: font-size 0.35s ease, color 0.35s ease;
+}
+.rail li[data-active] .num {
+  background: var(--star);
+  color: var(--star-ink);
+  font-weight: 650;
+  box-shadow: 0 0 24px rgb(253 216 58 / 0.35);
+}
+.rail li[data-active] .railTitle {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.rail a:hover .railTitle { color: var(--text); }
+.railText {
+  margin: 0 0 0 21px;
+  padding-left: 41px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.55;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.5s ease, opacity 0.4s ease, margin 0.5s ease;
+}
+.rail li[data-active] .railText { max-height: 10rem; opacity: 1; margin-block: 6px 10px; }
+
+.step {
+  position: relative;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr var(--col);
+  align-items: center;
+  padding: 96px var(--gutter) 48px;
+}
+/* On wide screens the rail tells the step; the article keeps it for screen readers. */
+.stepCopy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cardSlot {
+  grid-column: 2;
+  opacity: 0.25;
+  translate: 0 24px;
+  transition: opacity 0.6s ease, translate 0.6s ease;
+}
+.step[data-active] .cardSlot { opacity: 1; translate: 0 0; }
+
+/* ---------- Why, and the closing ---------- */
+.why,
+.closing {
+  position: relative;
+  padding: clamp(96px, 14vh, 160px) var(--gutter);
+  background: linear-gradient(rgb(17 20 31 / 0), rgb(17 20 31 / 0.88) 22%, var(--night) 60%);
+}
+.closing { margin-top: -1px; background: var(--night); text-align: center; display: grid; justify-items: center; gap: 24px; padding-top: 40px; }
+.h2 {
+  margin: 0 0 48px;
+  max-width: 20ch;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(2rem, 4.2vw, 3.5rem);
+  font-weight: 650;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.closing .h2 { margin: 0; }
+.grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+}
+.grid li {
+  background: rgb(27 32 48 / 0.92);
+  padding: 28px 26px 32px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+.featIcon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: rgb(253 216 58 / 0.1);
+  color: var(--star);
+}
+.grid h3 { margin: 0; font-size: 1.125rem; font-weight: 650; }
+.grid p { margin: 0; color: var(--muted); }
+.fine { margin: 0; font-size: 0.875rem; color: var(--muted); }
+
+.footer {
+  position: relative;
+  z-index: 1;
+  background: var(--night);
+  border-top: 1px solid var(--line);
+  padding: 28px var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 32px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.footer nav { display: flex; gap: 20px; }
+.footer p { margin: 0 0 0 auto; }
+
+/* ---------- Narrow screens: no rail; each step carries its own words ---------- */
+@media (max-width: 1080px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 820px) {
+  .links { display: none; }
+  .nav { grid-template-columns: auto 1fr; height: 64px; background: linear-gradient(rgb(17 20 31 / 0.9), transparent); }
+  .brand { order: -1; }
+  .navActions .secondary { display: none; }
+  .hero { padding-top: 104px; }
+  .sample { right: auto; left: 50%; translate: -50% 0; bottom: 80px; }
+  .railWrap { display: none; }
+  .step {
+    grid-template-columns: 1fr;
+    align-items: end;
+    gap: 18px;
+    padding-top: 46vh;
+  }
+  .stepCopy {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+  .stepNum {
+    display: inline-grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin: 0 0 10px;
+    border-radius: 10px;
+    background: var(--star);
+    color: var(--star-ink);
+    font-size: 0.8125rem;
+    font-weight: 650;
+  }
+  .stepTitle { margin: 0 0 6px; font-family: var(--font-display), system-ui, sans-serif; font-size: 1.625rem; font-weight: 600; }
+  .stepText { margin: 0; color: var(--muted); }
+  .stepCopy, .cardSlot { position: relative; }
+  .step::before {
+    content: "";
+    position: absolute;
+    inset: 38vh 0 0;
+    background: linear-gradient(transparent, rgb(17 20 31 / 0.92) 22%);
+    pointer-events: none;
+  }
+  .cardSlot { grid-column: 1; }
+  .grid { grid-template-columns: 1fr; }
+  .footer p { margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
+}
