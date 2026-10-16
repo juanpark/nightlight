@@ -209,7 +209,8 @@ _SCRUB = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), "[hidden]"),
     (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [hidden]"),
     # KEY=value, KEY: value, "key": "value", 'key'='value', DB_PASSWORD=..., --password value
-    (re.compile(r"(?i)([\"']?" + _SECRET_WORD + r"[\"']?\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;}&]+)"), r"\1[hidden]"),
+    (re.compile(r"(?i)([\"']?" + _SECRET_WORD + r"[\"']?\s*[=:]\s*)(\"(?:[^\"\\]|\\.)*\"?|'(?:[^'\\]|\\.)*'?|[^\s,;}&]+)"),
+     r"\1[hidden]"),  # quoted values end at an unescaped quote (or the end of the line)
     (re.compile(r"(?i)(--?" + _SECRET_WORD + r"[ =])(\S+)"), r"\1[hidden]"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "[hidden]"),
     (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b|\bAIza[0-9A-Za-z_-]{35}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b"), "[hidden]"),
@@ -250,10 +251,15 @@ def _run_both(cmd, timeout=15, cap=256 * 1024):
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except OSError:
         return ""
+    import select
     chunks, size, deadline = [], 0, time.time() + timeout
+    fd = p.stdout.fileno()
     try:
-        while size < cap and time.time() < deadline:
-            block = p.stdout.read1(65536) if hasattr(p.stdout, "read1") else p.stdout.read(65536)
+        while size < cap:
+            left = deadline - time.time()
+            if left <= 0 or not select.select([fd], [], [], left)[0]:
+                break  # silent or stalled for too long
+            block = os.read(fd, 65536)
             if not block:
                 break
             chunks.append(block)

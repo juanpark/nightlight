@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -383,3 +384,15 @@ def test_reading_a_huge_log_is_bounded(helper):  # review 10 #5
     import sys as _sys
     out = helper._run_both([_sys.executable, "-c", "import sys; sys.stdout.write('x' * 5_000_000)"], cap=100_000)
     assert 0 < len(out) <= 100_000
+
+
+def test_escaped_quotes_never_leak_part_of_a_secret(helper):  # review 10 rev2 #1
+    out = helper.scrub(r'{"password": "ab\" cd efgh", "user": "bob"}')[0]
+    assert "cd efgh" not in out and '"user": "bob"' in out
+
+
+def test_a_stalled_command_cannot_hang_the_helper(helper):  # review 10 rev2 #2
+    import sys as _sys
+    t = time.time()
+    helper._run_both([_sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.3)
+    assert time.time() - t < 2

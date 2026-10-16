@@ -299,12 +299,12 @@ def checks(facts: dict) -> list[dict]:
         out.append({"id": "f_mem", "check": "memory_high", "severity": "crit",
                     "message": f"Memory is {mem:.0f}% used.", "evidence": f"memory {mem:.0f}%"})
     for unit in facts.get("failedUnits") or []:
-        out.append({"id": f"f_unit_{unit}", "check": "service_down", "severity": "warn",
+        out.append({"id": f"f_unit_{_doc_id(unit)}", "check": "service_down", "severity": "warn",
                     "message": f"{_friendly(unit)} has stopped working.", "evidence": f"system service {unit}: failed",
                     "svcId": _doc_id(unit)})
     for c in facts.get("containers") or []:
         if c.get("state") not in ("running", None):
-            out.append({"id": f"f_ctr_{c['name']}", "check": "container_down", "severity": "warn",
+            out.append({"id": f"f_ctr_{_doc_id(c['name'])}", "check": "container_down", "severity": "warn",
                         "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
                         "svcId": _doc_id(c["name"])})
     pending = facts.get("updatesPending")

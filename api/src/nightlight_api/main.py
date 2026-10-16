@@ -131,6 +131,8 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
     ref = db.device(uid, device_id)
     name = scrub(body.name)[0] if body.name is not None else None
     tags = sorted({scrub(t.strip())[0] for t in body.tags}) if body.tags is not None else None
+    if tags and any(len(t) > 20 for t in tags):  # hiding a secret can make a tag longer: check the stored value
+        raise ApiError(422, "tag_too_long")
 
     @firestore.transactional
     def run(tx):

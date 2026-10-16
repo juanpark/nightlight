@@ -72,3 +72,13 @@ def test_tags_are_saved_cleaned_and_shown_to_the_agent(client, started):
     assert client.post(f"/api/devices/{dev['deviceId']}/layout", json={"tags": ["x" * 21]}).status_code == 422
     assert client.post(f"/api/devices/{dev['deviceId']}/layout", json={"tags": list("abcdefg")}).status_code == 422
     assert "Tags: Home, Parents" in agentlib.fleet_summary(started, generation(started))
+
+
+def test_tags_checked_after_hiding_secrets_and_odd_unit_names_can_be_acknowledged(client, started):  # review 10b
+    dev = enrolled(client)
+    weird = {**ONE_PROBLEM, "failedUnits": ["demo\\x2dapp.service"]}
+    beat(client, dev["token"], weird)
+    fid = _dev(started, dev)["findings"][0]["id"]
+    assert client.post(f"/api/devices/{dev['deviceId']}/issues/{fid}", json={"state": "known"}).status_code == 200
+    r = client.post(f"/api/devices/{dev['deviceId']}/layout", json={"tags": ["account_secret=123"]})
+    assert r.status_code == 422
