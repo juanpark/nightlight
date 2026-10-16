@@ -15,6 +15,11 @@ def start(client, name="Mac"):
     return r.json()
 
 
+@pytest.fixture(autouse=True)
+def quick_polls(monkeypatch):
+    monkeypatch.setattr(real, "POLL_MIN_SECONDS", 0)
+
+
 def poll(client, p, secret=None):
     return client.post("/helper/pair/poll", json={"code": p["code"], "pollSecret": secret or p["pollSecret"]})
 
@@ -96,3 +101,40 @@ def test_owner_gate_reads_the_sign_in_provider(monkeypatch):
     monkeypatch.setattr(auth.fb_auth, "verify_id_token",
                         lambda t, app=None: {"uid": "u1", "firebase": {"sign_in_provider": "google.com"}})
     assert auth.owner_uid(Req()) == "u1"
+
+
+def test_concurrent_polls_mint_exactly_one_token(client, started):  # review 8 #1
+    from concurrent.futures import ThreadPoolExecutor
+    p = start(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True})
+    with ThreadPoolExecutor(6) as ex:
+        codes = list(ex.map(lambda _: poll(client, p).status_code, range(6)))
+    assert codes.count(200) == 1 and set(codes) <= {200, 401}
+    toks = [t for t in db.client().collection("helperTokens").stream() if t.to_dict().get("uid") == started]
+    assert len(toks) == 1
+
+
+def test_competing_decisions_one_wins(client, started):  # review 8 #1
+    from concurrent.futures import ThreadPoolExecutor
+    p = start(client)
+    with ThreadPoolExecutor(4) as ex:
+        codes = list(ex.map(lambda a: client.post(f"/api/devices/pair/{p['code']}", json={"approve": a}).status_code,
+                            [True, False, True, False]))
+    assert codes.count(200) == 1 and codes.count(409) == 3
+
+
+def test_polling_too_fast_is_slowed_down(client, started, monkeypatch):  # review 8 #4
+    monkeypatch.setattr(real, "POLL_MIN_SECONDS", 60)
+    p = start(client)
+    assert poll(client, p).status_code == 202
+    r = poll(client, p)
+    assert r.status_code == 429 and r.json()["code"] == "slow_down"
+    assert poll(client, p, secret="y" * 43).status_code == 401  # a wrong secret never touches the request
+
+
+def test_guessing_codes_is_budgeted(client, started, monkeypatch):  # review 8 #4
+    monkeypatch.setattr(real, "PAIR_CHECKS_PER_UID_HOUR", 3)
+    for _ in range(3):
+        assert client.get("/api/devices/pair/AAAA-AAAA").status_code == 404
+    assert client.get("/api/devices/pair/AAAA-AAAA").status_code == 429
+    assert client.post("/api/devices/pair/AAAA-AAAA", json={"approve": True}).status_code == 429

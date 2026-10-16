@@ -354,7 +354,7 @@ def helper_pair_poll(body: PairPollBody):
 
 @app.get("/api/devices/pair/{code}")
 def pair_preview(code: str, uid: str = Depends(owner_uid)):
-    return real.pair_preview(_pair_code(code))
+    return real.pair_preview(uid, _pair_code(code))
 
 
 @app.post("/api/devices/pair/{code}")

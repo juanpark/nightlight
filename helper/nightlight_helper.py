@@ -400,13 +400,46 @@ def _sudo(cmd):
     return cmd if os.geteuid() == 0 else ["sudo", *cmd]
 
 
+def _own_dir(path):
+    """A real directory owned by this user (never through a symlink), created 0700 if missing."""
+    if os.path.islink(path):
+        sys.exit(f"Refusing to use {path}: it is a symbolic link.")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if os.stat(path).st_uid != os.getuid():
+        sys.exit(f"Refusing to use {path}: it belongs to another user.")
+    return path
+
+
 def _copy_self():
-    os.makedirs(APP_DIR, mode=0o700, exist_ok=True)
-    target = os.path.join(APP_DIR, "nightlight_helper.py")
+    target = os.path.join(_own_dir(APP_DIR), "nightlight_helper.py")
     if os.path.abspath(__file__) != target:
-        shutil.copyfile(os.path.abspath(__file__), target)
-    os.chmod(target, 0o700)
+        fd, tmp = tempfile.mkstemp(dir=APP_DIR, prefix=".helper-", suffix=".py")
+        with os.fdopen(fd, "wb") as out, open(os.path.abspath(__file__), "rb") as src:
+            out.write(src.read())
+        os.chmod(tmp, 0o700)
+        os.replace(tmp, target)  # replaces the entry itself; never writes through a symlink
     return target
+
+
+def _systemd_value(v):
+    """Quote a value for a unit file; refuse characters systemd would expand or that could break the line."""
+    if re.search(r'[\x00-\x1f\x7f%$"\\]', v):
+        sys.exit(f"Unsupported character in path {v!r}; please install from a simpler folder.")
+    return '"' + v + '"'
+
+
+def _me():
+    """This process's own user, from the OS (not from environment variables)."""
+    import pwd
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
 
 
 def install(every=60):
@@ -433,12 +466,16 @@ def install(every=60):
         return
     if not shutil.which("systemctl"):
         sys.exit("This system has no systemd. Keep `python3 nightlight_helper.py run` running another way.")
-    import getpass
-    q = lambda v: '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'  # systemd quoting
+    if os.geteuid() == 0:
+        sys.exit("Run install as your normal user (not with sudo); it asks for your password when it needs it.")
+    if os.path.exists(UNIT) and f"# nightlight-owner={os.getuid()}" not in _read(UNIT):
+        sys.exit("Another user's Nightlight helper is installed on this machine; uninstall it there first.")
+    q = _systemd_value
     unit = (
+        f"# nightlight-owner={os.getuid()}\n"
         "[Unit]\nDescription=Nightlight helper (reports health; runs only jobs you allow)\n"
         "Wants=network-online.target\nAfter=network-online.target\n\n"
-        f"[Service]\nUser={getpass.getuser()}\nEnvironment={q('NIGHTLIGHT_HOME=' + home)}\n"
+        f"[Service]\nUser={_me()}\nEnvironment={q('NIGHTLIGHT_HOME=' + home)}\n"
         f"ExecStart={q(py)} {q(script)} run --every {every}\n"
         "Restart=on-failure\nRestartSec=30\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n")
     fd, tmp = tempfile.mkstemp(suffix=".service")
@@ -465,12 +502,23 @@ def uninstall():
         pass
     if sys.platform == "darwin":
         if os.path.exists(PLIST):
-            subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", PLIST], capture_output=True, check=False)
+            r = subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", PLIST], capture_output=True, check=False)
+            loaded = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"], capture_output=True,
+                                    check=False).returncode == 0
+            if r.returncode != 0 and loaded:
+                sys.exit("Couldn't stop the background service; nothing was removed. Try again or restart first.")
             os.unlink(PLIST)
     elif os.path.exists(UNIT):
-        subprocess.run(_sudo(["systemctl", "disable", "--now", "nightlight-helper.service"]), check=False)
-        subprocess.run(_sudo(["rm", "-f", UNIT]), check=False)
+        if f"# nightlight-owner={os.getuid()}" not in _read(UNIT):
+            sys.exit("The installed service belongs to another user on this machine; nothing was removed.")
+        stop = subprocess.run(_sudo(["systemctl", "disable", "--now", "nightlight-helper.service"]), check=False)
+        if stop.returncode != 0:
+            sys.exit("Couldn't stop the background service; nothing was removed. Try again.")
+        subprocess.run(_sudo(["rm", "-f", UNIT]), check=True)
         subprocess.run(_sudo(["systemctl", "daemon-reload"]), check=False)
+    for d in (APP_DIR, CONFIG_DIR):
+        if os.path.islink(d) or (os.path.isdir(d) and os.stat(d).st_uid != os.getuid()):
+            sys.exit(f"Refusing to clean {d}: it is a link or belongs to another user. The service is stopped.")
     for path in (os.path.join(APP_DIR, "nightlight_helper.py"), CONFIG):
         if os.path.isfile(path) and not os.path.islink(path):
             os.unlink(path)

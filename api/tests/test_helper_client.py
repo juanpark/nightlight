@@ -236,3 +236,45 @@ def test_macos_install_and_uninstall_touch_only_their_own_files(helper, monkeypa
     keep.write_text("not ours")
     helper.uninstall()
     assert not os.path.exists(helper.PLIST) and not os.path.exists(helper.CONFIG) and keep.exists()
+
+
+
+def test_install_refuses_root_odd_paths_and_symlinked_dirs(helper, monkeypatch, tmp_path):  # review 8 #2,#3,#5
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    with pytest.raises(SystemExit):
+        helper.install()
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 1000)
+    for bad in ("/opt/50%off", "/home/$USER", 'a"b', "line\nbreak"):
+        with pytest.raises(SystemExit):
+            helper._systemd_value(bad)
+    assert helper._systemd_value("/home/pi/My Apps") == '"/home/pi/My Apps"'
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "nightlight_helper.py").write_text("someone else's")
+    link = tmp_path / "app-link"
+    link.symlink_to(elsewhere)
+    monkeypatch.setattr(helper, "APP_DIR", str(link))
+    with pytest.raises(SystemExit):
+        helper._copy_self()
+    monkeypatch.setattr(helper, "UNIT", str(tmp_path / "no-unit"))
+    monkeypatch.setattr(helper, "_post", lambda *a, **k: (200, {"ok": True}))
+    with pytest.raises(SystemExit):
+        helper.uninstall()
+    assert (elsewhere / "nightlight_helper.py").exists()  # never deleted through the link
+
+
+def test_uninstall_keeps_files_when_the_service_wont_stop(helper, monkeypatch, tmp_path):  # review 8 #3
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    unit = tmp_path / "nightlight-helper.service"
+    unit.write_text(f"# nightlight-owner={os.getuid()}\n[Service]\n")
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper, "UNIT", str(unit))
+    monkeypatch.setattr(helper, "_post", lambda *a, **k: (200, {"ok": True}))
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", ""))
+    with pytest.raises(SystemExit):
+        helper.uninstall()
+    assert unit.exists() and os.path.exists(helper.CONFIG)

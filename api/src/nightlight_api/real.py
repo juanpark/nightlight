@@ -117,6 +117,24 @@ def _create_device(tx, uid: str, device_id: str, token: str, name: str) -> None:
 
 PAIR_TTL = timedelta(minutes=10)
 PAIR_PER_IP_HOUR = 20
+PAIR_CHECKS_PER_UID_HOUR = 30  # previews + decisions: guessing an 8-character code is hopeless at this rate
+POLL_MIN_SECONDS = 2  # the device is told 3
+
+
+def _count_check(uid: str) -> None:
+    """Budget for looking up or deciding codes (RFC 8628 §5.1: limit guessing)."""
+    now = _now()
+    ref = db.user(uid).collection("quota").document(f"pair_{now.strftime('%Y%m%d%H')}")
+
+    @firestore.transactional
+    def run(tx):
+        snap = ref.get(transaction=tx)
+        n = (snap.to_dict() or {}).get("count", 0) if snap.exists else 0
+        if n >= PAIR_CHECKS_PER_UID_HOUR:
+            raise ApiError(429, "quota_uid", retryAfter=3600 - now.minute * 60)
+        tx.set(ref, {"count": n + 1})
+
+    db.run_transaction(run)
 
 
 def pairs_ref():
@@ -147,14 +165,15 @@ def pair_start(name: str, os_name: str | None, ip: str) -> dict:
 
 def _pair_doc(tx, code: str):
     ref = pairs_ref().document(_sha(code.replace("-", "").strip().upper()))
-    snap = ref.get(transaction=tx) if tx else ref.get()
+    snap = ref.get(transaction=tx) if tx is not None else ref.get()  # an empty transaction is falsy
     data = snap.to_dict() if snap.exists else None
     if not data or data["expiresAt"] < _now():
         return ref, None
     return ref, data
 
 
-def pair_preview(code: str) -> dict:
+def pair_preview(uid: str, code: str) -> dict:
+    _count_check(uid)
     _, data = _pair_doc(None, code)
     if not data or data["status"] != "waiting":
         raise not_found()
@@ -163,6 +182,8 @@ def pair_preview(code: str) -> dict:
 
 
 def pair_decide(uid: str, code: str, approve: bool) -> dict:
+    _count_check(uid)
+
     @firestore.transactional
     def run(tx):
         ref, data = _pair_doc(tx, code)
@@ -187,7 +208,11 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
         if not data or not secrets.compare_digest(data["pollHash"], _sha(poll_secret)) \
                 or data["status"] in ("denied", "consumed"):
             raise ApiError(401, "invalid_code")  # unknown, expired, used, declined or not this device: all alike
+        last = data.get("lastPollAt")
+        if last and (_now() - last).total_seconds() < POLL_MIN_SECONDS:
+            raise ApiError(429, "slow_down", retryAfter=POLL_MIN_SECONDS)
         if data["status"] == "waiting":
+            tx.update(ref, {"lastPollAt": _now()})  # only the real device (right secret) gets here
             return 202, {"status": "waiting"}
         tx.update(ref, {"status": "consumed", "deviceId": device_id, "consumedAt": firestore.SERVER_TIMESTAMP})
         _create_device(tx, data["uid"], device_id, token, data["name"])
