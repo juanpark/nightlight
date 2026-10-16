@@ -36,6 +36,18 @@ class LayoutBody(Strict):
     x: int | None = Field(default=None, ge=0, le=2000)
     y: int | None = Field(default=None, ge=0, le=2000)
     name: str | None = Field(default=None, min_length=1, max_length=40)
+    tags: list[str] | None = Field(default=None, max_length=6)
+
+    @model_validator(mode="after")
+    def short_tags(self):
+        if self.tags is not None and not all(1 <= len(t.strip()) <= 20 for t in self.tags):
+            raise ValueError("tags are 1 to 20 characters")
+        return self
+
+
+class IssueBody(Strict):
+    state: Literal["new", "known", "snoozed"]
+    days: int | None = Field(default=None, ge=1, le=90)
 
 
 class Empty(Strict):
@@ -112,6 +124,7 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
         raise not_found()
     ref = db.device(uid, device_id)
     name = scrub(body.name)[0] if body.name is not None else None
+    tags = sorted({scrub(t.strip())[0] for t in body.tags}) if body.tags is not None else None
 
     @firestore.transactional
     def run(tx):
@@ -127,12 +140,22 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
                 raise not_found()
             if name is not None:
                 raise ApiError(422, "sample_devices_keep_their_names")
-        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name)) if v is not None}
+        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags)) if v is not None}
         if update:
             tx.update(ref, update)
         return update
 
     return {"ok": True, **db.run_transaction(run)}
+
+
+@app.post("/api/devices/{device_id}/issues/{finding_id}")
+def device_issue(device_id: str, finding_id: str, body: IssueBody, uid: str = Depends(current_uid)):
+    """Mark one problem on a real device: needs a look (new), known (leaving it on purpose) or snoozed."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id) or not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,140}", finding_id):
+        raise not_found()
+    if body.state == "snoozed" and not body.days:
+        raise ApiError(422, "snooze_needs_days")
+    return real.set_issue_state(uid, device_id, finding_id, body.state, body.days)
 
 
 @app.post("/api/demo/reset")

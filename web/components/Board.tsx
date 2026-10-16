@@ -92,7 +92,9 @@ export default function Board({ devices, selected, onSelect }: {
       onPointerLeave={() => setDrag(null)}>
       {shown.map((d) => {
         const c = cells.get(d.id)!;
-        const top = d.findings?.[0];
+        const open = (d.findings ?? []).filter((f) => (f.state ?? "new") === "new");
+        const known = (d.findings ?? []).length - open.length;
+        const top = open[0];
         const real = d.realm === "real";
         const dragging = drag?.id === d.id;
         return (
@@ -115,6 +117,7 @@ export default function Board({ devices, selected, onSelect }: {
             </div>
             <div className="problem">
               {d.status === "offline" ? "Not reporting right now" : top ? top.message : "All good"}
+              {known > 0 && d.status !== "offline" && <span className="known"> · {known} known</span>}
             </div>
           </button>
         );

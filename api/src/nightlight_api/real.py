@@ -109,6 +109,7 @@ def enrol(code: str, name: str) -> dict:
 
 def _create_device(tx, uid: str, device_id: str, token: str, name: str) -> None:
     """The device record and its token (stored hashed). Shared by enrolment and pairing."""
+    event(tx, uid, device_id, "joined", "info", f"{name} joined your Nightlight map.", who="you")
     tx.set(tokens_ref().document(_sha(token)), {"uid": uid, "deviceId": device_id, "revoked": False,
                                                 "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None})
     tx.set(db.device(uid, device_id), {
@@ -244,6 +245,8 @@ def leave(token: str) -> dict:
         tx.update(tref, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
         if dsnap.exists:
             tx.update(dref, {"status": "offline", "health": "unknown", "revoked": True, "uninstalled": True})
+            event(tx, t["uid"], t["deviceId"], "left", "info",
+                  f"{dsnap.to_dict().get('name', 'A device')} was uninstalled and left your map.", who="device")
 
     db.run_transaction(run)
     return {"ok": True}
@@ -262,6 +265,8 @@ def revoke(uid: str, device_id: str) -> dict:
         for t in tokens:
             tx.update(t.reference, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
         tx.update(db.device(uid, device_id), {"status": "offline", "health": "unknown", "revoked": True})
+        event(tx, uid, device_id, "revoked", "info",
+              f"You removed {dsnap.to_dict().get('name', 'a device')}'s access.", who="you")
 
     db.run_transaction(run)
     return {"ok": True, "deviceId": device_id}
@@ -345,9 +350,6 @@ def heartbeat(token: str, facts: dict) -> dict:
     tref = tokens_ref().document(_sha(token))
     facts, _ = scrub_value(facts)
     findings = checks(facts)
-    severity = max((3 if f["severity"] == "crit" else 2 if f["severity"] == "warn" else 1 for f in findings),
-                   default=0)
-    status = "crit" if severity == 3 else "warn" if severity == 2 else "ok"
     services = {}
     for c in facts.get("containers") or []:
         image = c.get("image") or ""
@@ -378,12 +380,22 @@ def heartbeat(token: str, facts: dict) -> dict:
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()
+        marked, states = apply_issue_states(findings, device.get("issueStates") or {})
+        status = health_of(marked)
+        previous = real_status(device)
+        if previous != status:
+            top = next((f for f in marked if f.get("state") == "new" and f["severity"] != "info"), None)
+            words = {"ok": "is back to normal", "warn": "needs a look", "crit": "needs attention now"}[status]
+            event(tx, uid, device_id, "status_" + status, status if status != "ok" else "info",
+                  f"{device.get('name', 'A device')} {words}" + (f": {top['message']}" if top and status != "ok" else "."),
+                  who="device")
         tx.update(tref, {"lastSeen": _now()})
         tx.update(dref, {
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
                        "uptime": facts.get("uptimeSec")},
-            "findings": findings, "lastSeen": firestore.SERVER_TIMESTAMP, "version": device.get("version", 1) + 1,
+            "findings": marked, "issueStates": states, "lastSeen": firestore.SERVER_TIMESTAMP,
+            "version": device.get("version", 1) + 1,
             "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {},
             "updatesPending": facts.get("updatesPending"), "containerCount": len(facts.get("containers") or []),
             "containersRunning": sum(1 for c in facts.get("containers") or [] if c.get("state") == "running")})
@@ -396,6 +408,74 @@ def heartbeat(token: str, facts: dict) -> dict:
 
     device_id, jobs, poll = db.run_transaction(run)
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll}
+
+
+SEVERITY = {"info": 1, "warn": 2, "crit": 3}
+
+
+def apply_issue_states(findings: list[dict], states: dict) -> tuple[list[dict], dict]:
+    """Mark each finding new / known / snoozed. A known or snoozed problem comes back as new if it got worse (or a
+    snooze ran out). States for problems that went away are dropped."""
+    now, out, keep = _now(), [], {}
+    for f in findings:
+        s = states.get(f["id"])
+        state = "new"
+        if s:
+            worse = SEVERITY[f["severity"]] > SEVERITY.get(s.get("severity"), 3)
+            expired = s.get("until") and s["until"] < now
+            if not worse and not expired:
+                state = s["state"]
+                keep[f["id"]] = s
+        out.append({**f, "state": state})
+    return out, keep
+
+
+def health_of(findings: list[dict]) -> str:
+    """The health light counts only problems that still need a look."""
+    worst = max((SEVERITY[f["severity"]] for f in findings if f.get("state", "new") == "new"), default=0)
+    return "crit" if worst == 3 else "warn" if worst == 2 else "ok"
+
+
+def real_status(device: dict) -> str | None:
+    return None if device.get("lastSeen") is None else device.get("status")
+
+
+def event(tx, uid: str, device_id: str | None, kind: str, severity: str, message: str, who: str = "device") -> None:
+    """One line in Activity about a real device (kept through demo resets: it has no demo generation)."""
+    tx.set(db.events(uid).document(new_id("ev")), {"deviceId": device_id, "kind": kind, "severity": severity,
+                                                   "message": message[:300], "who": who, "realm": "real",
+                                                   "at": firestore.SERVER_TIMESTAMP})
+
+
+def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days: int | None) -> dict:
+    """The owner marks one problem: still needs a look (new), known (leaving it on purpose) or snoozed for N days."""
+    ref = db.device(uid, device_id)
+
+    @firestore.transactional
+    def run(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d.get("realm") != "real":
+            raise not_found()
+        f = next((x for x in d.get("findings") or [] if x.get("id") == finding_id), None)
+        if not f:
+            raise not_found()
+        states = dict(d.get("issueStates") or {})
+        if state == "new":
+            states.pop(finding_id, None)
+        else:
+            states[finding_id] = {"state": state, "severity": f["severity"], "at": _now(),
+                                  "until": _now() + timedelta(days=days) if state == "snoozed" and days else None}
+        marked, states = apply_issue_states([{k: v for k, v in x.items() if k != "state"}
+                                             for x in d.get("findings") or []], states)
+        status = health_of(marked) if d.get("lastSeen") else d.get("status")
+        tx.update(ref, {"issueStates": states, "findings": marked, "status": status})
+        words = {"new": "needs a look again", "known": "is known (you're leaving it for now)",
+                 "snoozed": f"is snoozed for {days} days"}[state]
+        event(tx, uid, device_id, "issue_" + state, "info", f"{f['message']} {words}", who="you")
+        return {"ok": True, "state": state, "status": status}
+
+    return db.run_transaction(run)
 
 
 def _hand_over(tx, approved, user: dict) -> list[dict]:

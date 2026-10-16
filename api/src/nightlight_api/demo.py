@@ -160,7 +160,8 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     service_refs = [s.reference for d in old_devices for s in d.collection("services").get()]
     _delete_older(uid, op, generation, service_refs, hook)
     _delete_older(uid, op, generation, old_devices, hook)
-    _delete_older(uid, op, generation, [s.reference for s in db.events(uid).get()], hook)
+    _delete_older(uid, op, generation, [s.reference for s in db.events(uid).get()
+                                        if s.to_dict().get("realm") != "real"], hook)  # real history stays
     old_sessions = [s.reference for s in db.sessions(uid).get()]
     inner = [m.reference for s in old_sessions for sub in ("messages", "turns") for m in s.collection(sub).get()]
     _delete_older(uid, op, generation, inner, hook)

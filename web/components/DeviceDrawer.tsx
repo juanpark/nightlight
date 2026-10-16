@@ -32,6 +32,11 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
   const services = useServices(uid, device.id);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
+  const [tag, setTag] = useState("");
+  const saveTags = (tags: string[]) => api("POST", `/api/devices/${device.id}/layout`, { tags }).catch(() => {});
+  const mark = (id: string, state: "new" | "known" | "snoozed", days?: number) =>
+    api("POST", `/api/devices/${device.id}/issues/${encodeURIComponent(id)}`, { state, ...(days ? { days } : {}) })
+      .catch(() => {});
   async function rename() {
     if (name.trim() && name.trim() !== device.name) {
       await api("POST", `/api/devices/${device.id}/layout`, { name: name.trim() }).catch(() => {});
@@ -76,10 +81,35 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
         <Vital label="Memory" value={device.vitals?.mem} />
         <Vital label="CPU" value={device.vitals?.cpu} />
       </div>
-      {(device.findings ?? []).map((f, i) => (
-        <div key={i} className="finding"><span className={`dot ${f.severity === "info" ? "ok" : f.severity}`} />{" "}
-          {f.message} <span className="muted small">({f.evidence})</span></div>
-      ))}
+      {(device.findings ?? []).map((f, i) => {
+        const state = f.state ?? "new";
+        return (
+          <div key={f.id ?? i} className={`finding ${state !== "new" ? "is-known" : ""}`}>
+            <span className={`dot ${state !== "new" ? "offline" : f.severity === "info" ? "ok" : f.severity}`} />{" "}
+            {f.message} <span className="muted small">({f.evidence})</span>
+            {state !== "new" && <span className="pill" style={{ marginLeft: 6 }}>{state === "known" ? "Known" : "Snoozed"}</span>}
+            {real && f.id && (state === "new"
+              ? <span className="issue-actions">
+                  <button className="linkish small" onClick={() => mark(f.id!, "known")}>I know, leave it</button>
+                  <button className="linkish small" onClick={() => mark(f.id!, "snoozed", 7)}>Snooze a week</button>
+                </span>
+              : <button className="linkish small issue-actions" onClick={() => mark(f.id!, "new")}>Needs a look again</button>)}
+          </div>
+        );
+      })}
+      {real && (
+        <div className="tags-edit small">
+          <span className="muted">Tags:</span>
+          {(device.tags ?? []).map((t) => (
+            <span key={t} className="pill">{t} <button className="linkish" aria-label={`Remove ${t}`}
+              onClick={() => saveTags((device.tags ?? []).filter((x) => x !== t))}>×</button></span>))}
+          {(device.tags ?? []).length < 6 && (
+            <form onSubmit={(e) => { e.preventDefault(); if (tag.trim()) { saveTags([...(device.tags ?? []), tag.trim()]); setTag(""); } }}>
+              <input value={tag} onChange={(e) => setTag(e.target.value)} maxLength={20} placeholder="Add a tag (e.g. Parents)"
+                style={{ padding: "3px 8px" }} />
+            </form>)}
+        </div>
+      )}
       <div style={{ marginTop: 8 }}>
         {services.map((s) => (
           <div key={s.id} className="svc">

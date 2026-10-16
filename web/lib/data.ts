@@ -60,7 +60,7 @@ export function useActions(uid: string | null, gen: number | undefined): Action[
 }
 
 export function useEvents(uid: string | null, gen: number | undefined): EventDoc[] {
-  return useCollection<EventDoc>(uid, ["events"]).filter((e) => e.demoGeneration === gen)
+  return useCollection<EventDoc>(uid, ["events"]).filter((e) => e.realm === "real" || e.demoGeneration === gen)
     .sort((a, b) => (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0));
 }
 

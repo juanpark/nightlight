@@ -11,6 +11,7 @@ export interface Finding {
   message: string;
   evidence?: string;
   svcId?: string;
+  state?: "new" | "known" | "snoozed";
 }
 
 export interface Service {
@@ -52,6 +53,7 @@ export interface Device {
   containerCount?: number;
   containersRunning?: number;
   createdAt?: Date | null;
+  tags?: string[];
 }
 
 export interface Action {
@@ -94,6 +96,8 @@ export interface EventDoc {
   message: string;
   at?: Date | null;
   demoGeneration?: number;
+  realm?: "real";
+  who?: "you" | "device" | "auto";
 }
 
 export interface UserDoc {

@@ -46,7 +46,11 @@ export default function Home({ user }: { user: User }) {
     finally { setSwitching(false); }
   }
 
-  const needs = devices.filter((d) => d.status === "crit" || d.status === "warn").length;
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const allTags = useMemo(() => [...new Set(devices.flatMap((d) => d.tags ?? []))].sort(), [devices]);
+  const visible = tagFilter.length === 0 ? devices : devices.filter((d) => tagFilter.some((t) =>
+    t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t)));
+  const needs = visible.filter((d) => d.status === "crit" || d.status === "warn").length;
   const pending = actions.filter((a) => a.status === "pending").length;
   const resetting = me?.demo?.state === "resetting";
   const toggle = (p: Panel) => setPanel((cur) => (cur === p ? "none" : p));
@@ -88,7 +92,16 @@ export default function Home({ user }: { user: User }) {
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "memory" && <MemoryPanel />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
-          <Board devices={devices} selected={selected} onSelect={setSelected} />
+          {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
+            <div className="chips" aria-label="Show only">
+              <button className={tagFilter.length === 0 ? "on" : ""} onClick={() => setTagFilter([])}>All</button>
+              {[...allTags, ...(devices.some((d) => d.realm !== "real") ? ["Sample"] : [])].map((t) => (
+                <button key={t} className={tagFilter.includes(t) ? "on" : ""} onClick={() =>
+                  setTagFilter((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t])}>{t}</button>
+              ))}
+            </div>
+          )}
+          <Board devices={visible} selected={selected} onSelect={setSelected} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} device={devices.find((d) => d.id === selected)!}
               onAsk={(q) => chat.current?.ask(q)} onClose={() => setSelected(null)} />

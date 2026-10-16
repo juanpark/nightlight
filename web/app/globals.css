@@ -143,3 +143,11 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .details div span { display: block; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin-bottom: -8px; }
 .legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { padding: 4px 12px; border-radius: 99px; font-size: 13px; }
+.chips button.on { background: var(--accent); color: var(--bg); border-color: transparent; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.finding.is-known { color: var(--muted); }
+.issue-actions { margin-left: 8px; display: inline-flex; gap: 10px; }
+.node .known { color: var(--muted); }
+.tags-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
