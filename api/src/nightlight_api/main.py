@@ -580,13 +580,7 @@ def helper_job_result(action_id: str, body: JobResultBody, request: Request):
         raise ApiError(401, "invalid_token")
     if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
         raise not_found()
-    out = actions.job_result(token, action_id, body.ok, body.summary, body.state, body.output)
-    playbooks.propose_fixes(_uid_of_token(token), action_id)  # a playbook's checks came back: cards for its fixes
-    return out
-
-
-def _uid_of_token(token: str) -> str:
-    return (real.tokens_ref().document(real._sha(token)).get().to_dict() or {}).get("uid", "")
+    return actions.job_result(token, action_id, body.ok, body.summary, body.state, body.output)
 
 
 @app.post("/helper/discoveries")

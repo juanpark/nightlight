@@ -330,6 +330,32 @@ def await_diagnosis(uid: str, action_id_: str) -> dict | None:
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
 
 
+def _playbook_cards(tx, uid: str, a: dict, device: dict) -> list:
+    """One pending clean-up card per allowed fix a playbook found. Reads only (the caller writes, after all reads);
+    each finding gets `card` = the card's id, or None when no card could be made."""
+    out = []
+    for f in a["result"]["playbook"]["found"]:
+        if not f.get("fixAllowed"):
+            continue
+        params = {"recipe": f["fix"]}
+        key = proposal_key(a["demoGeneration"], f"{a['turnId']}:{a['id']}", device["id"], None, "fix", params)
+        aid = make_action_id(key)
+        f["card"] = None
+        if db.action(uid, aid).get(transaction=tx).exists:
+            continue  # can't happen for a first result; never make a second card
+        try:
+            c = real.card(device, {}, "fix", params)
+        except ValueError:
+            continue
+        f["card"] = aid
+        out.append((db.action(uid, aid), {
+            "proposalKey": key, "type": "fix", "deviceId": device["id"], "params": params, **c, "status": "pending",
+            "demoGeneration": a["demoGeneration"], "deviceVersion": device.get("version"),
+            "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
+            "sessionId": a["sessionId"], "turnId": a["turnId"], "fromPlaybook": a["id"], "createdAt": _now()}))
+    return out
+
+
 def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None,
                output: str | None = None) -> dict:
     """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once."""
@@ -354,11 +380,16 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
             found, hidden = scrub(output or "")
             a["result"] = {"ok": ok, "summary": text, "output": found[:4000], "hidden": hidden}
             from . import playbooks  # here, not at the top: playbooks uses this module
-            if a.get("playbook") in playbooks.library() and ok:  # matched here, in code: no AI needed
-                a["result"]["playbook"] = playbooks.evaluate(playbooks.library()[a["playbook"]], found,
-                                                             dsnap.to_dict() or {})
             current = user.get("demo", {}).get("state") == "ready" and \
                 a.get("demoGeneration") == user.get("demoGeneration")
+            cards = []
+            if a.get("playbook") in playbooks.library() and ok:  # matched here, in code: no AI needed
+                device = dict(dsnap.to_dict() or {}, id=device_id)
+                a["result"]["playbook"] = playbooks.evaluate(playbooks.library()[a["playbook"]], found, device)
+                if current:  # cards in this same transaction, so the words below only claim cards that exist
+                    cards = _playbook_cards(tx, uid, a, device)
+            for ref, doc in cards:
+                tx.set(ref, doc)
             if a.get("followUp") == "wanted" and current:  # the turn that asked has already ended
                 _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
             tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})

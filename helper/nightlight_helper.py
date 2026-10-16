@@ -661,20 +661,54 @@ def _as_root(cmd):
     return cmd if os.geteuid() == 0 else ["sudo", "-n", *cmd]
 
 
-def _empty_dir(path):
-    """Delete what is inside `path` (never `path` itself), never following links. Returns how many items failed."""
+_DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _open_under_home(parts):
+    """A descriptor for ~/parts[0]/parts[1]/..., opened one step at a time without following any link (None if any
+    step is missing, a link or not a folder), so a swapped-in link can't send the clean-up somewhere else."""
+    fd = os.open(_HOME, _DIR_FLAGS)
+    try:
+        for part in parts:
+            nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except OSError:
+        os.close(fd)
+        return None
+
+
+def _clear_fd(fd):
+    """Delete everything inside the open folder `fd`, through descriptors only. Returns how many items failed."""
     failed = 0
-    if not os.path.isdir(path) or os.path.islink(path):
-        return 0
-    for entry in os.scandir(path):
+    with os.scandir(fd) as it:
+        entries = list(it)
+    for entry in entries:
         try:
             if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(entry.path)
+                sub = os.open(entry.name, _DIR_FLAGS, dir_fd=fd)
+                try:
+                    failed += _clear_fd(sub)
+                finally:
+                    os.close(sub)
+                os.rmdir(entry.name, dir_fd=fd)
             else:
-                os.remove(entry.path)
+                os.unlink(entry.name, dir_fd=fd)  # a link is removed itself, never what it points to
         except OSError:
             failed += 1
     return failed
+
+
+def _empty_dir(parts):
+    """Empty ~/parts... (never the folder itself). True when everything went; False when it couldn't be done safely."""
+    fd = _open_under_home(parts)
+    if fd is None:
+        return False
+    try:
+        return _clear_fd(fd) == 0
+    finally:
+        os.close(fd)
 
 
 def _fix_cmd(cmd, timeout=300):
@@ -689,15 +723,15 @@ def _fix_cmd(cmd, timeout=300):
 
 FIXES = {
     "empty_trash": {"when": lambda: sys.platform == "darwin",
-                    "run": lambda: (_empty_dir(f"{_HOME}/.Trash") == 0, "some items couldn't be removed")},
+                    "run": lambda: (_empty_dir([".Trash"]), "some items couldn't be removed safely")},
     "brew_cleanup": {"when": lambda: bool(shutil.which("brew")), "run": lambda: _fix_cmd(["brew", "cleanup", "-s"])},
     "npm_cache": {"when": lambda: bool(shutil.which("npm")),
                   "run": lambda: _fix_cmd(["npm", "cache", "clean", "--force"])},
     "xcode_build_data": {"when": lambda: os.path.isdir(f"{_HOME}/Library/Developer/Xcode/DerivedData"),
-                         "run": lambda: (_empty_dir(f"{_HOME}/Library/Developer/Xcode/DerivedData") == 0,
-                                         "some items couldn't be removed")},
+                         "run": lambda: (_empty_dir(["Library", "Developer", "Xcode", "DerivedData"]),
+                                         "some items couldn't be removed safely")},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
-                     "run": lambda: _fix_cmd(["docker", "image", "prune", "-af"])},
+                     "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
     "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
     "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")),
                        "run": lambda: _fix_cmd(_as_root(["journalctl", "--vacuum-size=200M"]))},

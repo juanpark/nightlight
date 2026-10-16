@@ -4,7 +4,23 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { chatSession } from "@/lib/session";
-import type { Action, PlaybookOffer } from "@/lib/types";
+import type { Action, PlaybookOffer, PlaybookResult } from "@/lib/types";
+
+const CARD: Partial<Record<Action["status"], string>> = {
+  pending: "A clean-up card is waiting for you.", approved: "Approved; waiting for the device…",
+  running: "Cleaning up on the device…", denied: "You declined the clean-up.", stale: "That clean-up card expired.",
+};
+
+/** What happened to a finding's clean-up, from the card itself (never assumed). */
+function cardWords(f: PlaybookResult["found"][number], actions: Action[], cleanupOn: boolean): string {
+  if (!f.fixAllowed) {
+    return cleanupOn ? "This device doesn't offer that clean-up." : "Switch on \"Clean up space\" below to fix this with one tap.";
+  }
+  const card = f.card ? actions.find((a) => a.id === f.card) : undefined;
+  if (!card) return f.card ? "Loading the card…" : "No card could be made this time; run the checkup again later.";
+  if (card.status === "done" || card.status === "failed") return card.result?.summary ?? "Finished.";
+  return CARD[card.status] ?? "";
+}
 
 export default function Checkups({ uid, generation, deviceId, actions, cleanupOn }: {
   uid: string; generation?: number; deviceId: string; actions: Action[]; cleanupOn: boolean;
@@ -57,10 +73,7 @@ export default function Checkups({ uid, generation, deviceId, actions, cleanupOn
           {pb.found.map((f) => (
             <div key={f.cause} className="checkup-row">
               <div>{f.say}</div>
-              {f.fix && (f.fixAllowed
-                ? <div className="muted">A clean-up card is waiting for you.</div>
-                : <div className="muted">{cleanupOn ? "This device doesn't offer that clean-up."
-                    : "Switch on \"Clean up space\" below to fix this with one tap."}</div>)}
+              {f.fix && <div className="muted">{cardWords(f, actions, cleanupOn)}</div>}
               {f.advice && <div className="muted">{f.advice}</div>}
             </div>))}
           {pb.nothing && <div className="muted">{pb.nothing}</div>}

@@ -2,16 +2,13 @@
 for the playbook's read-only checks; when they come back, causes are matched here, in code, and the clean-ups the
 device allows are put up as approval cards. Gemini is only needed for what no playbook recognises."""
 
-import logging
 import re
 from functools import lru_cache
 from pathlib import Path
 
 import yaml
 
-from . import actions, db, real
-
-log = logging.getLogger(__name__)
+from . import actions, real
 
 _UNIT_GB = {"k": 1 / 1024 ** 2, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
 
@@ -102,27 +99,10 @@ def summary(result: dict) -> str:
     for f in pb.get("found") or []:
         tail = ""
         if f.get("fix"):
-            tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("fixAllowed")
-                    else " A clean-up exists, but \"clean up space\" isn't switched on for this device.")
+            tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("card")
+                    else " A clean-up exists, but \"clean up space\" isn't switched on for this device."
+                    if not f.get("fixAllowed") else " A clean-up exists, but no card could be made right now.")
         lines.append(f"- {f['say']}{tail}" + (f" {f['advice']}" if f.get("advice") else ""))
     if pb.get("nothing"):
         lines.append(pb["nothing"])
     return "\n".join(lines)
-
-
-def propose_fixes(uid: str, action_id_: str) -> list[str]:
-    """After a playbook's checks came back: one approval card per allowed clean-up it found. Best effort."""
-    a = db.action(uid, action_id_).get().to_dict() or {}
-    pb = (a.get("result") or {}).get("playbook") or {}
-    ids = []
-    for f in pb.get("found") or []:
-        if not f.get("fixAllowed"):
-            continue
-        try:
-            card = actions.propose(uid, session_id=a["sessionId"], turn_id=f"{a['turnId']}:{action_id_}",
-                                   generation=a["demoGeneration"], action_type="fix", device_id=a["deviceId"],
-                                   params={"recipe": f["fix"]})
-            ids.append(card["id"])
-        except Exception as e:  # a card that can't be made (device went quiet, reset) leaves the findings as words
-            log.info("playbook fix not proposed: %s", type(e).__name__)
-    return ids

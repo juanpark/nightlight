@@ -40,7 +40,8 @@
     - id: docker_images
       match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[MG]B)'
       min_gb: 1
-      say: Docker has {size} of images that no container uses.
+      say: Docker images take up to {size} that no container uses. The clean-up removes only untagged leftovers; check
+        the rest with "docker image ls" before removing anything you built yourself.
       fix: docker_prune
     - id: apt
       match: '^Package cache \(apt\): (?P<size>[\d.]+ [MG]B)'

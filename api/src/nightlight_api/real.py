@@ -43,9 +43,9 @@ FIX = {
                   "Nothing to undo: npm downloads packages again when needed."),
     "xcode_build_data": ("Clear Xcode's build data", "Empties Xcode's DerivedData folder",
                          "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower)."),
-    "docker_prune": ("Remove unused Docker images", "Runs \"docker image prune -af\": removes images that no "
-                     "container (running or stopped) uses", "Can't be undone, but Docker downloads an image again "
-                     "when something needs it. Containers are not touched."),
+    "docker_prune": ("Remove Docker's leftover images", "Runs \"docker image prune -f\": removes only untagged "
+                     "images (leftovers from updates and rebuilds) that no container uses", "Nothing to undo: "
+                     "images with a name and all containers are not touched."),
     "apt_clean": ("Clear downloaded system updates", "Runs \"sudo apt-get clean\": removes downloaded package files",
                   "Nothing to undo: installed software is not touched."),
     "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "

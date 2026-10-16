@@ -96,7 +96,7 @@ export interface Action {
 export interface PlaybookResult {
   id: string;
   title: string;
-  found: { cause: string; say: string; advice?: string; fix?: string; fixAllowed?: boolean }[];
+  found: { cause: string; say: string; advice?: string; fix?: string; fixAllowed?: boolean; card?: string | null }[];
   nothing: string | null;
 }
 
