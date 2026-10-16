@@ -5,10 +5,12 @@
 add_device:
   title: Add a device
   text: |
-    In the app, choose "Add a device". Copy the one line it shows and paste it into the Terminal on that device
-    (Mac: Terminal app; Raspberry Pi or Linux: a terminal or SSH session) and press Enter. The device shows a short
-    code; approve it in the app. The helper then installs itself as a background service and the device appears on
-    the map within a minute. It asks one question: whether the app may manage what Nightlight is allowed to do there.
+    In the app, choose "Add a device" and "Get my line". Paste that line into the Terminal on the device (Mac:
+    Applications > Utilities > Terminal; Raspberry Pi or Linux: a terminal or SSH session) and press Enter; it works
+    once, for 10 minutes. The helper installs itself as a background service and the device appears on the map within
+    a minute. It asks one question: whether the app may manage what Nightlight is allowed to do there.
+    If you can't paste a line on that device, run `curl -fsSL {web}/install.sh | sh` there instead: it shows a code
+    like WXYZ-1234, and you type it in the app ("Use a code it shows instead") to approve it.
     Nightlight never logs in to your devices: the helper on the device dials out to Nightlight, nothing dials in.
 
 remove_device:
@@ -43,9 +45,13 @@ what_the_helper_does:
     It reports health every minute (disk, memory, processor, containers, failed services, updates waiting) and runs
     only a fixed list of jobs: read-only checks (why something stopped, disk use, busiest programs, network, updates),
     restarting a stopped container or system service, and safe clean-ups (empty the Trash, clear caches that rebuild
-    themselves, remove Docker's leftover images). Anything that changes something needs your tap on a card. It can't
-    run any other command, open a remote shell, read your files or move them. The cloud sends job names, never
-    commands, and the device checks every job against what its owner allowed.
+    themselves, remove Docker's leftover images), installing signed helper updates and removing itself. Restarts,
+    clean-ups and removal need your approval (a card or your confirmation in the app); updates install when you tap
+    Update, or by themselves if you switched that on. It can't run any other command, open a remote shell, or move
+    your files; it reads file contents only for recent log lines of apps you allowed. The cloud sends job names,
+    never commands, and the device checks every job against what its owner allowed. Approval cards protect against
+    mistakes; the real limit is what the device itself allows, which a hacked account or server can't widen beyond
+    what the device's owner delegated.
 
 ssh_and_remote_access:
   title: Remote access (SSH, screen sharing)
@@ -59,10 +65,10 @@ silent_device:
   title: A device stopped reporting
   text: |
     Nightlight can't reach in, so it reasons from what it knows: when the device last reported and for how long it
-    has been silent; whether other devices in the same place still report (if they do, the internet and power there
-    are fine and the device itself is asleep, off, logged out or off Wi-Fi); what History showed just before. When it
-    comes back, Nightlight says whether it restarted or was only unreachable. Things to check at the device: is it on
-    and awake (Macs: System Settings > Energy, "Prevent automatic sleeping"); is it on the network; on a Mac the
+    has been silent, and whether other devices in the same place still report. If they do, the internet there is
+    probably fine and the likely causes are on the device itself: asleep, turned off, logged out, or off Wi-Fi. These
+    are possibilities, not a diagnosis. History under the device shows the gaps. Things to check at the device: is it
+    on and awake (Macs: System Settings > Energy, "Prevent automatic sleeping"); is it on the network; on a Mac the
     helper runs while you are logged in.
 
 permissions:
@@ -77,15 +83,18 @@ mac_privacy:
   title: Mac privacy prompts
   text: |
     macOS protects Downloads, Desktop, Documents, Movies and the Trash with a prompt. Nightlight never reads them from
-    the background, so no dialog pops up on a Mac nobody is watching. To include them in disk checks (and allow
-    emptying the Trash), run `nightlight settings` once at the Mac and click Allow when macOS asks.
+    the background unless you allowed it, so no dialog pops up on a Mac nobody is watching. To include them in disk
+    checks (and allow emptying the Trash), run `nightlight settings` once at the Mac and click Allow when macOS asks;
+    after that the helper measures their sizes in the background too.
 
 what_leaves_the_device:
   title: What leaves the device
   text: |
     Health numbers, container and service names and states, the number of updates waiting, and results of checks you
-    allowed (folder sizes, program names, update names). Never passwords, keys, files, host names or addresses;
-    anything that looks like a secret is hidden on the device before it is sent, and again in the cloud.
+    allowed (folder sizes, program names, update names; recent log lines only for apps you allowed). Never files,
+    host names or addresses. Anything that looks like a password, key or address is hidden on the device before it is
+    sent, and again in the cloud; that hiding is careful but can't catch every possible secret, which is why the
+    helper collects as little as it can in the first place.
 
 memories:
   title: What Nightlight remembers
@@ -105,8 +114,9 @@ checkups_and_cleanups:
 approvals_and_trust:
   title: Approval cards and trust
   text: |
-    Every change on a real device is a card: what it will do, what it touches, how to undo it. Nothing runs until you
-    tap Approve. On the sample home, kinds of jobs you approve often can be allowed to run on their own.
+    Restarts, clean-ups and removals on a real device come as a card (what it will do, what it touches, whether it
+    can be undone) and run only after you approve. Helper updates run when you tap Update, or by themselves if you
+    allowed that. On the sample home, kinds of jobs you approve often can be allowed to run on their own.
 
 sample_home:
   title: The sample home
