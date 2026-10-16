@@ -95,11 +95,15 @@ main() {
   fetch_helper
   if [ -n "$CODE" ]; then
     helper enrol "$API_URL" "$CODE"
+  elif helper status 2>/dev/null | grep -q '^Joined as device'; then
+    say "Nightlight: this device is already on your map; updating the helper."
+    UPDATED=1
   else
     helper pair "$API_URL" --web "$WEB_URL"
   fi
   helper install
   say ""
+  if [ -n "\${UPDATED:-}" ]; then say "Updated. Nightlight keeps running in the background."; return 0; fi
   say "Your device is on its way to your Nightlight map."
   say "To remove it later: curl -fsSL $WEB_URL/uninstall.sh | sh"
 }

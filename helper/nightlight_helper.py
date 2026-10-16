@@ -679,6 +679,7 @@ def install(every=60):
         os.unlink(tmp)
     subprocess.run(_sudo(["systemctl", "daemon-reload"]), check=True)
     subprocess.run(_sudo(["systemctl", "enable", "--now", "nightlight-helper.service"]), check=True)
+    subprocess.run(_sudo(["systemctl", "restart", "nightlight-helper.service"]), check=True)  # picks up an update
     print("Installed. Nightlight now runs in the background, also after restarts.")
 
 
