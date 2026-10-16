@@ -74,7 +74,12 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
           <div><span className="muted">Containers</span>{device.containerCount != null
             ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
           <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}</div>
-          <div><span className="muted">Jobs you allowed here</span>{allowed.length ? `restart ${allowed.join(", ")}` : "none"}</div>
+          <div><span className="muted">You allowed here</span>{[
+            allowed.length && `restart ${allowed.join(", ")}`,
+            device.allowedJobs?.restart_service?.length && `restart services ${device.allowedJobs.restart_service.join(", ")}`,
+            device.allowedJobs?.diagnose?.length && `look into ${device.allowedJobs.diagnose.join(", ")}`,
+            device.allowedJobs?.logs?.length && `share logs of ${device.allowedJobs.logs.join(", ")}`,
+          ].filter(Boolean).join("; ") || "nothing (read-only)"}</div>
         </div>
       )}
       <div className="vitals">

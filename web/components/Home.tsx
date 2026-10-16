@@ -6,6 +6,7 @@ import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useDiscoveries, useEvents, useNow, useTrust, useUserDoc, useWatches }
   from "@/lib/data";
 import FoundNearby from "./FoundNearby";
+import NeedsYou from "./NeedsYou";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
 import WatchedRow from "./WatchedRow";
@@ -113,6 +114,7 @@ export default function Home({ user }: { user: User }) {
                 {notify.on ? "Notifying you" : "Notify me"}</button>)}
             <button onClick={() => chat.current?.ask("Is anything wrong at home?")}>Check-up now</button>
           </div>
+          <NeedsYou actions={actions} trust={trust} devices={devices} onFollowUp={(id) => chat.current?.followUp(id)} />
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}

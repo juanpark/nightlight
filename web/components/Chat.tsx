@@ -4,7 +4,7 @@ import { api, ApiError, stream } from "@/lib/api";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import ApprovalCard from "./ApprovalCard";
 
-export interface ChatHandle { ask: (text: string) => void }
+export interface ChatHandle { ask: (text: string) => void; followUp: (turnId: string) => void }
 
 type Item =
   | { kind: "user"; text: string }
@@ -101,7 +101,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [busy, run, uid]);
 
-    useImperativeHandle(ref, () => ({ ask }), [ask]);
+
 
     // When a slow device answers, its action gets the follow-up turn: open it.
     useEffect(() => {
@@ -115,6 +115,9 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
         }
       }
     }, [actions, run, pendingTick]);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useImperativeHandle(ref, () => ({ ask, followUp: (id: string) => followUp(id) }), [ask]);
 
     const followUp = useCallback((turnId: string) => {
       if (streamed.current.has(turnId)) return;
