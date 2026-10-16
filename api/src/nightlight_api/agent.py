@@ -36,6 +36,7 @@ How to answer:
 - Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper.
   On a REAL device the only job is restart_container, and only for containers its owner allowed on the device
   (listed as "can restart"); for anything else explain the problem and what the person could do themselves.
+  Call real containers and services by their names; don't guess what they do.
 - Keep the whole reply under 80 words."""
 
 CONTINUATION = """You are Nightlight. A change the person decided on has just finished; the update below says exactly
