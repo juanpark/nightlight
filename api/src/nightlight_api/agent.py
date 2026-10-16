@@ -33,8 +33,9 @@ How to answer:
   failed = say it didn't work and that nothing changed.
 - Never claim something was done unless a tool result says status "done".
 - Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
-- Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper and
-  are read-only: explain their problems and what the person could do, but don't propose jobs for them.
+- Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper.
+  On a REAL device the only job is restart_container, and only for containers its owner allowed on the device
+  (listed as "can restart"); for anything else explain the problem and what the person could do themselves.
 - Keep the whole reply under 80 words."""
 
 CONTINUATION = """You are Nightlight. A change the person decided on has just finished; the update below says exactly
@@ -85,7 +86,8 @@ def _device_summary(d: dict) -> dict:
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
             "topProblem": top and top.get("message"), "simulated": d.get("simulated", True),
             "real": d.get("realm") == "real", "lastReport": str(d.get("lastSeen")) if d.get("realm") == "real" else None,
-            "stale": d.get("stale", False), "staleReason": d.get("staleReason")}
+            "stale": d.get("stale", False), "staleReason": d.get("staleReason"),
+            "allowedJobs": d.get("allowedJobs") or {}}
 
 
 def fleet_summary(uid: str, generation: int) -> str:
@@ -102,7 +104,8 @@ def fleet_summary(uid: str, generation: int) -> str:
         if s["real"]:
             why = {"revoked": "its access was revoked", "no_report_yet": "it hasn't reported yet",
                    "overdue": "NOT REPORTING for over 5 minutes"}.get(s["staleReason"])
-            kind = "REAL device, read-only (no jobs can run on it); " + (
+            allowed = ", ".join(s["allowedJobs"].get("restart_container", [])) or "nothing"
+            kind = f"REAL device, can restart: {allowed}; " + (
                 f"{why}, health unknown" if s["stale"] else f"last report {s['lastReport']}")
         lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.")
     text = scrub("\n".join(sorted(lines)))[0]
@@ -128,7 +131,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
         d = real.view(dict(snap.to_dict(), id=device_id))
         services = [dict(s.to_dict(), id=s.id) for s in db.services(ctx.uid, device_id).get()]
         keep = ("id", "name", "purpose", "os", "status", "health", "vitals", "findings", "diskConsumers",
-                "diskGb", "simulated", "version", "realm", "stale", "lastSeen")
+                "diskGb", "simulated", "version", "realm", "stale", "lastSeen", "allowedJobs")
         out = {k: d.get(k) for k in keep}
         out["services"] = [{k: s.get(k) for k in ("id", "name", "status", "version", "latestVersion",
                                                   "updateAvailable", "players", "lastBackupDaysAgo", "findings")
@@ -143,17 +146,20 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _bounded({"events": [{k: e.get(k) for k in ("deviceId", "kind", "severity", "message", "at")}
                                     for e in evs[:10]]}, ctx)
 
-    def _propose(action_type: str, device_id: str) -> dict:
+    def _propose(action_type: str, device_id: str, params: dict | None = None) -> dict:
         try:
             a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, generation=ctx.generation,
-                                action_type=action_type, device_id=device_id, params={},
+                                action_type=action_type, device_id=device_id, params=params or {},
                                 fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
         except ApiError as e:
             if e.code == "stale":
                 raise
             return {"status": "error", "reason": e.code}
-        except ValueError:
-            return {"status": "error", "reason": "not applicable to this device"}
+        except ValueError as e:
+            reason = {"not_allowed_on_device": "the owner hasn't allowed this on the device",
+                      "already_running": "it is already running",
+                      "device_not_reporting": "the device isn't reporting right now"}.get(str(e))
+            return {"status": "error", "reason": reason or "not applicable to this device"}
         ctx.actions.append(a)
         out = {"status": a["status"], "actionId": a["id"], "plan": a["plan"], "dryRun": a["dryRun"],
                "risk": a["riskClass"]}
@@ -202,6 +208,21 @@ def make_tools(ctx: TurnContext, read_only: bool):
         """
         return _propose("update_server", device_id)
 
+    def _restart_container_sync(device_id: str, container: str, tool_context: ToolContext) -> dict:
+        """Propose starting a stopped container again on a REAL device, through the helper on that device.
+
+        Only for containers the owner allowed on the device ("can restart"). Always puts an approval card in front of
+        them; after approval the helper runs it on the device within about a minute.
+
+        Args:
+            device_id: the real device's id from list_fleet.
+            container: the container's name, exactly as get_device lists it.
+        """
+        return _propose("restart_container", device_id, {"container": container})
+
+    async def restart_container(device_id: str, container: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_restart_container_sync, device_id, container, tool_context)
+
     # The model sees async wrappers so blocking Firestore work runs off the event loop (lease renewal and pings keep
     # running). Each wrapper keeps the sync function's name, docstring and parameters for the tool declaration.
     async def list_fleet(tool_context: ToolContext) -> dict:
@@ -222,8 +243,9 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
                                        _update_server_sync)]
+    action_tools.append(restart_container)
     for wrapper, sync in ((list_fleet, _list_fleet_sync), (get_device, _get_device_sync),
-                          (get_recent_events, _get_recent_events_sync)):
+                          (get_recent_events, _get_recent_events_sync), (restart_container, _restart_container_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events]
     return tools if read_only else [*tools, *action_tools]

@@ -143,3 +143,30 @@ def test_bad_acknowledgment_is_not_success(helper, monkeypatch, payload):
     helper._save_config({"api": f"http://127.0.0.1:{srv.server_port}", "token": "t" * 43, "deviceId": "d"})
     monkeypatch.setattr(helper, "facts", lambda: {})
     assert helper.once() == 0  # not counted as delivered; continuous mode will back off and retry
+
+
+def test_jobs_run_only_when_allowed_locally(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    calls, state = [], {"v": "exited"}
+
+    def fake_run(cmd, timeout=20):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "start"]:
+            state["v"] = "running"
+        return state["v"] + "\n" if cmd[1] == "inspect" else ""
+
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    job = {"id": "act_" + "a" * 26, "type": "restart_container", "params": {"container": "demo"}}
+    ok, summary, _ = helper.run_job(job, wait=0)
+    assert not ok and "isn't allowed" in summary and calls == []  # nothing runs until the owner allows it here
+    helper.set_allowed("restart_container", "demo", True)
+    assert helper.facts.__module__ and helper._allowed() == {"restart_container": ["demo"]}
+    for bad in ({**job, "type": "rm_rf"}, {**job, "params": {"container": "other"}}, {**job, "params": "demo"}):
+        assert helper.run_job(bad, wait=0)[0] is False and calls == []
+    ok, summary, st = helper.run_job(job, wait=0)
+    assert ok and st == "running" and ["docker", "start", "demo"] in calls
+    helper.set_allowed("restart_container", "demo", False)
+    assert helper._allowed() == {}
+    with pytest.raises(SystemExit):
+        helper.set_allowed("restart_container", "--privileged", True)

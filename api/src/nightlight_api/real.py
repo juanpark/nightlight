@@ -21,6 +21,11 @@ CODE_TTL = timedelta(minutes=10)
 CODES_PER_HOUR = 10
 HEARTBEAT_MIN_SECONDS = 20
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no look-alikes (0/O, 1/I/L)
+CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+# Jobs a real device can run. The helper has its own copy and runs only these, only on targets its owner allowed on
+# that machine; the server sends a job name and a target, never a command.
+JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"}}
 
 # Plain names for system services people commonly run at home.
 FRIENDLY = {
@@ -165,6 +170,33 @@ def checks(facts: dict) -> list[dict]:
     return out
 
 
+def service_for(params: dict) -> str | None:
+    name = params.get("container")
+    return _doc_id(name) if isinstance(name, str) else None
+
+
+def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
+    """The approval card for a real-device job. ValueError when it doesn't apply, including when the device's owner
+    hasn't allowed this job on this target on the device itself."""
+    if action_type not in JOBS or set(params) != {"container"}:
+        raise ValueError("not_applicable")
+    name = params["container"]
+    if not isinstance(name, str) or not CONTAINER_NAME.fullmatch(name):
+        raise ValueError("bad_target")
+    if name not in (device.get("allowedJobs") or {}).get(action_type, []):
+        raise ValueError("not_allowed_on_device")
+    svc = services.get(_doc_id(name))
+    if not svc or svc.get("kind") != "container":
+        raise ValueError("no_such_container")
+    if svc.get("status") == "ok":
+        raise ValueError("already_running")
+    return {"svcId": _doc_id(name), "plan": f"Start the stopped {name} container again on the {device['name']}.",
+            "dryRun": f"The helper on the device runs \"docker start {name}\" and checks it is still running a few "
+                      f"seconds later. Nothing else is touched.",
+            "rollback": f"Stop {name} again (from the app or with \"docker stop {name}\").",
+            "blastRadius": [device["id"]], "riskClass": JOBS[action_type]["riskClass"]}
+
+
 def heartbeat(token: str, facts: dict) -> dict:
     tref = tokens_ref().document(_sha(token))
     facts, _ = scrub_value(facts)
@@ -196,6 +228,8 @@ def heartbeat(token: str, facts: dict) -> dict:
         dref = db.device(uid, device_id)
         dsnap = dref.get(transaction=tx)
         old = [s.reference for s in db.services(uid, device_id).get(transaction=tx)]
+        approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+            filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()
@@ -205,16 +239,30 @@ def heartbeat(token: str, facts: dict) -> dict:
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
                        "uptime": facts.get("uptimeSec")},
             "findings": findings, "lastSeen": firestore.SERVER_TIMESTAMP, "version": device.get("version", 1) + 1,
-            "helperVersion": facts.get("helperVersion")})
+            "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {}})
         for ref in old:
             if ref.id not in services:
                 tx.delete(ref)
         for svc_id, svc in services.items():
             tx.set(db.services(uid, device_id).document(svc_id), svc)
-        return device_id
+        # Approved jobs are handed over once (at most once: a job claimed here is never handed out again).
+        jobs = []
+        for a in approved:
+            tx.update(a.reference, {"status": "running", "claimedAt": firestore.SERVER_TIMESTAMP})
+            jobs.append({"id": a.id, "type": a.get("type"), "params": a.get("params")})
+        return device_id, jobs
 
-    device_id = db.run_transaction(run)
-    return {"ok": True, "deviceId": device_id, "findings": len(findings)}
+    device_id, jobs = db.run_transaction(run)
+    return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs}
+
+
+def token_owner(tx, token: str) -> tuple[str, str]:
+    """(uid, deviceId) for a live device token, read inside the caller's transaction; 401 otherwise."""
+    snap = tokens_ref().document(_sha(token)).get(transaction=tx)
+    t = snap.to_dict() if snap.exists else None
+    if not t or t.get("revoked"):
+        raise ApiError(401, "invalid_token")
+    return t["uid"], t["deviceId"]
 
 
 STALE_AFTER = timedelta(minutes=5)

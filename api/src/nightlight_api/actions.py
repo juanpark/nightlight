@@ -6,7 +6,8 @@ update, continuation turn and the stored response commit together or not at all.
 
 from google.cloud import firestore
 
-from . import db, sim, trust as trustlib
+from . import db, real, sim, trust as trustlib
+from .redact import scrub
 from .errors import ApiError, conflict, not_found
 from .ids import action_id as make_action_id, continuation_turn_id, proposal_key
 
@@ -72,21 +73,30 @@ def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trus
     else:
         a["status"] = "denied"
     if by == "user":
-        cont = continuation_turn_id(a["id"])
-        verb = {"done": "was approved and completed", "failed": "was approved but failed",
-                "denied": "was declined"}[a["status"]]
-        summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
-        tx.set(db.turns(uid, a["sessionId"]).document(cont), {
-            "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
-            "actionId": a["id"], "input": f"{sim.ACTIONS[a['type']]['label']} on the {device['name']} {verb}.{summary}",
-            "createdAt": _now()})
-        # Lets POST /api/turns/{turnId}/stream find the session that owns this continuation.
-        tx.set(db.user(uid).collection("turnIndex").document(cont),
-               {"sessionId": a["sessionId"], "demoGeneration": a["demoGeneration"]})
-        a["continuationTurnId"] = cont
-        a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": cont}
+        _queue_continuation(tx, uid, a, device["name"])
+        a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": a["continuationTurnId"]}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
     return a
+
+
+def label(action_type: str) -> str:
+    return (sim.ACTIONS.get(action_type) or real.JOBS[action_type])["label"]
+
+
+def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
+    """Queue the follow-up turn that tells the person how a decided job ended."""
+    cont = continuation_turn_id(a["id"])
+    verb = {"done": "was approved and completed", "failed": "was approved but failed",
+            "denied": "was declined"}[a["status"]]
+    summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
+    tx.set(db.turns(uid, a["sessionId"]).document(cont), {
+        "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
+        "actionId": a["id"], "input": f"{label(a['type'])} on the {device_name} {verb}.{summary}",
+        "createdAt": _now()})
+    # Lets POST /api/turns/{turnId}/stream find the session that owns this continuation.
+    tx.set(db.user(uid).collection("turnIndex").document(cont),
+           {"sessionId": a["sessionId"], "demoGeneration": a["demoGeneration"]})
+    a["continuationTurnId"] = cont
 
 
 def _read_context(tx, uid: str, device_id: str, action_type: str):
@@ -104,7 +114,7 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
 
     `fence(tx)` lets the turn engine abort if its lease or attempt is no longer current.
     """
-    if action_type not in sim.ACTIONS:
+    if action_type not in sim.ACTIONS and action_type not in real.JOBS:
         raise ApiError(422, "unknown_action")
 
     @firestore.transactional
@@ -117,8 +127,11 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
+        if (device.get("realm") == "real") != (action_type in real.JOBS):
+            raise ValueError("not_applicable")  # simulated jobs on the sample home, real jobs on real devices only
         if device.get("realm") == "real":
-            raise ValueError("read_only_device")  # real devices only report; jobs run on the simulated home
+            return _propose_real(tx, uid, user, device, services, action_type, params, generation, session_id,
+                                 turn_id)
         # Identity first, from stable inputs only: a retried turn must find its action even when the job has
         # already run and would no longer apply (e.g. an update that is now installed).
         key = proposal_key(generation, turn_id, device_id, sim.service_for(device, action_type), action_type, params)
@@ -139,6 +152,24 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         return action
 
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+
+
+def _propose_real(tx, uid, user, device, services, action_type, params, generation, session_id, turn_id) -> dict:
+    """A real-device job always waits for a tap: no trust level lets it run on its own."""
+    if real.view(device).get("stale"):
+        raise ValueError("device_not_reporting")
+    key = proposal_key(generation, turn_id, device["id"], real.service_for(params), action_type, params)
+    aid = make_action_id(key)
+    existing = db.action(uid, aid).get(transaction=tx)
+    if existing.exists:
+        return dict(existing.to_dict(), id=aid)
+    c = real.card(device, _by_id(services), action_type, params)
+    action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device["id"], "params": params, **c,
+              "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
+              "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
+              "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
+    tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
+    return action
 
 
 def decide(uid: str, action_id_: str, decision: str, note: str | None = None) -> tuple[int, dict]:
@@ -165,6 +196,8 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
             raise conflict("illegal_transition", actionId=action_id_)
         _require_ready(user)
         device = dict(device_snap.to_dict(), id=action["deviceId"]) if device_snap.exists else None
+        if action.get("realm") == "real":
+            return _decide_real(tx, uid, action, device, decision, note)  # no trust ladder for real jobs (yet)
         service = _service_doc(services, action.get("svcId"))
         current_generation = action["demoGeneration"] == user.get("demoGeneration")
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action["type"],
@@ -184,3 +217,54 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
     if status == 409:
         raise conflict(body["code"], actionId=body.get("actionId"))
     return status, body
+
+
+def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str, note: str | None):
+    """Approving a real-device job queues it for that device's helper (it runs there, later); declining ends it.
+
+    A real device reports every minute, so its version can't fence the card; the helper re-checks the target on the
+    device before acting instead."""
+    a = dict(action)
+    a["decision"] = {k: v for k, v in {"by": "user", "decision": decision, "note": note, "at": _now()}.items()
+                     if v is not None}
+    if device is None or device.get("revoked"):
+        tx.update(db.action(uid, a["id"]), {"status": "stale", "finishedAt": _now()})
+        return 409, {"error": "conflict", "code": "stale", "actionId": a["id"]}
+    if decision == "approve":
+        a["status"] = "approved"
+        a["response"] = {"actionId": a["id"], "status": "approved"}
+    else:
+        a["status"] = "denied"
+        a["finishedAt"] = _now()
+        _queue_continuation(tx, uid, a, device["name"])
+        a["response"] = {"actionId": a["id"], "status": "denied", "continuationTurnId": a["continuationTurnId"]}
+    tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
+    return 202, a["response"]
+
+
+def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None) -> dict:
+    """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once."""
+
+    @firestore.transactional
+    def run(tx):
+        uid, device_id = real.token_owner(tx, token)
+        snap = db.action(uid, action_id_).get(transaction=tx)
+        a = dict(snap.to_dict(), id=action_id_) if snap.exists else None
+        if not a or a.get("deviceId") != device_id or a.get("realm") != "real":
+            raise not_found()
+        dsnap = db.device(uid, device_id).get(transaction=tx)
+        if a["status"] in ("done", "failed"):
+            return {"ok": True, "actionId": action_id_, "status": a["status"]}  # a repeated report changes nothing
+        if a["status"] != "running":
+            raise conflict("illegal_transition", actionId=action_id_)
+        text = scrub(summary)[0][:200]
+        a["status"] = "done" if ok else "failed"
+        a["finishedAt"] = _now()
+        a["result"] = {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
+        if ok and a.get("svcId"):
+            tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state}, merge=True)
+        _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
+        tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
+        return {"ok": True, "actionId": action_id_, "status": a["status"]}
+
+    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)

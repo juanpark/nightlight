@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Nightlight helper: reports a device's health to Nightlight. Read-only.
+"""Nightlight helper: reports a device's health to Nightlight, and runs only the jobs you allow on this machine.
 
 It sends only: OS name, CPU architecture, CPU / memory / disk percentages, uptime, Docker containers (name, image
 name and tag without any registry address or path, state, status text), the names of failed system services, and how
 many software updates are waiting. It does not collect host names, IP addresses, logs, files, environment variables or
-passwords, and it never changes anything on the device. It talks only HTTPS to the address you enrolled with.
+passwords. It talks only HTTPS to the address you enrolled with.
+
+By default it never changes anything. You can allow one kind of job, per target, on this machine:
+restarting a stopped Docker container you name. Even then the job runs only after you approve its card in the app,
+and Nightlight sends only the job's name and target, never a command; this helper decides what it runs.
 
 Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # once: trade the one-time code for a device token
   nightlight_helper.py once                                    # send one report
   nightlight_helper.py run [--every SECONDS]                   # keep reporting (default every 60 s)
   nightlight_helper.py show                                    # print what would be sent, without sending
+  nightlight_helper.py allow restart_container <NAME>          # allow restarting this container after approval
+  nightlight_helper.py disallow restart_container <NAME>       # take that back
 
 Python 3.8+, standard library only; uses psutil when it is installed.
 """
@@ -20,6 +26,7 @@ import http.client
 import json
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -30,9 +37,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
+JOB_TYPES = ("restart_container",)
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+ACTION_RE = re.compile(r"^act_[0-9a-f]{26}$")
 
 
 def _run(cmd, timeout=20):
@@ -149,7 +159,56 @@ def facts():
     cpu, mem, up = _cpu_mem_uptime()
     return {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
             "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
-            "failedUnits": _failed_units(), "updatesPending": _updates_pending()}
+            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed()}
+
+
+def _allowed():
+    """What the owner allowed on this machine (from the local config; the server can't change it)."""
+    try:
+        allow = _load().get("allow") or {}
+    except (OSError, ValueError):
+        return {}
+    return {k: [n for n in v if NAME_RE.fullmatch(n)][:20] for k, v in allow.items() if k in JOB_TYPES and v}
+
+
+def set_allowed(kind, name, on):
+    if kind not in JOB_TYPES:
+        sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
+    if not NAME_RE.fullmatch(name):
+        sys.exit("That isn't a valid container name.")
+    cfg = _load()
+    names = set((cfg.get("allow") or {}).get(kind, []))
+    names = names | {name} if on else names - {name}
+    cfg["allow"] = {**(cfg.get("allow") or {}), kind: sorted(names)}
+    _save_config(cfg)
+    print(("Allowed" if on else "No longer allowed") + f": {kind} {name}")
+
+
+def _container_state(name):
+    out = _run(["docker", "inspect", "--format", "{{.State.Status}}", name]).strip()
+    return out[:32] or None
+
+
+def run_job(job, wait=5):
+    """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
+    (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
+    kind, params = job.get("type"), job.get("params")
+    name = params.get("container") if isinstance(params, dict) else None
+    if kind not in JOB_TYPES or not isinstance(name, str) or name not in _allowed().get(kind, []):
+        return False, "This job isn't allowed on this device, so nothing was done.", None
+    if not shutil.which("docker"):
+        return False, "Docker isn't available on this device, so nothing was done.", None
+    state = _container_state(name)
+    if state is None:
+        return False, f"There is no container named {name} here, so nothing was done.", None
+    if state == "running":
+        return True, f"{name} was already running; nothing needed doing.", state
+    _run(["docker", "start", name], timeout=60)
+    time.sleep(wait)
+    state = _container_state(name)
+    if state == "running":
+        return True, f"Started {name}; it was still running {wait} seconds later.", state
+    return False, f"Tried to start {name}, but it is {state or 'not running'}.", state
 
 
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
@@ -243,11 +302,29 @@ def once():
         body = {"error": body.get("error") or "unexpected response"}
     if status == 200:
         print(f"Report sent: {body.get('findings', 0)} finding(s).")
+        jobs = body.get("jobs")
+        for job in jobs if isinstance(jobs, list) else []:
+            if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
+                _do_job(api, cfg["token"], job)
     elif status == 401:
         print("This device's access was revoked or is unknown. Enrol again with a new code.")
     else:
         print(f"Report not sent ({status or 'network error'}): {body.get('code') or body.get('error')}")
     return status
+
+
+def _do_job(api, token, job):
+    try:
+        ok, summary, state = run_job(job)
+    except Exception as e:  # report a crash as a failed job rather than leaving it unfinished
+        ok, summary, state = False, f"The helper hit an error ({type(e).__name__}).", None
+    print(("Job done: " if ok else "Job failed: ") + summary)
+    for attempt in range(3):
+        status, _ = _post(f"{api}/helper/jobs/{job['id']}/result", {"ok": ok, "summary": summary[:200],
+                                                                    "state": state}, {"X-Device-Token": token})
+        if status in (200, 401, 404, 409):
+            return
+        time.sleep(5 * (attempt + 1))
 
 
 def run(every):
@@ -274,6 +351,10 @@ def main():
     e.add_argument("--name", default=platform.system() or "My device")
     sub.add_parser("once")
     sub.add_parser("show")
+    for verb in ("allow", "disallow"):
+        x = sub.add_parser(verb)
+        x.add_argument("kind")
+        x.add_argument("target")
     r = sub.add_parser("run")
     r.add_argument("--every", type=int, default=60)
     a = p.parse_args()
@@ -281,6 +362,8 @@ def main():
         enrol(a.api, a.code, a.name[:40])
     elif a.cmd == "once":
         once()
+    elif a.cmd in ("allow", "disallow"):
+        set_allowed(a.kind, a.target, a.cmd == "allow")
     elif a.cmd == "show":
         print(json.dumps(facts(), indent=2))
     else:

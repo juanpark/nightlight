@@ -246,12 +246,23 @@ class HeartbeatBody(Strict):
     containers: list[Container] = Field(default_factory=list, max_length=50)
     failedUnits: list[str] = Field(default_factory=list, max_length=50)
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
+    # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
+    allowedJobs: dict[Literal["restart_container"], list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def short_units(self):
         if any(len(u) > 128 for u in self.failedUnits):
             raise ValueError("unit names must be at most 128 characters")
+        for targets in self.allowedJobs.values():
+            if len(targets) > 20 or not all(real.CONTAINER_NAME.fullmatch(t) for t in targets):
+                raise ValueError("allowedJobs: at most 20 valid container names per job")
         return self
+
+
+class JobResultBody(Strict):
+    ok: bool
+    summary: str = Field(max_length=200)
+    state: str | None = Field(default=None, max_length=32)
 
 
 @app.post("/api/devices/enrol-code", status_code=201)
@@ -277,3 +288,13 @@ def helper_heartbeat(body: HeartbeatBody, request: Request):
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
     return real.heartbeat(token, body.model_dump())
+
+
+@app.post("/helper/jobs/{action_id}/result")
+def helper_job_result(action_id: str, body: JobResultBody, request: Request):
+    token = request.headers.get("x-device-token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
+        raise ApiError(401, "invalid_token")
+    if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
+        raise not_found()
+    return actions.job_result(token, action_id, body.ok, body.summary, body.state)
