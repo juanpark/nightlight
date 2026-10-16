@@ -14,6 +14,9 @@ const toCell = (d: Device) => ({ col: Math.max(0, Math.round(((d.x ?? 120) - 120
   row: Math.max(0, Math.round(((d.y ?? 80) - 80) / 140)) });
 const fromCell = (col: number, row: number) => ({ x: 120 + col * 100, y: 80 + row * 140 });
 const CARD_W = 180, ROW_H = 150, PAD = 12;
+const MEANING: Record<string, string> = {
+  ok: "All good", warn: "Needs attention soon", crit: "Urgent: needs attention now", offline: "Not reporting right now",
+};
 
 /** Each device gets its wanted cell, or the nearest free one (first come, first served; sample devices first). */
 function place(devices: Device[], cols: number) {
@@ -68,6 +71,13 @@ export default function Board({ devices, selected, onSelect }: {
   }
 
   return (
+    <>
+    <div className="legend small muted" aria-label="Colour key">
+      {(["ok", "warn", "crit", "offline"] as const).map((k) => (
+        <span key={k}><span className={`dot ${k}`} /> {MEANING[k]}</span>))}
+      <span><span className="pill live">Live</span> real device</span>
+      <span><span className="pill">Sample</span> simulated</span>
+    </div>
     <div ref={ref} className="board" aria-label="Your home" style={{ height: rows * ROW_H + 40 }}
       onPointerMove={(e) => drag && setDrag({ ...drag, dx: e.clientX - drag.sx, dy: e.clientY - drag.sy })}
       onPointerUp={(e) => {
@@ -94,12 +104,14 @@ export default function Board({ devices, selected, onSelect }: {
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(d.id); }}
             title="Click for details. Drag to move.">
             <div className="row">
-              <span className={`dot ${d.status}`} />
+              <span className={`dot ${d.status}`} title={MEANING[d.status]} aria-label={MEANING[d.status]} />
               <span className="name">{d.name}</span>
             </div>
             <div className="row small muted" style={{ marginTop: 2 }}>
               {KIND[d.kind ?? ""] ?? d.kind}
-              <span className={`pill ${real ? "live" : ""}`}>{real ? "Live" : "Sample"}</span>
+              <span className={`pill ${real ? "live" : ""}`}
+                title={real ? "A real device, reporting through the Nightlight helper" : "A simulated sample device"}>
+                {real ? "Live" : "Sample"}</span>
             </div>
             <div className="problem">
               {d.status === "offline" ? "Not reporting right now" : top ? top.message : "All good"}
@@ -112,5 +124,6 @@ export default function Board({ devices, selected, onSelect }: {
           one on the map, or switch on the sample home to look around.</p>
       )}
     </div>
+    </>
   );
 }
