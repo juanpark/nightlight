@@ -76,4 +76,7 @@ HOME_PI = {
     "initial_incident": {"deviceId": "pi-1", "kind": "disk_full"},
 }
 
-TEMPLATES = {"home-pi": HOME_PI}
+# A signed-in owner starts with only their own (real) devices; the sample home can be switched on and off.
+EMPTY = {"devices": [], "initial_incident": None}
+
+TEMPLATES = {"home-pi": HOME_PI, "empty": EMPTY}

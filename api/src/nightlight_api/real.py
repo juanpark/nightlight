@@ -352,7 +352,9 @@ def heartbeat(token: str, facts: dict) -> dict:
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
                        "uptime": facts.get("uptimeSec")},
             "findings": findings, "lastSeen": firestore.SERVER_TIMESTAMP, "version": device.get("version", 1) + 1,
-            "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {}})
+            "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {},
+            "updatesPending": facts.get("updatesPending"), "containerCount": len(facts.get("containers") or []),
+            "containersRunning": sum(1 for c in facts.get("containers") or [] if c.get("state") == "running")})
         for ref in old:
             if ref.id not in services:
                 tx.delete(ref)

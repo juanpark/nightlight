@@ -30,13 +30,21 @@ export default function Home({ user }: { user: User }) {
   const chat = useRef<ChatHandle>(null);
   const starting = useRef(false);
 
-  // First visit: create the sample home.
+  // First visit: the one-click demo gets the sample home; a signed-in owner starts with only their own devices.
   useEffect(() => {
     if (me === null && !starting.current) {
       starting.current = true;
-      api("POST", "/api/demo/start", { template: "home-pi" }).catch(() => { starting.current = false; });
+      api("POST", "/api/demo/start", { template: user.isAnonymous ? "home-pi" : "empty" })
+        .catch(() => { starting.current = false; });
     }
-  }, [me]);
+  }, [me, user.isAnonymous]);
+  const sampleOn = me?.template !== "empty";
+  const [switching, setSwitching] = useState(false);
+  async function toggleSample() {
+    setSwitching(true);
+    try { await api("POST", "/api/demo/template", { template: sampleOn ? "empty" : "home-pi" }); }
+    finally { setSwitching(false); }
+  }
 
   const needs = devices.filter((d) => d.status === "crit" || d.status === "warn").length;
   const pending = actions.filter((a) => a.status === "pending").length;
@@ -52,7 +60,10 @@ export default function Home({ user }: { user: User }) {
     <div className="shell">
       <header className="top">
         <div className="brand"><span className="bulb" /> Nightlight</div>
-        <span className="pill">Sample home: simulated</span>
+        {user.isAnonymous
+          ? <span className="pill">Sample home: simulated</span>
+          : <button className="small" disabled={switching || !me} onClick={toggleSample}
+              title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
         <span className="spacer" />
         <button onClick={() => toggle("trust")}>Trust</button>
         <button onClick={() => toggle("activity")}>Activity</button>

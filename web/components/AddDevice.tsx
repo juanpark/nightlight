@@ -22,12 +22,9 @@ function Waiting({ devices, before }: { devices: Device[]; before: Set<string> }
     : <p className="live-status"><span className="dot offline pulse" /> Waiting for your device…</p>;
 }
 
-type Tab = "line" | "code";
-
 export default function AddDevice({ anonymous, onSave, devices }: {
   anonymous: boolean; onSave: () => void; devices: Device[];
 }) {
-  const [tab, setTab] = useState<Tab>("line");
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [before, setBefore] = useState<Set<string> | null>(null);
   const [paired, setPaired] = useState<{ approved: boolean; name: string } | null>(null);
@@ -60,53 +57,49 @@ export default function AddDevice({ anonymous, onSave, devices }: {
           : "Couldn't get a code. Please try again.");
     }
   }
-  const switchTo = (t: Tab) => { setTab(t); setBefore(null); setCode(null); setPaired(null); setErr(""); };
+  const [other, setOther] = useState(false);
 
   return (
     <div className="panel">
-      <h3>Add a real device</h3>
-      <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "line"} className={tab === "line" ? "on" : ""}
-          onClick={() => switchTo("line")}>Paste one line</button>
-        <button role="tab" aria-selected={tab === "code"} className={tab === "code" ? "on" : ""}
-          onClick={() => switchTo("code")}>Your device shows a code</button>
-      </div>
+      <h3>Add one of your devices</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>Works on a Raspberry Pi, a Linux computer or a Mac. Takes about
+        a minute.</p>
+      <ol className="steps-list">
+        <li>
+          <strong>Get your line.</strong>{" "}
+          {!code ? <button className="primary" onClick={getCode}>Get my line</button>
+            : <span className="small muted">(works once, for 10 minutes)</span>}
+          {code && <Copy text={`curl -fsSL ${origin}/install.sh | sh -s -- ${code.code}`} />}
+        </li>
+        <li><strong>Paste it on the device</strong>: open its Terminal (on a Mac: Applications &gt; Utilities &gt;
+          Terminal), paste, press Enter. It may ask for the device&apos;s password once.</li>
+        <li><strong>That&apos;s it.</strong> We&apos;ll show it here the moment it connects.
+          {before && !paired && <Waiting devices={devices} before={before} />}</li>
+      </ol>
 
-      {tab === "line" && (
-        <>
-          <p className="small muted">For Linux, Raspberry Pi and Mac. Open a terminal on the device and paste one line.</p>
-          {!code
-            ? <button className="primary" onClick={getCode}>Get my line</button>
-            : (
-              <>
-                <Copy text={`curl -fsSL ${origin}/install.sh | sh -s -- ${code.code}`} />
-                <p className="small muted">The code in it works once, for 10 minutes. It may ask for your password to
-                  set up the background service.</p>
-                {before && <Waiting devices={devices} before={before} />}
-                <p className="small muted" style={{ marginTop: 10 }}>Remove later:</p>
-                <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
-              </>
-            )}
-        </>
-      )}
-
-      {tab === "code" && (
-        <>
-          <p className="small muted">When the device shows a code like WXYZ-1234, type it here (or scan its QR code with
-            your phone). To make a device show one, run this on it:</p>
-          <Copy text={`curl -fsSL ${origin}/install.sh | sh`} />
+      <button className="linkish small" onClick={() => setOther(!other)}>
+        {other ? "Hide" : "Can't paste on that device? Use a code it shows instead"}</button>
+      {other && (
+        <div style={{ marginTop: 8 }}>
+          <p className="small muted">Run <code>curl -fsSL {origin}/install.sh | sh</code> on the device. It shows a code
+            like WXYZ-1234 (and a link you can open on your phone). Type the code here:</p>
           {!paired
             ? <PairApprove onApprove={snapshot} onDone={setPaired} />
             : paired.approved
               ? (before && <Waiting devices={devices} before={before} />)
               : <p className="small">Okay, that device was turned away. Nothing was added.</p>}
-        </>
+        </div>
       )}
 
-      <p className="small" style={{ marginTop: 12 }}>A small helper on your device reports its health (disk, memory,
-        what is running). It never sends passwords, logs, file contents or network addresses, and it changes nothing
-        unless you allow a job on the device itself and then approve it here.</p>
-      <p className="small soon">Coming later: installers for Mac, Windows, NAS app stores — no terminal needed.</p>
+      <details className="small" style={{ marginTop: 12 }}>
+        <summary>What does the helper do? How do I remove it?</summary>
+        <p>A small helper on your device reports its health (disk, memory, what is running). It never sends passwords,
+          logs, file contents or network addresses, and it changes nothing unless you allow a job on the device itself
+          and then approve it here.</p>
+        <p>To remove it, run this on the device:</p>
+        <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
+        <p className="soon">Coming later: installers for Mac, Windows and NAS app stores, no terminal needed.</p>
+      </details>
       {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
     </div>
   );

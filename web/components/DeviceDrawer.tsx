@@ -1,4 +1,6 @@
 "use client";
+import { useState } from "react";
+import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
 
@@ -12,6 +14,12 @@ function Vital({ label, value }: { label: string; value?: number | null }) {
   );
 }
 
+function uptime(sec?: number | null) {
+  if (!sec) return "–";
+  const d = Math.floor(sec / 86400);
+  return d >= 14 ? `${Math.floor(d / 7)} weeks` : d >= 1 ? `${d} days` : `${Math.max(1, Math.round(sec / 3600))} hours`;
+}
+
 function ago(d?: Date | null) {
   if (!d) return "never";
   const s = Math.round((Date.now() - d.getTime()) / 1000);
@@ -22,20 +30,47 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
   uid: string; device: Device; onAsk: (q: string) => void; onClose: () => void;
 }) {
   const services = useServices(uid, device.id);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(device.name);
+  async function rename() {
+    if (name.trim() && name.trim() !== device.name) {
+      await api("POST", `/api/devices/${device.id}/layout`, { name: name.trim() }).catch(() => {});
+    }
+    setEditing(false);
+  }
   const real = device.realm === "real";
   const allowed = device.allowedJobs?.restart_container ?? [];
   return (
     <div className="panel drawer">
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className={`dot ${device.status}`} />
-        <strong style={{ fontSize: 18 }}>{device.name}</strong>
+        {editing
+          ? <form onSubmit={(e) => { e.preventDefault(); rename(); }} style={{ display: "flex", gap: 6 }}>
+              <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus />
+              <button className="primary">Save</button>
+              <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+            </form>
+          : <strong style={{ fontSize: 18 }}>{device.name}</strong>}
+        {real && !editing && <button className="linkish small" onClick={() => { setName(device.name); setEditing(true); }}>
+          Rename</button>}
         <span className={`pill ${real ? "live" : ""}`}>{real ? "Live device" : "Sample (simulated)"}</span>
         <span style={{ flex: 1 }} />
         <button onClick={onClose}>Close</button>
       </div>
       <p className="muted" style={{ margin: "6px 0" }}>{device.purpose}</p>
-      {real && <p className="small muted">Last report: {ago(device.lastSeen)}{device.os ? ` · ${device.os}` : ""}
-        {allowed.length > 0 && <> · You allowed restarting: {allowed.join(", ")}</>}</p>}
+      {real && (
+        <div className="details small">
+          <div><span className="muted">Last report</span>{ago(device.lastSeen)}</div>
+          <div><span className="muted">Running for</span>{uptime(device.vitals?.uptime)}</div>
+          <div><span className="muted">System</span>{device.os ?? "–"}</div>
+          <div><span className="muted">Chip</span>{device.arch ?? "–"}</div>
+          <div><span className="muted">Updates waiting</span>{device.updatesPending ?? "–"}</div>
+          <div><span className="muted">Containers</span>{device.containerCount != null
+            ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
+          <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}</div>
+          <div><span className="muted">Jobs you allowed here</span>{allowed.length ? `restart ${allowed.join(", ")}` : "none"}</div>
+        </div>
+      )}
       <div className="vitals">
         <Vital label="Disk" value={device.vitals?.diskPct} />
         <Vital label="Memory" value={device.vitals?.mem} />

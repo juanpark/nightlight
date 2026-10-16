@@ -29,7 +29,13 @@ class Strict(BaseModel):
 
 
 class StartBody(Strict):
-    template: Literal["home-pi"] = "home-pi"
+    template: Literal["home-pi", "empty"] = "home-pi"
+
+
+class LayoutBody(Strict):
+    x: int | None = Field(default=None, ge=0, le=2000)
+    y: int | None = Field(default=None, ge=0, le=2000)
+    name: str | None = Field(default=None, min_length=1, max_length=40)
 
 
 class Empty(Strict):
@@ -92,6 +98,31 @@ def health():
 @app.post("/api/demo/start")
 def demo_start(body: StartBody, uid: str = Depends(current_uid)):
     return demo.start(uid, body.template)
+
+
+@app.post("/api/demo/template")
+def demo_template(body: StartBody, uid: str = Depends(current_uid)):
+    return demo.switch(uid, body.template)
+
+
+@app.post("/api/devices/{device_id}/layout")
+def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_uid)):
+    """Move a device on the map, or rename a real one. Position isn't device state: no version change."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    ref = db.device(uid, device_id)
+    snap = ref.get()
+    d = snap.to_dict() if snap.exists else None
+    if not d:
+        raise not_found()
+    update = {k: v for k, v in (("x", body.x), ("y", body.y)) if v is not None}
+    if body.name is not None:
+        if d.get("realm") != "real":
+            raise ApiError(422, "sample_devices_keep_their_names")
+        update["name"] = scrub(body.name)[0]
+    if update:
+        ref.update(update)
+    return {"ok": True, **update}
 
 
 @app.post("/api/demo/reset")

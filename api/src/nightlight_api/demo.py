@@ -127,7 +127,7 @@ def _seed(uid: str, op: str, generation: int, template: str, hook) -> int:
             device.update(version=1, simulated=True, demoGeneration=generation, lastSeen=firestore.SERVER_TIMESTAMP,
                           findings=[])
             device, services = sim.refresh({**device, "id": device_id}, services)
-            if t["initial_incident"]["deviceId"] == device_id:
+            if t["initial_incident"] and t["initial_incident"]["deviceId"] == device_id:
                 device, services, _ = sim.inject(device, services, t["initial_incident"]["kind"])
             device.pop("id")
             tx.set(db.device(uid, device_id), device)
@@ -188,6 +188,15 @@ def start(uid: str, template: str = "home-pi", hook=_no_hook) -> dict:
     op, generation = began
     count = _rebuild(uid, op, generation, template, hook)
     return {"ok": True, "demoGeneration": generation, "devices": count}
+
+
+def switch(uid: str, template: str, hook=_no_hook) -> dict:
+    """Show or hide the sample home (a rebuild under the barrier, like a reset, but memories are kept)."""
+    if template not in TEMPLATES:
+        raise ApiError(422, "unknown_template")
+    op, generation = _begin(uid, template, only_if_missing=False)
+    count = _rebuild(uid, op, generation, template, hook)
+    return {"ok": True, "demoGeneration": generation, "devices": count, "template": template}
 
 
 def reset(uid: str, hook=_no_hook) -> dict:

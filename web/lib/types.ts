@@ -46,6 +46,12 @@ export interface Device {
   revoked?: boolean;
   allowedJobs?: Record<string, string[]>;
   os?: string;
+  arch?: string;
+  helperVersion?: string;
+  updatesPending?: number | null;
+  containerCount?: number;
+  containersRunning?: number;
+  createdAt?: Date | null;
 }
 
 export interface Action {
@@ -92,6 +98,7 @@ export interface EventDoc {
 
 export interface UserDoc {
   demoGeneration: number;
+  template?: "home-pi" | "empty";
   demo?: { state: "ready" | "resetting" };
   trustDefault?: Level;
   isDemo?: boolean;
