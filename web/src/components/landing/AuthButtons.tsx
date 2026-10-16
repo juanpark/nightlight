@@ -4,13 +4,21 @@ import { useState } from "react";
 import { GoogleAuthProvider, signInAnonymously, signInWithPopup } from "firebase/auth";
 import { firebase } from "@/lib/firebase";
 import { Icon } from "./Icon";
-import s from "./Landing.module.css";
+import landing from "./Landing.module.css";
 
 type Kind = "demo" | "google";
 
 // "Try the demo" (anonymous, one click) and "Sign in with Google". Once Firebase
 // reports a user, AppGate swaps the landing page for the app.
-export function AuthButtons({ size = "large", demoOnly = false }: { size?: "large" | "small"; demoOnly?: boolean }) {
+export function AuthButtons({
+  size = "large",
+  demoOnly = false,
+  styles: s = landing,
+}: {
+  size?: "large" | "small";
+  demoOnly?: boolean;
+  styles?: Record<string, string>; // the day hero passes its own
+}) {
   const [busy, setBusy] = useState<Kind | null>(null);
   const [err, setErr] = useState("");
 

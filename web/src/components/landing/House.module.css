@@ -1,4 +1,4 @@
-/* The night scene. Flat fills; the only warm light is the star yellow.
+/* The night scene: bright lit rooms in a dark night.
    State comes from the stage: data-beat (0 hero, 1 notices, 2 explains,
    3 asks, 4 trust) and data-fixed (the clean-up ran). */
 
@@ -11,52 +11,64 @@
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
-.hillFar { fill: #171b2b; }
-.hillNear { fill: #131725; }
-.ground { fill: #0e111b; }
-.tree { fill: #0f121d; stroke: #0f121d; }
-.fog { fill: #20263a; opacity: 0.55; }
+.scene {
+  --ok: #3f8f5c;
+  --warn: #d4870a;
+}
+
+/* Outside: a deep night, so the lit house carries the scene. */
+.hillFar { fill: #0f121c; }
+.hillNear { fill: #0c0f18; }
+.ground { fill: #090b12; }
+.tree { fill: #0a0d15; stroke: #0a0d15; }
+.fog { fill: #1a1f30; opacity: 0.45; }
 .fogA { animation: drift 38s ease-in-out infinite alternate; }
 .fogB { animation: drift 30s ease-in-out -12s infinite alternate-reverse; }
 
-.shell { fill: #0b0e17; }
-.eave { fill: none; stroke: #2a3047; stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
-.chimney { fill: #0b0e17; }
+/* The cut walls and roof: dark warm timber around the bright rooms. */
+.shell { fill: #241c17; }
+.eave { fill: none; stroke: #3d3029; stroke-width: 4; stroke-linejoin: round; stroke-linecap: round; }
+.chimney { fill: #241c17; }
 
-.room { fill: #191e2e; }
-.window { fill: #232a40; }
-.frame { stroke: #0b0e17; stroke-width: 3; fill: none; }
-.winStar { fill: #f3efe6; opacity: 0.8; }
-.furn { fill: #232a3e; }
-.furn2 { fill: #2a3148; }
-.pillow { fill: #353d57; }
-.book { fill: #3a3550; }
-.book2 { fill: #2f4050; }
-.lampArm { fill: none; stroke: #2a3148; stroke-width: 4; stroke-linecap: round; }
-.screen { fill: #12161f; stroke: #2a3148; stroke-width: 3; }
+/* Inside: warm plaster lit from the ceiling, natural materials. */
+.room { fill: url(#nl-wall); }
+.window { fill: #18203a; stroke: #8b6a4a; stroke-width: 2; }
+.frame { stroke: #8b6a4a; stroke-width: 3; fill: none; }
+.winStar { fill: #f3efe6; opacity: 0.9; }
+.furn { fill: #b48f66; }
+.furn2 { fill: #9c7a55; }
+.furn, .furn2, .device, .screen, .stairs { filter: url(#nl-soft); }
+.pillow { fill: #f6efe3; }
+.book { fill: #8e4f3e; }
+.book2 { fill: #4d6f68; }
+.lampArm { fill: none; stroke: #5e4734; stroke-width: 4; stroke-linecap: round; }
+.screen { fill: #22252d; stroke: #5e4734; stroke-width: 3; }
 .grass { fill: #6aa05f; }
 .dirt { fill: #7a5b40; }
-.device { fill: #313951; }
-.vent { stroke: #1f2536; stroke-width: 2.5; stroke-linecap: round; fill: none; }
-.antenna { stroke: #313951; stroke-width: 3; stroke-linecap: round; fill: none; }
-.stairs { fill: #20263a; }
-.pi { fill: #2f6a48; }
-.chip { fill: #1d3a2a; }
-.cable { fill: none; stroke: #3b4460; stroke-width: 2.5; stroke-linecap: round; }
-.camera_ { fill: #313951; }
+.device { fill: #f1e8da; }
+.vent { stroke: #cbb79b; stroke-width: 2.5; stroke-linecap: round; fill: none; }
+.antenna { stroke: #e3d6c2; stroke-width: 3; stroke-linecap: round; fill: none; }
+.stairs { fill: #c29d72; }
+.pi { fill: #3f7d55; }
+.chip { fill: #24452f; }
+.cable { fill: none; stroke: #5e4734; stroke-width: 2.5; stroke-linecap: round; }
+.camera_ { fill: #3a3f4d; }
+
+/* The mascots get matte vinyl light. */
+.round > g > g, .cast > g > g, .still > g > g { filter: url(#nl-vinyl); }
 
 /* Markers */
-.dotOff { fill: #424a63; }
+.dotOff { fill: #bda888; }
 .labelOff,
 .labelOn {
   font-size: 12.5px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-anchor: middle;
   text-transform: uppercase;
 }
-.labelOff { fill: #6f7690; }
-.labelOn { fill: #f3efe6; }
+.labelOff { fill: #8a6f4f; }
+.labelOn { fill: #2a1f15; }
 .dotOn { fill: var(--ok); }
 .dotHalo { fill: var(--ok); opacity: 0.22; }
 
@@ -161,8 +173,8 @@
 [data-beat="4"] .camera { transform: var(--wide-cam); }
 
 @keyframes needs {
-  0%, 100% { opacity: 0.2; transform: scale(1); }
-  50% { opacity: 0.55; transform: scale(1.5); }
+  0%, 100% { opacity: 0.16; transform: scale(0.9); }
+  50% { opacity: 0.38; transform: scale(1.3); }
 }
 .dotHalo { transform-box: fill-box; transform-origin: center; }
 

@@ -116,7 +116,10 @@ function Sky() {
       {stars.map(([x, y, r], i) => (
         <circle key={i} cx={x} cy={y} r={r * 0.16} className={i % 4 === 0 ? s.twinkle : undefined} style={{ animationDelay: `${(i % 7) * 0.9}s` }} />
       ))}
-      <circle className={s.moonHalo} cx="78" cy="13" r="3.4" />
+      <filter id="nl-moonblur" x="-1" y="-1" width="3" height="3">
+        <feGaussianBlur stdDeviation="1.1" />
+      </filter>
+      <circle className={s.moonHalo} cx="78" cy="13" r="3.6" filter="url(#nl-moonblur)" />
       <circle className={s.moon} cx="78" cy="13" r="1.9" />
       <circle className={s.moonShade} cx="78.8" cy="12.5" r="1.6" />
     </svg>

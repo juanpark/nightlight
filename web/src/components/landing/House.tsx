@@ -4,9 +4,11 @@ import { MascotPose } from "../mascot/MascotPose";
 import type { PoseName } from "../mascot/poses";
 import s from "./House.module.css";
 
-// The sample home as a cutaway at night: attic, two floors and a garage.
-// Flat fills only. Devices sit in the rooms; each has an unlit and a lit layer
-// (warm pool, status light, bright label) that the stage switches with CSS.
+// The sample home as a cutaway at night: attic, two floors and a garage, its
+// rooms lit warm against a dark night. Soft light and shadow give the rooms
+// volume; the mascots get the same matte vinyl light as SculptedMascot.
+// Devices sit in the rooms; each has an unlit and a lit layer (light pool,
+// status light, label) that the stage switches with CSS.
 
 export type DeviceId = "pi" | "pc" | "nas" | "mac" | "router" | "cam";
 
@@ -88,8 +90,11 @@ function Room({ id, d, children }: { id: string; d: string; children?: ReactNode
       </clipPath>
       <path d={d} className={s.room} />
       <g clipPath={`url(#nl-room-${id})`}>
+        <path d={d} fill="url(#nl-ceiling)" />
         {children}
         {pools(id)}
+        {/* Shade gathering in the corners and along the walls. */}
+        <path d={d} fill="none" stroke="#6b4a2c" strokeWidth="26" opacity="0.32" filter="url(#nl-ao)" />
       </g>
     </g>
   );
@@ -111,10 +116,48 @@ export function House({ viewBox }: { viewBox: string }) {
     >
       <defs>
         <radialGradient id="nl-pool">
-          <stop offset="0" stopColor="#fdd83a" stopOpacity="0.3" />
-          <stop offset="0.5" stopColor="#fdd83a" stopOpacity="0.09" />
-          <stop offset="1" stopColor="#fdd83a" stopOpacity="0" />
+          <stop offset="0" stopColor="#fff4cf" stopOpacity="0.75" />
+          <stop offset="0.5" stopColor="#ffe9a8" stopOpacity="0.22" />
+          <stop offset="1" stopColor="#ffe9a8" stopOpacity="0" />
         </radialGradient>
+        <linearGradient id="nl-wall" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#f2e1c2" />
+          <stop offset="0.7" stopColor="#e6cfaa" />
+          <stop offset="1" stopColor="#d4b78d" />
+        </linearGradient>
+        <radialGradient id="nl-ceiling" cx="0.5" cy="0" r="0.75">
+          <stop offset="0" stopColor="#fff6dc" stopOpacity="0.85" />
+          <stop offset="0.6" stopColor="#fff6dc" stopOpacity="0.15" />
+          <stop offset="1" stopColor="#fff6dc" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient id="nl-spill" cx="0.5" cy="0" r="0.5">
+          <stop offset="0" stopColor="#f7c977" stopOpacity="0.32" />
+          <stop offset="1" stopColor="#f7c977" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient id="nl-glow">
+          <stop offset="0" stopColor="#f7c977" stopOpacity="0.16" />
+          <stop offset="1" stopColor="#f7c977" stopOpacity="0" />
+        </radialGradient>
+        <filter id="nl-ao" x="-10%" y="-10%" width="120%" height="120%">
+          <feGaussianBlur stdDeviation="9" />
+        </filter>
+        <filter id="nl-soft" x="-30%" y="-30%" width="160%" height="170%">
+          <feDropShadow dx="2" dy="3" stdDeviation="2.6" floodColor="#4a3018" floodOpacity="0.3" />
+        </filter>
+        {/* Matte vinyl light on the mascots, as in SculptedMascot. */}
+        <filter id="nl-vinyl" x="-10%" y="-10%" width="120%" height="120%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="h" />
+          <feDiffuseLighting in="h" surfaceScale="6" diffuseConstant="1.15" lightingColor="#fff" result="d">
+            <feDistantLight azimuth="225" elevation="50" />
+          </feDiffuseLighting>
+          <feSpecularLighting in="h" surfaceScale="6" specularConstant="0.5" specularExponent="12" lightingColor="#fff1d6" result="sp">
+            <feDistantLight azimuth="222" elevation="42" />
+          </feSpecularLighting>
+          <feComposite in="d" in2="SourceGraphic" operator="arithmetic" k1="1.12" result="lit" />
+          <feComposite in="sp" in2="SourceAlpha" operator="in" result="sheen" />
+          <feComposite in="lit" in2="sheen" operator="arithmetic" k2="1" k3="0.35" result="out" />
+          <feComposite in="out" in2="SourceAlpha" operator="in" />
+        </filter>
       </defs>
 
       <g className={s.camera}>
@@ -130,6 +173,8 @@ export function House({ viewBox }: { viewBox: string }) {
         />
         <ellipse className={`${s.fog} ${s.fogB}`} cx="1180" cy="660" rx="520" ry="26" />
         <rect className={s.ground} x="-2400" y="700" width="5800" height="400" />
+        <ellipse cx="520" cy="430" rx="720" ry="420" fill="url(#nl-glow)" />
+        <ellipse cx="530" cy="700" rx="560" ry="90" fill="url(#nl-spill)" />
         <g className={s.tree}>
           <path d="M-60 700V610" strokeWidth="10" />
           <circle cx="-60" cy="590" r="46" />
