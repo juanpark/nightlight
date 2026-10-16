@@ -1,3 +1,8 @@
+# Upload list for `gcloud run deploy --source web`. Without this file gcloud would reuse .gitignore and leave out
+# public/nightlight_helper.py, which is copied in before deploy and must ship.
+.gcloudignore
 node_modules/
 .next/
+out/
 .env*
+*.tsbuildinfo
