@@ -1175,6 +1175,7 @@ def main():
     sub.add_parser("uninstall")
     sub.add_parser("status")
     sub.add_parser("settings")
+    sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
     dsc.add_argument("--yes", action="store_true", help="send everything found without asking")
     sub.add_parser("once")
@@ -1198,6 +1199,11 @@ def main():
         status()
     elif a.cmd == "settings":
         settings()
+    elif a.cmd == "joined":
+        try:
+            sys.exit(0 if _load().get("token") else 1)
+        except (OSError, ValueError):
+            sys.exit(1)
     elif a.cmd == "discover":
         discover(a.yes)
     elif a.cmd == "once":

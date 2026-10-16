@@ -95,7 +95,7 @@ main() {
   fetch_helper
   if [ -n "$CODE" ]; then
     helper enrol "$API_URL" "$CODE"
-  elif helper status 2>/dev/null | grep -q '^Joined as device'; then
+  elif helper joined 2>/dev/null; then
     say "Nightlight: this device is already on your map; updating the helper."
     UPDATED=1
   else

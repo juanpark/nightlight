@@ -533,3 +533,13 @@ def test_install_without_a_terminal_chooses_strict(helper, monkeypatch, tmp_path
     monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
     helper.install()
     assert helper._load()["manage"] == "strict"
+
+
+def test_joined_check_used_by_the_installer(helper, monkeypatch):
+    monkeypatch.setattr(helper.sys, "argv", ["h", "joined"])
+    with pytest.raises(SystemExit) as no:
+        helper.main()
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    with pytest.raises(SystemExit) as yes:
+        helper.main()
+    assert no.value.code == 1 and yes.value.code == 0
