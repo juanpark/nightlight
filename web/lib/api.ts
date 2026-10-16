@@ -17,7 +17,9 @@ async function headers() {
 
 export async function api<T = Record<string, unknown>>(method: string, path: string, body?: unknown): Promise<T> {
   const { config } = await firebase();
-  const r = await fetch(config.apiUrl + path, { method, headers: await headers(), body: JSON.stringify(body ?? {}) });
+  const r = await fetch(config.apiUrl + path, {
+    method, headers: await headers(), body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
+  });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new ApiError(r.status, data.code ?? "error", data);
   return data as T;

@@ -11,8 +11,9 @@ import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
 import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
+import MemoryPanel from "./MemoryPanel";
 
-type Panel = "none" | "trust" | "activity" | "demo" | "add";
+type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory";
 
 export default function Home({ user }: { user: User }) {
   const uid = user.uid;
@@ -55,6 +56,7 @@ export default function Home({ user }: { user: User }) {
         <span className="spacer" />
         <button onClick={() => toggle("trust")}>Trust</button>
         <button onClick={() => toggle("activity")}>Activity</button>
+        <button onClick={() => toggle("memory")}>Memory</button>
         <button onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("demo")}>Demo tools</button>
         {user.isAnonymous
@@ -73,6 +75,7 @@ export default function Home({ user }: { user: User }) {
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
+          {panel === "memory" && <MemoryPanel />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} />}
           <Board devices={devices} selected={selected} onSelect={setSelected} />
           {selected && devices.find((d) => d.id === selected) && (
