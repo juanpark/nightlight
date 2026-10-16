@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PROJECT=${PROJECT:-nightlight-aibc}
 REGION=${REGION:-asia-northeast3}
-WEB_ORIGINS=${WEB_ORIGINS:-http://localhost:3000}
+WEB_ORIGINS=${WEB_ORIGINS:-http://localhost:3000,https://nightlight-web-1032111130355.asia-northeast3.run.app}
 ./scripts/secret_scan.sh
 gcloud run deploy nightlight-api --source api --project "$PROJECT" --region "$REGION" \
   --service-account "api-runtime@${PROJECT}.iam.gserviceaccount.com" \

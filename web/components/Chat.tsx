@@ -1,0 +1,131 @@
+"use client";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { api, ApiError, stream } from "@/lib/api";
+import type { Action, Device, StreamEvent } from "@/lib/types";
+import ApprovalCard from "./ApprovalCard";
+
+export interface ChatHandle { ask: (text: string) => void }
+
+type Item =
+  | { kind: "user"; text: string }
+  | { kind: "agent"; text: string; steps: string[]; cards: string[]; error?: string; busy: boolean };
+
+const SUGGESTIONS = ["Is anything wrong at home?", "My kids say Minecraft is laggy tonight. Can you help?",
+  "When was the Minecraft world last backed up?"];
+
+function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[]) {
+  const id = (e.args?.device_id as string) ?? "";
+  const name = devices.find((d) => d.id === id)?.name ?? "the device";
+  return ({
+    list_fleet: "Looking over your home…", get_device: `Checking the ${name}…`,
+    get_recent_events: "Reading what happened recently…", restart_container: `Preparing a fix for the ${name}…`,
+  } as Record<string, string>)[e.name] ?? `Preparing a fix for the ${name}…`;
+}
+
+const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: Device[]; disabled: boolean }>(
+  function Chat({ uid, actions, devices, disabled }, ref) {
+    const [items, setItems] = useState<Item[]>([]);
+    const [text, setText] = useState("");
+    const [busy, setBusy] = useState(false);
+    const log = useRef<HTMLDivElement>(null);
+    const streamed = useRef(new Set<string>());
+    const devicesRef = useRef(devices);
+    devicesRef.current = devices;
+
+    useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" }); }, [items]);
+
+    const update = (fn: (a: Extract<Item, { kind: "agent" }>) => void) =>
+      setItems((cur) => {
+        const next = [...cur];
+        const last = next[next.length - 1];
+        if (last?.kind === "agent") {
+          const copy = { ...last, steps: [...last.steps], cards: [...last.cards] };
+          fn(copy);
+          next[next.length - 1] = copy;
+        }
+        return next;
+      });
+
+    const run = useCallback(async (path: string, body: unknown) => {
+      setItems((cur) => [...cur, { kind: "agent", text: "", steps: [], cards: [], busy: true }]);
+      try {
+        await stream(path, body, (e) => update((a) => {
+          if (e.type === "text") a.text += e.delta;
+          else if (e.type === "tool_call") a.steps.push(step(e, devicesRef.current));
+          else if (e.type === "approval_request" && !a.cards.includes(e.actionId)) a.cards.push(e.actionId);
+          else if (e.type === "error") a.error = e.message || e.code;
+        }));
+      } catch (e) {
+        update((a) => { a.error = e instanceof ApiError ? e.code : "connection problem"; });
+      } finally {
+        update((a) => { a.busy = false; });
+      }
+    }, []);
+
+    async function session(): Promise<string> {
+      const key = `nl_session_${uid}`;
+      let sid = null;
+      try { sid = localStorage.getItem(key); } catch { /* private mode */ }
+      if (sid) return sid;
+      const r = await api<{ sessionId: string }>("POST", "/api/chat/sessions", {});
+      try { localStorage.setItem(key, r.sessionId); } catch { /* private mode */ }
+      return r.sessionId;
+    }
+
+    const ask = useCallback(async (q: string) => {
+      if (!q.trim() || busy) return;
+      setBusy(true);
+      setText("");
+      setItems((cur) => [...cur, { kind: "user", text: q }]);
+      try {
+        const sid = await session();
+        await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID() });
+      } finally {
+        setBusy(false);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [busy, run, uid]);
+
+    useImperativeHandle(ref, () => ({ ask }), [ask]);
+
+    const followUp = useCallback((turnId: string) => {
+      if (streamed.current.has(turnId)) return;
+      streamed.current.add(turnId);
+      run(`/api/turns/${turnId}/stream`, {});
+    }, [run]);
+
+    return (
+      <>
+        <div className="chat-log" ref={log}>
+          {items.length === 0 && (
+            <div className="muted small">Ask Nightlight about your home. It explains in plain words and asks before it
+              changes anything.</div>
+          )}
+          {items.map((it, i) => it.kind === "user"
+            ? <div key={i} className="bubble user">{it.text}</div>
+            : (
+              <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {it.steps.length > 0 && <div className="steps">{it.steps.map((s, j) => <span key={j}>{s}</span>)}</div>}
+                {(it.text || it.busy) && <div className="bubble agent">{it.text || "…"}</div>}
+                {it.cards.map((id) => {
+                  const a = actions.find((x) => x.id === id);
+                  return <ApprovalCard key={id} action={a} device={devices.find((d) => d.id === a?.deviceId)}
+                    onFollowUp={followUp} />;
+                })}
+                {it.error && <div className="small" style={{ color: "var(--crit)" }}>Problem: {it.error}</div>}
+              </div>
+            ))}
+        </div>
+        <div className="suggest">
+          {SUGGESTIONS.map((s) => <button key={s} disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>)}
+        </div>
+        <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
+            maxLength={1000} disabled={disabled} />
+          <button className="primary" disabled={busy || disabled || !text.trim()}>Send</button>
+        </form>
+      </>
+    );
+  });
+
+export default Chat;
