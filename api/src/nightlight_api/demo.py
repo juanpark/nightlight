@@ -98,7 +98,9 @@ def _delete_older(uid: str, op: str, generation: int, refs: list, hook) -> None:
 
 
 def _stale_pending(uid: str, op: str, generation: int, hook) -> None:
-    refs = [s.reference for s in db.actions(uid).where(filter=FieldFilter("status", "==", "pending")).get()]
+    """Withdraw undecided cards, and real-device jobs approved but not yet handed to the device. A job already on
+    the device (running) is left alone: its result is still recorded when the device reports."""
+    refs = [s.reference for s in db.actions(uid).where(filter=FieldFilter("status", "in", ["pending", "approved"])).get()]
     for chunk in _chunks(refs, settings.reset_batch_size):
         hook("batch")
 
@@ -106,7 +108,7 @@ def _stale_pending(uid: str, op: str, generation: int, hook) -> None:
             snaps = [r.get(transaction=tx) for r in chunk]
             for r, s in zip(chunk, snaps, strict=True):
                 d = s.to_dict() if s.exists else None
-                if d and d.get("status") == "pending" and d.get("demoGeneration", 0) < generation:
+                if d and d.get("status") in ("pending", "approved") and d.get("demoGeneration", 0) < generation:
                     tx.update(r, {"status": "stale", "finishedAt": firestore.SERVER_TIMESTAMP})
 
         _fenced(uid, op, generation, work)

@@ -275,7 +275,7 @@ class HeartbeatBody(Strict):
 class JobResultBody(Strict):
     ok: bool
     summary: str = Field(max_length=200)
-    state: str | None = Field(default=None, max_length=32)
+    state: Literal["created", "restarting", "running", "removing", "paused", "exited", "dead"] | None = None
 
 
 @app.post("/api/devices/enrol-code", status_code=201)

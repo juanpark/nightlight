@@ -43,6 +43,7 @@ CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container",)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 ACTION_RE = re.compile(r"^act_[0-9a-f]{26}$")
+STATES = ("created", "restarting", "running", "removing", "paused", "exited", "dead")  # Docker's own words
 
 
 def _run(cmd, timeout=20):
@@ -320,8 +321,9 @@ def _do_job(api, token, job):
         ok, summary, state = False, f"The helper hit an error ({type(e).__name__}).", None
     print(("Job done: " if ok else "Job failed: ") + summary)
     for attempt in range(3):
-        status, _ = _post(f"{api}/helper/jobs/{job['id']}/result", {"ok": ok, "summary": summary[:200],
-                                                                    "state": state}, {"X-Device-Token": token})
+        status, _ = _post(f"{api}/helper/jobs/{job['id']}/result",
+                          {"ok": ok, "summary": summary[:200], "state": state if state in STATES else None},
+                          {"X-Device-Token": token})
         if status in (200, 401, 404, 409):
             return
         time.sleep(5 * (attempt + 1))

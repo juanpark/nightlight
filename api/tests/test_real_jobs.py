@@ -121,3 +121,76 @@ def test_every_action_tool_raises_an_approval_card_event():
     names = {t.__name__ for t in agentlib.make_tools(ctx, read_only=False)}
     read = {t.__name__ for t in agentlib.make_tools(ctx, read_only=True)}
     assert names - read == turns.ACTION_TOOLS
+
+
+def _deliver(client, dev):
+    _again(dev["token"])
+    return beat(client, dev["token"], ALLOW).json()["jobs"]
+
+
+def test_reset_withdraws_jobs_not_yet_on_the_device(client, started):  # review 6 #1
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    assert client.post("/api/demo/reset", json={}).status_code == 200
+    assert _action(started, a["id"])["status"] == "stale"
+    assert _deliver(client, dev) == []
+
+
+def test_result_after_reset_is_recorded_without_a_dead_follow_up(client, started):  # review 6 #1
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    assert len(_deliver(client, dev)) == 1
+    client.post("/api/demo/reset", json={})
+    assert _action(started, a["id"])["status"] == "running"  # already on the device: left alone
+    r = client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "Started.", "state": "running"},
+                    headers={"X-Device-Token": dev["token"]})
+    done = _action(started, a["id"])
+    assert r.status_code == 200 and done["status"] == "done" and done["followUp"] == "skipped_after_reset"
+    assert "continuationTurnId" not in done
+
+
+def test_no_jobs_handed_out_or_follow_ups_written_while_resetting(client, started):  # review 6 #1
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    db.user(started).update({"demo.state": "resetting"})
+    assert _deliver(client, dev) == []
+    db.user(started).update({"demo.state": "ready"})
+    assert len(_deliver(client, dev)) == 1
+    db.user(started).update({"demo.state": "resetting"})
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": False, "summary": "no"},
+                headers={"X-Device-Token": dev["token"]})
+    assert _action(started, a["id"])["followUp"] == "skipped_after_reset"
+
+
+def test_existing_proposal_is_recovered_even_when_the_device_went_quiet(client, started):  # review 6 #2
+    from datetime import datetime, timedelta, timezone
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"], turn="turn_rec")
+    db.device(started, dev["deviceId"]).update({"lastSeen": datetime.now(timezone.utc) - timedelta(minutes=10)})
+    assert _propose(started, dev["deviceId"], turn="turn_rec")["id"] == a["id"]
+    with pytest.raises(ValueError, match="device_not_reporting"):
+        _propose(started, dev["deviceId"], turn="turn_new")
+
+
+def test_result_state_is_a_known_word_and_summary_is_scrubbed(client, started):  # review 6 #3
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    _deliver(client, dev)
+    h = {"X-Device-Token": dev["token"]}
+    bad = client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "x", "state": "password=hunter2"},
+                      headers=h)
+    assert bad.status_code == 422
+    fake = "token=" + "abcd1234efgh5678"  # a made-up value, split so secret scanners don't flag the test
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": f"{fake} ok", "state": "running"},
+                headers=h)
+    done = _action(started, a["id"])
+    assert "abcd1234efgh5678" not in done["result"]["summary"] and done["result"]["after"]["state"] == "running"

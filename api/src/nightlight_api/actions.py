@@ -156,13 +156,13 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
 
 def _propose_real(tx, uid, user, device, services, action_type, params, generation, session_id, turn_id) -> dict:
     """A real-device job always waits for a tap: no trust level lets it run on its own."""
-    if real.view(device).get("stale"):
-        raise ValueError("device_not_reporting")
     key = proposal_key(generation, turn_id, device["id"], real.service_for(params), action_type, params)
     aid = make_action_id(key)
     existing = db.action(uid, aid).get(transaction=tx)
     if existing.exists:
-        return dict(existing.to_dict(), id=aid)
+        return dict(existing.to_dict(), id=aid)  # recovery first: identity never depends on current state
+    if real.view(device).get("stale"):
+        raise ValueError("device_not_reporting")
     c = real.card(device, _by_id(services), action_type, params)
     action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device["id"], "params": params, **c,
               "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
@@ -248,6 +248,7 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
     @firestore.transactional
     def run(tx):
         uid, device_id = real.token_owner(tx, token)
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
         snap = db.action(uid, action_id_).get(transaction=tx)
         a = dict(snap.to_dict(), id=action_id_) if snap.exists else None
         if not a or a.get("deviceId") != device_id or a.get("realm") != "real":
@@ -263,7 +264,12 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         a["result"] = {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
         if ok and a.get("svcId"):
             tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state}, merge=True)
-        _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
+        # What happened on the device is always recorded. The chat follow-up only goes to a chat that still exists:
+        # not while a reset runs, and not into a generation a reset has replaced.
+        if user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration"):
+            _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
+        else:
+            a["followUp"] = "skipped_after_reset"
         tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
         return {"ok": True, "actionId": action_id_, "status": a["status"]}
 

@@ -49,19 +49,22 @@ Sample questions that work:
 The demo panel can trigger incidents: disk full, a failing job, a lagging game server, an overdue backup, an
 available update.
 
-## Real devices (read-only helper)
+## Real devices (the helper)
 
 A small Python script ([`helper/nightlight_helper.py`](helper/nightlight_helper.py), standard library, psutil if
 present) joins your home with a one-time code made in the app and then reports health facts every minute: disk,
 memory, CPU, uptime, stopped system services, containers (name, image name and tag, state), pending updates. It never
 sends hostnames, IP addresses, logs or credentials, talks HTTPS only, and keeps its device token in an owner-only
-file. A device that hasn't reported for 5 minutes is shown as offline with unknown health. Tested on a Raspberry Pi
+file. By default it changes nothing. The owner can allow one kind of job **on the device itself**: restarting a
+stopped container they name. Even then it runs only after a tap on the approval card; Nightlight sends a job name and
+target, never a command, and the helper decides what it runs. A device that hasn't reported for 5 minutes is shown as offline with unknown health. Tested on a Raspberry Pi
 (Python 3.9).
 
 ```bash
 python3 nightlight_helper.py show                      # preview exactly what would be sent
 python3 nightlight_helper.py enrol <API_URL> <CODE>    # join with a one-time code (valid 10 minutes, single use)
 python3 nightlight_helper.py run                       # keep reporting
+python3 nightlight_helper.py allow restart_container <NAME>   # optional: allow restarting this container
 ```
 
 ## Architecture
@@ -132,7 +135,7 @@ The API contract for the web app is in [`docs/API.md`](docs/API.md); sample data
 
 ## Known limits
 
-- Real devices are **read-only**: the helper reports health facts and Nightlight explains them, but jobs run only on
-  the simulated home.
+- On real devices the only job is restarting a container the owner allowed on the device; everything else is
+  explained, not changed.
 - Answers are kept short on purpose; very long conversations are trimmed or refused rather than cut off silently.
 - The approval card's "undo" is simulated in the demo.

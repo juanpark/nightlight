@@ -230,6 +230,8 @@ def heartbeat(token: str, facts: dict) -> dict:
         old = [s.reference for s in db.services(uid, device_id).get(transaction=tx)]
         approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
             filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
+        ready = user.get("demo", {}).get("state") == "ready"
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()
@@ -248,6 +250,8 @@ def heartbeat(token: str, facts: dict) -> dict:
         # Approved jobs are handed over once (at most once: a job claimed here is never handed out again).
         jobs = []
         for a in approved:
+            if not ready or a.get("demoGeneration") != user.get("demoGeneration"):
+                continue  # a reset is withdrawing it (or has): never hand it out
             tx.update(a.reference, {"status": "running", "claimedAt": firestore.SERVER_TIMESTAMP})
             jobs.append({"id": a.id, "type": a.get("type"), "params": a.get("params")})
         return device_id, jobs

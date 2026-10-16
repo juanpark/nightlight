@@ -26,7 +26,7 @@ fields. Example data for every shape is in [`contracts/mocks/`](../contracts/moc
 | `users/{uid}/devices/{deviceId}` | name, kind, `purpose` (plain words), `status` (`ok`/`warn`/`crit`/`offline`), `health` (`verified`/`unknown`), `vitals`, `version`, `simulated`, map position `x`,`y` | `phases/<phase>/devices.json` |
 | `…/devices/{deviceId}/services/{svcId}` | name, status, version, `updateAvailable`, `findings[]` (plain message + evidence) | nested under each device in `devices.json` for convenience |
 | `users/{uid}/events/{eventId}` | what happened, when, how serious | `phases/<phase>/events.json` |
-| `users/{uid}/actions/{actionId}` | approval cards: `plan`, `dryRun`, `blastRadius`, `rollback`, `status`, `decision`, `result` | `phases/<phase>/actions.json` |
+| `users/{uid}/actions/{actionId}` | approval cards: `plan`, `dryRun`, `blastRadius`, `rollback`, `status`, `decision`, `result`, `realm` (`sim`/`real`), `continuationTurnId` | `phases/<phase>/actions.json` |
 | `users/{uid}/trust/{realm}:{actionType}` | trust level per kind of job, `pinned`, `successes`, promotion `offer` | `phases/<phase>/trust.json` |
 | `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status | `phases/<phase>/sessions.json` |
 
@@ -46,7 +46,7 @@ current.
 | `POST /api/chat/sessions` | `{}` | `201 {sessionId}` |
 | `POST /api/chat/sessions/{sid}/messages` | `{"text":"…","clientRequestId":"<uuid v4>"}` (text ≤ 2 KB) | `200` stream; same `clientRequestId` → the same turn (a finished turn replays); same id with different text → `409 request_mismatch`; `409 turn_in_progress` |
 | `POST /api/turns/{turnId}/stream` | `{}` | `200` stream: runs a queued turn, retries a turn whose lease expired, or replays a finished one; `409 turn_in_progress` while it's live |
-| `POST /api/actions/{id}/decide` | `{"decision":"approve"}` or `{"decision":"deny","note":"…"}` | `202 {actionId, status, continuationTurnId}`; retry → `200` same body; `409 decision_conflict` / `stale` / `illegal_transition` |
+| `POST /api/actions/{id}/decide` | `{"decision":"approve"}` or `{"decision":"deny","note":"…"}` | `202 {actionId, status, continuationTurnId}`; for an approved **real-device** job `202 {actionId, status:"approved"}` with no continuation yet (see Real devices); retry → `200` same body; `409 decision_conflict` / `stale` / `illegal_transition` |
 | `PUT /api/trust/{actionType}` | `{"level":"auto","deviceId":null,"svcId":null,"pinned":true}` | `200` trust doc |
 | `POST /api/trust/{actionType}/promotion` | `{"accept":true,"offerId":"…"}` | `200` trust doc; `409 offer_obsolete` |
 | `GET /api/me/memories` | | `200 {enabled, memories:[{id, fact, updatedAt}]}`, newest first, at most 50 |
@@ -82,17 +82,19 @@ When trust allows a job to run automatically, there is no card and no follow-up 
 finished, `done` or `failed`, with `decision.by = "auto"`, and the agent explains the outcome in the same reply. A
 failed automatic job lowers its trust level by one step.
 
-## Real devices (read-only helper)
+## Real devices (the helper)
 
 | Method and path | Auth | Body | Response |
 |---|---|---|---|
 | `POST /api/devices/enrol-code` | Firebase token | `{}` | `201 {code: "ABCD-EFGH", expiresAt}`: one-time, 10 minutes, at most 10 per hour |
 | `POST /helper/enrol` | the one-time code | `{"code":"ABCD-EFGH","name":"My Pi"}` | `201 {deviceId, token}`: the token is shown only here and kept by the helper; `401 invalid_code` if unknown, used or expired |
-| `POST /helper/heartbeat` | header `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
+| `POST /helper/heartbeat` | header `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}]}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
+| `POST /helper/jobs/{actionId}/result` | header `X-Device-Token` | `{"ok":true,"summary":"…","state":"running"}` (`state`: one of Docker's states or null) | `200 {ok, actionId, status}`; a repeated report changes nothing; `409` before the job was handed to this device; `404` for any other device |
 | `POST /api/devices/{deviceId}/revoke` | Firebase token | `{}` | `200 {ok, deviceId}`: the helper's token stops working |
 
 Heartbeat facts (anything else is rejected): `helperVersion`, `os`, `arch`, `cpuPct`, `memPct`, `diskPct`,
-`uptimeSec`, `containers[] {name, image, state, status}`, `failedUnits[]`, `updatesPending`. The helper reduces
+`uptimeSec`, `containers[] {name, image, state, status}`, `failedUnits[]`, `updatesPending`, `allowedJobs`
+(`{"restart_container": ["name", …]}`: what the owner allowed **on the device**, at most 20 names). The helper reduces
 `image` to the image's own name and tag (no registry host, port, path or digest) and doesn't collect host names, IP
 addresses, logs, environment variables or credentials; the server also scrubs every value. Free-text values such as
 container names come from the device and are shown as reported.
@@ -102,8 +104,27 @@ A real device that hasn't reported for **5 minutes** (or was revoked) is present
 HTTPS to the enrolled address, never follows redirects with its token, stores the token owner-only (0600), and
 keeps retrying with growing waits when the network drops.
 
-Real devices have `realm: "real"` and `simulated: false`; they are always shown (they have no `demoGeneration`),
-are never touched by Reset, and jobs don't run on them (read-only). Their services come from containers
+Real devices have `realm: "real"` and `simulated: false`; they are always shown (they have no `demoGeneration`)
+and are never touched by Reset.
+
+**Jobs on real devices.** One job exists: `restart_container` (`riskClass: service`), proposed by the agent only
+for a stopped container listed in the device's `allowedJobs`. The owner allows it on the device itself
+(`nightlight_helper.py allow restart_container NAME`); the server can't widen that list, and the helper re-checks it
+before acting. The server sends a job name and target, never a command. A real job never runs without a tap,
+whatever the trust settings. Its lifecycle:
+
+| `status` | Meaning | What the UI shows |
+|---|---|---|
+| `pending` | card waiting for the person | Approve / Not now |
+| `approved` | approved; the device picks it up on its next report (up to about a minute) | "Waiting for the device…" |
+| `running` | handed to the device (exactly once) | "Running on the device…" |
+| `done` / `failed` | the device reported the result; `result.summary` says what happened | the result; then the follow-up |
+| `denied` | declined | follow-up as usual |
+| `stale` | withdrawn: a reset happened before the device picked it up | "Out of date" |
+
+The follow-up turn is created when the device reports: watch the action document and open
+`POST /api/turns/{continuationTurnId}/stream` once `continuationTurnId` appears. A job already on the device when a
+reset happens is still recorded when it reports, but gets `followUp: "skipped_after_reset"` and no follow-up turn. Their services come from containers
 (`category: "containers"`) and failed system services (`category: "system"`). Checks: `disk_over_80`,
 `disk_over_90`, `memory_high`, `service_down`, `container_down`, `updates_pending`, `restart_overdue`.
 
