@@ -158,3 +158,43 @@ def test_wrong_version_in_a_signed_file_is_refused(helper, tmp_path, monkeypatch
     srv, api = _release(helper, tmp_path, "9.9.8")
     assert "isn't the version" in helper.self_update("9.9.9", api)[1]
     srv.shutdown()
+
+
+def test_an_old_worker_or_a_repeat_cannot_go_back_or_lose_the_backup(helper, tmp_path, monkeypatch):  # review D #1
+    target = _installed(helper, monkeypatch)
+    original = Path(target).read_text()
+    helper._save_config({"token": "t" * 43, "manage": "app", "remote": {}})
+    srv, api = _release(helper, tmp_path, "9.9.9")
+    assert helper.self_update("9.9.9", api)[0]
+    assert "waiting for the restart" in helper.self_update("9.9.9", api)[1]  # a duplicate job
+    helper._RESTART.clear()  # an overlapping old worker that didn't install it
+    srv.shutdown()
+    srv, api = _release(helper, tmp_path, "9.9.8")
+    assert "isn't newer than what is installed" in helper.self_update("9.9.8", api)[1]
+    srv.shutdown()
+    assert 'VERSION = "9.9.9"' in Path(target).read_text()
+    assert Path(helper.APP_DIR, "nightlight_helper.prev.py").read_text() == original
+
+
+def test_rollback_pauses_automatic_updates_until_the_owner_asks(helper, tmp_path, monkeypatch):  # review D #2
+    target = _installed(helper, monkeypatch)
+    helper._save_config({"token": "t" * 43, "manage": "app", "remote": {"autoUpdate": True}})
+    srv, api = _release(helper, tmp_path, "9.9.9")
+    assert helper.self_update("9.9.9", api, auto=True)[0]
+    helper.rollback()
+    helper._RESTART.clear()
+    monkeypatch.setattr(helper, "VERSION", helper._file_version(target))  # restarted on the old version
+    assert helper._load()["autoPaused"] and "9.9.9" in helper._load()["skipVersions"]
+    assert "paused after a rollback" in helper.self_update("9.9.9", api, auto=True)[1]
+    assert helper.self_update("9.9.9", api)[0]  # the owner's tap installs it and ends the pause
+    srv.shutdown()
+    assert "autoPaused" not in helper._load() and helper._load()["skipVersions"] == []
+
+
+def test_settings_without_a_terminal_changes_nothing(helper, monkeypatch):  # review D #3
+    import io
+    helper._save_config({"token": "t" * 43, "manage": "strict", "allow": {}})
+    monkeypatch.setattr(helper.sys, "stdin", io.StringIO(""))
+    with pytest.raises(SystemExit):
+        helper.settings()
+    assert helper._load()["allow"] == {}

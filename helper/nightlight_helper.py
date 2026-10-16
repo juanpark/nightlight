@@ -834,15 +834,46 @@ def _signed(data, sig):
         return r.returncode == 0 and "Verified OK" in r.stdout
 
 
-def self_update(version, api=None):
-    """Install release `version` of the helper. Returns (ok, summary, None)."""
+def _file_version(path):
+    try:
+        with open(path, "rb") as f:
+            m = re.search(rb'^VERSION = "([0-9.]+)"$', f.read(), re.M)
+        return m.group(1).decode() if m else None
+    except OSError:
+        return None
+
+
+def self_update(version, api=None, auto=False):
+    """Install release `version` of the helper. Returns (ok, summary, None). One install at a time (a lock), never
+    older than what is installed, never twice before the restart; an automatic one never re-installs a version the
+    owner rolled back from."""
+    if _RESTART:
+        return False, "An update is already installed and waiting for the restart.", None
     if not update_allowed():
         return False, "Updating from the app isn't allowed on this device (run `nightlight settings`).", None
     target = os.path.join(APP_DIR, "nightlight_helper.py")
     if os.path.realpath(sys.argv[0]) != os.path.realpath(target) or os.path.islink(target):
         return False, "This copy isn't the installed helper, so it wasn't replaced. Run install once.", None
-    if not _ver(version) or _ver(version) <= _ver(VERSION):
-        return False, f"{version} isn't newer than {VERSION}, so nothing changed.", None
+    import fcntl
+    lock = open(os.path.join(_own_dir(APP_DIR), ".update.lock"), "a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return False, "Another update is running right now; nothing changed.", None
+    try:
+        return _install(version, api, auto, target)
+    finally:
+        lock.close()  # releases the lock
+
+
+def _install(version, api, auto, target):
+    cfg = _load()
+    floor = max(_ver(VERSION), _ver(_file_version(target) or "0"))
+    if not _ver(version) or _ver(version) <= floor:
+        return False, f"{version} isn't newer than what is installed, so nothing changed.", None
+    if auto and (cfg.get("autoPaused") or version in (cfg.get("skipVersions") or [])):
+        return False, f"Automatic updates are paused after a rollback; tap Update in the app to install {version}.", None
     base = check_api(api or _load()["api"]) + "/helper/release/"
     data, sig = _get(base + "nightlight_helper.py", MAX_HELPER_BYTES), _get(base + "nightlight_helper.py.sig", 4096)
     if not data or not sig:
@@ -870,15 +901,24 @@ def self_update(version, api=None):
     os.replace(prev + ".tmp", prev)  # kept for `nightlight rollback`
     os.replace(tmp, target)
     _RESTART.append(True)
+    if not auto:  # the owner asked for this one: that ends a pause after a rollback
+        _update_config(lambda c: (c.pop("autoPaused", None),
+                                  c.__setitem__("skipVersions", [v for v in c.get("skipVersions") or [] if v != version])))
     return True, f"Updated from {VERSION} to {version} (signature checked); restarting.", None
 
 
 def rollback():
     prev = os.path.join(APP_DIR, "nightlight_helper.prev.py")
+    target = os.path.join(APP_DIR, "nightlight_helper.py")
     if not os.path.isfile(prev) or os.path.islink(prev):
         sys.exit("There is no earlier version to go back to.")
-    os.replace(prev, os.path.join(APP_DIR, "nightlight_helper.py"))
-    print("Back on the earlier version. Restart the background service (or log out and in) to use it.")
+    rejected = _file_version(target)
+    os.replace(prev, target)
+    # Remember the rejected version and pause automatic updates until the owner asks for an update again.
+    _update_config(lambda c: (c.__setitem__("autoPaused", True), c.__setitem__(
+        "skipVersions", sorted(set((c.get("skipVersions") or []) + ([rejected] if rejected else [])))[-10:])))
+    print(f"Back on the earlier version (automatic updates paused; {rejected} won't install by itself). Restart the "
+          "background service (or log out and in) to use it.")
 
 
 def run_job(job, wait=5):
@@ -1041,7 +1081,7 @@ def once():
         fresh = _load()
         if not _RESTART and isinstance(latest, str) and _ver(latest) > _ver(VERSION) and \
                 fresh.get("manage") == "app" and (fresh.get("remote") or {}).get("autoUpdate") is True:
-            print(self_update(latest, api)[1])  # the owner chose "install signed updates automatically"
+            print(self_update(latest, api, auto=True)[1])  # the owner chose "install signed updates automatically"
     elif status == 401:
         print("This device's access was revoked or is unknown. Enrol again with a new code.")
     else:
@@ -1596,6 +1636,8 @@ def status():
 
 def settings():
     """Change, on this device, whether the app manages permissions, and (strict mode) what is allowed."""
+    if not sys.stdin.isatty():
+        sys.exit("Run `nightlight settings` in a terminal: it asks before changing anything.")
     cfg = _load()
     print(f"Permissions are now {'managed from the app' if cfg.get('manage') == 'app' else 'strict'}.")
     app = _ask("Let the Nightlight app manage what it may do on this device?", cfg.get("manage") == "app")
