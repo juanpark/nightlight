@@ -220,3 +220,19 @@ def test_restart_needs_the_exact_failed_unit(client, started):  # review 14 #1
     with pytest.raises(ValueError, match="not_failed"):
         actions.propose(started, session_id="sess_test", turn_id="t_x", generation=generation(started),
                         action_type="restart_service", device_id=dev["deviceId"], params={"unit": "demo_app.service"})
+
+
+def test_a_restarted_service_gets_no_new_card_until_it_fails_again(client, started):  # review 14 rev2
+    dev = enrolled(client)
+    facts = {**FACTS, "allowedJobs": {"restart_service": ["pihole-FTL.service"]}}
+    beat(client, dev["token"], facts)
+    a = actions.propose(started, session_id="sess_test", turn_id="t_r1", generation=generation(started),
+                        action_type="restart_service", device_id=dev["deviceId"], params={"unit": "pihole-FTL.service"})
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    _again(dev["token"])
+    beat(client, dev["token"], facts)
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "ok", "state": "running"},
+                headers={"X-Device-Token": dev["token"]})
+    with pytest.raises(ValueError, match="not_failed"):
+        actions.propose(started, session_id="sess_test", turn_id="t_r2", generation=generation(started),
+                        action_type="restart_service", device_id=dev["deviceId"], params={"unit": "pihole-FTL.service"})

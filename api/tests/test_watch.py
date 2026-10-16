@@ -165,3 +165,11 @@ def test_counter_heals_from_the_registry(client, started, dns, monkeypatch):  # 
     watch.sweep()
     rows = len(list(watch.watch_registry().stream()))
     assert db.client().collection("watchStats").document("global").get().to_dict()["active"] == rows
+
+
+def test_a_slow_name_lookup_cannot_hold_the_probe(monkeypatch):  # review 11 rev4 #1
+    import time as _t
+    monkeypatch.setattr(watch, "PROBE_BUDGET", 0.1)
+    monkeypatch.setattr(watch, "_resolve", lambda url: (_t.sleep(1.0), None)[1])
+    t = _t.monotonic()
+    assert watch.probe("https://example.org")[0] == "crit" and _t.monotonic() - t < 0.6

@@ -335,7 +335,8 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
             return {"ok": True, "actionId": action_id_, "status": a["status"]}
         a["result"] = {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
         if ok and a.get("svcId"):
-            tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state}, merge=True)
+            tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state, "failed": False},
+                   merge=True)  # recovered: no new restart card until the device reports it failed again
         # What happened on the device is always recorded. The chat follow-up only goes to a chat that still exists:
         # not while a reset runs, and not into a generation a reset has replaced.
         if user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration"):

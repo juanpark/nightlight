@@ -5,7 +5,9 @@ reads two small registries (real devices, watched addresses) instead of scanning
 """
 
 import asyncio
+import concurrent.futures
 import ipaddress
+import threading
 import logging
 import socket
 import time
@@ -155,6 +157,21 @@ def probe(url: str) -> tuple[str, int | None, int | None]:
     return asyncio.run(bounded())
 
 
+async def _resolve_bounded(url: str):
+    """Name lookup in its own daemon thread: if the deadline cancels us, nothing waits for it (the system resolver
+    gives up on its own) and the sweep moves on."""
+    fut: concurrent.futures.Future = concurrent.futures.Future()
+
+    def work():
+        try:
+            fut.set_result(_resolve(url))
+        except BaseException as e:  # handed to the waiting coroutine
+            fut.set_exception(e)
+
+    threading.Thread(target=work, daemon=True, name="watch-dns").start()
+    return await asyncio.wrap_future(fut)
+
+
 async def _aprobe(url: str) -> tuple[str, int | None, int | None]:
     """(status, http code, milliseconds). Up = any answer below 500 (redirects not followed).
 
@@ -162,7 +179,7 @@ async def _aprobe(url: str) -> tuple[str, int | None, int | None]:
     host), so DNS can't redirect it somewhere private between check and connect. Only the status line is read:
     the body is never downloaded."""
     try:
-        u, port, ip = await asyncio.to_thread(_resolve, url)  # re-checked each time
+        u, port, ip = await _resolve_bounded(url)  # re-checked each time
     except ApiError:
         return "crit", None, None
     host = f"[{ip}]" if ":" in ip else ip
@@ -240,6 +257,20 @@ def _adopt_legacy(uid: str, wid: str) -> None:
     db.run_transaction(run)
 
 
+def _reconcile_count() -> None:
+    """Re-derive the global count from the registry, in a transaction with the rows it counts, so a concurrent add
+    or remove (which writes a registry row) makes one of the two retry instead of being overwritten."""
+    total = db.client().collection("watchStats").document("global")
+
+    @firestore.transactional
+    def run(tx):
+        rows = list(watch_registry().get(transaction=tx))
+        total.get(transaction=tx)
+        tx.set(total, {"active": len(rows)})
+
+    db.run_transaction(run)
+
+
 def sweep() -> dict:
     started = time.monotonic()
     silent = checked = pruned = 0
@@ -262,8 +293,7 @@ def sweep() -> dict:
             break
         if "lastCheckedAt" not in (r.to_dict() or {}):
             r.reference.set({"lastCheckedAt": datetime(2000, 1, 1, tzinfo=timezone.utc)}, merge=True)
-    # The global count is re-derived from the registry each sweep, so any drift heals itself.
-    db.client().collection("watchStats").document("global").set({"active": len(rows)})
+    _reconcile_count()
     for r in watch_registry().order_by("lastCheckedAt").limit(WATCHES_TOTAL).stream():
         if time.monotonic() - started > SWEEP_BUDGET:
             break  # the rest waits for the next sweep
