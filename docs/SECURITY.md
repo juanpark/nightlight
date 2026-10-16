@@ -46,15 +46,21 @@ The server sends a job **name** and a **target**, never a command. The helper (`
 
 - Commands are fixed argument lists; nothing from the server reaches a shell. Unknown job types do nothing. The
   `logs` and `diagnose` permissions can never start anything.
-- **The local allowlist is final.** The server proposes only inside the list the device reported, but the helper
-  re-checks its own config before acting; the server cannot widen it.
+- **The device chooses who may widen permissions**, once, at install (`nightlight settings` to change):
+  - **Strict:** the local allowlist is final; the server cannot widen it.
+  - **Managed from the app (delegated):** the owner's switches in the app are applied by the helper. This is a
+    deliberate delegation: a compromised server could switch on the built-in permissions (look into, read the last
+    log lines, restart) for **targets this device itself reports right now** (intersected on the device), and could
+    approve its own cards. It still cannot run any other command, touch unreported targets, change the mode, or
+    read files. The helper re-checks every action (exact target, failed state, fixed argv) in both modes.
+  Approval cards live on the server, so they protect against mistakes, not against a compromised server.
 - Restart jobs always need a tap on an approval card; no trust level skips it on a real device. `diagnose` is
   read-only and allowed per target by the owner on the device, so it runs without a card.
 - A job is handed to the device at most once (in the same transaction that marks it `running`). Only that device can
   report its result, once.
 
-So a compromised or malicious cloud could restart a container or failed unit the owner allowed, or read the status
-(and, if allowed, last 30 log lines) of an allowed target. Nothing else.
+So a compromised or malicious cloud could restart a container or failed unit the owner allowed (in app mode: any the
+device reports), or read the status (and, if allowed, last 30 log lines) of such a target. Nothing else.
 
 The helper itself runs as the owner's normal user (never installed as root; the systemd unit sets
 `NoNewPrivileges=yes`), keeps its config and token in an owner-only directory and file (0700 / 0600, never through a

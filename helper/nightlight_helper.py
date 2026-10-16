@@ -268,16 +268,18 @@ def _allowed():
 
 def _from_remote(remote):
     """The app's switches, as an allowlist. Only well-formed names; "check why" covers what this device reports now."""
+    containers = {c["name"] for c in _containers() if NAME_RE.fullmatch(c.get("name", ""))}
+    units = {u for u in _failed_units() if TARGET_RE.fullmatch(u)}
+    here = {"logs": containers | units, "restart_container": containers, "restart_service": units}
     out = {}
     for key in ("logs", "restart_container", "restart_service"):
         names = remote.get(key) if isinstance(remote.get(key), list) else []
-        names = [n for n in names if isinstance(n, str) and _name_re(key).fullmatch(n)][:20]
+        # only things this device itself reports right now: a compromised server can't name anything else
+        names = [n for n in names if isinstance(n, str) and n in here[key]][:20]
         if names:
             out[key] = names
-    if remote.get("diagnose") is True:
-        names = [c["name"] for c in _containers() if NAME_RE.fullmatch(c.get("name", ""))] + _failed_units()
-        if names:
-            out["diagnose"] = names[:20]
+    if remote.get("diagnose") is True and (containers or units):
+        out["diagnose"] = sorted(containers | units)[:20]
     return out
 
 
@@ -326,11 +328,11 @@ def set_allowed(kind, name, on):
         sys.exit("Unknown job type. Allowed: " + ", ".join(JOB_TYPES))
     if not _name_re(kind).fullmatch(name):
         sys.exit("That isn't a valid name.")
-    cfg = _load()
-    names = set((cfg.get("allow") or {}).get(kind, []))
-    names = names | {name} if on else names - {name}
-    cfg["allow"] = {**(cfg.get("allow") or {}), kind: sorted(names)}
-    _save_config(cfg)
+    def change(cfg):
+        names = set((cfg.get("allow") or {}).get(kind, []))
+        names = names | {name} if on else names - {name}
+        cfg["allow"] = {**(cfg.get("allow") or {}), kind: sorted(names)}
+    _update_config(change)
     print(("Allowed" if on else "No longer allowed") + f": {kind} {name}")
 
 
@@ -552,6 +554,22 @@ def _load():
         return json.load(f)
 
 
+def _update_config(change):
+    """Read-modify-write the config under a lock, on a FRESH copy, so the background service and a person running
+    `nightlight settings` can never overwrite each other's changes (e.g. a report undoing a switch to strict)."""
+    import fcntl
+    _own_dir(CONFIG_DIR)
+    with open(os.path.join(CONFIG_DIR, ".lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            cfg = _load()
+        except (OSError, ValueError):
+            cfg = {}
+        change(cfg)
+        _save_config(cfg)
+        return cfg
+
+
 def _save_config(data):
     """Write the token file owner-only: a fresh 0600 file, atomically replacing the entry (never through a symlink)."""
     if os.path.islink(CONFIG_DIR):
@@ -598,8 +616,8 @@ def once():
         _POLL["every"] = poll if isinstance(poll, int) and 0 < poll <= 60 else 0
         watch = body.get("watch")
         if isinstance(watch, list) and watch != cfg.get("watch"):
-            cfg["watch"] = [w for w in watch if isinstance(w, dict)][:10]
-            _save_config(cfg)  # what to check next time (the owner's choices; addresses stay local)
+            wl = [w for w in watch if isinstance(w, dict)][:10]
+            _update_config(lambda c: c.__setitem__("watch", wl))  # only this field; addresses stay local
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -639,8 +657,7 @@ def _remember_about(cfg, body):
         about["remote"] = body["permissions"]
     if any(cfg.get(k) != v for k, v in about.items() if k != "lastReport") or \
             time.time() - cfg.get("_aboutSaved", 0) > 600:
-        cfg.update(about, _aboutSaved=int(time.time()))
-        _save_config(cfg)
+        _update_config(lambda c: c.update(about, _aboutSaved=int(time.time())))  # never touches manage/allow
 
 
 def run(every):
@@ -885,8 +902,8 @@ def discover(yes=False):
     if not chosen:
         print("Nothing sent.")
         return
-    cfg["found"] = {**(cfg.get("found") or {}), **{it["cid"]: local[it["cid"]] for it in chosen}}
-    _save_config(cfg)
+    picked = {it["cid"]: local[it["cid"]] for it in chosen}
+    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **picked}))
     st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
                      {"X-Device-Token": cfg["token"]})
     print(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
@@ -994,8 +1011,7 @@ def install(every=60):
         app = interactive and _ask("Let the Nightlight app manage what it may do on this device? You'll switch things "
                                    "on and off in the app; every restart still asks you first. (n = strict: changes "
                                    "only on this device)", True)
-        cfg["manage"] = "app" if app else "strict"
-        _save_config(cfg)
+        _update_config(lambda c: c.setdefault("manage", "app" if app else "strict"))
         print("Managed from the app." if app else "Strict: change permissions here with `nightlight settings`.")
     script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
     _link_command(script, py)
@@ -1077,8 +1093,8 @@ def uninstall():
         if os.path.islink(d) or (os.path.isdir(d) and os.stat(d).st_uid != os.getuid()):
             sys.exit(f"Refusing to clean {d}: it is a link or belongs to another user. The service is stopped.")
     short = os.path.expanduser("~/.local/bin/nightlight")
-    if os.path.isfile(short) and not os.path.islink(short) and "nightlight_helper.py" in _read(short):
-        os.unlink(short)  # only our own two-line script
+    if _is_our_wrapper(short) and not os.path.islink(os.path.dirname(short)):
+        os.unlink(short)  # only our own managed script
     for path in (os.path.join(APP_DIR, "nightlight_helper.py"), CONFIG):
         if os.path.isfile(path) and not os.path.islink(path):
             os.unlink(path)
@@ -1090,17 +1106,31 @@ def uninstall():
     print("Uninstalled. Nothing of Nightlight is left running on this device.")
 
 
+WRAPPER_MARK = "# nightlight-helper wrapper (managed; safe to delete with `nightlight uninstall`)"
+
+
+def _is_our_wrapper(path):
+    """Ours only if it's a regular file we own whose second line is exactly our mark."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    lines = _read(path).splitlines()
+    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and len(lines) == 3 and lines[1] == WRAPPER_MARK
+
+
 def _link_command(script, py):
     """A short `nightlight` command in ~/.local/bin (a two-line script; nothing else on the system changes)."""
     bindir = os.path.expanduser("~/.local/bin")
     try:
         _own_dir(bindir)
         target = os.path.join(bindir, "nightlight")
-        if os.path.islink(target) or (os.path.exists(target) and "nightlight_helper.py" not in _read(target)):
+        if os.path.islink(target) or (os.path.exists(target) and not _is_our_wrapper(target)):
             return  # something else lives there: leave it alone
+        import shlex
         fd, tmp = tempfile.mkstemp(dir=bindir, prefix=".nightlight-")
         with os.fdopen(fd, "w") as f:
-            f.write(f'#!/bin/sh\nexec "{py}" "{script}" "$@"\n')
+            f.write(f"#!/bin/sh\n{WRAPPER_MARK}\nexec {shlex.quote(py)} {shlex.quote(script)} \"$@\"\n")
         os.chmod(tmp, 0o755)
         os.replace(tmp, target)
         if bindir not in os.environ.get("PATH", "").split(os.pathsep):
@@ -1155,7 +1185,8 @@ def settings():
             if _ask(f"  Restart {t} when it has stopped (after you approve)?", False):
                 allow[kind].append(t)
         cfg["allow"] = {k: v for k, v in allow.items() if v}
-    _save_config(cfg)
+    chosen = {k: cfg[k] for k in ("manage", "allow") if k in cfg}
+    _update_config(lambda c: c.update(chosen))
     print("Saved. It applies on the next report (within a minute).")
 
 

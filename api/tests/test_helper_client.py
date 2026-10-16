@@ -519,7 +519,7 @@ def test_app_managed_permissions_apply_only_in_app_mode(helper, monkeypatch):
     helper._save_config(cfg)
     got = helper._allowed()
     assert got["restart_container"] == ["web"] and got["logs"] == ["web"]
-    assert got["diagnose"] == ["web", "pihole-FTL.service"]
+    assert sorted(got["diagnose"]) == ["pihole-FTL.service", "web"]
 
 
 def test_install_without_a_terminal_chooses_strict(helper, monkeypatch, tmp_path):
@@ -543,3 +543,39 @@ def test_joined_check_used_by_the_installer(helper, monkeypatch):
     with pytest.raises(SystemExit) as yes:
         helper.main()
     assert no.value.code == 1 and yes.value.code == 0
+
+
+def test_a_report_never_undoes_a_local_switch_to_strict(helper, monkeypatch):  # review 15 #1
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "app"})
+    stale = helper._load()  # what the service loaded before its request
+    helper._update_config(lambda c: c.__setitem__("manage", "strict"))  # the owner switches to strict meanwhile
+    helper._remember_about(stale, {"deviceName": "Pi", "permissions": {"diagnose": True,
+                                                                       "restart_container": ["web"]}})
+    cfg = helper._load()
+    assert cfg["manage"] == "strict" and cfg["deviceName"] == "Pi"
+
+
+def test_app_grants_only_for_things_this_device_reports(helper, monkeypatch):  # review 15 #2
+    monkeypatch.setattr(helper, "_containers", lambda: [{"name": "web"}])
+    monkeypatch.setattr(helper, "_failed_units", lambda: [])
+    got = helper._from_remote({"diagnose": True, "logs": ["web", "other"], "restart_container": ["unreported", "web"],
+                               "restart_service": ["ssh.service"]})
+    assert got == {"logs": ["web"], "restart_container": ["web"], "diagnose": ["web"]}
+
+
+def test_wrapper_is_quoted_and_never_clobbers_other_files(helper, monkeypatch, tmp_path):  # review 15 #3,#4
+    import subprocess
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(helper.os.path, "expanduser", lambda p: p.replace("~", str(tmp_path)))
+    bindir = tmp_path / ".local" / "bin"
+    bindir.mkdir(parents=True)
+    theirs = bindir / "nightlight"
+    theirs.write_text("#!/bin/sh\n# calls nightlight_helper.py somewhere\necho mine\n")
+    helper._link_command(str(tmp_path / "a$HOME b" / "nightlight_helper.py"), "/usr/bin/python3")
+    assert "echo mine" in theirs.read_text()  # not ours: untouched
+    theirs.unlink()
+    helper._link_command(str(tmp_path / "a$HOME b" / "nightlight_helper.py"), "/usr/bin/python3")
+    text = theirs.read_text()
+    assert helper.WRAPPER_MARK in text and "'" in text and helper._is_our_wrapper(str(theirs))
+    out = subprocess.run(["sh", "-n", str(theirs)], capture_output=True)
+    assert out.returncode == 0

@@ -72,8 +72,14 @@ up/down results for things it watches for you.
 leave the device only for a target you allowed with `allow logs`, as the last 30 lines, scrubbed on the device first.
 It talks only HTTPS to the address it joined, never follows redirects, and keeps its token in an owner-only file.
 
-**It changes nothing by default.** You allow each job for each target **on the device itself**; the server can't
-widen that list, and the helper re-checks it before acting:
+**It changes nothing by default.** At install the device chooses one of two modes:
+
+- **Managed from the app** (default): you switch permissions on and off in the device's panel. This delegates that
+  choice to your Nightlight account: the app (and so, in the worst case, a compromised server) can grant the
+  built-in jobs, but only for things the device itself reports, and every restart still waits for a tap.
+- **Strict**: permissions change only on the device; the server can't widen them.
+
+Either way the helper re-checks every action before running it. In strict mode, or by hand:
 
 ```bash
 H=~/.local/share/nightlight/nightlight_helper.py     # macOS: ~/Library/Application\ Support/Nightlight/
