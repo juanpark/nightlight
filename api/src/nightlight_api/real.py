@@ -110,6 +110,7 @@ def enrol(code: str, name: str) -> dict:
 def _create_device(tx, uid: str, device_id: str, token: str, name: str) -> None:
     """The device record and its token (stored hashed). Shared by enrolment and pairing."""
     event(tx, uid, device_id, "joined", "info", f"{name} joined your Nightlight map.", who="you")
+    tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"), {"uid": uid, "deviceId": device_id})
     tx.set(tokens_ref().document(_sha(token)), {"uid": uid, "deviceId": device_id, "revoked": False,
                                                 "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None})
     tx.set(db.device(uid, device_id), {
@@ -389,8 +390,16 @@ def heartbeat(token: str, facts: dict) -> dict:
             event(tx, uid, device_id, "status_" + status, status if status != "ok" else "info",
                   f"{device.get('name', 'A device')} {words}" + (f": {top['message']}" if top and status != "ok" else "."),
                   who="device")
+        from .watch import history_point  # (watch imports this module)
+        vitals = {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
+                  "uptime": facts.get("uptimeSec")}
+        extra = history_point(tx, uid, device_id, device, vitals, status,
+                              sum(1 for f in marked if f.get("state") == "new"))
+        if device.get("watchState") == "silent":
+            extra["watchState"] = None
+            event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again.")
         tx.update(tref, {"lastSeen": _now()})
-        tx.update(dref, {
+        tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
                        "uptime": facts.get("uptimeSec")},

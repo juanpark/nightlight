@@ -47,6 +47,9 @@ class Settings:
     # Memory Bank (Agent Platform). Empty id = memory off: every memory call is a no-op, so tests and local runs need
     # no cloud. The id is the last segment of the Memory Bank's resource name (.../reasoningEngines/<id>).
     memory_bank_id: str = os.environ.get("MEMORY_BANK_ID", "")
+    # The scheduled sweep (`POST /internal/sweep`) must carry a Google identity token for this audience and account.
+    sweep_audience: str = os.environ.get("SWEEP_AUDIENCE", "")
+    sweep_invoker: str = os.environ.get("SWEEP_INVOKER", "")
     memory_location: str = os.environ.get("MEMORY_BANK_LOCATION", "global")
     memory_fact_chars: int = 300
     memory_recall_seconds: float = 3.0

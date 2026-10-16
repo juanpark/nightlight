@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, memory, quota, real, sim, trust as trustlib, turns
+from . import __version__, actions, db, demo, memory, quota, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -43,6 +43,12 @@ class LayoutBody(Strict):
         if self.tags is not None and not all(1 <= len(t.strip()) <= 20 for t in self.tags):
             raise ValueError("tags are 1 to 20 characters")
         return self
+
+
+class WatchBody(Strict):
+    name: str = Field(min_length=1, max_length=40)
+    url: str = Field(min_length=8, max_length=300)
+    tags: list[str] = Field(default_factory=list, max_length=6)
 
 
 class IssueBody(Strict):
@@ -156,6 +162,36 @@ def device_issue(device_id: str, finding_id: str, body: IssueBody, uid: str = De
     if body.state == "snoozed" and not body.days:
         raise ApiError(422, "snooze_needs_days")
     return real.set_issue_state(uid, device_id, finding_id, body.state, body.days)
+
+
+@app.post("/api/watches", status_code=201)
+def add_watch(body: WatchBody, uid: str = Depends(current_uid)):
+    """Watch a public web address (website, game server status page, API): checked every 5 minutes."""
+    return watch.add_watch(uid, body.name, body.url, sorted({scrub(t.strip())[0][:20] for t in body.tags if t.strip()}))
+
+
+@app.delete("/api/watches/{watch_id}")
+def remove_watch(watch_id: str, uid: str = Depends(current_uid)):
+    if not re.fullmatch(r"w_[0-9a-z]{26}", watch_id):
+        raise not_found()
+    return watch.remove_watch(uid, watch_id)
+
+
+@app.post("/internal/sweep")
+def internal_sweep(request: Request):
+    """Called by Cloud Scheduler only: the Google-signed token must name our audience and scheduler account."""
+    from google.auth.transport import requests as g_requests
+    from google.oauth2 import id_token
+    token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not settings.sweep_audience or not token:
+        raise ApiError(401, "invalid_token")
+    try:
+        claims = id_token.verify_oauth2_token(token, g_requests.Request(), audience=settings.sweep_audience)
+    except Exception:
+        raise ApiError(401, "invalid_token") from None
+    if claims.get("email") != settings.sweep_invoker or not claims.get("email_verified"):
+        raise ApiError(403, "forbidden")
+    return watch.sweep()
 
 
 @app.post("/api/demo/reset")

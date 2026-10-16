@@ -137,6 +137,11 @@ def fleet_summary(uid: str, generation: int) -> str:
         extra = (f" Tags: {', '.join(s['tags'])}." if s["tags"] else "") + \
             (f" {s['known']} known problem(s) the owner is leaving for now." if s["known"] else "")
         lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.{extra}")
+    for snap in db.user(uid).collection("watches").get():
+        w = snap.to_dict()
+        state = {"ok": "up", "crit": "NOT ANSWERING", "unknown": "not checked yet"}.get(w.get("status"), "unknown")
+        tags = f" Tags: {', '.join(w['tags'])}." if w.get("tags") else ""
+        lines.append(f"- watched address {w.get('name')} (checked every 5 minutes from the internet): {state}.{tags}")
     text = scrub("\n".join(sorted(lines)))[0]
     return text.replace("{", "(").replace("}", ")")
 
@@ -174,12 +179,12 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _bounded(out, ctx)
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
-        """List the ten most recent things that happened on the person's devices."""
+        """List the fifteen most recent things that happened on the person's devices and watched addresses."""
         evs = [s.to_dict() for s in db.events(ctx.uid).get()]
-        evs = [e for e in evs if e.get("demoGeneration") == ctx.generation]
+        evs = [e for e in evs if e.get("realm") == "real" or e.get("demoGeneration") == ctx.generation]
         evs.sort(key=lambda e: str(e.get("at")), reverse=True)
         return _bounded({"events": [{k: e.get(k) for k in ("deviceId", "kind", "severity", "message", "at")}
-                                    for e in evs[:10]]}, ctx)
+                                    for e in evs[:15]]}, ctx)
 
     def _propose(action_type: str, device_id: str, params: dict | None = None) -> dict:
         try:
