@@ -24,8 +24,10 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
   } as Record<string, string>)[e.name] ?? `Preparing a fix for the ${name}…`;
 }
 
-const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: Device[]; disabled: boolean }>(
-  function Chat({ uid, actions, devices, disabled }, ref) {
+const Chat = forwardRef<ChatHandle, {
+  uid: string; actions: Action[]; devices: Device[]; disabled: boolean; generation?: number;
+}>(
+  function Chat({ uid, actions, devices, disabled, generation }, ref) {
     const [items, setItems] = useState<Item[]>([]);
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
@@ -37,6 +39,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
     devicesRef.current = devices;
 
     useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" }); }, [items]);
+    useEffect(() => { setItems([]); }, [generation]); // after a reset the old conversation is gone
 
     const update = (fn: (a: Extract<Item, { kind: "agent" }>) => void) =>
       setItems((cur) => {
@@ -78,7 +81,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
     }, []);
 
     async function session(): Promise<string> {
-      const key = `nl_session_${uid}`;
+      const key = `nl_session_${uid}_${generation ?? 0}`; // a reset deletes old chats: a new generation, a new chat
       let sid = null;
       try { sid = localStorage.getItem(key); } catch { /* private mode */ }
       if (sid) return sid;
@@ -99,7 +102,7 @@ const Chat = forwardRef<ChatHandle, { uid: string; actions: Action[]; devices: D
         setBusy(false);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [busy, run, uid]);
+    }, [busy, run, uid, generation]);
 
 
 

@@ -148,7 +148,7 @@ export default function Home({ user }: { user: User }) {
           )}
         </section>
         <aside className="right">
-          <Chat ref={chat} uid={uid} actions={actions} devices={devices} disabled={resetting || !me} />
+          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
         </aside>
       </div>
       {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
