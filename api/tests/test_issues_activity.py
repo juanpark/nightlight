@@ -100,7 +100,7 @@ def test_safety_and_mac_checks_in_plain_words(client, started):
     beat(client, dev["token"], {**ONE_PROBLEM, "failedUnits": [], "failedAgents": ["org.example.sync"],
                                 "safety": {"passwordlessSudo": True, "sshPasswordLogin": True}})
     checks = {f["check"]: f for f in _dev(started, dev)["findings"]}
-    assert "take full control without a password" in checks["passwordless_admin"]["message"]
+    assert "administrator commands without typing a password" in checks["passwordless_admin"]["message"]
     assert checks["ssh_password_login"]["severity"] == "info" and "background_items_failing" in checks
     assert client.post("/helper/heartbeat", json={**FACTS, "safety": {"rootkit": True}},
                        headers={"X-Device-Token": dev["token"]}).status_code == 422

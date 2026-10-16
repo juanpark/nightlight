@@ -234,6 +234,18 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
 # ------------------------------------------------------------------ discovery and devices watched by a helper
 
 DISCOVERY_TTL = timedelta(hours=24)
+WATCHED_PER_HELPER = 10
+# The helper's vocabulary (nightlight_helper.py PORTS / MDNS / VENDORS / _guess); anything else is refused.
+FOUND_PORTS = (22, 80, 443, 445, 631, 8123, 25565, 32400)
+FOUND_SERVICES = ("remote login (SSH)", "web page", "secure web page", "file sharing", "printer", "Home Assistant",
+                  "Minecraft", "Plex", "Chromecast / Google speaker", "AirPlay speaker or TV", "HomeKit accessory",
+                  "AirPlay speaker")
+FOUND_VENDORS = ("Raspberry Pi", "Synology", "QNAP", "VMware virtual machine", "Philips Hue", "Sonos",
+                 "Espressif (smart-home gadget)", "Google", "Amazon", "Ubiquiti", "Nintendo",
+                 "private address (likely a phone or laptop)")
+FOUND_GUESSES = ("Home Assistant", "Plex media server", "Minecraft server", "Printer", "File share (NAS or computer)",
+                 "Speaker or TV", "Raspberry Pi", "VMware virtual machine", "Computer (remote login)",
+                 "Device with a web page", "Unknown device", *FOUND_VENDORS)
 
 
 def discoveries_ref(uid: str):
@@ -246,9 +258,11 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
     def run(tx):
         uid, device_id = token_owner(tx, token)
         dsnap = db.device(uid, device_id).get(transaction=tx)
+        watched = db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)
         name = (dsnap.to_dict() or {}).get("name", "A device")
+        added = {w.to_dict().get("cid") for w in watched}  # already on the map: stays "added" across rediscovery
         tx.set(discoveries_ref(uid).document(device_id), {
-            "items": [{**it, "added": False} for it in items], "by": device_id, "byName": name,
+            "items": [{**it, "added": it["cid"] in added} for it in items], "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
         return {"ok": True, "items": len(items)}
@@ -265,15 +279,21 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
     def run(tx):
         snap = dref.get(transaction=tx)
         hsnap = db.device(uid, helper_id).get(transaction=tx)
+        watched = [w.to_dict() for w in
+                   db.devices(uid).where(filter=FieldFilter("watchedBy", "==", helper_id)).get(transaction=tx)]
         d = snap.to_dict() if snap.exists else None
         if not d or d["expiresAt"] < _now() or not hsnap.exists:
             raise not_found()
         item = next((it for it in d["items"] if it.get("cid") == cid), None)
         if not item:
             raise not_found()
-        if item.get("added"):
+        if item.get("added") or any(w.get("cid") == cid for w in watched):
             raise ApiError(409, "already_added")
-        port = next((p for p in item.get("ports") or [] if p in (8123, 32400, 25565, 445, 631, 443, 80, 22)), None)
+        if sum(1 for w in watched if not w.get("revoked")) >= WATCHED_PER_HELPER:
+            raise ApiError(429, "watch_capacity")
+        port = next((p for p in (8123, 32400, 25565, 445, 631, 443, 80, 22) if p in (item.get("ports") or [])), None)
+        if port is None:
+            raise ApiError(422, "no_check_port")  # nothing we could check answers on it
         helper_name = hsnap.to_dict().get("name", "your device")
         tx.update(dref, {"items": [{**it, "added": it.get("cid") == cid or it.get("added")} for it in d["items"]]})
         tx.set(db.device(uid, device_id), {
@@ -381,11 +401,11 @@ def checks(facts: dict) -> list[dict]:
     safety = facts.get("safety") or {}
     if safety.get("passwordlessSudo"):
         out.append({"id": "f_sudo_nopasswd", "check": "passwordless_admin", "severity": "warn",
-                    "message": "Anything running as this account can take full control without a password.",
-                    "evidence": "administrator (sudo) works with no password"})
+                    "message": "This account can run administrator commands without typing a password.",
+                    "evidence": "sudo ran a test command with no password"})
     if safety.get("sshPasswordLogin"):
         out.append({"id": "f_ssh_password", "check": "ssh_password_login", "severity": "info",
-                    "message": "Remote login accepts passwords; keys are safer against guessing.",
+                    "message": "The remote-login (SSH) settings allow password logins; keys are safer against guessing.",
                     "evidence": "SSH PasswordAuthentication yes"})
     pending = facts.get("updatesPending")
     if pending:
@@ -506,7 +526,10 @@ def heartbeat(token: str, facts: dict) -> dict:
                 continue
             up = r.get("up")
             what = (f"{wd.get('name')} isn't answering" if not up else None)
-            tx.update(w.reference, {"status": "ok" if up else "crit", "health": "verified", "lastSeen": _now(),
+            if wd.get("watchState") == "silent":
+                event(tx, uid, w.id, "back", "info", f"{wd.get('name')} is being checked again.")
+            tx.update(w.reference, {"watchState": None, "status": "ok" if up else "crit", "health": "verified",
+                                    "lastSeen": _now(),
                                     "vitals": {"latencyMs": r.get("ms")},
                                     "findings": [] if up else [{"id": "f_watch_down", "check": "watched_down",
                                                                 "severity": "crit", "message": what + ".",

@@ -125,3 +125,28 @@ def test_old_watches_retire_and_left_devices_leave_the_registry(client, started,
 def test_sweep_needs_the_schedulers_signed_token(client):
     assert client.post("/internal/sweep").status_code == 401
     assert client.post("/internal/sweep", headers={"Authorization": "Bearer forged"}).status_code == 401
+
+
+def test_probe_has_a_hard_deadline(monkeypatch):  # review 11 rev2 #1
+    import time as _t
+    monkeypatch.setattr(watch, "PROBE_BUDGET", 0.2)
+    monkeypatch.setattr(watch, "_probe", lambda url: (_t.sleep(1.5), ("ok", 200, 1))[1])
+    t = _t.monotonic()
+    assert watch.probe("https://example.org")[0] == "crit" and _t.monotonic() - t < 1
+
+
+def test_every_watch_gets_its_turn_and_legacy_ones_are_counted(client, started, dns, monkeypatch):  # rev2 #2,#3
+    _answer(monkeypatch)
+    ids = [client.post("/api/watches", json={"name": f"w{i}", "url": "https://example.org"}).json()["id"]
+           for i in range(3)]
+    legacy = watch.watches(started).document("w_legacy")
+    legacy.set({"name": "old", "url": "https://example.org/", "status": "unknown", "tags": []})
+    watch.watch_registry().document(f"{started}__w_legacy").set({"uid": started, "watchId": "w_legacy"})
+    monkeypatch.setattr(watch, "WATCHES_TOTAL", 1)
+    seen = []
+    real_check = watch.check_one
+    monkeypatch.setattr(watch, "check_one", lambda uid, wid: (seen.append(wid), real_check(uid, wid))[1])
+    for _ in range(8):
+        watch.sweep()
+    assert set(ids) | {"w_legacy"} <= set(seen)
+    assert legacy.get().to_dict()["counted"] is True and legacy.get().to_dict()["expiresAt"]

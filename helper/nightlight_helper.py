@@ -172,8 +172,9 @@ def _count_updates():
     if shutil.which("apt"):
         out = _run(["apt", "list", "--upgradable"], timeout=60)
         return sum(1 for line in out.splitlines() if "upgradable from" in line)
-    if shutil.which("dnf"):
-        return sum(1 for line in _run(["dnf", "-q", "check-update"], timeout=60).splitlines() if line.strip())
+    if shutil.which("dnf"):  # exit 100 means "updates available", so read the output whatever the code
+        out = _run_both(["dnf", "-q", "check-update"], timeout=60)
+        return sum(1 for line in out.splitlines() if len(line.split()) == 3 and "." in line.split()[0])
     if sys.platform == "darwin" and shutil.which("softwareupdate"):
         out = _run_both(["softwareupdate", "-l"], timeout=90)
         return sum(1 for line in out.splitlines() if line.strip().startswith("* Label:"))
@@ -211,21 +212,20 @@ def _ssh_password_login():
     """True if the SSH server allows password logins (keys are safer). None if there's no SSH server config."""
     paths = ["/etc/ssh/sshd_config"]
     try:
-        paths += sorted(os.path.join("/etc/ssh/sshd_config.d", f) for f in os.listdir("/etc/ssh/sshd_config.d"))
+        with open(paths[0]) as f:
+            lines = f.read().splitlines()
     except OSError:
-        pass
-    seen = False
-    for path in paths:
-        try:
-            with open(path) as f:
-                for line in f:
-                    words = line.split()
-                    if len(words) >= 2 and words[0].lower() == "passwordauthentication":
-                        return words[1].lower() == "yes"  # sshd uses the first value it finds
-            seen = True
-        except OSError:
+        return None
+    for line in lines:
+        words = line.split()
+        if not words or words[0].startswith("#"):
             continue
-    return True if seen and sys.platform != "darwin" else None  # Debian's default is yes
+        key = words[0].lower()
+        if key in ("include", "match"):
+            return None  # the effective setting depends on includes or conditions: don't guess
+        if key == "passwordauthentication" and len(words) >= 2:
+            return words[1].lower() == "yes"  # sshd uses the first value it finds
+    return True if sys.platform != "darwin" else None  # Debian's default is yes
 
 
 def facts():
@@ -745,13 +745,14 @@ def discover(yes=False):
     neigh, mdns = _neighbours(), _mdns()
     ips = set(neigh) | set(mdns)
     ports = _open_ports(ips)
+    known = {v.get("ip"): k for k, v in (cfg.get("found") or {}).items()}  # same thing, same id as last time
     items, local = [], {}
     for ip in sorted(ips):
         vendor = _vendor(neigh.get(ip))
         services = sorted(mdns.get(ip, set()) | {PORTS[p] for p in ports.get(ip, [])})
         if not services and not vendor:
             continue  # nothing to say about it
-        cid = secrets_hex(6)
+        cid = known.get(ip) or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
         local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
@@ -777,7 +778,7 @@ def discover(yes=False):
     if not chosen:
         print("Nothing sent.")
         return
-    cfg["found"] = {it["cid"]: local[it["cid"]] for it in chosen}
+    cfg["found"] = {**(cfg.get("found") or {}), **{it["cid"]: local[it["cid"]] for it in chosen}}
     _save_config(cfg)
     st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
                      {"X-Device-Token": cfg["token"]})
@@ -798,10 +799,10 @@ def _watch_results():
         return []
     found, out = cfg.get("found") or {}, []
     for w in (cfg.get("watch") or [])[:10]:
-        target = found.get(w.get("cid"))
+        target = found.get(w.get("cid")) if isinstance(w.get("cid"), str) else None
         port = w.get("port")
-        if not target or not isinstance(port, int):
-            continue
+        if not target or type(port) is not int or port not in PORTS or port not in target.get("ports", []):
+            continue  # only a port this device saw open on that thing, from the fixed list
         t = time.time()
         try:
             with _s.create_connection((target["ip"], port), timeout=1):

@@ -113,8 +113,9 @@ def add_watch(uid: str, name: str, url: str, tags: list[str]) -> dict:
         tx.set(total, {"active": active + 1})
         tx.set(watches(uid).document(wid), {"name": scrub(name)[0], "url": clean, "tags": tags, "status": "unknown",
                                             "createdAt": firestore.SERVER_TIMESTAMP, "lastCheckedAt": None,
-                                            "expiresAt": now + WATCH_LIFETIME})
-        tx.set(watch_registry().document(f"{uid}__{wid}"), {"uid": uid, "watchId": wid})
+                                            "expiresAt": now + WATCH_LIFETIME, "counted": True})
+        tx.set(watch_registry().document(f"{uid}__{wid}"), {"uid": uid, "watchId": wid,
+                                                            "lastCheckedAt": datetime(2000, 1, 1, tzinfo=timezone.utc)})
 
     db.run_transaction(run)
     check_one(uid, wid)
@@ -134,10 +135,25 @@ def remove_watch(uid: str, wid: str) -> dict:
             raise not_found()
         tx.delete(ref)
         tx.delete(watch_registry().document(f"{uid}__{wid}"))
-        tx.set(total, {"active": max(0, (g.to_dict() or {}).get("active", 1) - 1)})
+        if snap.to_dict().get("counted"):  # only watches that took a place give one back
+            tx.set(total, {"active": max(0, (g.to_dict() or {}).get("active", 1) - 1)})
 
     db.run_transaction(run)
     return {"ok": True}
+
+
+import concurrent.futures
+
+_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="watch")
+
+
+def probe(url: str) -> tuple[str, int | None, int | None]:
+    """_probe with a hard overall deadline (name lookup included): a slow or trickling server counts as down."""
+    fut = _POOL.submit(_probe, url)
+    try:
+        return fut.result(timeout=PROBE_BUDGET)
+    except concurrent.futures.TimeoutError:
+        return "crit", None, None
 
 
 def _probe(url: str) -> tuple[str, int | None, int | None]:
@@ -174,7 +190,7 @@ def check_one(uid: str, wid: str) -> None:
     if not snap.exists:
         return
     w = snap.to_dict()
-    status, code, ms = _probe(w["url"])
+    status, code, ms = probe(w["url"])
 
     @firestore.transactional
     def run(tx):
@@ -186,6 +202,8 @@ def check_one(uid: str, wid: str) -> None:
             real.event(tx, uid, None, "watch_" + status, "info" if status == "ok" else "crit",
                        f"{cur.get('name', 'A watched address')} {words}.", who="nightlight")
         tx.update(ref, update)
+        tx.set(watch_registry().document(f"{uid}__{wid}"), {"uid": uid, "watchId": wid, "lastCheckedAt": _now()},
+               merge=True)  # the sweep takes the least recently checked first
 
     db.run_transaction(run)
 
@@ -211,10 +229,29 @@ def _mark_silent(uid: str, device_id: str) -> bool:
     return db.run_transaction(run)
 
 
+def _adopt_legacy(uid: str, wid: str) -> None:
+    """Watches from before the global count get counted and a retirement date (once)."""
+    ref = watches(uid).document(wid)
+    total = db.client().collection("watchStats").document("global")
+
+    @firestore.transactional
+    def run(tx):
+        w = ref.get(transaction=tx).to_dict()
+        g = total.get(transaction=tx)
+        if not w or w.get("counted"):
+            return
+        tx.update(ref, {"counted": True, "expiresAt": w.get("expiresAt") or _now() + WATCH_LIFETIME})
+        tx.set(total, {"active": (g.to_dict() or {}).get("active", 0) + 1})
+
+    db.run_transaction(run)
+
+
 def sweep() -> dict:
     started = time.monotonic()
     silent = checked = pruned = 0
     for r in registry().stream():
+        if time.monotonic() - started > SWEEP_BUDGET / 2:
+            break  # devices get half the time; the rest waits for the next sweep
         d = r.to_dict()
         try:
             dsnap = db.device(d["uid"], d["deviceId"]).get()
@@ -225,7 +262,10 @@ def sweep() -> dict:
             silent += _mark_silent(d["uid"], d["deviceId"])
         except Exception as e:  # one bad record never stops the sweep
             log.warning("sweep device failed: %s", type(e).__name__)
-    for r in watch_registry().limit(WATCHES_TOTAL).stream():
+    legacy = [r for r in watch_registry().stream() if "lastCheckedAt" not in (r.to_dict() or {})]
+    for r in legacy:  # rows from before ordering existed: give them a place in the queue (oldest first)
+        r.reference.set({"lastCheckedAt": datetime(2000, 1, 1, tzinfo=timezone.utc)}, merge=True)
+    for r in watch_registry().order_by("lastCheckedAt").limit(WATCHES_TOTAL).stream():
         if time.monotonic() - started > SWEEP_BUDGET:
             break  # the rest waits for the next sweep
         d = r.to_dict()
@@ -239,6 +279,8 @@ def sweep() -> dict:
                     r.reference.delete()
                 pruned += 1
                 continue
+            if not w.get("counted"):
+                _adopt_legacy(d["uid"], d["watchId"])
             check_one(d["uid"], d["watchId"])
             checked += 1
         except Exception as e:

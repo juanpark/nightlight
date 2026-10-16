@@ -1,6 +1,6 @@
 """HTTP routes. Only these are public; the ADK agent runs in-process and is never exposed directly."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -357,18 +357,12 @@ class WatchResult(Strict):
 
 
 class Found(Strict):
+    """Only the helper's fixed words: nothing free-form can carry an address or a name off the device."""
     cid: str = Field(pattern=r"^[0-9a-f]{12}$")
-    guess: str = Field(max_length=60)
-    vendor: str | None = Field(default=None, max_length=60)
-    services: list[str] = Field(default_factory=list, max_length=8)
-    ports: list[int] = Field(default_factory=list, max_length=8)
-
-    @model_validator(mode="after")
-    def no_addresses(self):
-        text = " ".join([self.guess, self.vendor or "", *self.services])
-        if any(len(s) > 40 for s in self.services) or re.search(r"\d+\.\d+\.\d+\.\d+|([0-9a-fA-F]{2}:){5}", text):
-            raise ValueError("found items carry no addresses")
-        return self
+    guess: Literal[tuple(real.FOUND_GUESSES)]
+    vendor: Literal[tuple(real.FOUND_VENDORS)] | None = None
+    services: list[Literal[tuple(real.FOUND_SERVICES)]] = Field(default_factory=list, max_length=8)
+    ports: list[Literal[tuple(real.FOUND_PORTS)]] = Field(default_factory=list, max_length=8)
 
 
 class DiscoveriesBody(Strict):
@@ -393,7 +387,7 @@ class HeartbeatBody(Strict):
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
     allowedJobs: dict[Literal["restart_container", "diagnose", "logs"], list[str]] = Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
-    failedAgents: list[str] = Field(default_factory=list, max_length=20)
+    failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
 
     @model_validator(mode="after")

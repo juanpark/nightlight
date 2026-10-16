@@ -435,3 +435,26 @@ def test_safety_facts(helper, monkeypatch, tmp_path):
     monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(cfg if p == "/etc/ssh/sshd_config" else p, *a, **k))
     monkeypatch.setattr(helper.sys, "platform", "linux")
     assert helper._ssh_password_login() is False
+
+
+def test_the_server_cannot_widen_watched_ports(helper, monkeypatch):  # review 12 #1
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d",
+                         "found": {"a1b2c3d4e5f6": {"ip": "192.168.1.20", "ports": [8123]}},
+                         "watch": [{"cid": "a1b2c3d4e5f6", "port": 31337}, {"cid": "nope", "port": 8123},
+                                   {"cid": "a1b2c3d4e5f6", "port": "8123"}]})
+    tried = []
+    monkeypatch.setattr("socket.create_connection", lambda addr, timeout=None: tried.append(addr) or (_ for _ in ()).throw(OSError()))
+    assert helper._watch_results() == [] and tried == []
+
+
+def test_ssh_settings_with_includes_are_unknown_and_dnf_counts(helper, monkeypatch, tmp_path):  # review 13 #2,#3
+    cfg = tmp_path / "sshd_config"
+    cfg.write_text("Include /etc/ssh/sshd_config.d/*.conf\nPasswordAuthentication yes\n")
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(cfg if p == "/etc/ssh/sshd_config" else p, *a, **k))
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    assert helper._ssh_password_login() is None
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/usr/bin/dnf" if n == "dnf" else None)
+    monkeypatch.setattr(helper, "_run_both", lambda cmd, timeout=15: "\nkernel.x86_64  6.5.1-1.fc39  updates\n"
+                        "vim.x86_64 2:9.0-1.fc39 updates\n")
+    assert helper._count_updates() == 2
