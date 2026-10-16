@@ -59,8 +59,10 @@ def _bank() -> str:
     return f"reasoningEngines/{settings.memory_bank_id}"
 
 
-def _scope(uid: str) -> dict:
-    return {"app_name": APP, "user_id": uid}
+def _scope(uid: str, ep: int) -> dict:
+    """Memory Bank matches scopes exactly, so facts saved under an older epoch are invisible the moment a purge bumps
+    the epoch, even before the (asynchronous) purge has deleted them. The purge filter matches all epochs."""
+    return {"app_name": APP, "user_id": uid, "epoch": str(ep)}
 
 
 def _usable(uid: str) -> bool:
@@ -96,10 +98,11 @@ def remember(uid: str, fact: str, started_epoch: int | None = None) -> dict:
         return {"status": "refused", "reason": "it looked like a password, key or address; those are never kept"}
     if not clean:
         return {"status": "refused", "reason": "nothing to remember"}
-    if started_epoch is not None and epoch(uid) != started_epoch:
+    ep = epoch(uid)
+    if started_epoch is not None and ep != started_epoch:
         return {"status": "error", "reason": "memory was just cleared; nothing was saved"}
     try:
-        _api().create(name=_bank(), fact=clean, scope=_scope(uid),
+        _api().create(name=_bank(), fact=clean, scope=_scope(uid, ep),
                       config={"wait_for_completion": True, "ttl": TTL})
     except Exception as e:  # never let memory break a turn
         log.warning("memory write failed: %s", type(e).__name__)
@@ -124,7 +127,7 @@ def recall(uid: str, query: str, top_k: int = 5) -> list[str]:
     if not _usable(uid) or not (query or "").strip():
         return []
     try:
-        found = _api().retrieve(name=_bank(), scope=_scope(uid),
+        found = _api().retrieve(name=_bank(), scope=_scope(uid, epoch(uid)),
                                 similarity_search_params={"search_query": scrub(query)[0][:1000], "top_k": top_k})
         facts = []
         for item in found:
@@ -139,12 +142,13 @@ def recall(uid: str, query: str, top_k: int = 5) -> list[str]:
         return []
 
 
-def list_all(uid: str, limit: int = 50) -> list[dict]:
+def list_all(uid: str, limit: int = 50, ep: int | None = None) -> list[dict]:
     """Everything remembered for this person (for the "What Nightlight remembers" panel), newest first."""
     if not _usable(uid):
         return []
     try:
-        found = _api().retrieve(name=_bank(), scope=_scope(uid), simple_retrieval_params={"page_size": limit})
+        found = _api().retrieve(name=_bank(), scope=_scope(uid, epoch(uid) if ep is None else ep),
+                                simple_retrieval_params={"page_size": limit})
         out = []
         for item in found:
             fact, name, updated = _fact(item)
@@ -204,7 +208,7 @@ def load(uid: str, current_epoch: int | None = None) -> list[str]:
     if not _usable(uid):
         return []
     ep = epoch(uid) if current_epoch is None else current_epoch
-    facts = [m["fact"] for m in list_all(uid, limit=PER_TURN)]
+    facts = [m["fact"] for m in list_all(uid, limit=PER_TURN, ep=ep)]
     with _lock:
         _cache[uid] = (time.monotonic(), ep, facts)
     return facts if epoch(uid) == ep else []

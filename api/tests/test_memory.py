@@ -23,8 +23,10 @@ from test_chat import ask, events, fake_model, new_session  # noqa: F401 - fake_
 class FakeMemories:
     def __init__(self):
         self.store: dict[str, list[str]] = {}
+        self.epochs: dict[tuple[str, str], str] = {}  # (uid, fact) -> epoch it was saved under ("0" if seeded)
         self.calls: list[tuple] = []
         self.fail = False
+        self.deferred = False  # purge returns before deleting (like the real long-running operation)
 
     def _check(self, name, scope=None):
         assert name == f"reasoningEngines/{settings.memory_bank_id}"
@@ -36,6 +38,7 @@ class FakeMemories:
         self.calls.append(("create", scope["user_id"], fact, config))
         self._check(name, scope)
         self.store.setdefault(scope["user_id"], []).append(fact)
+        self.epochs[(scope["user_id"], fact)] = scope["epoch"]
         return SimpleNamespace(done=True)
 
     def retrieve(self, *, name, scope, similarity_search_params=None, simple_retrieval_params=None, config=None):
@@ -43,13 +46,15 @@ class FakeMemories:
         self._check(name, scope)
         at = datetime(2026, 10, 16, tzinfo=timezone.utc)
         return iter([SimpleNamespace(memory=SimpleNamespace(fact=f, name=f"{name}/memories/m{i}", update_time=at))
-                     for i, f in enumerate(self.store.get(scope["user_id"], []))])
+                     for i, f in enumerate(self.store.get(scope["user_id"], []))
+                     if self.epochs.get((scope["user_id"], f), "0") == scope["epoch"]])  # exact scope match
 
     def purge(self, *, name, filter, force=False, config=None):
         uid = re.fullmatch(r'scope\.user_id="([^"]+)"', filter).group(1)
         self.calls.append(("purge", uid, force, config))
         self._check(name)
-        self.store.pop(uid, None)
+        if not self.deferred:
+            self.store.pop(uid, None)
         return SimpleNamespace(done=False)
 
     def count(self, kind):
@@ -257,8 +262,8 @@ def test_a_load_that_overlaps_a_purge_is_never_served(mem, uid):  # review 7 #2
     before = memory.epoch(uid)
     real_list = memory.list_all
 
-    def list_then_purge(u, limit=50):
-        out = real_list(u, limit)  # the old fact was read...
+    def list_then_purge(u, limit=50, ep=None):
+        out = real_list(u, limit, ep)  # the old fact was read...
         memory.forget_all(u)  # ...then the person said "forget everything"
         return out
 
@@ -285,3 +290,14 @@ def test_a_save_from_before_a_purge_is_refused_or_undone(mem, uid):  # review 7 
     purges = mem.count("purge")
     assert memory.remember(uid, "kids play on weekends", start)["status"] == "error"
     assert mem.count("purge") == purges + 2  # the reset's purge, then ours: forgetting wins
+
+
+def test_facts_are_invisible_as_soon_as_a_purge_starts(mem, uid):  # review 7 rev2 #1
+    mem.store[uid] = ["old preference"]
+    assert memory.load(uid) == ["old preference"]
+    mem.deferred = True  # the purge is accepted but hasn't deleted anything yet
+    memory.forget_all(uid)
+    assert mem.store[uid] == ["old preference"]  # still stored...
+    ep = memory.epoch(uid)
+    assert memory.load(uid, ep) == [] and memory.cached(uid, ep) == []  # ...but never recalled or cached again
+    assert memory.recall(uid, "preference") == [] and memory.list_all(uid) == []
