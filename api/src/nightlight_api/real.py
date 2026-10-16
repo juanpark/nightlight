@@ -117,7 +117,7 @@ def _create_device(tx, uid: str, device_id: str, token: str, name: str) -> None:
         "name": name, "kind": "computer", "purpose": "A real device reporting through the Nightlight helper.",
         "realm": "real", "simulated": False, "health": "unknown", "status": "offline", "vitals": {},
         "findings": [], "version": 1, "x": 420, "y": 80, "createdAt": firestore.SERVER_TIMESTAMP,
-        "lastSeen": None})
+        "lastSeen": None, "registered": True})
 
 
 # ------------------------------------------------------------------ pairing (the device shows a code)
@@ -395,6 +395,10 @@ def heartbeat(token: str, facts: dict) -> dict:
                   "uptime": facts.get("uptimeSec")}
         extra = history_point(tx, uid, device_id, device, vitals, status,
                               sum(1 for f in marked if f.get("state") == "new"))
+        if not device.get("registered"):  # devices from before the sweep registry join it on their next report
+            tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
+                   {"uid": uid, "deviceId": device_id})
+            extra["registered"] = True
         if device.get("watchState") == "silent":
             extra["watchState"] = None
             event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again.")
