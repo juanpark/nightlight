@@ -133,6 +133,10 @@ checks every minute (a TCP connect to a port it saw open).
 
 ## Architecture
 
+![Nightlight architecture](docs/architecture/architecture.png)
+
+(Drawn from code: `uv run --with diagrams python docs/architecture/architecture.py`.)
+
 ```
 Browser (Next.js on Cloud Run) ── Firebase Authentication (Google sign-in, one-click anonymous demo)
    │  HTTPS + ID token (REST + streamed replies)          Firestore (read-only listeners on users/{uid}/**)
