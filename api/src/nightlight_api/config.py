@@ -44,6 +44,13 @@ class Settings:
     history_messages: int = 20
     history_chars: int = 12000
     tool_result_bytes: int = 4000
+    # Memory Bank (Agent Platform). Empty id = memory off: every memory call is a no-op, so tests and local runs need
+    # no cloud. The id is the last segment of the Memory Bank's resource name (.../reasoningEngines/<id>).
+    memory_bank_id: str = os.environ.get("MEMORY_BANK_ID", "")
+    memory_location: str = os.environ.get("MEMORY_BANK_LOCATION", "global")
+    memory_fact_chars: int = 300
+    memory_recall_seconds: float = 1.5
+    memory_write_seconds: float = 10.0
 
     @property
     def c_max(self) -> float:

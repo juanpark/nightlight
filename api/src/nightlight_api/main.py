@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, quota, real, sim, trust as trustlib, turns
+from . import __version__, actions, db, demo, memory, quota, real, sim, trust as trustlib, turns
 from .auth import current_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -20,7 +20,7 @@ from .redact import scrub
 app = FastAPI(title="Nightlight API", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
-app.add_middleware(CORSMiddleware, allow_origins=settings.web_origins, allow_methods=["GET", "POST", "PUT"],
+app.add_middleware(CORSMiddleware, allow_origins=settings.web_origins, allow_methods=["GET", "POST", "PUT", "DELETE"],
                    allow_headers=["Authorization", "Content-Type"], max_age=600)
 
 
@@ -219,6 +219,18 @@ def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(
     claimed = turns.claim(uid, turn_id)
     return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
                              headers=SSE_HEADERS)
+
+
+# ------------------------------------------------------------------ memory (what Nightlight remembers)
+
+@app.get("/api/me/memories")
+def my_memories(uid: str = Depends(current_uid)):
+    return {"enabled": memory.enabled(), "memories": memory.list_all(uid)}
+
+
+@app.delete("/api/me/memories")
+def forget_my_memories(uid: str = Depends(current_uid)):
+    return {"ok": memory.forget_all(uid) if memory.enabled() else True}
 
 
 # ------------------------------------------------------------------ real devices (read-only helper)

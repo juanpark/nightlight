@@ -19,7 +19,7 @@ from google.adk.sessions import InMemorySessionService
 from google.cloud import firestore
 from google.genai import types
 
-from . import agent as agentlib, db, quota
+from . import agent as agentlib, db, memory, quota
 from .config import settings
 from .errors import ApiError, conflict, not_found
 from .fence import turn_fence
@@ -246,6 +246,17 @@ def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
+async def _recall(uid: str, query: str) -> list[str]:
+    """Facts remembered about this person that relate to their message; [] if memory is off, slow or failing."""
+    if not memory.enabled():
+        return []
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(memory.recall, uid, query),
+                                      timeout=settings.memory_recall_seconds)
+    except Exception:  # a slow or failing memory never holds up or breaks the answer
+        return []
+
+
 async def stream(uid: str, c: Claim, ip: str, model=None):
     """Async generator of SSE strings for a claimed turn. Always ends with `done` or `error`.
 
@@ -280,7 +291,10 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         try:
             continuation = c.turn["kind"] == "continuation"
             if not continuation:
-                ctx.fleet = await asyncio.to_thread(agentlib.fleet_summary, uid, c.generation)
+                # One memory lookup per turn, in parallel with the fleet summary; both go into the instruction and
+                # so through the same exact token bound as everything else.
+                ctx.fleet, ctx.memories = await asyncio.gather(
+                    asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, c.turn["input"]))
             agent = agentlib.build(ctx, continuation=continuation, model=model)
             sessions = InMemorySessionService()
             runner = Runner(app_name=APP, agent=agent, session_service=sessions)
