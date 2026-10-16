@@ -507,7 +507,7 @@ def heartbeat(token: str, facts: dict) -> dict:
     for unit in facts.get("failedUnits") or []:
         services[_doc_id(unit)] = {"name": _friendly(unit), "unit": unit, "category": "system", "kind": "system",
                                    "status": "warn", "failed": True,
-                          "findings": [f for f in findings if f.get("svcId") == unit]}
+                          "findings": [f for f in findings if f.get("svcId") == _doc_id(unit)]}
 
     @firestore.transactional
     def run(tx):

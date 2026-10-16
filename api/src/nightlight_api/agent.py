@@ -82,7 +82,7 @@ class TurnContext:
                                                     "tokensThinking": 0, "costUsd": 0.0})
     reservations: list = field(default_factory=list)
     fleet: str = ""  # plain-text summary of the home, put in the instruction so the model needn't list devices
-    memories: list = field(default_factory=list)  # facts recalled once at turn start (memory.recall)
+    memories: list = field(default_factory=list)  # newest facts loaded once at turn start (memory cache)
     memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
     redacted: int = 0

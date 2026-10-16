@@ -1,58 +1,200 @@
 # API
 
-The contract between the web app and the backend. Frozen on 16 Oct 2026, 02:30 KST: after that, changes only add
-fields. Example data for every shape is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of one demo story
-(start with `phases/before_approval`).
+The contract between the web app, the device helper and the backend. Frozen on 16 Oct 2026, 02:30 KST: after that,
+changes only add routes and fields (this page covers everything up to helper 0.6.0). Example data for the sample-home
+shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of one demo story (start with
+`phases/before_approval`). Security design: [`SECURITY.md`](SECURITY.md).
 
 ## Basics
 
 - **Auth:** every `/api/*` call sends `Authorization: Bearer <Firebase ID token>`, except `GET /api/health`. The demo
-  signs in anonymously (Firebase), so judges never create an account.
-- **Bodies:** JSON. Unknown or invalid fields are **rejected** with 422.
+  signs in anonymously (Firebase), so judges never create an account. `/helper/*` routes use a device token
+  (`X-Device-Token`) or a join code; `/internal/sweep` accepts only Cloud Scheduler's signed token.
+- **Owner gate:** routes marked *owner* need a non-anonymous (Google) sign-in; an anonymous token gets
+  `403 sign_in_required`.
+- **Bodies:** JSON. Unknown or invalid fields are **rejected** with 422. The reason is in `detail[0].msg` (a code such
+  as `private_address` for our own checks, the validator's message for schema errors).
 - **Times:** ISO 8601 UTC strings in the API and mocks, e.g. `2026-10-16T17:05:12.345Z`. Firestore listeners return
   Timestamp objects; convert them in one adapter so the UI sees the same shape from both.
 - **Reading data:** the browser reads its own data directly from Firestore with listeners, under `users/{uid}/...`
   (read-only). Every write goes through this API.
 - **Streams:** chat replies are Server-Sent Events over a `POST`, read with `fetch()` and a `ReadableStream`
   (`EventSource` can't send headers). Every stream ends with a `done` or an `error` event. A `: ping` comment arrives
-  every 15 s on long streams.
-- **Simulated data:** the sample home is simulated and labelled as such.
+  after 15 s without other output.
+- **Simulated data:** the sample home is simulated and labelled as such (`simulated: true`).
 
 ## Data the browser reads (Firestore, read-only)
 
-| Path | What | Mock |
-|---|---|---|
-| `users/{uid}` | `demoGeneration`, `demo.state` (`ready` / `resetting`), `trustDefault`, `template` | `phases/<phase>/user.json` |
-| `users/{uid}/devices/{deviceId}` | name, kind, `purpose` (plain words), `status` (`ok`/`warn`/`crit`/`offline`), `health` (`verified`/`unknown`), `vitals`, `version`, `simulated`, map position `x`,`y` | `phases/<phase>/devices.json` |
-| `…/devices/{deviceId}/services/{svcId}` | name, status, version, `updateAvailable`, `findings[]` (plain message + evidence) | nested under each device in `devices.json` for convenience |
-| `users/{uid}/events/{eventId}` | what happened, when, how serious | `phases/<phase>/events.json` |
-| `users/{uid}/actions/{actionId}` | approval cards: `plan`, `dryRun`, `blastRadius`, `rollback`, `status`, `decision`, `result`, `realm` (`sim`/`real`), `continuationTurnId` | `phases/<phase>/actions.json` |
-| `users/{uid}/trust/{realm}:{actionType}` | trust level per kind of job, `pinned`, `successes`, promotion `offer` | `phases/<phase>/trust.json` |
-| `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status | `phases/<phase>/sessions.json` |
+| Path | What |
+|---|---|
+| `users/{uid}` | `demoGeneration`, `demo.state` (`ready` / `resetting`), `trustDefault`, `template` (`home-pi` = sample home shown, `empty` = hidden), `lastChatAt`, `memoryEpoch` |
+| `users/{uid}/devices/{deviceId}` | name, `kind`, `purpose` (plain words), `status` (`ok`/`warn`/`crit`/`offline`), `health` (`verified`/`unknown`), `vitals`, `version`, `simulated`, `realm` (`real` for helper devices), map position `x`,`y`, `tags[]`, `findings[]` |
+| `…/devices/{deviceId}/services/{svcId}` | name, status, version, `updateAvailable`, `category`, `findings[]` (plain message + evidence) |
+| `…/devices/{deviceId}/history/{YYYYMMDDTHHMMSS}` | real devices only: `{at, cpu, mem, disk, status, problems, expiresAt}`, at most one point per 5 minutes, deleted after 8 days (Firestore TTL on `expiresAt`) |
+| `users/{uid}/events/{eventId}` | Activity: what happened, when, how serious (see Events) |
+| `users/{uid}/actions/{actionId}` | approval cards and jobs: `type`, `params`, `plan`, `dryRun`, `blastRadius`, `rollback`, `riskClass`, `status`, `decision`, `result`, `realm` (`sim`/`real`), `continuationTurnId`, `followUp` |
+| `users/{uid}/trust/{realm}:{actionType}` | trust level per kind of job, `pinned`, `successes`, promotion `offer` |
+| `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status |
+| `users/{uid}/watches/{watchId}` | watched websites: `name`, `url`, `tags`, `status` (`unknown`/`ok`/`crit`), `httpStatus`, `latencyMs`, `lastCheckedAt`, `lastChange`, `createdAt`, `expiresAt` (30 days after adding) |
+| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, services[], ports[], added}`, `by`, `byName`, `at`, `expiresAt` (24 h) |
 
-Every demo document carries `demoGeneration`. Show only documents whose `demoGeneration` equals the user's current
-`demoGeneration` (older ones are leftovers from before a reset), plus real devices (`realm: "real"`), which are always
-current.
+Every sample-home document carries `demoGeneration`. Show only documents whose `demoGeneration` equals the user's
+current `demoGeneration` (older ones are leftovers from before a reset), plus real devices and real events
+(`realm: "real"`), which are always current.
 
-## Endpoints
+Mocks: `phases/<phase>/user.json`, `devices.json` (services nested), `events.json`, `actions.json`, `trust.json`,
+`sessions.json`. Real-device, history, watch and discovery shapes have no mocks; this page is their reference.
+
+## Endpoints: home, chat, trust
 
 | Method and path | Body | Response |
 |---|---|---|
 | `GET /config` (served by the web app) | | `{apiUrl, firebase:{apiKey, authDomain, projectId, appId}}` |
 | `GET /api/health` | | `200 {ok, version}` |
-| `POST /api/demo/start` | `{"template":"home-pi"}` | `200 {ok, demoGeneration, devices}` |
-| `POST /api/demo/reset` | `{}` | `200 {ok, demoGeneration}`; `409 reset_in_progress` |
-| `POST /api/demo/inject` | `{"kind":"disk_full","deviceId":"pi-1"}` | `201 {eventId}` |
+| `POST /api/demo/start` | `{"template":"home-pi"}` or `{"template":"empty"}` | `200 {ok, demoGeneration, devices}`; does nothing if the home is already ready. The web app sends `home-pi` for anonymous users and `empty` for signed-in owners |
+| `POST /api/demo/template` | `{"template":"home-pi" \| "empty"}` | `200 {ok, demoGeneration, devices, template}`: shows or hides the sample home (a rebuild under the reset barrier; memories are kept, real devices untouched); `409 reset_in_progress` |
+| `POST /api/demo/reset` | `{}` | `200 {ok, demoGeneration}`; `409 reset_in_progress`. Also forgets memories |
+| `POST /api/demo/inject` | `{"kind":"disk_full","deviceId":"pi-1"}` | `201 {eventId}`; `422 real_device_read_only` for a real device |
+| `POST /api/devices/{deviceId}/layout` | `{"x":0-2000, "y":0-2000, "name":"…", "tags":["…"]}`, every field optional | `200 {ok, …fields written}`. `name` (1-40) only for real devices (`422 sample_devices_keep_their_names`); `tags` at most 6, 1-20 characters, scrubbed, de-duplicated, sorted (`422 tag_too_long` if scrubbing made one longer). Sample devices: `409 resetting`, `404` for an old generation. Position doesn't change `version` |
+| `POST /api/devices/{deviceId}/issues/{findingId}` | `{"state":"new" \| "known" \| "snoozed","days":1-90}` (`days` required for snoozed) | `200 {ok, state, status}`; real devices only (`404` otherwise or if the finding isn't there); `422 snooze_needs_days` |
 | `POST /api/chat/sessions` | `{}` | `201 {sessionId}` |
-| `POST /api/chat/sessions/{sid}/messages` | `{"text":"…","clientRequestId":"<uuid v4>"}` (text ≤ 2 KB) | `200` stream; same `clientRequestId` → the same turn (a finished turn replays); same id with different text → `409 request_mismatch`; `409 turn_in_progress` |
+| `POST /api/chat/sessions/{sid}/messages` | `{"text":"…","clientRequestId":"<uuid v4>"}` (text ≤ 2,000 bytes) | `200` stream; same `clientRequestId` → the same turn (a finished turn replays); same id with different text → `409 request_mismatch`; `409 turn_in_progress` |
 | `POST /api/turns/{turnId}/stream` | `{}` | `200` stream: runs a queued turn, retries a turn whose lease expired, or replays a finished one; `409 turn_in_progress` while it's live |
-| `POST /api/actions/{id}/decide` | `{"decision":"approve"}` or `{"decision":"deny","note":"…"}` | `202 {actionId, status, continuationTurnId}`; for an approved **real-device** job `202 {actionId, status:"approved"}` with no continuation yet (see Real devices); retry → `200` same body; `409 decision_conflict` / `stale` / `illegal_transition` |
-| `PUT /api/trust/{actionType}` | `{"level":"auto","deviceId":null,"svcId":null,"pinned":true}` | `200` trust doc |
+| `POST /api/actions/{id}/decide` | `{"decision":"approve"}` or `{"decision":"deny","note":"…"}` | `202 {actionId, status, continuationTurnId}`; for an approved **real-device** job `202 {actionId, status:"approved"}` with no continuation yet; retry → `200` same body; `409 decision_conflict` / `stale` / `illegal_transition` |
+| `PUT /api/trust/{actionType}` | `{"level":"auto","deviceId":null,"svcId":null,"pinned":true}` | `200` trust doc (sample-home jobs only) |
 | `POST /api/trust/{actionType}/promotion` | `{"accept":true,"offerId":"…"}` | `200` trust doc; `409 offer_obsolete` |
 | `GET /api/me/memories` | | `200 {enabled, memories:[{id, fact, updatedAt}]}`, newest first, at most 50 |
 | `DELETE /api/me/memories` | | `200 {ok}`: forgets everything remembered about the caller (`ok:false` if Memory Bank couldn't be reached) |
 
-While `demo.state` is `resetting`, every demo write and chat answers `409 resetting`.
+While `demo.state` is `resetting`, every sample-home write and chat answers `409 resetting`.
+
+## Endpoints: real devices (browser side)
+
+| Method and path | Auth | Body | Response |
+|---|---|---|---|
+| `POST /api/devices/enrol-code` | owner | `{}` | `201 {code:"ABCD-EFGH", expiresAt}`: one-time, 10 minutes, at most 10 per hour (`429 quota_uid`) |
+| `GET /api/devices/pair/{code}` | owner | | `200 {name, os, expiresAt}`: preview of a code a device shows; `404` if unknown, expired or already decided |
+| `POST /api/devices/pair/{code}` | owner | `{"approve":true}` or `{"approve":false}` | `200 {ok}`; `404`; `409 already_decided`. Previews and decisions together: at most 30 per hour (`429 quota_uid`) |
+| `POST /api/devices/{deviceId}/revoke` | token | `{}` | `200 {ok, deviceId}`: the helper's token stops working and the device goes offline. For a watched device (`kind: "watched"`) it takes it off the map instead and offers its discovery item again |
+| `POST /api/discoveries/{helperDeviceId}/{cid}/add` | token | `{"name":"Printer"}` (1-40) | `201 {ok, deviceId}`: a watched device on the map; `404` (expired list, unknown item, helper gone); `409 already_added`; `422 no_check_port`; `429 watch_capacity` (10 watched per helper) |
+| `POST /api/watches` | owner | `{"name":"Blog","url":"https://…","tags":[]}` (name 1-40, url 8-300, tags ≤6) | `201 {id, url}` (checked once right away); `422 bad_url` / `unknown_host` / `private_address`; `429 too_many_watches` (10 per account) / `watch_budget` (20 adds per day, 200 active overall) |
+| `DELETE /api/watches/{watchId}` | token | | `200 {ok}`; `404` |
+
+## Endpoints: the helper
+
+| Method and path | Auth | Body | Response |
+|---|---|---|---|
+| `POST /helper/enrol` | the one-time code | `{"code":"ABCD-EFGH","name":"My Pi"}` | `201 {deviceId, token}`: the token is shown only here; `401 invalid_code` if unknown, used or expired |
+| `POST /helper/pair/start` | none (20 per network address per hour, `429 quota_ip`) | `{"name":"Raspberry Pi","os":"Debian 12"}` | `201 {code, pollSecret, interval:3, expiresAt}` (10 minutes) |
+| `POST /helper/pair/poll` | `pollSecret` | `{"code":"…","pollSecret":"…"}` | `202 {status:"waiting"}`; `200 {deviceId, token}` once, after the owner approved; `401 invalid_code` (unknown, expired, used, declined or wrong secret, all alike); `429 slow_down` (polls under 2 s apart) |
+| `POST /helper/heartbeat` | `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}], pollEverySec, watch:[{cid, port}]}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
+| `POST /helper/jobs/claim` | `X-Device-Token` | `{}` | `200 {ok, jobs, pollEverySec}`: a light check for approved work between reports; `429 too_frequent` (4 s apart) |
+| `POST /helper/jobs/{actionId}/result` | `X-Device-Token` | `{"ok":true,"summary":"…","state":"running","output":null}` | `200 {ok, actionId, status}`; a repeated report changes nothing; `409 illegal_transition` before the job was handed to this device; `404` for any other device |
+| `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
+| `POST /helper/leave` | `X-Device-Token` | `{}` | `200 {ok}`: the device revokes its own token (uninstall); `401 invalid_token` |
+
+Heartbeat reply fields:
+
+- `findings`: how many findings this report produced (a number).
+- `jobs`: approved jobs handed to this device now, each exactly once (the same transaction marks them `running`).
+- `pollEverySec`: `5` while the owner chatted in the last 5 minutes (the helper then calls `/helper/jobs/claim`
+  every 5 s), else `0`.
+- `watch`: up to 10 found devices this helper should check (`cid` and a port it reported open).
+
+Heartbeat facts (anything else is rejected):
+
+| Field | Limit |
+|---|---|
+| `helperVersion` | ≤16 characters |
+| `os`, `arch` | ≤80, ≤16 |
+| `cpuPct`, `memPct`, `diskPct` | 0-100 |
+| `uptimeSec` | ≥0 |
+| `containers[] {name, image, state, status}` | ≤50; `image` is name and tag only (no registry host, port, path or digest) |
+| `failedUnits[]` | ≤50 names, ≤128 characters |
+| `updatesPending` | 0-100,000 (apt, dnf or macOS `softwareupdate`, re-counted at most hourly) |
+| `allowedJobs` | keys `restart_container`, `restart_service`, `diagnose`, `logs`; ≤20 valid names each: what the owner allowed **on the device** |
+| `watchResults[] {cid, up, ms}` | ≤10; `cid` 12 hex characters, `ms` 0-60,000 or null |
+| `failedAgents[]` | ≤20 labels, ≤100 characters: macOS background items (not Apple's) whose last run failed |
+| `safety` | keys `passwordlessSudo`, `sshPasswordLogin`: true, false or null (unknown) |
+
+Discovery items use a fixed vocabulary: `guess`, `vendor`, `services` and `ports` (22, 80, 443, 445, 631, 8123,
+25565, 32400) must be one of the helper's known words or numbers; `cid` is a random 12-hex id. No addresses or
+free text. The server scrubs every value of every helper request. Free-text values such as container names come from
+the device and are shown as reported.
+
+## Real devices
+
+A real device that hasn't reported for **5 minutes** (or was revoked) is presented as `status: "offline"`,
+`health: "unknown"` with no findings; show `lastSeen` so people know how fresh the data is. Real devices have
+`realm: "real"` and `simulated: false`; they have no `demoGeneration` and are never touched by Reset or the sample
+switch.
+
+Extra device fields from the helper: `os`, `arch`, `helperVersion`, `allowedJobs`, `updatesPending`,
+`containerCount`, `containersRunning`, `issueStates`, `historyAt`, `lastSeen`, `watchState` (`silent` after the sweep
+noticed it stopped reporting, cleared by the next report), `revoked`, `uninstalled`. Services come from containers
+(`category: "containers"`, `kind: "container"`) and failed system services (`category: "system"`, `kind: "system"`,
+`unit`, `failed: true`).
+
+**Watched devices** (added from discovery) have `kind: "watched"`, `realm: "real"`, `watchedBy` (the helper's device
+id), `cid`, `checkPort`, `vendor`, `vitals.latencyMs`. Their helper checks them each report (a TCP connect, 1 s):
+`ok`, or `crit` with a `watched_down` finding. If the helper stops reporting, they go stale by the same 5-minute rule.
+
+**Findings** on real devices carry `state`: `new` (needs a look), `known` (leaving it on purpose) or `snoozed`.
+The health light counts only `new` findings. A known or snoozed finding becomes `new` again when its severity rises or
+the snooze ends; states for findings that went away are dropped. Finding ids are stable per problem and safe to use
+in the issues route.
+
+Checks: `disk_over_80`, `disk_over_90`, `memory_high`, `service_down`, `container_down`, `updates_pending`,
+`restart_overdue` (over 180 days), `background_items_failing`, `passwordless_admin`, `ssh_password_login`,
+`watched_down`.
+
+## Jobs on real devices
+
+| `actionType` | `params` | `riskClass` | Card? | Proposed only when |
+|---|---|---|---|---|
+| `restart_container` | `{"container":"name"}` | `service` | always | the container is in `allowedJobs.restart_container` and isn't running |
+| `restart_service` | `{"unit":"pihole-FTL.service"}` | `service` | always | the exact unit is in `allowedJobs.restart_service` and the device reports it failed |
+| `diagnose` | `{"target":"name"}` | `read` | no | the target is in `allowedJobs.diagnose` and the device reported it; log lines only if also in `allowedJobs.logs` |
+
+The server can't widen `allowedJobs`, and the helper re-checks it before acting. The server sends a job name and
+target, never a command. A real job never runs without a tap, whatever the trust settings (except `diagnose`, which
+is read-only and created already `approved` with `decision.by = "owner_allowed_on_device"`). Proposals for a device
+that isn't reporting are refused. Lifecycle:
+
+| `status` | Meaning | What the UI shows |
+|---|---|---|
+| `pending` | card waiting for the person | Approve / Not now |
+| `approved` | approved; the device picks it up on its next report or claim | "Waiting for the device…" |
+| `running` | handed to the device (exactly once) | "Running on the device…" |
+| `done` / `failed` | the device reported; `result.summary` says what happened | the result; then the follow-up |
+| `denied` | declined | follow-up as usual |
+| `stale` | withdrawn: a reset happened before the device picked it up, or the device was revoked | "Out of date" |
+
+Results: restart jobs set `result {ok, summary, before, after:{state}}`; `diagnose` sets
+`result {ok, summary, output, hidden}`, where `output` (≤4,000 characters) is what the look found, scrubbed on the
+device and again on the server, and `hidden` counts values the server hid.
+
+The follow-up turn is created when the device reports: watch the action document and open
+`POST /api/turns/{continuationTurnId}/stream` once `continuationTurnId` appears. A job already on the device when a
+reset happens is still recorded when it reports, but gets `followUp: "skipped_after_reset"` and no follow-up turn.
+
+**Look into (`diagnose`) in a chat.** The agent's `look_into` tool waits up to 15 s inside the turn. If the device
+answers in time, the agent explains it in the same reply. Otherwise the action gets `followUp: "wanted"`, the stream
+sends `{"type":"followup_pending","turnId":"cont_act_…"}`, and exactly one follow-up turn is queued when the result
+arrives: open that turn's stream once the action has `continuationTurnId` (retry on `409 turn_in_progress`).
+
+## Keeping watch
+
+- **Sweep:** Cloud Scheduler calls `POST /internal/sweep` every 5 minutes with a Google-signed OIDC token (audience
+  `<API>/internal/sweep`, the configured invoker account; `401 invalid_token` / `403 forbidden` otherwise). It marks
+  real devices silent after 5 minutes without a report (event `silent`, once), checks watched websites least recently
+  checked first, retires watches older than 30 days and prunes registry rows of removed devices. Reply
+  `{ok, newlySilent, watchesChecked, pruned}`. Not for browsers.
+- **Watched websites:** http(s) only, no user name or password; every resolved address must be public (checked when
+  added and before every check). The check connects to that checked IP, reads only the status line (up = any answer
+  below 500; redirects not followed, body never downloaded), 6 s deadline. Changes produce `watch_ok` / `watch_crit`
+  events.
+- **History:** written by the heartbeat, at most every 5 minutes per device, kept 8 days.
 
 ## What Nightlight remembers (Memory Bank)
 
@@ -60,15 +202,15 @@ The agent can keep short facts about the person between chats, e.g. "the kids pl
 one only when the person tells it something lasting, through a `remember` tool (the stream shows
 `{"type":"tool_call","name":"remember","args":{"fact":"…"}}` and a `tool_result` with summary `status saved`,
 `status refused` or `status error`). Facts are at most 300 characters; a fact that looks like a password, key, token
-or email address is refused, not stored. At the start of each question turn the agent looks up the few facts related
-to the message, once; live device facts always win over a remembered fact.
+or email address is refused, not stored. At the start of each question turn the agent uses the person's newest facts
+(cached for a few minutes per server instance); live device facts always win over a remembered fact.
 
 Facts are kept per user (the uid from the token) in Agent Platform Memory Bank, not in Firestore, so there are no
 listeners: use `GET /api/me/memories` for a "What Nightlight remembers" panel. `POST /api/demo/reset` also forgets
-them. A deletion may take a moment to show in the list. When `enabled` is `false` (memory not configured), the list is
-always empty and the agent has no `remember` tool.
+them; `POST /api/demo/template` doesn't. A deletion may take a moment to show in the list. When `enabled` is `false`
+(memory not configured), the list is always empty and the agent has no `remember` tool.
 
-## The approval flow
+## The approval flow (sample home)
 
 1. The user asks a question → stream. If the agent wants to change something, the stream sends
    `{"type":"approval_request","actionId":"…"}`. The card's details are in Firestore at `users/{uid}/actions/{actionId}`.
@@ -82,55 +224,7 @@ When trust allows a job to run automatically, there is no card and no follow-up 
 finished, `done` or `failed`, with `decision.by = "auto"`, and the agent explains the outcome in the same reply. A
 failed automatic job lowers its trust level by one step.
 
-## Real devices (the helper)
-
-| Method and path | Auth | Body | Response |
-|---|---|---|---|
-| `POST /api/devices/enrol-code` | Firebase token | `{}` | `201 {code: "ABCD-EFGH", expiresAt}`: one-time, 10 minutes, at most 10 per hour |
-| `POST /helper/enrol` | the one-time code | `{"code":"ABCD-EFGH","name":"My Pi"}` | `201 {deviceId, token}`: the token is shown only here and kept by the helper; `401 invalid_code` if unknown, used or expired |
-| `POST /helper/heartbeat` | header `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}]}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
-| `POST /helper/jobs/{actionId}/result` | header `X-Device-Token` | `{"ok":true,"summary":"…","state":"running"}` (`state`: one of Docker's states or null) | `200 {ok, actionId, status}`; a repeated report changes nothing; `409` before the job was handed to this device; `404` for any other device |
-| `POST /api/devices/{deviceId}/revoke` | Firebase token | `{}` | `200 {ok, deviceId}`: the helper's token stops working |
-
-Heartbeat facts (anything else is rejected): `helperVersion`, `os`, `arch`, `cpuPct`, `memPct`, `diskPct`,
-`uptimeSec`, `containers[] {name, image, state, status}`, `failedUnits[]`, `updatesPending`, `allowedJobs`
-(`{"restart_container": ["name", …]}`: what the owner allowed **on the device**, at most 20 names). The helper reduces
-`image` to the image's own name and tag (no registry host, port, path or digest) and doesn't collect host names, IP
-addresses, logs, environment variables or credentials; the server also scrubs every value. Free-text values such as
-container names come from the device and are shown as reported.
-
-A real device that hasn't reported for **5 minutes** (or was revoked) is presented as `status: "offline"`,
-`health: "unknown"` with no findings; show `lastSeen` so people know how fresh the data is. The helper only talks
-HTTPS to the enrolled address, never follows redirects with its token, stores the token owner-only (0600), and
-keeps retrying with growing waits when the network drops.
-
-Real devices have `realm: "real"` and `simulated: false`; they are always shown (they have no `demoGeneration`)
-and are never touched by Reset.
-
-**Jobs on real devices.** One job exists: `restart_container` (`riskClass: service`), proposed by the agent only
-for a stopped container listed in the device's `allowedJobs`. The owner allows it on the device itself
-(`nightlight_helper.py allow restart_container NAME`); the server can't widen that list, and the helper re-checks it
-before acting. The server sends a job name and target, never a command. A real job never runs without a tap,
-whatever the trust settings. Its lifecycle:
-
-| `status` | Meaning | What the UI shows |
-|---|---|---|
-| `pending` | card waiting for the person | Approve / Not now |
-| `approved` | approved; the device picks it up on its next report (up to about a minute) | "Waiting for the device…" |
-| `running` | handed to the device (exactly once) | "Running on the device…" |
-| `done` / `failed` | the device reported the result; `result.summary` says what happened | the result; then the follow-up |
-| `denied` | declined | follow-up as usual |
-| `stale` | withdrawn: a reset happened before the device picked it up | "Out of date" |
-
-The follow-up turn is created when the device reports: watch the action document and open
-`POST /api/turns/{continuationTurnId}/stream` once `continuationTurnId` appears. A job already on the device when a
-reset happens is still recorded when it reports, but gets `followUp: "skipped_after_reset"` and no follow-up turn. Their services come from containers
-(`category: "containers"`) and failed system services (`category: "system"`). Checks: `disk_over_80`,
-`disk_over_90`, `memory_high`, `service_down`, `container_down`, `updates_pending`, `restart_overdue`.
-
-The helper: [`helper/nightlight_helper.py`](../helper/nightlight_helper.py) (`enrol`, `once`, `run`, `show`).
-
-## Jobs, incidents and checks
+## Sample-home jobs, incidents and checks
 
 | Job (`actionType`) | What it does | `riskClass` | Can run on its own? |
 |---|---|---|---|
@@ -140,11 +234,13 @@ The helper: [`helper/nightlight_helper.py`](../helper/nightlight_helper.py) (`en
 | `update_server` | back up, then update a game server (players disconnected ~2 min) | `service` | no, as above |
 
 Demo incidents (`POST /api/demo/inject` `kind`): `disk_full`, `logs_locked` (the next job fails), `server_lagging`,
-`backup_overdue`, `update_available`. Game incidents only apply to game servers (`422` otherwise).
+`backup_overdue`, `update_available`. Game incidents only apply to game servers (`422 incident_not_applicable`
+otherwise).
 
-Findings (`check`) on devices and services: `disk_over_90`, `memory_high`, `backup_overdue`, `update_available`,
-`backup_never_test_restored`; each has `severity` (`crit`/`warn`/`info`), a plain `message`, `evidence` and the
-`svcId` it concerns. A device's health light reflects its own and its services' findings.
+Findings (`check`) on sample devices and services: `disk_over_90`, `memory_high`, `backup_overdue`,
+`update_available`, `backup_never_test_restored`; each has `id`, `severity` (`crit`/`warn`/`info`), a plain
+`message`, `evidence` and the `svcId` it concerns. A device's health light reflects its own and its services'
+findings.
 
 Game services also carry `version`, `latestVersion`, `updateAvailable`, `players {online, max}` and
 `lastBackupDaysAgo`. Services have a `category` (`home`, `network`, `files`, `games`) for the category filter.
@@ -158,7 +254,17 @@ Game services also carry `version`, `latestVersion`, `updateAvailable`, `players
 | `auto` | Just handle it and tell me |
 
 Precedence: a service setting beats a device setting, which beats the job's level, which beats the global default.
-Risky jobs have a ceiling (e.g. turning off password login always asks).
+Risky jobs have a ceiling. Trust applies to sample-home jobs only; real-device jobs always ask.
+
+## Events (Activity)
+
+| Realm | Fields | `kind` values |
+|---|---|---|
+| sample home | `deviceId`, `kind`, `severity`, `message`, `svcId`, `source: "demo"`, `demoGeneration`, `at` | the incident kinds above |
+| real (`realm: "real"`) | `deviceId` (null for a website), `kind`, `severity`, `message`, `who`, `at` | `joined`, `left`, `revoked`, `removed`, `found`, `status_ok`, `status_warn`, `status_crit`, `issue_new`, `issue_known`, `issue_snoozed`, `silent`, `back`, `watch_ok`, `watch_crit` |
+
+`who` is `you` (the owner did it), `device` (the device reported it) or `nightlight` (the sweep noticed it). Reset
+deletes sample-home events only.
 
 ## Stream events
 
@@ -168,6 +274,7 @@ Risky jobs have a ceiling (e.g. turning off password login always asks).
 {"type":"tool_call","name":"get_device","args":{"device_id":"pi-1"}}
 {"type":"tool_result","name":"get_device","summary":"…","redacted":0}
 {"type":"approval_request","actionId":"…"}
+{"type":"followup_pending","turnId":"cont_act_…"}                                  look_into handed off to a follow-up
 {"type":"error","code":"…","message":"…","retryable":false}                         terminal
 {"type":"done","turnId":"…","metrics":{"latencyMs":…,"firstTextMs":…,"modelCalls":…,"toolCalls":…,"tokensIn":…,"tokensOut":…,"tokensThinking":…,"costUsd":…}}   terminal
 ```
@@ -176,14 +283,14 @@ Risky jobs have a ceiling (e.g. turning off password login always asks).
 
 | Status | Meaning | Body |
 |---|---|---|
-| 401 | missing, invalid or expired token | `{error, code:"invalid_token"}` |
-| 403 | allowed in principle but switched off (e.g. kill switch) | `{error, code}` |
+| 401 | missing, invalid or expired token; unknown, used or expired code | `{error, code:"invalid_token" \| "invalid_code"}` |
+| 403 | allowed in principle but not for this caller or switched off: `sign_in_required` (anonymous on an owner route), `kill_switch`, `forbidden` (sweep caller) | `{error, code}` |
 | 404 | not found, **or owned by another user** (same answer) | `{error, code:"not_found"}` |
-| 409 | `illegal_transition`, `decision_conflict`, `stale`, `turn_in_progress`, `offer_obsolete`, `request_mismatch`, `resetting`, `reset_in_progress` | `{error, code, actionId?, turnId?, retryAfter?}` |
-| 422 | unknown or invalid field | `{"error":"validation_error","code":"invalid_body","detail":[…]}` |
-| 429 | usage limit | `{error, code:"quota_uid"|"quota_ip"|"quota_global"}` + `Retry-After` |
+| 409 | `illegal_transition`, `decision_conflict`, `stale`, `turn_in_progress`, `offer_obsolete`, `request_mismatch`, `resetting`, `reset_in_progress`, `already_decided`, `already_added` | `{error, code, actionId?, turnId?, retryAfter?}` |
+| 422 | unknown or invalid field; our own reasons: `bad_url`, `unknown_host`, `private_address`, `no_check_port`, `tag_too_long`, `sample_devices_keep_their_names`, `snooze_needs_days`, `unknown_template`, `unknown_incident`, `incident_not_applicable`, `real_device_read_only` | `{"error":"validation_error","code":"invalid_body","detail":[{"loc":[…],"msg":"<reason>"}]}` |
+| 429 | a limit: `quota_uid`, `quota_ip`, `quota_global` (usage), `too_frequent`, `slow_down` (helper pacing), `too_many_watches`, `watch_budget`, `watch_capacity` | `{error, code, retryAfter?}` + `Retry-After` when known |
 
-All bodies are in `contracts/mocks/errors.json`.
+Sample-home error bodies are in `contracts/mocks/errors.json`.
 
 ## Chat retries
 

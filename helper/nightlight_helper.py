@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Nightlight helper: reports a device's health to Nightlight, and runs only the jobs you allow on this machine.
 
-It sends only: OS name, CPU architecture, CPU / memory / disk percentages, uptime, Docker containers (name, image
-name and tag without any registry address or path, state, status text), the names of failed system services, and how
-many software updates are waiting. It does not collect host names, IP addresses, logs, files, environment variables or
-passwords. It talks only HTTPS to the address you enrolled with.
+Every report carries: OS name, CPU architecture, CPU / memory / disk percentages, uptime, Docker containers (name,
+image name and tag without any registry address or path, state, status text), the names of failed system services
+(and, on a Mac, of your own failing background items), how many software updates are waiting, two yes/no safety
+facts (administrator commands without a password; SSH password logins), what you allowed here, and up/down results
+for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
+variables or passwords. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
+scrubbed here first. It talks only HTTPS to the address you joined with.
 
-By default it never changes anything. You can allow one kind of job, per target, on this machine:
-restarting a stopped Docker container you name. Even then the job runs only after you approve its card in the app,
-and Nightlight sends only the job's name and target, never a command; this helper decides what it runs.
+By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
+container, restarting a failed system service, and reading why something is down. Even then a change runs only
+after you approve its card in the app; Nightlight sends a job name and target, never a command.
 
 Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # join with a one-time code from the app
