@@ -170,3 +170,69 @@ def test_jobs_run_only_when_allowed_locally(helper, monkeypatch):
     assert helper._allowed() == {}
     with pytest.raises(SystemExit):
         helper.set_allowed("restart_container", "--privileged", True)
+
+
+def test_pair_polls_until_approved_then_saves_the_token(helper, monkeypatch):
+    calls = []
+
+    class Pair(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls.append(self.path)
+            n = sum(1 for c in calls if c.endswith("/poll"))
+            body = ({"code": "ABCD-EFGH", "pollSecret": "s" * 43, "interval": 0} if self.path.endswith("/start")
+                    else {"deviceId": "dev_x", "token": "t" * 43} if n >= 2 else {"status": "waiting"})
+            code = 201 if self.path.endswith("/start") else 200 if n >= 2 else 202
+            raw = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *a):
+            pass
+
+    srv = _server(Pair)
+    monkeypatch.setattr(helper.time, "sleep", lambda s: None)
+    helper.pair(f"http://127.0.0.1:{srv.server_port}", web="https://web.example", name="Mac")
+    assert helper._load()["token"] == "t" * 43 and calls.count("/helper/pair/poll") == 2
+
+
+def test_linux_install_writes_a_service_without_secrets(helper, monkeypatch, tmp_path):
+    helper._save_config({"api": "https://api.example.com", "token": "SECRET" + "t" * 37, "deviceId": "d"})
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper, "APP_DIR", str(tmp_path / "app dir"))
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        if "install" in cmd and "-m" in cmd:
+            seen["unit"] = open(cmd[-2]).read()
+        seen.setdefault("cmds", []).append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    import subprocess
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    helper.install(every=60)
+    unit = seen["unit"]
+    assert "SECRET" not in unit and "run --every 60" in unit and '"' + str(tmp_path / "app dir") in unit
+    assert "NIGHTLIGHT_HOME=" in unit and "Restart=on-failure" in unit
+    assert any(c[-2:] == ["--now", "nightlight-helper.service"] for c in seen["cmds"])
+    assert stat.S_IMODE(os.stat(helper.CONFIG).st_mode) == 0o600
+
+
+def test_macos_install_and_uninstall_touch_only_their_own_files(helper, monkeypatch, tmp_path):
+    import plistlib
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    monkeypatch.setattr(helper, "APP_DIR", str(tmp_path / "Application Support" / "Nightlight"))
+    monkeypatch.setattr(helper, "PLIST", str(tmp_path / "LaunchAgents" / "com.nightlight.helper.plist"))
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(helper, "_post", lambda *a, **k: (200, {"ok": True}))
+    helper.install(every=180)
+    plist = plistlib.load(open(helper.PLIST, "rb"))
+    assert plist["ProgramArguments"][-3:] == ["run", "--every", "180"] and "t" * 43 not in str(plist)
+    keep = tmp_path / "Application Support" / "Nightlight" / "my-notes.txt"
+    keep.write_text("not ours")
+    helper.uninstall()
+    assert not os.path.exists(helper.PLIST) and not os.path.exists(helper.CONFIG) and keep.exists()

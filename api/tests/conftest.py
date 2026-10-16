@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 assert os.environ.get("FIRESTORE_EMULATOR_HOST"), "run tests via scripts/test_api.sh (Firestore emulator)"
 
 from nightlight_api import actions, db, demo  # noqa: E402
-from nightlight_api.auth import current_uid  # noqa: E402
+from nightlight_api.auth import current_uid, owner_uid  # noqa: E402
 from nightlight_api.main import app  # noqa: E402
 
 
@@ -19,6 +19,7 @@ def uid():
 @pytest.fixture
 def client(uid):
     app.dependency_overrides[current_uid] = lambda: uid
+    app.dependency_overrides[owner_uid] = lambda: uid  # tests act as a signed-in owner
     yield TestClient(app)
     app.dependency_overrides.clear()
 

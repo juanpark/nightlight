@@ -11,7 +11,9 @@ restarting a stopped Docker container you name. Even then the job runs only afte
 and Nightlight sends only the job's name and target, never a command; this helper decides what it runs.
 
 Usage:
-  nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # once: trade the one-time code for a device token
+  nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # join with a one-time code from the app
+  nightlight_helper.py pair <API_URL> [--web URL]              # or: show a code to approve in the app / by phone
+  nightlight_helper.py install | uninstall | status            # run in the background (systemd / launchd)
   nightlight_helper.py once                                    # send one report
   nightlight_helper.py run [--every SECONDS]                   # keep reporting (default every 60 s)
   nightlight_helper.py show                                    # print what would be sent, without sending
@@ -37,7 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container",)
@@ -344,13 +346,174 @@ def run(every):
         time.sleep(wait)
 
 
+def default_name():
+    """A friendly default device name from the hardware or OS, never the host name."""
+    if sys.platform == "darwin":
+        model = _run(["sysctl", "-n", "hw.model"]).strip()
+        return "Mac mini" if model.startswith("Macmini") else "MacBook" if "Book" in model else "Mac"
+    try:
+        with open("/proc/device-tree/model") as f:
+            if "Raspberry Pi" in f.read():
+                return "Raspberry Pi"
+    except OSError:
+        pass
+    return (_os_name().split(" ")[0] or "Linux") + " computer"
+
+
+def pair(api, web=None, name=None):
+    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone."""
+    api = check_api(api)
+    status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
+    if status != 201:
+        sys.exit(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
+    code, interval = body["code"], max(int(body.get("interval", 3)), 2)
+    print(f"\n  Your code:  {code}\n")
+    if web:
+        link = f"{web.rstrip('/')}/pair?code={code}"
+        print(f"  Open Nightlight > Add a device > Enter code, or scan this with your phone:\n  {link}\n")
+        if shutil.which("qrencode"):
+            subprocess.run(["qrencode", "-t", "ANSIUTF8", link], check=False)
+    print("  Waiting for you to approve it (10 minutes)...")
+    deadline = time.time() + 600
+    while time.time() < deadline:
+        time.sleep(interval)
+        st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
+        if st == 200 and res.get("token"):
+            _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
+            print("  Approved. This device is now on your Nightlight map.")
+            return
+        if st == 401:
+            sys.exit("  The code was declined or has expired. Run pair again for a new one.")
+    sys.exit("  The code expired. Run pair again for a new one.")
+
+
+# ------------------------------------------------------------------ running in the background
+
+APP_DIR = (os.path.expanduser("~/Library/Application Support/Nightlight") if sys.platform == "darwin"
+           else os.path.expanduser("~/.local/share/nightlight"))
+UNIT = "/etc/systemd/system/nightlight-helper.service"
+PLIST = os.path.expanduser("~/Library/LaunchAgents/com.nightlight.helper.plist")
+LABEL = "com.nightlight.helper"
+
+
+def _sudo(cmd):
+    return cmd if os.geteuid() == 0 else ["sudo", *cmd]
+
+
+def _copy_self():
+    os.makedirs(APP_DIR, mode=0o700, exist_ok=True)
+    target = os.path.join(APP_DIR, "nightlight_helper.py")
+    if os.path.abspath(__file__) != target:
+        shutil.copyfile(os.path.abspath(__file__), target)
+    os.chmod(target, 0o700)
+    return target
+
+
+def install(every=60):
+    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first."""
+    try:
+        _load()
+    except (OSError, ValueError):
+        sys.exit("Join first: run enrol (with a code from the app) or pair.")
+    script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
+    every = max(int(every), 30)
+    if sys.platform == "darwin":
+        import plistlib
+        os.makedirs(os.path.dirname(PLIST), exist_ok=True)
+        logs = os.path.expanduser("~/Library/Logs/nightlight-helper.log")
+        with open(PLIST, "wb") as f:
+            plistlib.dump({"Label": LABEL, "ProgramArguments": [py, script, "run", "--every", str(every)],
+                           "EnvironmentVariables": {"NIGHTLIGHT_HOME": home}, "RunAtLoad": True,
+                           "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 30,
+                           "StandardOutPath": logs, "StandardErrorPath": logs}, f)
+        domain = f"gui/{os.getuid()}"
+        subprocess.run(["launchctl", "bootout", domain, PLIST], capture_output=True, check=False)
+        subprocess.run(["launchctl", "bootstrap", domain, PLIST], check=True)
+        print("Installed. Nightlight now runs in the background whenever you're logged in to this Mac.")
+        return
+    if not shutil.which("systemctl"):
+        sys.exit("This system has no systemd. Keep `python3 nightlight_helper.py run` running another way.")
+    import getpass
+    q = lambda v: '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'  # systemd quoting
+    unit = (
+        "[Unit]\nDescription=Nightlight helper (reports health; runs only jobs you allow)\n"
+        "Wants=network-online.target\nAfter=network-online.target\n\n"
+        f"[Service]\nUser={getpass.getuser()}\nEnvironment={q('NIGHTLIGHT_HOME=' + home)}\n"
+        f"ExecStart={q(py)} {q(script)} run --every {every}\n"
+        "Restart=on-failure\nRestartSec=30\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n")
+    fd, tmp = tempfile.mkstemp(suffix=".service")
+    with os.fdopen(fd, "w") as f:
+        f.write(unit)
+    print("Setting up the background service (your password may be asked once)...")
+    try:
+        subprocess.run(_sudo(["install", "-m", "0644", tmp, UNIT]), check=True)
+    finally:
+        os.unlink(tmp)
+    subprocess.run(_sudo(["systemctl", "daemon-reload"]), check=True)
+    subprocess.run(_sudo(["systemctl", "enable", "--now", "nightlight-helper.service"]), check=True)
+    print("Installed. Nightlight now runs in the background, also after restarts.")
+
+
+def uninstall():
+    """Stop and remove everything this helper installed, and tell Nightlight this device has left."""
+    try:
+        cfg = _load()
+        st, _ = _post(check_api(cfg["api"]) + "/helper/leave", {}, {"X-Device-Token": cfg["token"]})
+        print("Nightlight was told this device left." if st == 200 else "Couldn't reach Nightlight; remove the "
+              "device in the app too.")
+    except (OSError, ValueError, KeyError):
+        pass
+    if sys.platform == "darwin":
+        if os.path.exists(PLIST):
+            subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", PLIST], capture_output=True, check=False)
+            os.unlink(PLIST)
+    elif os.path.exists(UNIT):
+        subprocess.run(_sudo(["systemctl", "disable", "--now", "nightlight-helper.service"]), check=False)
+        subprocess.run(_sudo(["rm", "-f", UNIT]), check=False)
+        subprocess.run(_sudo(["systemctl", "daemon-reload"]), check=False)
+    for path in (os.path.join(APP_DIR, "nightlight_helper.py"), CONFIG):
+        if os.path.isfile(path) and not os.path.islink(path):
+            os.unlink(path)
+    for d in (APP_DIR, CONFIG_DIR):
+        try:
+            os.rmdir(d)  # only if empty: never removes anything we didn't put there
+        except OSError:
+            pass
+    print("Uninstalled. Nothing of Nightlight is left running on this device.")
+
+
+def status():
+    try:
+        cfg = _load()
+        print(f"Joined as device {cfg.get('deviceId')} ({cfg.get('api')}).")
+    except (OSError, ValueError):
+        print("Not joined yet.")
+    if sys.platform == "darwin":
+        out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{LABEL}"], capture_output=True, text=True)
+        print("Background service: " + ("running" if "state = running" in out.stdout else
+                                         "installed, not running" if out.returncode == 0 else "not installed"))
+    elif shutil.which("systemctl"):
+        out = _run(["systemctl", "is-active", "nightlight-helper.service"]).strip()
+        print(f"Background service: {out or 'not installed'}")
+    allowed = _allowed()
+    print("Jobs you allowed here: " + (", ".join(f"{k} {', '.join(v)}" for k, v in allowed.items()) or "none"))
+
+
 def main():
-    p = argparse.ArgumentParser(description="Nightlight helper (read-only)")
+    p = argparse.ArgumentParser(description="Nightlight helper")
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enrol")
     e.add_argument("api")
     e.add_argument("code")
-    e.add_argument("--name", default=platform.system() or "My device")
+    e.add_argument("--name", default=None)
+    pa = sub.add_parser("pair")
+    pa.add_argument("api")
+    pa.add_argument("--web", default=None)
+    pa.add_argument("--name", default=None)
+    ins = sub.add_parser("install")
+    ins.add_argument("--every", type=int, default=60)
+    sub.add_parser("uninstall")
+    sub.add_parser("status")
     sub.add_parser("once")
     sub.add_parser("show")
     for verb in ("allow", "disallow"):
@@ -361,7 +524,15 @@ def main():
     r.add_argument("--every", type=int, default=60)
     a = p.parse_args()
     if a.cmd == "enrol":
-        enrol(a.api, a.code, a.name[:40])
+        enrol(a.api, a.code, (a.name or default_name())[:40])
+    elif a.cmd == "pair":
+        pair(a.api, a.web, a.name)
+    elif a.cmd == "install":
+        install(a.every)
+    elif a.cmd == "uninstall":
+        uninstall()
+    elif a.cmd == "status":
+        status()
     elif a.cmd == "once":
         once()
     elif a.cmd in ("allow", "disallow"):

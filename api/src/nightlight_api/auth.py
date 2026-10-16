@@ -15,7 +15,7 @@ def _app():
     return firebase_admin.initialize_app(options={"projectId": settings.project_id})
 
 
-def current_uid(request: Request) -> str:
+def _claims(request: Request) -> dict:
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
@@ -24,4 +24,16 @@ def current_uid(request: Request) -> str:
         claims = fb_auth.verify_id_token(token, app=_app())
     except Exception:  # expired, revoked, malformed, wrong project: all the same to the caller
         raise ApiError(401, "invalid_token") from None
+    return claims
+
+
+def current_uid(request: Request) -> str:
+    return _claims(request)["uid"]
+
+
+def owner_uid(request: Request) -> str:
+    """A signed-in (not one-click demo) account: real devices stay linked to it even if browser storage is cleared."""
+    claims = _claims(request)
+    if (claims.get("firebase") or {}).get("sign_in_provider") == "anonymous":
+        raise ApiError(403, "sign_in_required")
     return claims["uid"]

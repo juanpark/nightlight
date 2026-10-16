@@ -12,7 +12,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from . import __version__, actions, db, demo, memory, quota, real, sim, trust as trustlib, turns
-from .auth import current_uid
+from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
 from .redact import scrub
@@ -279,7 +279,7 @@ class JobResultBody(Strict):
 
 
 @app.post("/api/devices/enrol-code", status_code=201)
-def enrol_code(body: Empty, uid: str = Depends(current_uid)):
+def enrol_code(body: Empty, uid: str = Depends(owner_uid)):
     return real.create_code(uid)
 
 
@@ -288,6 +288,55 @@ def revoke_device(device_id: str, body: Empty, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
         raise not_found()
     return real.revoke(uid, device_id)
+
+
+class PairStartBody(Strict):
+    name: str = Field(min_length=1, max_length=40)
+    os: str | None = Field(default=None, max_length=80)
+
+
+class PairPollBody(Strict):
+    code: str = Field(pattern=r"^[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}$")
+    pollSecret: str = Field(min_length=20, max_length=64)
+
+
+class PairDecideBody(Strict):
+    approve: bool
+
+
+def _pair_code(code: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}", code):
+        raise not_found()
+    return code
+
+
+@app.post("/helper/pair/start", status_code=201)
+def helper_pair_start(body: PairStartBody, request: Request):
+    return real.pair_start(scrub(body.name)[0], scrub(body.os)[0] if body.os else None, _client_ip(request))
+
+
+@app.post("/helper/pair/poll")
+def helper_pair_poll(body: PairPollBody):
+    status, payload = real.pair_poll(body.code, body.pollSecret)
+    return JSONResponse(payload, status_code=status)
+
+
+@app.get("/api/devices/pair/{code}")
+def pair_preview(code: str, uid: str = Depends(owner_uid)):
+    return real.pair_preview(_pair_code(code))
+
+
+@app.post("/api/devices/pair/{code}")
+def pair_decide(code: str, body: PairDecideBody, uid: str = Depends(owner_uid)):
+    return real.pair_decide(uid, _pair_code(code), body.approve)
+
+
+@app.post("/helper/leave")
+def helper_leave(body: Empty, request: Request):
+    token = request.headers.get("x-device-token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
+        raise ApiError(401, "invalid_token")
+    return real.leave(token)
 
 
 @app.post("/helper/enrol", status_code=201)

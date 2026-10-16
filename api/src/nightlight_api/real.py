@@ -92,17 +92,128 @@ def enrol(code: str, name: str) -> dict:
             raise ApiError(401, "invalid_code")  # unknown, used or expired look the same
         uid = data["uid"]
         tx.update(ref, {"used": True, "usedAt": firestore.SERVER_TIMESTAMP, "deviceId": device_id})
-        tx.set(tokens_ref().document(_sha(token)), {"uid": uid, "deviceId": device_id, "revoked": False,
-                                                    "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None})
-        tx.set(db.device(uid, device_id), {
-            "name": name, "kind": "computer", "purpose": "A real device reporting through the Nightlight helper.",
-            "realm": "real", "simulated": False, "health": "unknown", "status": "offline", "vitals": {},
-            "findings": [], "version": 1, "x": 420, "y": 80, "createdAt": firestore.SERVER_TIMESTAMP,
-            "lastSeen": None})
+        _create_device(tx, uid, device_id, token, name)
         return uid
 
     db.run_transaction(run)
     return {"deviceId": device_id, "token": token}
+
+
+def _create_device(tx, uid: str, device_id: str, token: str, name: str) -> None:
+    """The device record and its token (stored hashed). Shared by enrolment and pairing."""
+    tx.set(tokens_ref().document(_sha(token)), {"uid": uid, "deviceId": device_id, "revoked": False,
+                                                "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None})
+    tx.set(db.device(uid, device_id), {
+        "name": name, "kind": "computer", "purpose": "A real device reporting through the Nightlight helper.",
+        "realm": "real", "simulated": False, "health": "unknown", "status": "offline", "vitals": {},
+        "findings": [], "version": 1, "x": 420, "y": 80, "createdAt": firestore.SERVER_TIMESTAMP,
+        "lastSeen": None})
+
+
+# ------------------------------------------------------------------ pairing (the device shows a code)
+# The OAuth device-authorization pattern: the device asks for a short code, the owner approves it in the app (typed
+# or by scanning a QR with a phone), and the device, polling with a secret only it holds, then receives its token.
+# The token is created at that moment and never stored in plaintext.
+
+PAIR_TTL = timedelta(minutes=10)
+PAIR_PER_IP_HOUR = 20
+
+
+def pairs_ref():
+    return db.client().collection("pairRequests")
+
+
+def pair_start(name: str, os_name: str | None, ip: str) -> dict:
+    now = _now()
+    code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+    poll_secret = secrets.token_urlsafe(32)
+    bucket = db.client().collection("pairLimits").document(f"{_sha(ip)[:32]}_{now.strftime('%Y%m%d%H')}")
+
+    @firestore.transactional
+    def run(tx):
+        b = bucket.get(transaction=tx)
+        n = (b.to_dict() or {}).get("count", 0) if b.exists else 0
+        if n >= PAIR_PER_IP_HOUR:
+            raise ApiError(429, "quota_ip", retryAfter=3600 - now.minute * 60)
+        tx.set(bucket, {"count": n + 1, "expiresAt": now + timedelta(hours=2)})
+        tx.set(pairs_ref().document(_sha(code)), {"pollHash": _sha(poll_secret), "name": name, "os": os_name,
+                                                   "status": "waiting", "uid": None, "expiresAt": now + PAIR_TTL,
+                                                   "createdAt": firestore.SERVER_TIMESTAMP})
+
+    db.run_transaction(run)
+    return {"code": f"{code[:4]}-{code[4:]}", "pollSecret": poll_secret, "interval": 3,
+            "expiresAt": (now + PAIR_TTL).isoformat().replace("+00:00", "Z")}
+
+
+def _pair_doc(tx, code: str):
+    ref = pairs_ref().document(_sha(code.replace("-", "").strip().upper()))
+    snap = ref.get(transaction=tx) if tx else ref.get()
+    data = snap.to_dict() if snap.exists else None
+    if not data or data["expiresAt"] < _now():
+        return ref, None
+    return ref, data
+
+
+def pair_preview(code: str) -> dict:
+    _, data = _pair_doc(None, code)
+    if not data or data["status"] != "waiting":
+        raise not_found()
+    return {"name": data["name"], "os": data.get("os"),
+            "expiresAt": data["expiresAt"].isoformat().replace("+00:00", "Z")}
+
+
+def pair_decide(uid: str, code: str, approve: bool) -> dict:
+    @firestore.transactional
+    def run(tx):
+        ref, data = _pair_doc(tx, code)
+        if not data:
+            raise not_found()
+        if data["status"] != "waiting":
+            raise ApiError(409, "already_decided")
+        tx.update(ref, {"status": "approved" if approve else "denied", "uid": uid if approve else None,
+                        "decidedAt": firestore.SERVER_TIMESTAMP})
+
+    db.run_transaction(run)
+    return {"ok": True}
+
+
+def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
+    token = secrets.token_urlsafe(32)
+    device_id = new_id("dev").lower()
+
+    @firestore.transactional
+    def run(tx):
+        ref, data = _pair_doc(tx, code)
+        if not data or not secrets.compare_digest(data["pollHash"], _sha(poll_secret)) \
+                or data["status"] in ("denied", "consumed"):
+            raise ApiError(401, "invalid_code")  # unknown, expired, used, declined or not this device: all alike
+        if data["status"] == "waiting":
+            return 202, {"status": "waiting"}
+        tx.update(ref, {"status": "consumed", "deviceId": device_id, "consumedAt": firestore.SERVER_TIMESTAMP})
+        _create_device(tx, data["uid"], device_id, token, data["name"])
+        return 200, {"deviceId": device_id, "token": token}
+
+    return db.run_transaction(run)
+
+
+def leave(token: str) -> dict:
+    """The helper revokes its own token (on uninstall) and its device goes offline."""
+    tref = tokens_ref().document(_sha(token))
+
+    @firestore.transactional
+    def run(tx):
+        snap = tref.get(transaction=tx)
+        t = snap.to_dict() if snap.exists else None
+        if not t or t.get("revoked"):
+            raise ApiError(401, "invalid_token")
+        dref = db.device(t["uid"], t["deviceId"])
+        dsnap = dref.get(transaction=tx)
+        tx.update(tref, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
+        if dsnap.exists:
+            tx.update(dref, {"status": "offline", "health": "unknown", "revoked": True, "uninstalled": True})
+
+    db.run_transaction(run)
+    return {"ok": True}
 
 
 def revoke(uid: str, device_id: str) -> dict:
