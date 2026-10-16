@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Service, TrustDoc, UserDoc, Watch } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, Service, TrustDoc, UserDoc, Watch } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -53,6 +53,12 @@ export function useDevices(uid: string | null, gen: number | undefined): Device[
 
 export function useServices(uid: string | null, deviceId: string | null): Service[] {
   return useCollection<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
+}
+
+/** A device's notebook, newest first. */
+export function useNotes(uid: string | null, deviceId: string | null): Note[] {
+  return useCollection<Note>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "notes"])
+    .sort((a, b) => (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0));
 }
 
 export function useActions(uid: string | null, gen: number | undefined): Action[] {

@@ -157,7 +157,7 @@ def _finalize(uid: str, op: str, generation: int, hook) -> None:
 def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     # Real devices (helper-reported) belong to the owner, not to the demo: reset never touches them.
     old_devices = [s.reference for s in db.devices(uid).get() if s.to_dict().get("realm") != "real"]
-    service_refs = [s.reference for d in old_devices for s in d.collection("services").get()]
+    service_refs = [s.reference for d in old_devices for sub in ("services", "notes") for s in d.collection(sub).get()]
     _delete_older(uid, op, generation, service_refs, hook)
     _delete_older(uid, op, generation, old_devices, hook)
     _delete_older(uid, op, generation, [s.reference for s in db.events(uid).get()

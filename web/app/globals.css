@@ -202,3 +202,9 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .perm-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .perm-foot .dot { width: 8px; height: 8px; }
 .perm-note { margin: -4px 0 8px 28px; }
+
+.notebook { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.notebook h4 { margin: 0 0 6px; }
+.note { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; }
+.note-add { display: flex; gap: 6px; margin-top: 6px; }
+.note-add input { flex: 1; min-width: 0; padding: 4px 8px; }

@@ -117,6 +117,13 @@ export interface EventDoc {
 
 /** One history point for a real device: `users/{uid}/devices/{deviceId}/history/{YYYYMMDDTHHMMSS}`, at most one per
  * 5 minutes, kept 8 days. Percentages, or null when the device didn't report that value. */
+export interface Note {
+  id: string;
+  text: string;
+  by: "nightlight" | "you";
+  at: Date | null;
+}
+
 export interface HistoryPoint {
   id: string;
   at: Date | null;

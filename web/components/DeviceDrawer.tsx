@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
+import Notebook from "./Notebook";
 import Permissions from "./Permissions";
 
 function Vital({ label, value }: { label: string; value?: number | null }) {
@@ -125,6 +126,7 @@ export default function DeviceDrawer({ uid, device, onAsk, onClose }: {
           </div>
         ))}
       </div>
+      {device.kind !== "watched" && <Notebook uid={uid} deviceId={device.id} />}
       {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
         <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>

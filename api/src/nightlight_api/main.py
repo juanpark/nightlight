@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, db, demo, memory, quota, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, db, demo, memory, notebook, quota, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -181,6 +181,30 @@ def device_issue(device_id: str, finding_id: str, body: IssueBody, uid: str = De
     if body.state == "snoozed" and not body.days:
         raise ApiError(422, "snooze_needs_days")
     return real.set_issue_state(uid, device_id, finding_id, body.state, body.days)
+
+
+class NoteBody(Strict):
+    text: str = Field(min_length=1, max_length=notebook.NOTE_CHARS)
+
+
+def _generation(uid: str) -> int | None:
+    return (db.user(uid).get().to_dict() or {}).get("demoGeneration")
+
+
+@app.post("/api/devices/{device_id}/notes", status_code=201)
+def add_note(device_id: str, body: NoteBody, uid: str = Depends(current_uid)):
+    """Write a note in a device's notebook (Nightlight reads it before it looks into that device)."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    return notebook.owner_add(uid, device_id, body.text, _generation(uid))
+
+
+@app.delete("/api/devices/{device_id}/notes/{note_id}")
+def delete_note(device_id: str, note_id: str, uid: str = Depends(current_uid)):
+    """Remove a note from a device's notebook (the owner's or Nightlight's)."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id) or not re.fullmatch(r"note_[0-9A-Za-z]{26}", note_id):
+        raise not_found()
+    return notebook.remove(uid, device_id, note_id)
 
 
 @app.post("/api/watches", status_code=201)

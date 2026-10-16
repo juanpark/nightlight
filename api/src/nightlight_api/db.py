@@ -32,6 +32,10 @@ def services(uid: str, device_id: str):
     return device(uid, device_id).collection("services")
 
 
+def notes(uid: str, device_id: str):
+    return device(uid, device_id).collection("notes")
+
+
 def actions(uid: str):
     return user(uid).collection("actions")
 
