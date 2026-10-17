@@ -383,3 +383,11 @@ def test_a_promise_about_another_device_is_not_moved_to_the_one_read(client, sta
                                  "I've put up a card to clean up old logs on the Raspberry Pi.", "Waiting for you.")
     ev = events(ask(client, new_session(client), "Clean up the Pi"))
     assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device", "rotate_logs"]
+
+
+def test_a_promise_naming_a_device_loosely_must_still_be_that_device(client, started):  # Codex rev3 #1
+    for claim, made in (("I've put up a card to clean up logs on the Mac.", False),
+                        ("I've put up a card to clean up logs on your Pi.", True)):
+        FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), claim, "Waiting for you.")
+        ev = events(ask(client, new_session(client), "Clean up"))
+        assert ("rotate_logs" in [e["name"] for e in ev if e["type"] == "tool_call"]) is made, claim

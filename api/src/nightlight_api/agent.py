@@ -1121,6 +1121,11 @@ def _keep_card_promise(ctx: TurnContext, llm_response) -> None:
     named_devices = {i for i, n in names.items() if n.strip().lower() in sentence}
     if named_devices and pick[1] not in named_devices:
         return
+    # Any other way of naming a device ("on the Mac", "on your Pi") must point at the fix's device too.
+    ref = re.search(r"\bon (?:the|your) ([\w' -]{2,30}?)(?=[.,;:!?]|$| to | so | and | which | that )", sentence)
+    target = (names.get(pick[1]) or "").strip().lower()
+    if ref and not (target and (ref.group(1).strip() in target or target in ref.group(1))):
+        return
     ctx.promised = (pick[0], pick[1])
     # Gemini 3 wants a thought signature on every call in the history: carry the model's own over, else the
     # documented placeholder for a call the client made.
