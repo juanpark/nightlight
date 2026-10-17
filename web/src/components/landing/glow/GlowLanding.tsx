@@ -143,6 +143,11 @@ export function GlowLanding() {
   const tag = useRef<HTMLParagraphElement>(null);
   const link = useRef<SVGSVGElement>(null);
   const cards = useRef<(HTMLDivElement | null)[]>([]);
+  // Phones and tablets: one sheet at the foot of the screen whose contents slide
+  // sideways to the step the camera is on. Its height follows the step showing.
+  const panels = useRef<(HTMLDivElement | null)[]>([]);
+  const [sheetH, setSheetH] = useState<number>();
+  const now = Math.min(STEPS.length, Math.max(1, step)) - 1;
   const [gl, setGl] = useState<"loading" | "on" | "off">("loading");
   const [approval, setApproval] = useState<ApprovalState>("waiting");
   const [trust, setTrust] = useState<TrustState>("offer");
@@ -443,6 +448,14 @@ export function GlowLanding() {
     { scope: root },
   );
 
+  useEffect(() => {
+    const el = panels.current[now];
+    if (!el) return;
+    const sized = new ResizeObserver(() => setSheetH(el.offsetHeight || undefined));
+    sized.observe(el);
+    return () => sized.disconnect();
+  }, [now]);
+
   // Approve → a short run → done, and the Pi's light turns green. The scene draws at
   // full rate while that plays out.
   useEffect(() => {
@@ -531,19 +544,69 @@ export function GlowLanding() {
 
           {STEPS.map((st, i) => (
             <article key={st.title} id={`step-${i + 1}`} className={s.step} data-active={step === i + 1 || undefined}>
-              <div className={s.stepCopy}>
-                <p className={s.stepNum}>{String(i + 1).padStart(2, "0")}</p>
-                <h2 className={s.stepTitle}>{st.title}</h2>
-                <p className={s.stepText}>{st.text}</p>
-              </div>
-              <div className={s.cardSlot} ref={(n) => { cards.current[i] = n; }}>
-                {i === 0 && <NoticeCard />}
-                {i === 1 && <ExplainCard />}
-                {i === 2 && <ApprovalCard state={approval} onChange={setApproval} />}
-                {i === 3 && <TrustCard state={trust} onChange={setTrust} />}
+              {/* On phones and tablets the words and the card ride together as one sheet,
+                  held at the bottom of the screen while the camera plays above it. */}
+              <div className={s.stepStick}>
+                <div className={s.stepCopy}>
+                  <div className={s.stepHead}>
+                    <p className={s.stepNum}>{String(i + 1).padStart(2, "0")}</p>
+                    <h2 className={s.stepTitle}>{st.title}</h2>
+                    <span className={s.stepPips} aria-hidden="true">
+                      {STEPS.map((_, k) => (
+                        <span key={k} data-on={k <= i || undefined} />
+                      ))}
+                    </span>
+                  </div>
+                  <p className={s.stepText}>{st.text}</p>
+                </div>
+                <div className={s.cardSlot} ref={(n) => { cards.current[i] = n; }}>
+                  {i === 0 && <NoticeCard />}
+                  {i === 1 && <ExplainCard />}
+                  {i === 2 && <ApprovalCard state={approval} onChange={setApproval} />}
+                  {i === 3 && <TrustCard state={trust} onChange={setTrust} />}
+                </div>
               </div>
             </article>
           ))}
+
+          {/* Phones and tablets: the sheet stays put at the foot of the screen; only
+              what's in it moves, sliding across to the step the camera is on. */}
+          <div className={s.sheet}>
+            <span className={s.sheetPips} aria-hidden="true">
+              {STEPS.map((_, k) => (
+                <span key={k} data-on={k <= now || undefined} />
+              ))}
+            </span>
+            <div className={s.sheetView} style={{ height: sheetH }}>
+              <div className={s.sheetTrack} style={{ transform: `translate3d(${-now * 100}%, 0, 0)` }}>
+                {STEPS.map((st, i) => (
+                  <div
+                    key={st.title}
+                    ref={(n) => {
+                      panels.current[i] = n;
+                    }}
+                    className={s.sheetPanel}
+                    data-active={i === now || undefined}
+                    inert={i !== now}
+                  >
+                    <div className={s.sheetCopy}>
+                      <div className={s.stepHead}>
+                        <p className={s.stepNum}>{String(i + 1).padStart(2, "0")}</p>
+                        <h2 className={s.stepTitle}>{st.title}</h2>
+                      </div>
+                      <p className={s.stepText}>{st.text}</p>
+                    </div>
+                    <div className={s.sheetCard} data-compact>
+                      {i === 0 && <NoticeCard />}
+                      {i === 1 && <ExplainCard />}
+                      {i === 2 && <ApprovalCard state={approval} onChange={setApproval} />}
+                      {i === 3 && <TrustCard state={trust} onChange={setTrust} />}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* High above the house: everything it keeps an eye on. */}

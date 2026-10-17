@@ -274,18 +274,41 @@
   background: var(--line-strong);
 }
 .menu a[aria-current] { color: var(--star); }
-@media (max-width: 440px) {
-  .navActions .primary { padding-inline: 14px; }
-  .navActions .primary svg { display: none; }
+.menu nav { display: grid; }
+.menuActions {
+  margin: 8px 8px 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgb(var(--line-rgb) / 0.7);
 }
+.menuActions .actions { justify-items: stretch; }
+.menuActions .actionRow { display: grid; justify-content: stretch; }
+.menuActions .secondary { width: 100%; min-height: 52px; }
 @media (max-width: 1100px) {
   .links { display: none; }
-  .bar { gap: 6px; padding-left: 8px; }
+  /* 44px controls in a 56px capsule: the same 6px of glass on every side,
+     so the pill and the round button sit concentric with the bar. */
+  .bar { height: 56px; gap: 6px; padding: 0 6px; }
   /* Both outer columns stay equal, so the logo sits exactly in the middle. */
   .bar { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
   .navActions .secondary { display: none; }
+  .navActions .primary { padding: 0 14px 0 18px; font-size: 0.875rem; letter-spacing: 0.01em; }
   .menuButton { display: inline-grid; }
   .menu { display: grid; }
+}
+/* Phones: no room for a centred logo between two controls. The logo leads,
+   the action and the menu share the right end. */
+@media (max-width: 560px) {
+  .bar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "brand end menu";
+    padding-left: 18px;
+  }
+  .brand { justify-self: start; }
+  .menuButton { grid-area: menu; }
+}
+@media (max-width: 340px) {
+  .navActions .primary svg { display: none; }
+  .navActions .primary { padding-inline: 16px; }
 }
 
 /* ---------- Buttons (AuthButtons reads these names) ---------- */
@@ -516,6 +539,9 @@
   align-items: center;
   padding: 96px var(--gutter) 48px;
 }
+/* On wide screens the step's words and card sit straight in its grid. */
+.stepStick { display: contents; }
+.stepPips { display: none; }
 /* On wide screens the rail tells the step; the article keeps it for screen readers. */
 .stepCopy {
   position: absolute;
@@ -812,11 +838,33 @@
   .cue { left: var(--gutter); }
   .sample { right: auto; left: calc(var(--gutter) - 12px); bottom: 88px; }
   .railWrap { display: none; }
+  /* Each step is a stretch of scroll with its sheet at the foot. The sheet sticks
+     to the bottom of the screen for the whole stretch, so the camera plays out
+     above it, then the next step's sheet pushes it away. */
   .step {
-    grid-template-columns: 1fr;
-    align-items: end;
-    gap: 18px;
-    padding-top: 46svh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 100svh;
+    padding: 46svh var(--gutter) 28px;
+  }
+  .stepStick {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    gap: 16px;
+    opacity: 0.3;
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .step[data-active] .stepStick { opacity: 1; }
+  /* A wash of night rises behind the sheet so its words never sit on the bright house. */
+  .stepStick::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -88px calc(-1 * var(--gutter)) -28px;
+    background: linear-gradient(rgb(var(--night-rgb) / 0), rgb(var(--night-rgb) / 0.9) 88px);
+    pointer-events: none;
   }
   .stepCopy {
     position: static;
@@ -826,29 +874,41 @@
     clip-path: none;
     white-space: normal;
   }
+  /* Number, title and where you are in the four, on one line. */
+  .stepHead { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
   .stepNum {
+    flex: none;
     display: inline-grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
-    margin: 0 0 10px;
-    border-radius: 10px;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    border-radius: 9px;
     background: var(--star);
     color: var(--star-ink);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 6px 18px -6px rgb(var(--star-rgb) / 0.55);
   }
-  .stepTitle { margin: 0 0 6px; font-family: var(--font-display), system-ui, sans-serif; font-size: 1.625rem; font-weight: 600; }
-  .stepText { margin: 0; color: var(--muted); }
-  .stepCopy, .cardSlot { position: relative; }
-  .step::before {
-    content: "";
-    position: absolute;
-    inset: 38svh 0 0;
-    background: linear-gradient(transparent, rgb(var(--night-rgb) / 0.92) 22%);
-    pointer-events: none;
+  .stepTitle {
+    margin: 0;
+    font-family: var(--font-display), system-ui, sans-serif;
+    font-size: clamp(1.375rem, 5.6vw, 1.75rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
   }
-  .cardSlot { grid-column: 1; }
+  .stepPips { display: flex; gap: 4px; margin-left: auto; }
+  .stepPips span { width: 14px; height: 3px; border-radius: 2px; background: rgb(var(--line-rgb) / 0.9); }
+  .stepPips span[data-on] { background: var(--star); }
+  .stepText { margin: 0; color: var(--muted); font-size: 0.9375rem; line-height: 1.5; text-wrap: pretty; }
+  .cardSlot { grid-column: 1; position: relative; opacity: 1; translate: none; filter: none; transition: none; }
+  /* The cards, tightened so the sheet leaves the house room above it. */
+  .cardSlot > :first-child { padding: 16px; gap: 12px; border-radius: 20px; }
+  .cardSlot dl { gap: 10px; }
+  .cardSlot dt { font-size: 0.8125rem; }
+  .cardSlot dd { font-size: 0.875rem; }
   .intro { min-height: 110svh; align-items: end; padding-bottom: 18svh; }
   .watchGrid, .privacyCols { grid-template-columns: 1fr; }
   .watchBlock + .watchBlock { border-left: 0; border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
@@ -899,4 +959,113 @@
   .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
   .tag[data-tone="live"]::before { animation: none; }
   .menu, .menuIcon span { transition: none; }
+}
+
+/* ---------- The story sheet (phones and tablets held upright) ----------
+   One panel at the foot of the screen for the whole story. The panel stays put
+   while the camera plays above it; only its contents slide across, step to
+   step. The steps themselves become stretches of scroll that drive the camera.
+   Short screens and phones on their side keep each step in the flow instead,
+   where a tall card can still be read top to bottom. */
+.sheet { display: none; }
+@media (max-width: 820px) and (min-height: 640px) {
+  .step { min-height: 115svh; padding: 0; }
+  .step .stepStick { display: none; }
+  .sheet {
+    position: sticky;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    z-index: 2;
+    display: block;
+    isolation: isolate;
+    margin: 0 var(--gutter) 24px;
+    border-radius: 24px;
+    background: rgb(var(--surface-rgb) / 0.96);
+    border: 1px solid rgb(var(--line-rgb) / 0.8);
+    box-shadow: 0 -12px 40px -16px rgb(var(--shadow-rgb) / 0.7), 0 24px 48px -16px rgb(var(--shadow-rgb) / 0.8);
+  }
+  /* A wash of night rises behind the panel so it never sits on the bright house. */
+  .sheet::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: -96px calc(-1 * var(--gutter)) calc(-1 * max(16px, env(safe-area-inset-bottom)) - 24px);
+    background: linear-gradient(rgb(var(--night-rgb) / 0), rgb(var(--night-rgb) / 0.85) 96px);
+    pointer-events: none;
+  }
+  /* Where you are in the four stays fixed in the panel's corner. */
+  .sheetPips { position: absolute; z-index: 1; top: 30px; right: 20px; display: flex; gap: 4px; }
+  .sheetPips span {
+    width: 14px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgb(var(--line-rgb) / 0.9);
+    transition: background-color 0.4s ease;
+  }
+  .sheetPips span[data-on] { background: var(--star); }
+  .sheetView {
+    overflow: hidden;
+    border-radius: inherit;
+    transition: height 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .sheetTrack {
+    display: flex;
+    align-items: flex-start;
+    transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform;
+  }
+  .sheetPanel {
+    flex: 0 0 100%;
+    min-width: 0;
+    display: grid;
+    gap: 14px;
+    padding: 20px;
+    opacity: 0.25;
+    transition: opacity 0.5s ease;
+  }
+  .sheetPanel[data-active] { opacity: 1; }
+  .sheetCopy .stepHead { padding-right: 76px; }
+  /* The card's content sits straight on the panel: no box inside a box. */
+  .sheetCard > :first-child {
+    max-width: none;
+    padding: 0;
+    gap: 12px;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .sheetCard button { min-height: 44px; }
+  .sheetCard dl { gap: 10px; }
+  .sheetCard dt { font-size: 0.8125rem; }
+  .sheetCard dd { font-size: 0.875rem; }
+}
+/* Tablets: the words on the left, the card on the right, so the panel stays low
+   and the house keeps most of the screen. */
+@media (min-width: 600px) and (max-width: 820px) and (min-height: 640px) {
+  .sheetPanel { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); align-items: start; column-gap: 28px; padding: 22px 24px; }
+  .sheetCopy .stepHead { padding-right: 0; }
+  .sheetPips { top: auto; bottom: 26px; left: 24px; right: auto; }
+  .sheetCopy .stepText { font-size: 1rem; }
+}
+/* Phones: the house keeps the top half. The step's sentence stays for screen
+   readers only (the title and the card tell it on screen). */
+@media (max-width: 599px) and (min-height: 640px) {
+  .sheetPanel { gap: 12px; padding: 16px; }
+  .sheetPips { top: 26px; right: 16px; }
+  .sheetCopy .stepHead { margin-bottom: 0; }
+  .sheetCopy .stepTitle { font-size: 1.25rem; }
+  .sheetCopy .stepNum { width: 28px; height: 28px; border-radius: 8px; }
+  .sheetCopy .stepText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .sheetCard dl { gap: 12px 16px; }
+  .sheetCard dd { font-size: 0.8125rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stepStick, .sheetView, .sheetTrack, .sheetPanel, .sheetPips span { transition: none; }
 }

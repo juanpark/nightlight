@@ -14,11 +14,13 @@ type Kind = "demo" | "google";
 export function AuthButtons({
   size = "large",
   demoOnly = false,
+  googleOnly = false,
   styles: s,
   magnetic = false,
 }: {
   size?: "large" | "small";
   demoOnly?: boolean;
+  googleOnly?: boolean; // just "Sign in with Google", where the demo button already shows nearby
   styles: Record<string, string>; // the page passes its own button styles
   magnetic?: boolean; // buttons lean toward the pointer, labels roll on hover
 }) {
@@ -51,12 +53,13 @@ export function AuthButtons({
   return (
     <div className={size === "large" ? s.actions : s.actionsSmall}>
       <div className={s.actionRow}>
-        {wrap(
-          <button type="button" className={s.primary} disabled={busy !== null} onClick={() => go("demo")}>
-            {busy === "demo" ? "Starting the demo…" : label("Try the demo")}
-            {busy !== "demo" && <Icon name="arrow" size={size === "large" ? 18 : 16} />}
-          </button>,
-        )}
+        {!googleOnly &&
+          wrap(
+            <button type="button" className={s.primary} disabled={busy !== null} onClick={() => go("demo")}>
+              {busy === "demo" ? "Starting the demo…" : label("Try the demo")}
+              {busy !== "demo" && <Icon name="arrow" size={size === "large" ? 18 : 16} />}
+            </button>,
+          )}
         {!demoOnly &&
           wrap(
             <button type="button" className={s.secondary} disabled={busy !== null} onClick={() => go("google")}>
