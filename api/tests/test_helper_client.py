@@ -102,12 +102,19 @@ def test_image_names_drop_registry_and_digest(helper):
 
 def test_run_survives_network_failures(helper, monkeypatch):
     statuses = iter([0, 0, 200, 401])
+
+    def once():
+        try:
+            return next(statuses)
+        except StopIteration:
+            raise KeyboardInterrupt  # not an Exception: ends the loop (a test must never be able to spin forever)
     sleeps = []
-    monkeypatch.setattr(helper, "once", lambda: next(statuses))
+    monkeypatch.setattr(helper, "once", once)
     monkeypatch.setattr(helper.time, "sleep", sleeps.append)
-    with pytest.raises(SystemExit):
+    with pytest.raises(KeyboardInterrupt):
         helper.run(60)
-    assert sleeps == [120, 240, 60]  # backs off on failure, returns to normal after success, stops when revoked
+    # backs off on failure, returns to normal after success, waits long (not stops) when the key is refused
+    assert sleeps == [120, 240, 60, helper.REFUSED_RETRY]
 
 
 def test_malformed_reply_is_reported_not_raised(helper):

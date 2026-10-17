@@ -144,9 +144,27 @@ def test_without_admin_rights_a_dormant_stub_stays(helper, tmp_path, monkeypatch
     assert e.value.code == 0  # a clean exit: the service doesn't restart it
 
 
-def test_a_removed_token_makes_the_helper_stop_cleanly(helper, monkeypatch):
+def test_a_refused_key_waits_and_recovers_then_gives_up_after_a_week(helper, monkeypatch):
     helper._save_config({"api": "https://api.example.com", "token": "t" * 43})
-    monkeypatch.setattr(helper, "once", lambda: 401)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(helper.time, "time", lambda: clock[0])
+    waits, answers = [], iter([401, 401, 200, 401])
+
+    def once():
+        try:
+            return next(answers)
+        except StopIteration:
+            return 401
+
+    def wait(seconds):
+        waits.append(seconds)
+        clock[0] += seconds
+        if len(waits) > 400:
+            raise RuntimeError("never gave up")
+    monkeypatch.setattr(helper, "once", once)
+    monkeypatch.setattr(helper, "_wait_and_claim", wait)
     with pytest.raises(SystemExit) as e:
         helper.run(60)
     assert e.value.code == 0
+    assert waits[:3] == [helper.REFUSED_RETRY, helper.REFUSED_RETRY, 60]  # refused twice, then healthy again
+    assert clock[0] - 1_000_000.0 >= helper.REFUSED_GIVE_UP

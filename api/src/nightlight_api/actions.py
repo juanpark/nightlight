@@ -4,6 +4,8 @@
 update, continuation turn and the stored response commit together or not at all.
 """
 
+from datetime import datetime, timezone
+
 from google.cloud import firestore
 
 from . import db, real, sim, trust as trustlib
@@ -385,6 +387,27 @@ def _playbook_cards(tx, uid: str, a: dict, device: dict) -> list:
     return out
 
 
+def _report_auto_look(tx, uid: str, a: dict, device: dict) -> None:
+    """What Nightlight found when it looked by itself (e.g. after an unexpected restart): one Activity line and a note
+    in the device's notebook, so the person and the chat both know without asking. Writes only (after all reads)."""
+    from . import playbooks
+    from .ids import new_id
+    pb = a["result"]["playbook"]
+    name = device.get("name", "A device")
+    lines = [f["say"] for f in pb.get("found") or []]
+    before = (device.get("lastGap") or {}).get("diskBefore")
+    if a.get("playbook") == "after_restart" and isinstance(before, (int, float)) and before >= 95:
+        lines.append(f"Its disk was {before:.0f}% full just before it went silent: a full disk can freeze or crash a "
+                     "computer, so that is the most likely cause. Free some space.")
+    text = " ".join(lines) or (pb.get("nothing") or "Nothing unusual found.")
+    real.event(tx, uid, a["deviceId"], "looked", "warn" if pb.get("found") else "info",
+               f"{name}: {pb.get('title')}. {text}"[:300], who="nightlight")
+    tx.set(db.notes(uid, a["deviceId"]).document(new_id("note")),
+           {"text": f"{datetime.now(timezone.utc):%Y-%m-%d} {pb.get('title')}: {text}"[:300], "by": "nightlight",
+            "at": datetime.now(timezone.utc)})
+    del playbooks
+
+
 def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None,
                output: str | None = None) -> dict:
     """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once."""
@@ -421,6 +444,8 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
                 tx.set(ref, doc)
             if a.get("followUp") == "wanted" and current:  # the turn that asked has already ended
                 _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
+            if not a.get("sessionId") and current and a["result"].get("playbook"):  # Nightlight looked by itself
+                _report_auto_look(tx, uid, a, dsnap.to_dict() or {})
             tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
             return {"ok": True, "actionId": action_id_, "status": a["status"]}
         a["result"] = {"ok": ok, "summary": text} if a["type"] in ("fix", "update_helper") else \

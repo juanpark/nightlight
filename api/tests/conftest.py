@@ -11,6 +11,15 @@ from nightlight_api.auth import current_uid, owner_uid  # noqa: E402
 from nightlight_api.main import app  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _private_home(tmp_path_factory, monkeypatch):
+    """Every test runs with its own empty home folder, so nothing (above all the helper's install, uninstall and
+    update code, whose paths come from the home folder) can touch a real installation on the machine running tests."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    yield
+
+
 @pytest.fixture
 def uid():
     return f"u_{uuid.uuid4().hex[:12]}"

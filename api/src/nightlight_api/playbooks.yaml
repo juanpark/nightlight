@@ -142,3 +142,20 @@
       say: "{count} Homebrew packages have newer versions."
       advice: Run "brew upgrade" when you have a few minutes.
   nothing: Nothing is waiting to be installed.
+
+- id: after_restart
+  title: Why it restarted
+  about: Looks at how the device last started and what it recorded about crashes.
+  findings: []
+  checks: [restarts, disk]
+  causes:
+    - id: unclean
+      match: '^The last start was NOT clean'
+      say: The last restart wasn't clean (no shutdown was recorded before it), so it crashed, froze or lost power.
+    - id: panic
+      match: '^Crash reports: (?P<when>.+)$'
+      say: "The system recorded a crash report ({when})."
+    - id: clean
+      match: '^The last start was clean'
+      say: It was shut down or restarted normally before it went silent.
+  nothing: It couldn't tell how the device last started.

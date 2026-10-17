@@ -70,7 +70,10 @@ How to answer:
   security design). Say what you know (silent for how long, which neighbours still report), what that suggests as
   possibilities (neighbours reporting: probably the device itself is asleep, off, logged out or off Wi-Fi; nothing
   reporting there: probably the internet or power at that place), the one or two things to check at the device, and
-  that you'll tell them what happened when it reports again. Never answer with just "I can't".
+  that you'll tell them what happened when it reports again. If its last known state explains it (a disk at or near
+  100%, memory exhausted), lead with that as the most likely cause. When it comes back after a restart, Nightlight
+  checks by itself why it restarted; that finding is in Activity and the device's notebook. Never answer with just
+  "I can't".
 - Never propose a clean-up blind: first measure (run the matching playbook, or inspect "disk"/"home"), then propose
   only clean-ups for places the device actually reported as large, with their sizes. If a job failed, say the exact
   reason it gave and the next step (another clean-up, or what the person can do), never just "it didn't work".
@@ -157,8 +160,14 @@ def _silence(d: dict, s: dict, everyone: list[dict]) -> str:
     up = [o["name"] for o in near if not o["stale"]]
     down = [o["name"] for o in near if o["stale"]]
     where = f"devices tagged {', '.join(sorted(tags))}" if tags else "your other real devices"
-    return (f"; silent for {gone} (last report {last.strftime('%Y-%m-%d %H:%M')} UTC); {where} still reporting: "
-            f"{', '.join(up) or 'none'}" + (f"; also silent: {', '.join(down)}" if down else ""))
+    v = d.get("vitals") or {}
+    known = ", ".join(x for x in (f"disk {v['diskPct']:.0f}%" if isinstance(v.get("diskPct"), (int, float)) else "",
+                                  f"memory {v['mem']:.0f}%" if isinstance(v.get("mem"), (int, float)) else "") if x)
+    likely = ("; its disk was nearly full when it went silent: a full disk can freeze or crash a computer, so that is "
+              "the most likely cause" if isinstance(v.get("diskPct"), (int, float)) and v["diskPct"] >= 95 else "")
+    return (f"; silent for {gone} (last report {last.strftime('%Y-%m-%d %H:%M')} UTC)"
+            + (f"; last known: {known}" if known else "") + likely
+            + f"; {where} still reporting: {', '.join(up) or 'none'}" + (f"; also silent: {', '.join(down)}" if down else ""))
 
 
 def fleet_summary(uid: str, generation: int) -> str:

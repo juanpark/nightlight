@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.6"
+VERSION = "0.9.7"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -751,7 +751,80 @@ def _inspect_home():
     return "Biggest folders in the home folder (sizes; protected folders not checked):\n" + "\n".join(lines)
 
 
-INSPECT = {"home": _inspect_home, "disk": _inspect_disk, "processes": _inspect_processes, "updates": _inspect_updates,
+def _restart_lines():
+    """(last start, the event just before it) from `last` (newest first): each a (kind, datetime), or None."""
+    from datetime import datetime
+    cmd = ["last", "reboot"] if sys.platform == "darwin" else ["last", "-x", "reboot", "shutdown"]
+    events = []
+    for line in _run(cmd, timeout=_left(10)).splitlines():
+        kind = "reboot" if line.startswith("reboot") else "shutdown" if line.startswith("shutdown") else None
+        m = re.search(r"([A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d)", line)
+        if not kind or not m:
+            continue
+        try:
+            when = datetime.strptime(" ".join(m.group(1).split()), "%a %b %d %H:%M").replace(year=datetime.now().year)
+        except ValueError:
+            continue
+        events.append((kind, when if when <= datetime.now() else when.replace(year=when.year - 1)))
+    i = next((n for n, e in enumerate(events) if e[0] == "reboot"), None)
+    if i is None:
+        return None, None
+    return events[i][1], (events[i + 1] if i + 1 < len(events) else None)
+
+
+def _inspect_restarts():
+    """How the device last started, whether that was after a clean shutdown, and crash reports by date (names and
+    times only: their contents are never read)."""
+    lines = []
+    up = facts_uptime()
+    if up is not None:
+        lines.append(f"Running for: {up // 3600} hours {up % 3600 // 60} minutes")
+    boot, before = _restart_lines()
+    if boot:
+        lines.append(f"Last start: {boot:%Y-%m-%d %H:%M}")
+        down = before[1] if before and before[0] == "shutdown" else None
+        clean = down is not None and down <= boot and boot - down < __import__("datetime").timedelta(minutes=15)
+        lines.append(f"Shutdown before it: {down:%Y-%m-%d %H:%M}" if down else "Shutdown before it: none recorded")
+        lines.append("The last start was clean" if clean else
+                     "The last start was NOT clean (no shutdown recorded just before it: a crash, freeze or power cut)")
+    reports = []
+    for d in ("/Library/Logs/DiagnosticReports", os.path.expanduser("~/Library/Logs/DiagnosticReports")):
+        try:
+            names = os.listdir(d) if sys.platform == "darwin" else []
+        except OSError:
+            names = []
+        for n in names:
+            low = n.lower()
+            if low.startswith(("panic", "resetcounter")) or "watchdog" in low:
+                try:
+                    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.lstat(os.path.join(d, n)).st_mtime))
+                except OSError:
+                    continue
+                kind = ("kernel panic" if low.startswith("panic") else "watchdog" if "watchdog" in low else "reset") \
+                    + ", report written"
+                reports.append((when, kind))
+    if shutil.which("journalctl"):
+        boots = _run(["journalctl", "--list-boots", "--no-pager", "-q"], timeout=_left(10)).strip().splitlines()
+        if boots:
+            lines.append(f"Boots recorded: {len(boots)}")
+    recent = sorted(set(reports), reverse=True)[:5]
+    if recent:
+        lines.append("Crash reports: " + ", ".join(f"{w} ({k})" for w, k in recent))
+    return "How it last started:\n" + ("\n".join(lines) or "unknown")
+
+
+def facts_uptime():
+    try:
+        if sys.platform == "darwin":
+            m = re.search(r"sec = (\d+)", _run(["sysctl", "-n", "kern.boottime"], timeout=5))
+            return int(time.time()) - int(m.group(1)) if m else None
+        with open("/proc/uptime") as f:
+            return int(float(f.read().split()[0]))
+    except (OSError, ValueError):
+        return None
+
+
+INSPECT = {"restarts": _inspect_restarts, "home": _inspect_home, "disk": _inspect_disk, "processes": _inspect_processes, "updates": _inspect_updates,
            "docker": _inspect_docker, "network": _inspect_network, "load": _inspect_load, "failed": _inspect_failed}
 
 
@@ -1043,6 +1116,12 @@ def _install(version, api, auto, target):
     m = re.search(rb'^VERSION = "([0-9.]+)"$', data, re.M)
     if not m or m.group(1).decode() != version:
         return False, "The signed file isn't the version that was asked for; nothing changed.", None
+    for old in os.listdir(APP_DIR):  # leftovers from an update that was interrupted
+        if old.startswith(".update-") and old.endswith(".py"):
+            try:
+                os.remove(os.path.join(APP_DIR, old))
+            except OSError:
+                pass
     fd, tmp = tempfile.mkstemp(dir=APP_DIR, prefix=".update-", suffix=".py")
     with os.fdopen(fd, "wb") as f:
         f.write(data)
@@ -1059,10 +1138,11 @@ def _install(version, api, auto, target):
         os.remove(tmp)  # the owner rolled back while this was downloading: their choice wins
         return False, "Automatic updates were paused during the download; nothing changed.", None
     prev = os.path.join(APP_DIR, "nightlight_helper.prev.py")
-    with open(target, "rb") as cur, open(prev + ".tmp", "wb") as out:
-        out.write(cur.read())
-    os.chmod(prev + ".tmp", 0o700)
-    os.replace(prev + ".tmp", prev)  # kept for `nightlight rollback`
+    if os.path.isfile(target):  # (it can be missing if something deleted it: then the update simply restores it)
+        with open(target, "rb") as cur, open(prev + ".tmp", "wb") as out:
+            out.write(cur.read())
+        os.chmod(prev + ".tmp", 0o700)
+        os.replace(prev + ".tmp", prev)  # kept for `nightlight rollback`
     os.replace(tmp, target)
     _RESTART.append(True)
     if not auto:  # the owner asked for this one: that ends a pause after a rollback
@@ -1293,6 +1373,10 @@ def _remember_about(cfg, body):
         _update_config(lambda c: c.update(about, _aboutSaved=int(time.time())))  # never touches manage/allow
 
 
+REFUSED_RETRY = 1800  # seconds between tries while the key is refused
+REFUSED_GIVE_UP = 7 * 86400
+
+
 def run(every):
     """Keep reporting; network or server trouble is retried with growing waits, a revoked token stops."""
     try:
@@ -1300,7 +1384,7 @@ def run(every):
             sys.exit(0)  # removed from the app; only the service definition is left (it needs an administrator)
     except (OSError, ValueError):
         pass
-    wait = every
+    wait, refused = every, None
     while True:
         try:
             status = once()
@@ -1309,10 +1393,16 @@ def run(every):
             status = 0
         if "exit" in _RESTART:
             sys.exit(0)
-        if status == 401:  # removed or revoked in the app: stop for good (a clean exit isn't restarted)
-            print("This device was removed from Nightlight; the helper stops here. To delete its files, run the uninstall "
-                  "line from the Nightlight app on this device.")
-            sys.exit(0)
+        if status == 401:  # refused: removed in the app, or a server problem. Keep asking, slowly, so a server
+            refused = refused or time.time()  # problem heals itself; give up only after REFUSED_GIVE_UP
+            if time.time() - refused > REFUSED_GIVE_UP:
+                print("Nightlight has refused this device for a week: it was removed. The helper stops here; to "
+                      "delete its files, run the uninstall line from the Nightlight app on this device.")
+                sys.exit(0)  # a clean exit isn't restarted
+            print("Nightlight refused this device's key; trying again later.")
+            _wait_and_claim(REFUSED_RETRY)
+            continue
+        refused = None
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
             sys.stdout.flush()
             os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
@@ -1913,6 +2003,11 @@ def settings():
 
 
 def main():
+    try:  # the background service writes to a log file: one line at a time, so the log shows what happened
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass
     p = argparse.ArgumentParser(description="Nightlight helper")
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enrol")

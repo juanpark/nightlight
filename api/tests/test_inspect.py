@@ -212,3 +212,16 @@ def test_scrub_runs_before_escaping(helper):  # review 0.9.4 #1
     secret = "hunter2" + "hunter2hunter2"
     assert secret not in helper._one_line(f"pass\x1b[0mword={secret}", 300)
     assert secret not in helper._one_line(f"password={secret}", 300)
+
+
+def test_restarts_check_tells_a_crash_from_a_clean_restart(helper, monkeypatch):
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: None)
+    crash = "reboot   system boot  6.1.0 Sat Oct 17 03:43   still running\nreboot   system boot  6.1.0 Sat Oct  3 18:50\n"
+    clean = "reboot   system boot  6.1.0 Sat Oct 17 03:43   still running\nshutdown system down  6.1.0 Sat Oct 17 03:40\n"
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: crash)
+    assert "NOT clean" in helper._inspect_restarts()
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: clean)
+    assert "The last start was clean" in helper._inspect_restarts()

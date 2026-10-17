@@ -38,3 +38,46 @@ def test_coming_back_records_whether_it_restarted(client, started):
     assert d["lastGap"]["restarted"] is True
     back = [e.to_dict()["message"] for e in db.events(started).get() if e.to_dict().get("kind") == "back"]
     assert back and "restarted" in back[0]
+
+
+def test_disk_forecast_and_escalation():
+    now = _now()
+    trend, to_full = real.disk_forecast([{"at": now - timedelta(hours=3), "pct": 88.0}], 94.0, now)
+    assert 2.5 < to_full < 3.5 and trend[-1]["pct"] == 94.0
+    f = real.checks({"diskPct": 99.0})
+    real.escalate_disk(f, 99.0, None)
+    assert "may freeze or crash" in f[0]["message"] and f[0]["severity"] == "crit"
+    g = real.checks({"diskPct": 94.0})
+    real.escalate_disk(g, 94.0, 3.0)
+    assert "full in about 3 hours" in g[0]["message"]
+    assert real.disk_forecast([], 50.0, now)[1] is None
+
+
+def test_silent_device_with_a_full_disk_names_the_likely_cause(client, started):
+    dev = enrolled(client, "Mac mini")
+    beat(client, dev["token"], {**FACTS, "diskPct": 100.0})
+    db.device(started, dev["deviceId"]).update({"lastSeen": _now() - timedelta(hours=5)})
+    line = next(ln for ln in agent.fleet_summary(started, generation(started)).splitlines() if "Mac mini" in ln)
+    assert "last known: disk 100%" in line and "most likely cause" in line
+
+
+def test_after_a_restart_nightlight_looks_by_itself_and_writes_it_down(client, started):
+    dev = enrolled(client, "Mac mini")
+    offers = {**FACTS, "diskPct": 99.0, "allowedJobs": {"inspect": ["disk", "restarts"]}}
+    beat(client, dev["token"], offers)
+    db.device(started, dev["deviceId"]).update({"lastSeen": _now() - timedelta(hours=5), "watchState": "silent"})
+    db.client().collection("helperTokens").document(real._sha(dev["token"])).update({"lastSeen": None})
+    beat(client, dev["token"], {**offers, "diskPct": 88.0, "uptimeSec": 600})  # back, after a restart
+    looks = [s for s in db.actions(started).get() if s.to_dict().get("playbook") == "after_restart"]
+    assert len(looks) == 1 and looks[0].to_dict()["status"] == "approved" and looks[0].to_dict()["sessionId"] is None
+    db.client().collection("helperTokens").document(real._sha(dev["token"])).update({"lastSeen": None})
+    jobs = beat(client, dev["token"], offers).json()["jobs"]
+    assert jobs[0]["params"] == {"what": ["restarts", "disk"]}
+    out = ("How it last started:\nThe last start was NOT clean (no shutdown recorded just before it)\n"
+           "Crash reports: 2026-10-17 08:37 (kernel panic, report written)")
+    client.post(f"/helper/jobs/{looks[0].id}/result", json={"ok": True, "summary": "Checked", "output": out},
+                headers={"X-Device-Token": dev["token"]})
+    ev = [e.to_dict()["message"] for e in db.events(started).get() if e.to_dict().get("kind") == "looked"]
+    notes = [n.to_dict()["text"] for n in db.notes(started, dev["deviceId"]).get()]
+    assert ev and "wasn't clean" in ev[0] and "99% full just before" in ev[0]
+    assert notes and "Why it restarted" in notes[0]

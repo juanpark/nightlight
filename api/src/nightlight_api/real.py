@@ -63,7 +63,8 @@ INSPECT = {"disk": "which known folders take the most space", "processes": "whic
            "updates": "which updates are waiting (can take up to a minute)", "docker": "how much space Docker uses",
            "network": "whether name lookup (DNS) and the internet work", "load": "how busy the processor is",
            "failed": "which services or background items keep failing",
-           "home": "the biggest folders in the home folder (and its Library), outside protected ones"}
+           "home": "the biggest folders in the home folder (and its Library), outside protected ones",
+           "restarts": "when it last started, whether that was after a crash, and crash reports by date"}
 MAX_INSPECT = 4
 
 # Plain names for system services people commonly run at home.
@@ -426,6 +427,42 @@ def _friendly(unit: str) -> str:
     return FRIENDLY.get(base, base)
 
 
+TREND_EVERY = timedelta(minutes=20)  # one disk sample per 20 minutes, the last 18 kept (6 hours)
+
+
+def disk_forecast(trend: list, pct: float | None, now: datetime) -> tuple[list, float | None]:
+    """Keep a short disk-use trend on the device and estimate the hours until it is full (None if not filling)."""
+    trend = [p for p in (trend or []) if isinstance(p, dict) and p.get("at") and now - p["at"] < timedelta(hours=6)]
+    if pct is None:
+        return trend, None
+    if not trend or now - trend[-1]["at"] >= TREND_EVERY:
+        trend = (trend + [{"at": now, "pct": pct}])[-18:]
+    first = trend[0]
+    hours = (now - first["at"]).total_seconds() / 3600
+    if hours < 1 or pct <= first["pct"]:
+        return trend, None
+    rate = (pct - first["pct"]) / hours  # percentage points per hour
+    return trend, max(0.0, (100 - pct) / rate) if rate >= 0.2 else None
+
+
+def _hours(h: float) -> str:
+    return "less than an hour" if h < 1 else f"about {round(h)} hour{'s' if round(h) != 1 else ''}" if h < 48 \
+        else f"about {round(h / 24)} days"
+
+
+def escalate_disk(findings: list[dict], pct: float | None, to_full: float | None) -> None:
+    """A full disk can freeze or crash a computer: say so plainly, and say when it will be full at this rate."""
+    f = next((x for x in findings if x.get("id") == "f_disk"), None)
+    if f is None or pct is None:
+        return
+    if pct >= 98:
+        f["severity"] = "crit"
+        f["message"] = (f"The disk is {pct:.0f}% full: the computer may freeze or crash any moment. "
+                        "Free some space now.")
+    if to_full is not None and pct < 99.5:
+        f["message"] += f" At this rate it will be full in {_hours(to_full)}."
+
+
 def checks(facts: dict) -> list[dict]:
     """Deterministic findings from real facts. The model explains these; it doesn't decide them."""
     out = []
@@ -610,6 +647,8 @@ def heartbeat(token: str, facts: dict) -> dict:
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
         device = dsnap.to_dict()
+        trend, to_full = disk_forecast(device.get("diskTrend"), facts.get("diskPct"), _now())
+        escalate_disk(findings, facts.get("diskPct"), to_full)
         marked, states = apply_issue_states(findings, device.get("issueStates") or {})
         status = health_of(marked)
         previous = real_status(device)
@@ -631,10 +670,13 @@ def heartbeat(token: str, facts: dict) -> dict:
         if device.get("watchState") == "silent":
             extra["watchState"] = None
             gap = back_words(device.get("lastSeen"), facts.get("uptimeSec"))
-            extra["lastGap"] = {"from": device.get("lastSeen"), "to": _now(), "restarted": gap["restarted"]}
+            extra["lastGap"] = {"from": device.get("lastSeen"), "to": _now(), "restarted": gap["restarted"],
+                                "diskBefore": (device.get("vitals") or {}).get("diskPct")}
+            restarted[0] = gap["restarted"] is True
             event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again: "
                   + gap["words"])
         tx.update(tref, {"lastSeen": _now()})
+        extra["diskTrend"] = trend
         tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
@@ -676,10 +718,35 @@ def heartbeat(token: str, facts: dict) -> dict:
                  "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
         return device_id, _hand_over(tx, approved, user), _poll_every(user), watch_list, about
 
+    restarted = [False]
     device_id, jobs, poll, watch_list, about = db.run_transaction(run)
+    if restarted[0]:
+        post_mortem(token, device_id, facts)
     offer = release.latest()
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
             "watch": watch_list, **about, **({"latestHelper": offer["version"]} if offer else {})}
+
+
+def post_mortem(token: str, device_id: str, facts: dict) -> None:
+    """A device came back after a restart: find out why, by itself (read-only checks the device allows, no card).
+    The result lands in Activity and the device's notebook."""
+    offered = set((facts.get("allowedJobs") or {}).get("inspect", []))
+    what = [w for w in ("restarts", "disk") if w in offered]
+    if "restarts" not in what:
+        return  # an older helper, or looking around isn't allowed there
+    from . import actions
+    t = tokens_ref().document(_sha(token)).get().to_dict() or {}
+    uid = t.get("uid")
+    user = db.user(uid).get().to_dict() or {} if uid else {}
+    if not uid or user.get("demo", {}).get("state") != "ready":
+        return
+    try:
+        actions.request_inspection(uid, session_id=None, turn_id=f"after_restart_{_now():%Y%m%d%H%M}",
+                                   generation=user.get("demoGeneration"), device_id=device_id, what=what,
+                                   extra={"playbook": "after_restart"})
+    except Exception as e:  # never let the look-after break a report
+        import logging
+        logging.getLogger(__name__).info("post-mortem not started: %s", type(e).__name__)
 
 
 SEVERITY = {"info": 1, "warn": 2, "crit": 3}

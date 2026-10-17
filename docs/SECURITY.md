@@ -99,6 +99,9 @@ Only when the owner acts on the device:
 - macOS protected folders (Downloads, Desktop, Documents, Movies, Trash, iPhone backups, Docker Desktop) are never
   read from the background unless the owner said yes at the Mac (`nightlight settings`, which raises macOS's own
   prompts right then), so the helper never pops a privacy dialog on a Mac nobody is watching.
+- `restarts` (part of looking around): uptime, the last start and the event before it from `last`, and the names
+  and times of crash reports in `DiagnosticReports` (their contents are never read). Run automatically, read-only,
+  when a device comes back after a restart.
 - `inspect` (when allowed): folder sizes for the fixed list of places, top program names with CPU/memory percent,
   names of waiting updates, Docker's disk summary, DNS/internet reachability, load. Scrubbed on the device like
   diagnose output, the home path shown as `~`, at most about 3.5 KB.
