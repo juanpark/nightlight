@@ -406,7 +406,8 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _propose("update_server", device_id)
 
     def _restart_container_sync(device_id: str, container: str, tool_context: ToolContext) -> dict:
-        """Propose starting a stopped container again on a REAL device, through the helper on that device.
+        """Propose starting a stopped container again, or restarting one that runs but fails its health check, on a
+        REAL device, through the helper on that device.
 
         Only for containers the owner allowed on the device ("can restart"). Always puts an approval card in front of
         them; after approval the helper runs it on the device within about a minute.

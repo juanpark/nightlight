@@ -305,3 +305,21 @@ def test_a_late_wait_never_clears_its_successors_lease(client, started, monkeypa
     monkeypatch.setattr(real, "_wait", slow_wait)
     real.wait_for_jobs(dev["token"], hold=1)
     assert tref.get().to_dict()["waitOwner"] == "wait_B"  # A didn't clear B's lease
+
+
+def test_a_running_but_unhealthy_container_is_flagged_and_can_be_restarted(client, started):
+    dev = enrolled(client)
+    sick = {**FACTS, "allowedJobs": {"restart_container": ["photos"]},
+            "containers": [{"name": "photos", "image": "ghcr.io/immich-app/immich-server:v1", "state": "running",
+                            "status": "Up 3 days (unhealthy)"}]}
+    beat(client, dev["token"], sick)  # an older helper: it would answer "already running"
+    svc = db.services(started, dev["deviceId"]).document(real._doc_id("photos")).get().to_dict()
+    finding = next(f for f in db.device(started, dev["deviceId"]).get().to_dict()["findings"]
+                   if f["check"] == "container_unhealthy")
+    assert svc["status"] == "warn" and finding["svcId"] == real._doc_id("photos")
+    with pytest.raises(ValueError, match="helper_too_old"):
+        _propose(started, dev["deviceId"], "photos")
+    _again(dev["token"])
+    beat(client, dev["token"], {**sick, "helperVersion": real.UNHEALTHY_RESTART_FROM})
+    card = _propose(started, dev["deviceId"], "photos", turn="turn_sick")
+    assert card["status"] == "pending" and "docker restart photos" in card["dryRun"]

@@ -812,3 +812,20 @@ def test_the_app_can_raise_the_mac_folder_prompts_while_the_owner_is_there(helpe
     ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
     assert ok and "click Allow" in words and helper._load()["macPrivateFolders"] is True
     assert order and all(seen is True for seen in order)  # recorded before any folder was opened
+
+
+def test_a_running_container_that_fails_its_health_check_is_restarted(helper, monkeypatch):
+    calls, health = [], iter(["unhealthy", "healthy"])
+
+    def fake_run(cmd, timeout=20):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "inspect"]:
+            return next(health) if "Health" in cmd[3] else "running"
+        return ""
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    helper.set_allowed("restart_container", "photos", True)
+    ok, summary, st = helper.run_job({"id": "act_" + "b" * 26, "type": "restart_container",
+                                      "params": {"container": "photos"}}, wait=0)
+    assert ok and st == "running" and ["docker", "restart", "photos"] in calls and "healthy" in summary
+    assert ["docker", "start", "photos"] not in calls
