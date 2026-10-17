@@ -11,8 +11,8 @@ import { Magnetic } from "../motion/Magnetic";
 import { revealChars, revealLines, riseIn } from "../motion/reveal";
 import { Roll } from "../motion/Roll";
 import { scrollToTarget, useSmoothScroll } from "../motion/smooth";
+import { HouseMap } from "./HouseMap";
 import { Loop } from "./Loop";
-import { Marquee } from "./Marquee";
 import { NightLog } from "./NightLog";
 import { Torch } from "./Torch";
 import s from "./Home.module.css";
@@ -186,16 +186,16 @@ export function HomeLanding() {
           </div>
         </section>
 
-        <section id="watch-intro" className={s.intro} aria-label="What Nightlight watches">
-          <Marquee />
-          <p className={s.statement} data-lines>
+        <section id="watch-intro" className={s.intro} aria-label="What Nightlight watches">          <p className={s.statement} data-lines>
             Most homes now run a small data centre: a NAS, a Pi, a game server, the router. Nobody is on call for it.
             Nightlight is.
           </p>
         </section>
 
-        <Loop />
+        <HouseMap />
 
+
+        <Loop />
 
         <section id="watch" className={s.watch} aria-labelledby="watch-title">
           <h2 id="watch-title" className={s.h2} data-lines>

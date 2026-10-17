@@ -448,28 +448,10 @@
   .logNext, .logLive::after, .logRow[data-tone="warn"] .logDot::after { display: none; }
 }
 
-/* ---------- Intro: marquee + statement ---------- */
-.intro { padding: clamp(100px, 14vw, 200px) 0 clamp(120px, 14vw, 220px); }
-.marquee { display: grid; gap: 4px; }
-.marqueeRow { overflow: hidden; white-space: nowrap; }
-.marqueeTrack { display: inline-flex; will-change: transform; }
-.marqueeSet { display: inline-flex; }
-.marqueeItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35em;
-  padding-right: 0.35em;
-  font-family: var(--font-display), system-ui, sans-serif;
-  font-size: var(--size-l);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1.08;
-}
-.marqueeRow[data-dim] .marqueeItem { color: var(--dim); }
-.marqueeStar { width: 0.42em; height: 0.42em; fill: var(--star); flex: none; }
-.marqueeRow[data-dim] .marqueeStar { fill: var(--dim); }
+/* ---------- Intro: statement ---------- */
+.intro { padding: clamp(72px, 9vw, 128px) 0 clamp(80px, 10vw, 144px); }
 .statement {
-  margin: clamp(80px, 10vw, 140px) var(--gutter) 0 !important;
+  margin: 0 var(--gutter) !important;
   max-width: 24em;
   font-family: var(--font-display), system-ui, sans-serif;
   font-size: var(--size-m);
@@ -483,6 +465,45 @@
 }
 
 /* ---------- Loop (pinned on wide screens) ---------- */
+/* ---------- The map: the sample home as a lit house ---------- */
+.map { padding: 0 0 clamp(72px, 9vw, 128px); }
+.mapHead {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, var(--col));
+  align-items: end;
+  gap: 24px 48px;
+  padding: 0 var(--gutter);
+}
+.mapText { margin: 0; color: var(--muted); font-size: var(--size-body); line-height: 1.55; }
+/* The house sits straight on the page's ground: the scene clears to the same
+   navy, so the canvas has no edge. */
+.mapStage {
+  position: relative;
+  height: clamp(420px, 72vh, 760px);
+  margin-top: clamp(16px, 3vw, 40px);
+}
+.mapCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  /* Tone mapping darkens the scene's clear colour a little, so the top and
+     bottom fade into the page instead of meeting it at an edge. */
+  -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent);
+}
+.map[data-gl="on"] .mapCanvas { opacity: 1; }
+.mapStill { display: none; object-fit: contain; }
+.map[data-gl="off"] .mapCanvas { display: none; }
+.map[data-gl="off"] .mapStill { display: block; }
+@media (max-width: 860px) {
+  .mapHead { grid-template-columns: 1fr; }
+  .mapStage { height: auto; aspect-ratio: 4 / 3; }
+}
+
 .loop { padding: 0 var(--gutter); }
 .loopStage { display: grid; gap: 64px; }
 .loopHead { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
@@ -545,7 +566,7 @@
 }
 
 /* ---------- What it watches ---------- */
-.watch { padding: clamp(140px, 16vw, 240px) var(--gutter) 0; }
+.watch { padding: clamp(96px, 11vw, 160px) var(--gutter) 0; }
 .h2 {
   font-family: var(--font-display), system-ui, sans-serif;
   font-size: var(--size-l);
@@ -597,7 +618,7 @@
 }
 
 /* ---------- Who it's for ---------- */
-.who { padding: clamp(140px, 16vw, 240px) var(--gutter) 0; }
+.who { padding: clamp(96px, 11vw, 160px) var(--gutter) 0; }
 .whoList { margin-top: clamp(48px, 6vw, 88px); display: grid; gap: 8px; }
 .whoRow {
   position: relative;
@@ -639,7 +660,7 @@
 }
 
 /* ---------- Privacy: the one yellow field ---------- */
-.privacy { padding-top: clamp(140px, 16vw, 240px); }
+.privacy { padding-top: clamp(96px, 11vw, 160px); }
 .field {
   --muted: #2b3a6b;
   padding: clamp(80px, 10vw, 150px) var(--gutter);
@@ -685,7 +706,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 40px 64px;
-  padding: clamp(140px, 16vw, 240px) var(--gutter);
+  padding: clamp(96px, 11vw, 160px) var(--gutter);
 }
 .ctaTitle {
   font-family: var(--font-display), system-ui, sans-serif;

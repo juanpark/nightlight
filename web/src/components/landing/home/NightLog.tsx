@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import s from "./Home.module.css";
 
-// Tonight's rounds on the sample home, timed against the visitor's own clock:
-// the last few checks, then a new one every few seconds. The Pi is the one
+// Tonight's rounds on the sample home, on the sample night's own clock: the
+// last few checks from a little after two, then a new one every few seconds. The Pi is the one
 // thing that needs a look, as everywhere else on the page.
 type Row = { device: string; room: string; result: string; tone: "ok" | "warn" };
 
@@ -19,28 +19,28 @@ const ROUND: Row[] = [
 const SHOWN = 5;
 const EVERY = 3200;
 
-function clock(d: Date) {
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+// The night starts at 02:00 and each check comes a minute and a half after the
+// last, so the server and the browser always agree on the times.
+const START = 2 * 60;
+const GAP = 1.5;
+
+function clock(i: number) {
+  const m = Math.floor(START + i * GAP) % (24 * 60);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
 export function NightLog() {
-  // The server renders the round without times; the browser fills in its own.
-  const [now, setNow] = useState<number | null>(null);
   const [step, setStep] = useState(ROUND.length);
 
   useEffect(() => {
-    setNow(Date.now());
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const id = window.setInterval(() => {
-      setStep((n) => n + 1);
-      setNow(Date.now());
-    }, EVERY);
+    const id = window.setInterval(() => setStep((n) => n + 1), EVERY);
     return () => window.clearInterval(id);
   }, []);
 
   const rows = Array.from({ length: SHOWN }, (_, k) => {
     const i = step - SHOWN + k;
-    return { key: i, row: ROUND[((i % ROUND.length) + ROUND.length) % ROUND.length], ago: SHOWN - 1 - k };
+    return { key: i, row: ROUND[((i % ROUND.length) + ROUND.length) % ROUND.length] };
   });
   const needs = rows.some((r) => r.row.tone === "warn");
 
@@ -54,9 +54,9 @@ export function NightLog() {
         <span className={s.logTag}>Sample home</span>
       </figcaption>
       <ol className={s.logRows} aria-live="off">
-        {rows.map(({ key, row, ago }) => (
+        {rows.map(({ key, row }) => (
           <li key={key} className={s.logRow} data-tone={row.tone}>
-            <time className={s.logTime}>{now === null ? " " : clock(new Date(now - ago * 60_000))}</time>
+            <time className={s.logTime}>{clock(key)}</time>
             <span className={s.logDevice}>
               {row.device}
               <span className={s.logRoom}>{row.room}</span>

@@ -74,9 +74,67 @@
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(70% 38% at 50% 0%, rgb(17 20 31 / 0.85), transparent 75%),
-    linear-gradient(90deg, rgb(17 20 31 / 0.82), rgb(17 20 31 / 0.5) 22%, transparent 38%, transparent 72%, rgb(17 20 31 / 0.35));
+    radial-gradient(70% 38% at 50% 0%, rgb(17 20 31 / 0.8), transparent 75%),
+    radial-gradient(120% 90% at 50% 50%, transparent 55%, rgb(17 20 31 / 0.55));
 }
+
+/* ---------- Callouts pinned to the scene: a label, and a line to the card ---------- */
+.link {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+  overflow: visible;
+}
+.link path {
+  fill: none;
+  stroke: var(--star);
+  stroke-width: 1.25;
+  stroke-opacity: 0.7;
+  filter: drop-shadow(0 0 6px rgb(253 216 58 / 0.55));
+}
+.link circle { fill: var(--night); stroke: var(--star); stroke-width: 1.5; }
+.link circle + circle { fill: var(--star); stroke: none; }
+.tag {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0;
+  translate: -50% calc(-100% - 22px);
+  padding: 6px 11px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  background: rgb(17 20 31 / 0.78);
+  border: 1px solid rgb(245 184 74 / 0.5);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+.tag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 10px var(--warn);
+}
+.tag[data-tone="live"] { border-color: rgb(253 216 58 / 0.5); }
+.tag[data-tone="live"]::before { background: var(--star); box-shadow: 0 0 10px var(--star); animation: blink 1.1s ease-in-out infinite; }
+.tag[data-tone="ok"] { border-color: rgb(143 214 168 / 0.5); }
+.tag[data-tone="ok"]::before { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+@keyframes blink { 50% { opacity: 0.35; } }
 
 /* ---------- Nav: links, logo centred, actions ---------- */
 .nav {
@@ -229,6 +287,12 @@
   bottom: clamp(32px, 7vh, 72px);
   margin-left: var(--gutter);
   width: min(26rem, 34vw);
+  padding: 14px 20px 14px 14px;
+  border-radius: 22px;
+  background: rgb(27 32 48 / 0.55);
+  border: 1px solid rgb(61 69 99 / 0.6);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 24px 48px -16px rgb(3 4 10 / 0.6);
   opacity: 0;
   translate: 0 16px;
   transition: opacity 0.5s ease, translate 0.5s ease;
@@ -304,20 +368,39 @@
 }
 .cardSlot {
   grid-column: 2;
-  opacity: 0.25;
-  translate: 0 24px;
-  transition: opacity 0.6s ease, translate 0.6s ease;
+  opacity: 0.14;
+  translate: 0 28px;
+  filter: blur(4px);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), translate 0.9s cubic-bezier(0.16, 1, 0.3, 1), filter 0.7s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.step[data-active] .cardSlot { opacity: 1; translate: 0 0; }
+.step[data-active] .cardSlot { opacity: 1; translate: 0 0; filter: none; }
+/* The cards are glass here, so the house stays visible behind them. */
+.cardSlot > :first-child {
+  background: rgb(27 32 48 / 0.72);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
 
 /* ---------- Why, and the closing ---------- */
+/* The house stays under both: high above it for "why", down on the path for the close. */
 .why,
 .closing {
   position: relative;
   padding: clamp(96px, 14vh, 160px) var(--gutter);
-  background: linear-gradient(rgb(17 20 31 / 0), rgb(17 20 31 / 0.88) 22%, var(--night) 60%);
 }
-.closing { margin-top: -1px; background: var(--night); text-align: center; display: grid; justify-items: center; gap: 24px; padding-top: 40px; }
+.why {
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+}
+.closing {
+  min-height: 100vh;
+  text-align: center;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 24px;
+  padding-top: clamp(120px, 20vh, 200px);
+}
 .h2 {
   margin: 0 0 48px;
   max-width: 20ch;
@@ -336,13 +419,14 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1px;
-  background: var(--line);
-  border: 1px solid var(--line);
+  background: rgb(61 69 99 / 0.45);
+  border: 1px solid rgb(61 69 99 / 0.6);
   border-radius: 20px;
   overflow: hidden;
+  backdrop-filter: blur(18px) saturate(1.2);
 }
 .grid li {
-  background: rgb(27 32 48 / 0.92);
+  background: rgb(27 32 48 / 0.62);
   padding: 28px 26px 32px;
   display: grid;
   align-content: start;
@@ -365,8 +449,9 @@
 .footer {
   position: relative;
   z-index: 1;
-  background: var(--night);
-  border-top: 1px solid var(--line);
+  background: rgb(17 20 31 / 0.6);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid rgb(61 69 99 / 0.5);
   padding: 28px var(--gutter);
   display: flex;
   flex-wrap: wrap;
@@ -433,4 +518,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
+  .tag[data-tone="live"]::before { animation: none; }
 }

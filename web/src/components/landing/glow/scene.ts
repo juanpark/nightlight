@@ -10,7 +10,8 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 // with the six machines of the sample home in their rooms. A small warm light
 // (the nightlight) travels a path room to room; each machine's status light and
 // its room's lamp come on as it passes. Everything the page scrolls through is
-// one View, which GlowLanding tweens with GSAP; this file only draws it.
+// one View, which GlowLanding tweens with GSAP; this file only draws it, and
+// reports where the light, the Pi and its logs land on screen (a Probe).
 
 export type View = {
   tx: number; ty: number; tz: number; // where the camera looks
@@ -24,9 +25,28 @@ export type View = {
   done: number; // 0..1: the Pi is fixed
   lit: number; // 0..1: every room warm
   orb: number; // 0..1: pulses flow along the whole wire
+  lift?: number; // focal point's offset upward, as a share of the height (every screen)
+  logs?: number; // 0..1: the Pi's old logs have piled up beside it
+  mark?: number; // 0..1: the dry run outlines the logs that would go
 };
 
-const BG = 0x0d1019;
+// Where things land on screen this frame, in CSS pixels, for the page to pin
+// its labels and connector lines to.
+export type Probe = {
+  head: { x: number; y: number };
+  pi: { x: number; y: number };
+  logs: { x: number; y: number };
+  checked: number; // machines the light has reached
+};
+
+// The glow page's own colours, and "home": the same night recoloured for "/",
+// where the ground is the page's navy and every light is star yellow or cream.
+// Tone mapping darkens the clear colour, so home's BG is set lighter than the
+// page's #0b1430 in order to land on it on screen.
+const PALETTES = {
+  glow: { BG: 0x0d1019, WARM: 0xffc65a, OK: 0x8fd6a8, WARN: 0xf5a83a },
+  home: { BG: 0x1b233c, WARM: 0xfdd83a, OK: 0xc9d1ea, WARN: 0xfdd83a },
+};
 // Night clay: low-saturation greys, so the colour comes from the light (cool
 // moon outside, warm lamps inside) rather than from the paint.
 const CLAY = {
@@ -37,12 +57,14 @@ const CLAY = {
   soft: 0x8c8a92,
 };
 const COOL_PANE = new THREE.Color(0x2a3a6a);
-const WARM = new THREE.Color(0xffc65a);
-const OK = new THREE.Color(0x8fd6a8);
-const WARN = new THREE.Color(0xf5a83a);
 const OFF = new THREE.Color(0x232a40);
 
-export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) {
+export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean; palette?: keyof typeof PALETTES }) {
+  const P = PALETTES[opts.palette ?? "glow"];
+  const BG = P.BG;
+  const WARM = new THREE.Color(P.WARM);
+  const OK = new THREE.Color(P.OK);
+  const WARN = new THREE.Color(P.WARN);
   // Antialiasing happens in the post target (MSAA), so the canvas itself needs none.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
   // Quality steps down on its own if frames run slow: pixel ratio first, then bloom.
@@ -264,6 +286,46 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
       box(0.18, 0.08, 0.18, -0.12, 6.67, -1.62, mats.ground, 0.02);
     }, [0.22, 6.72, -1.4], [-0.9, 6, -1.9]),
   ];
+
+  // ---------- The Pi's old logs: a stack of thin slabs beside its crate ----------
+  // They pile up as the light finds the problem, the dry run outlines the old
+  // ones, and once the cleanup runs those slide away; the recent three stay.
+  const LOGS = 10;
+  const KEEP = 3;
+  const LOG_AT = new THREE.Vector3(1.55, 6.06, -1.55);
+  const LOG_GAP = 0.13;
+  const slabGeo = new RoundedBoxGeometry(0.95, 0.08, 0.7, 2, 0.025);
+  geos.push(slabGeo);
+  const slabs = Array.from({ length: LOGS }, (_, k) => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2a2416,
+      emissive: WARN.clone(),
+      emissiveIntensity: 0.5,
+      roughness: 0.6,
+      transparent: true,
+      opacity: 0,
+    });
+    const m = new THREE.Mesh(slabGeo, mat);
+    m.position.set(LOG_AT.x, LOG_AT.y + 0.04 + k * LOG_GAP, LOG_AT.z);
+    m.visible = false;
+    scene.add(m);
+    return m;
+  });
+  // The dry run's outline: dashed, around the slabs that would be cleared.
+  const markH = (LOGS - KEEP) * LOG_GAP + 0.06;
+  const markEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.15, markH, 0.9));
+  geos.push(markEdges);
+  const markMat = new THREE.LineDashedMaterial({ color: WARN, dashSize: 0.09, gapSize: 0.07, transparent: true, opacity: 0, toneMapped: false });
+  const markBox = new THREE.LineSegments(markEdges, markMat);
+  markBox.computeLineDistances();
+  markBox.position.set(LOG_AT.x, LOG_AT.y + KEEP * LOG_GAP + markH / 2 - 0.02, LOG_AT.z);
+  scene.add(markBox);
+  // A faint volume inside the outline, so the share that would go reads at a glance.
+  const markFillGeo = new THREE.BoxGeometry(1.15, markH, 0.9);
+  geos.push(markFillGeo);
+  const markFillMat = new THREE.MeshBasicMaterial({ color: WARN, transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+  markBox.add(new THREE.Mesh(markFillGeo, markFillMat));
+  const logTop = new THREE.Vector3();
 
   // A soft warm fill on each storey, for when the whole house is lit.
   const fills = [1.6, 4.6, 7.2].map((y) => {
@@ -511,6 +573,33 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
       d.shade.emissiveIntensity = d.glow * 1.2;
     });
     fills.forEach((f) => (f.intensity = v.lit * 9));
+
+    // The logs: each slab drops in on its turn; the old ones slide off once cleared.
+    const logs = v.logs ?? 0;
+    const mark = v.mark ?? 0;
+    let top = 0;
+    slabs.forEach((m, k) => {
+      const inn = sm(k / LOGS, (k + 1.6) / LOGS, logs);
+      const old = k >= KEEP;
+      // The old slabs go top first, so the stack sinks rather than vanishing at once.
+      const out = old ? sm(((LOGS - 1 - k) / (LOGS - KEEP)) * 0.6, ((LOGS - 1 - k) / (LOGS - KEEP)) * 0.6 + 0.4, v.done) : 0;
+      const a = inn * (1 - out);
+      m.visible = a > 0.002;
+      const mat = m.material as THREE.MeshStandardMaterial;
+      mat.opacity = a * 0.92;
+      mat.emissive.copy(WARN).lerp(OK, old ? 0 : v.done);
+      // A slab that is marked for cleanup brightens with the dry run.
+      mat.emissiveIntensity = 0.45 + (old ? mark * (1 - v.done) * 0.5 : 0);
+      m.position.y = LOG_AT.y + 0.04 + k * LOG_GAP + (1 - inn) * 0.5 + out * 0.35;
+      m.position.x = LOG_AT.x + out * 0.9;
+      if (a > 0.5) top = k;
+    });
+    const marked = mark * (1 - v.done);
+    markMat.opacity = marked * (opts.calm ? 1 : 0.8 + Math.sin(time * 3) * 0.2);
+    markFillMat.opacity = marked * 0.1;
+    markBox.visible = marked > 0.002;
+    // The callout pins to the middle of the old logs while they are there, then to what is left.
+    logTop.set(LOG_AT.x, LOG_AT.y + (v.done > 0.5 ? top * 0.5 : KEEP + (LOGS - KEEP) / 2) * LOG_GAP, LOG_AT.z);
     // Windows go from moonlit blue to lamplight as the house wakes up.
     const warmth = Math.max(v.lit, tr * 0.55);
     paneMat.emissive.copy(COOL_PANE).lerp(WARM, warmth);
@@ -548,7 +637,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     const half = Math.max(11, (narrow ? 8.5 : 0) / aspect) / v.zoom;
     const halfW = half * aspect;
     const ox = narrow ? 0 : v.ox;
-    const oy = narrow ? v.oy : 0;
+    const oy = (narrow ? v.oy : 0) + (v.lift ?? 0);
     camera.left = -halfW - ox * 2 * halfW;
     camera.right = halfW - ox * 2 * halfW;
     camera.top = half - oy * 2 * half;
@@ -556,6 +645,21 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     camera.updateProjectionMatrix();
 
     composer.render();
+
+    camera.updateMatrixWorld();
+    toScreen(headPos, probe.head);
+    toScreen(devices[devices.length - 1].at, probe.pi);
+    toScreen(logTop, probe.logs);
+    probe.checked = devices.filter((d) => tr >= d.t).length;
+    return probe;
+  }
+
+  const probe: Probe = { head: { x: 0, y: 0 }, pi: { x: 0, y: 0 }, logs: { x: 0, y: 0 }, checked: 0 };
+  const ndc = new THREE.Vector3();
+  function toScreen(p: THREE.Vector3, out: { x: number; y: number }) {
+    ndc.copy(p).project(camera);
+    out.x = ((ndc.x + 1) / 2) * W;
+    out.y = ((1 - ndc.y) / 2) * H;
   }
 
   // Build every shader now, so nothing stalls the first time it appears.
