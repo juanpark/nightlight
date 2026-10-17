@@ -6,14 +6,12 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SplitText } from "gsap/SplitText";
 import { useGSAP } from "@gsap/react";
 import { Logo, LogoIcon } from "../../brand/Logo";
-import { Mascot } from "../../mascot/Mascot";
 import { AuthButtons } from "../AuthButtons";
 import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, type TrustState } from "../StoryCards";
 import { revealLines } from "../motion/reveal";
 import { Roll } from "../motion/Roll";
 import { scrollToTarget, useSmoothScroll } from "../motion/smooth";
 import { archivo } from "./fonts";
-import { Follower } from "./Follower";
 import { Ledger } from "./Ledger";
 import { Starfield } from "./Starfield";
 import s from "./Night.module.css";
@@ -21,9 +19,8 @@ import s from "./Night.module.css";
 gsap.registerPlugin(useGSAP, ScrollTrigger, SplitText);
 
 // "/night": the Swiss-grid variant. Small precise type against very large
-// condensed capitals, a window onto a street at night that opens to the full
-// screen, the night's four moments on a sideways track, a ledger of tonight's
-// checks, and a footer where the mascot follows your cursor through the stars.
+// condensed capitals, the night's four moments on a sideways track, a ledger
+// of tonight's checks, and a footer under a field of stars.
 
 const LINKS = [
   { href: "#moments", label: "Tonight" },
@@ -59,8 +56,6 @@ function useClock() {
 
 export function NightLanding() {
   const root = useRef<HTMLDivElement>(null);
-  const hero = useRef<HTMLElement>(null);
-  const footer = useRef<HTMLElement>(null);
   const [approval, setApproval] = useState<ApprovalState>("waiting");
   const [trust, setTrust] = useState<TrustState>("offer");
   const [popup, setPopup] = useState(false);
@@ -138,21 +133,7 @@ export function NightLanding() {
         });
       });
 
-      // The window: a small rounded picture opens to fill the screen.
       mm.add("(prefers-reduced-motion: no-preference) and (min-width: 760px)", () => {
-        const win = q("[data-window]")[0];
-        const tl = gsap.timeline({
-          scrollTrigger: { trigger: win, start: "top top", end: "+=120%", pin: true, scrub: 0.6 },
-        });
-        tl.fromTo(
-          q("[data-window-frame]"),
-          { clipPath: "inset(26% 8% 26% 52% round 28px)" },
-          { clipPath: "inset(0% 0% 0% 0% round 0px)", ease: "power2.inOut" },
-        )
-          .fromTo(q("[data-window-img]"), { scale: 1.35 }, { scale: 1, ease: "power2.inOut" }, 0)
-          .fromTo(q("[data-window-note]"), { autoAlpha: 1 }, { autoAlpha: 0, duration: 0.25 }, 0)
-          .fromTo(q("[data-window-cap]"), { autoAlpha: 0, y: 20 }, { autoAlpha: 1, y: 0, duration: 0.3 }, 0.7);
-
         // Tonight: the four moments slide past sideways.
         const track = q("[data-track]")[0] as HTMLElement;
         const pane = q("[data-moments]")[0] as HTMLElement;
@@ -222,10 +203,7 @@ export function NightLanding() {
       </header>
 
       <main id="main">
-        <section id="top" ref={hero} className={s.hero} aria-labelledby="hero-title">
-          <Follower area={hero} home={[0.84, 0.64]} className={s.heroMascot}>
-            <Mascot size={110} />
-          </Follower>
+        <section id="top" className={s.hero} aria-labelledby="hero-title">
           <h1 id="hero-title" className={s.heroTitle} data-hero-title>
             Watches your home
             <br />
@@ -236,28 +214,8 @@ export function NightLanding() {
               Nightlight keeps an eye on the computers in your home or small office, explains what it finds in plain
               words, and never changes anything without your yes.
             </p>
-            <p className={s.heroHint}>(Move your cursor. The light follows.)</p>
             <AuthButtons styles={s} />
           </div>
-        </section>
-
-        <section className={s.window} data-window aria-label="A street at night">
-          <div className={s.windowFrame} data-window-frame>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/landing/houses-at-night.jpg"
-              alt="Canal houses at night with a few windows still lit, reflected in the water"
-              width={2000}
-              height={1500}
-              data-window-img
-            />
-          </div>
-          <p className={s.windowNote} data-window-note>
-            Most lit windows have a router or a NAS behind them. Nobody is watching it.
-          </p>
-          <p className={s.windowCap} data-window-cap>
-            Photograph: Michelle Frechette, CC0
-          </p>
         </section>
 
         <section className={s.hello} aria-labelledby="hello-title">
@@ -381,11 +339,8 @@ export function NightLanding() {
         </section>
       </main>
 
-      <footer ref={footer} className={s.footer}>
+      <footer className={s.footer}>
         <Starfield className={s.stars} />
-        <Follower area={footer} home={[0.8, 0.14]} className={s.footMascot}>
-          <Mascot size={130} />
-        </Follower>
         <div className={s.footCenter}>
           <h2 className={s.footTitle} data-foot-title>
             Go to sleep.
@@ -406,7 +361,7 @@ export function NightLanding() {
           </div>
         </div>
         <div className={s.footBar}>
-          <p>Photograph by Michelle Frechette, CC0</p>
+          <p>The demo home is simulated.</p>
           <nav aria-label="Footer" className={s.footLinks}>
             {LINKS.map((l) => (
               <a key={l.href} href={l.href} onClick={go(l.href)}>

@@ -2,13 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-import { MascotPose } from "../../mascot/MascotPose";
-import type { PoseName } from "../../mascot/poses";
 import s from "./Night.module.css";
 
 // Tonight's ledger for the sample home: every device and what runs on it, the
 // way the map lists them. Hovering a row brings a small card along with the
-// cursor: the mascot's reaction and the one plain sentence the app would show.
+// cursor with the one plain sentence the app would show.
 type Entry = {
   time: string;
   name: string;
@@ -18,16 +16,15 @@ type Entry = {
   tone: "ok" | "warn";
   status: string;
   line: string;
-  pose: PoseName;
 };
 
 const ENTRIES: Entry[] = [
-  { time: "02:10", name: "Wi-Fi router", kind: "Network", does: "Gets everything online", room: "Hall", tone: "ok", status: "Fine", line: "Online all night. Nothing to do.", pose: "sit" },
-  { time: "02:11", name: "Home NAS", kind: "Files", does: "Keeps the family photos", room: "Office", tone: "ok", status: "Fine", line: "Photo backup ran at 01:30. Disk at 48%.", pose: "happy" },
-  { time: "02:12", name: "Mac Mini", kind: "Home", does: "Runs the home automation", room: "Living room", tone: "ok", status: "Fine", line: "Lights and heating rules are running.", pose: "wave" },
-  { time: "02:13", name: "Minecraft server", kind: "Games", does: "Hosts the kids’ world", room: "Kids’ room", tone: "ok", status: "Fine", line: "Two players earlier; quiet now. Backed up today.", pose: "wiggle" },
-  { time: "02:14", name: "Camera recorder", kind: "Home", does: "Records the front door", room: "Garage", tone: "ok", status: "Fine", line: "Recording. 11 days of space left.", pose: "walk" },
-  { time: "02:15", name: "Raspberry Pi", kind: "Network", does: "Home VPN and a car-data logger", room: "Attic", tone: "warn", status: "Needs a look", line: "The disk is 94% full, mostly old logs. I can show you what would go first.", pose: "peek" },
+  { time: "02:10", name: "Wi-Fi router", kind: "Network", does: "Gets everything online", room: "Hall", tone: "ok", status: "Fine", line: "Online all night. Nothing to do." },
+  { time: "02:11", name: "Home NAS", kind: "Files", does: "Keeps the family photos", room: "Office", tone: "ok", status: "Fine", line: "Photo backup ran at 01:30. Disk at 48%." },
+  { time: "02:12", name: "Mac Mini", kind: "Home", does: "Runs the home automation", room: "Living room", tone: "ok", status: "Fine", line: "Lights and heating rules are running." },
+  { time: "02:13", name: "Minecraft server", kind: "Games", does: "Hosts the kids’ world", room: "Kids’ room", tone: "ok", status: "Fine", line: "Two players earlier; quiet now. Backed up today." },
+  { time: "02:14", name: "Camera recorder", kind: "Home", does: "Records the front door", room: "Garage", tone: "ok", status: "Fine", line: "Recording. 11 days of space left." },
+  { time: "02:15", name: "Raspberry Pi", kind: "Network", does: "Home VPN and a car-data logger", room: "Attic", tone: "warn", status: "Needs a look", line: "The disk is 94% full, mostly old logs. I can show you what would go first." },
 ];
 
 export function Ledger() {
@@ -44,7 +41,7 @@ export function Ledger() {
     const y = gsap.quickTo(el, "y", { duration: still ? 0 : 0.7, ease: "power3.out" });
     const move = (e: PointerEvent) => {
       x(Math.min(e.clientX + 28, window.innerWidth - 260));
-      y(e.clientY - 250);
+      y(e.clientY - 130);
     };
     box.addEventListener("pointermove", move);
     return () => box.removeEventListener("pointermove", move);
@@ -111,9 +108,6 @@ export function Ledger() {
       <div ref={card} className={s.preview} aria-hidden="true">
         {e && (
           <>
-            <div className={s.previewMascot}>
-              <MascotPose key={e.pose} pose={e.pose} size={84} />
-            </div>
             <p className={s.previewName}>{e.name}</p>
             <p className={s.previewLine}>{e.line}</p>
           </>
