@@ -111,6 +111,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     api("DELETE", `/api/links/${l.id}`).catch(() => setRemoved(({ [l.id]: _, ...rest }) => rest));
   }, []);
 
+  const named = useCallback((id: string) => devices.find((d) => d.id === id)?.name ?? id, [devices]);
   const edges: LinkEdgeType[] = useMemo(() => {
     const on = new Set(devices.map((d) => d.id));
     const silent = new Set(devices.filter((d) => d.status === "offline").map((d) => d.id));
@@ -120,15 +121,14 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const kind = drafts[l.id] ?? l.kind;
       return {
         id: l.id, source: l.from, target: l.to, sourceHandle: s, targetHandle: t, type: "link",
-        selected: edgeSel === l.id, ariaLabel: `${l.from} ${LINK[kind].verb} ${l.to}`,
-        data: { kind, faded: silent.has(l.from) || silent.has(l.to) },
+        selected: edgeSel === l.id, ariaLabel: `${named(l.from)} ${LINK[kind].verb} ${named(l.to)}`,
+        data: { kind, faded: silent.has(l.from) || silent.has(l.to), why: l.source === "auto" ? l.why ?? "seen by the helpers" : undefined },
       };
     });
-  }, [links, devices, drafts, edgeSel, pos, hidden]);
+  }, [links, devices, drafts, edgeSel, pos, hidden, named]);
   // The selected line's controls sit in a bar at screen size, whatever the zoom and wherever the line is.
   const chosen = links.find((l) => l.id === edgeSel && !hidden(l));
   const chosenKind = chosen && (drafts[chosen.id] ?? chosen.kind);
-  const named = (id: string) => devices.find((d) => d.id === id)?.name ?? id;
 
   function connect(c: { source: string | null; target: string | null }) {
     if (!c.source || !c.target || c.source === c.target) return;
@@ -186,7 +186,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       </ReactFlow>
       {chosen && chosenKind && (
         <div className="hm-linkbar" role="group" aria-label="This line">
-          <span className="small">{named(chosen.from)} {LINK[chosenKind].verb} {named(chosen.to)}</span>
+          <span className="small">{named(chosen.from)} {LINK[chosenKind].verb} {named(chosen.to)}
+            {chosen.source === "auto" && <span className="muted"> · Nightlight drew this: {chosen.why ?? "seen by the helpers"}</span>}</span>
           <span className="etools">
             {LINK_KINDS.map((k) => (
               <button key={k} className={k === chosenKind ? "on" : ""} aria-pressed={k === chosenKind} onClick={() => setKind(chosen, k)}>{LINK[k].label}</button>))}

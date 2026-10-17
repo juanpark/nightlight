@@ -79,7 +79,7 @@ export interface Device {
 /** How two devices relate, drawn as a line on the map: connected through, backs up to, relies on, powered by. */
 export type LinkKind = "network" | "backup" | "depends" | "power";
 export interface Link { id: string; from: string; to: string; kind: LinkKind; realm?: "sim" | "real";
-  demoGeneration?: number; createdAt?: Date }
+  demoGeneration?: number; createdAt?: Date; source?: "user" | "auto"; why?: string }
 
 export interface Action {
   id: string;

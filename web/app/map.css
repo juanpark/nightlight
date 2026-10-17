@@ -82,6 +82,10 @@
 .everb { background: var(--bg); color: var(--muted); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line);
   opacity: .85; }
 .elabel.k-network .everb { display: none; } /* plain wires speak for themselves */
+/* drawn by Nightlight: a dot before the verb; on a plain wire, the dot alone */
+.everb.auto { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; }
+.everb.auto::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.elabel.k-network .everb.auto { display: inline-flex; font-size: 0; gap: 0; padding: 3px; }
 .etools { display: flex; flex-wrap: wrap; gap: 4px; }
 .etools button { font-size: 13px; padding: 0 10px; min-height: 34px; min-width: 34px; border: 0; display: inline-flex;
   align-items: center; justify-content: center; }
