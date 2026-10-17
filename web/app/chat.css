@@ -41,3 +41,8 @@
 .mode-switch button:nth-child(2) { border-radius: 0 8px 8px 0; margin-left: -1px; }
 .mode-switch button.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .mode-hint { flex-basis: 100%; padding-top: 3px; }
+
+/* Permission presets reuse the segmented control; the switches sit folded under them. */
+.presets { padding: 0 0 6px; }
+.presets button .small { opacity: .8; }
+.perm-switches > summary { cursor: pointer; margin: 4px 0; }
