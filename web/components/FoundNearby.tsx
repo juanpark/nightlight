@@ -13,7 +13,7 @@ const discoverCmd = (d: Device) => /mac/i.test(d.os ?? "")
 
 const names = (xs: string[]) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`;
 
-type Asked = { at: number; asked: { deviceId: string; name: string }[]; skipped: { deviceId: string; name: string; why: string }[] };
+type Asked = { base: Record<string, number>; asked: { deviceId: string; name: string }[]; skipped: { deviceId: string; name: string; why: string }[] };
 
 /** "Look for devices nearby": the server asks one device per network (the tap is the approval); results arrive in
  * the list. Devices that couldn't look say why, with the way round it. */
@@ -24,13 +24,15 @@ function LookNearby({ devices, discoveries, onGo, again }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const own = devices.filter((d) => d.realm === "real" && d.kind !== "watched");
-  // a device has looked once its list is newer than the request
-  const looked = (id: string) => (discoveries.find((x) => x.id === id)?.at?.getTime() ?? 0) > (run?.at ?? Infinity);
+  // a device has looked once its list is newer than the one it had when we asked (or it had none)
+  const looked = (id: string) => !!run
+    && (discoveries.find((x) => x.id === id)?.at?.getTime() ?? -1) > (run.base[id] ?? -1);
   async function look() {
     setErr(""); setBusy(true);
+    const base = Object.fromEntries(discoveries.map((d) => [d.id, d.at?.getTime() ?? 0])); // before asking
     try {
-      const r = await api<Omit<Asked, "at">>("POST", "/api/discover", {});
-      setRun({ at: Date.now() - 5000, ...r }); // a little slack for clock differences
+      const r = await api<Omit<Asked, "base">>("POST", "/api/discover", {});
+      setRun({ base, ...r });
     } catch (e) {
       setErr(e instanceof ApiError && e.status === 429 ? "That's a lot of looking. Please wait a little." : "Couldn't ask your devices to look.");
     } finally { setBusy(false); }
@@ -72,14 +74,13 @@ export default function FoundNearby({ discoveries, devices, onGo }: {
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [tick, setTick] = useState(0);
-  // the discovery listener says when a list changed; the merged view comes from the server
-  const changed = discoveries.map((d) => `${d.id}@${d.at?.getTime() ?? 0}`).join();
+  // every discovery snapshot (a new scan, or something added from another tab) refreshes the server's merged view
   useEffect(() => {
     let live = true;
     api<{ items: FoundThing[] }>("GET", "/api/found").then((r) => { if (live) setItems(r.items); })
       .catch(() => { if (live) setItems((cur) => cur ?? []); });
     return () => { live = false; };
-  }, [changed, tick]);
+  }, [discoveries, tick]);
   const key = (t: FoundThing) => t.tag ?? `${t.seenBy[0]?.deviceId}:${t.seenBy[0]?.cid}`;
   async function add(t: FoundThing) {
     const by = t.seenBy[0];
