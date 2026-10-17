@@ -69,7 +69,11 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
     }
     setEditing(false);
   }
-  const newFinding = (device.findings ?? []).find((f) => (f.state ?? "new") === "new");
+  // Each problem is said once: the urgent one as a row under the status sentence (with its "What should I do?"),
+  // the rest under Problems.
+  const listed = (f: Finding) => needs.some((n) => n.id === `critical:${device.id}:${f.id ?? f.message}`);
+  const urgent = (device.findings ?? []).find(listed);
+  const brief = !removing && !(real && device.status === "offline") && (device.status === "crit" || device.status === "warn");
   const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
   const current: Tab = tabs.includes(tab) ? tab : "overview";
   return (
@@ -89,12 +93,12 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         <span style={{ flex: 1 }} />
         <button onClick={onClose}>Close</button>
       </div>
-      <p className="drawer-status">{statusSentence(device, Date.now(), removing)}</p>
-      <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
+      <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
+        : statusSentence(device, Date.now(), removing)}</p>
+      <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}
+        extra={(n) => urgent && real && n.kind === "critical" ? <IssueActions device={device} finding={urgent} /> : null} />
       <div className="drawer-actions">
         <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
-        {newFinding && <button onClick={() => onAsk(`What should I do about this on my ${device.name}: ${newFinding.message}`)}>
-          What should I do?</button>}
       </div>
       {tabs.length > 0 && (
         <div className="tabs" role="tablist">
@@ -114,7 +118,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
               <Vital label="Memory" value={device.vitals?.mem} />
               <Vital label="CPU" value={device.vitals?.cpu} />
             </div>}
-        <Problems device={device} />
+        <Problems device={device} skip={listed} onAsk={onAsk} />
         {real && !watched && <Checkups uid={uid} generation={generation} deviceId={device.id}
           actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
         <section className="drawer-section">
@@ -129,7 +133,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
                   {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
                 {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
                 {s.detail && <div className="small muted">{s.detail}</div>}
-                {(s.findings ?? []).map((f, i) => <div key={i} className="finding small">{f.message}</div>)}
+                {(s.findings ?? []).filter((f) => !(device.findings ?? []).some((g) => g.message === f.message)) // said above
+                  .map((f, i) => <div key={i} className="finding small">{f.message}</div>)}
               </div>
             </div>
           ))}
@@ -180,35 +185,46 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   );
 }
 
-function Problems({ device }: { device: Device }) {
-  const [showKnown, setShowKnown] = useState(false);
-  const real = device.realm === "real";
-  const all = device.findings ?? [];
-  const open = all.filter((f) => (f.state ?? "new") === "new");
-  const known = all.filter((f) => (f.state ?? "new") !== "new");
-  const mark = (id: string, state: "new" | "known" | "snoozed", days?: number) =>
-    api("POST", `/api/devices/${device.id}/issues/${encodeURIComponent(id)}`, { state, ...(days ? { days } : {}) })
+type Finding = NonNullable<Device["findings"]>[number];
+
+/** Leave a problem alone for good or for a week, or bring it back (real devices; the server keeps the state). */
+function IssueActions({ device, finding: f }: { device: Device; finding: Finding }) {
+  if (device.realm !== "real" || !f.id) return null;
+  const mark = (state: "new" | "known" | "snoozed", days?: number) =>
+    api("POST", `/api/devices/${device.id}/issues/${encodeURIComponent(f.id!)}`, { state, ...(days ? { days } : {}) })
       .catch(() => {});
-  const row = (f: (typeof all)[number], i: number) => {
+  return (f.state ?? "new") === "new"
+    ? <span className="issue-actions">
+        <button className="linkish small" onClick={() => mark("known")}>I know, leave it</button>
+        <button className="linkish small" onClick={() => mark("snoozed", 7)}>Snooze a week</button>
+      </span>
+    : <button className="linkish small issue-actions" onClick={() => mark("new")}>Needs a look again</button>;
+}
+
+function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) => boolean; onAsk: (q: string) => void }) {
+  const [showKnown, setShowKnown] = useState(false);
+  const all = device.findings ?? [];
+  const open = all.filter((f) => (f.state ?? "new") === "new" && !skip(f));
+  const known = all.filter((f) => (f.state ?? "new") !== "new");
+  const urgent = all.some(skip);
+  const row = (f: Finding, i: number) => {
     const state = f.state ?? "new";
     return (
       <div key={f.id ?? i} className={`finding ${state !== "new" ? "is-known" : ""}`}>
         <span className={`dot ${state !== "new" ? "offline" : f.severity === "info" ? "ok" : f.severity}`} />{" "}
         {f.message} <span className="muted small">({f.evidence})</span>
         {state !== "new" && <span className="pill" style={{ marginLeft: 6 }}>{state === "known" ? "Known" : "Snoozed"}</span>}
-        {real && f.id && (state === "new"
-          ? <span className="issue-actions">
-              <button className="linkish small" onClick={() => mark(f.id!, "known")}>I know, leave it</button>
-              <button className="linkish small" onClick={() => mark(f.id!, "snoozed", 7)}>Snooze a week</button>
-            </span>
-          : <button className="linkish small issue-actions" onClick={() => mark(f.id!, "new")}>Needs a look again</button>)}
+        {state === "new" && <button className="linkish small issue-actions"
+          onClick={() => onAsk(`What should I do about this on my ${device.name}: ${f.message}`)}>What should I do?</button>}
+        <IssueActions device={device} finding={f} />
       </div>
     );
   };
+  if (urgent && open.length === 0 && known.length === 0) return null; // the row at the top already says it all
   return (
     <section className="drawer-section">
-      <h4>Problems</h4>
-      {open.length === 0 && <p className="muted small">Nothing needs a look.</p>}
+      <h4>{urgent ? "Other problems" : "Problems"}</h4>
+      {open.length === 0 && <p className="muted small">{urgent ? "Nothing else needs a look." : "Nothing needs a look."}</p>}
       {open.map(row)}
       {known.length > 0 && <button className="linkish small" onClick={() => setShowKnown(!showKnown)}>
         {showKnown ? "Hide" : `${known.length} known or snoozed`}</button>}

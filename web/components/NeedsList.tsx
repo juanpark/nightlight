@@ -1,6 +1,6 @@
 "use client";
 // Rows of "needs you" items with one action each. Used at the top of a device panel and in the strip above the map.
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import type { Go, Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
@@ -10,9 +10,9 @@ import { Copy } from "./AddDevice";
 
 const TONE = { 1: "crit", 2: "warn", 3: "offline" } as const;
 
-export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, max = 3, showDevice = false }: {
+export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, max = 3, showDevice = false, extra }: {
   needs: Need[]; actions: Action[]; devices: Device[]; onGo: (go: Go) => void; onFollowUp: (turnId: string) => void;
-  max?: number; showDevice?: boolean;
+  max?: number; showDevice?: boolean; extra?: (n: Need) => ReactNode; // more controls at the end of a row
 }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -42,6 +42,7 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
                   ? <button className="small" onClick={() => setOpen(open === n.id ? null : n.id)}>
                       {open === n.id ? "Hide" : n.cta.label}</button>
                   : <button className="small" onClick={() => onGo(n.cta.go)}>{n.cta.label}</button>}
+            {extra?.(n)}
           </div>
           {open === n.id && n.cta.go.to === "line" && (
             <div className="needs-line small">
