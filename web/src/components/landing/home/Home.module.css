@@ -13,10 +13,8 @@
   --muted: #aab3cf;
   --dim: #4f5f92;
   --star: #fdd83a;
-  --star-hover: #ffe46e;
   --star-ink: #15224a;
-  --navy: #2c4290;
-  --navy-hover: #344ca0;
+  --navy: #1a2856;
   --cream: #f4efe4;
   /* Status stays in the palette: calm is pale cream-navy, needs-you is the
      star. Every status also carries a word. */
@@ -148,20 +146,11 @@
 }
 .primary:hover svg { transform: rotate(-45deg); }
 
-/* Yellow primary (nav): navy chip, the yellow warms on hover. */
+/* Yellow primary (nav): navy chip. On hover the chip's navy floods the pill
+   and the label turns star yellow, the hero button's move in reverse. */
 .primary { background: var(--star); color: var(--star-ink); }
 .primary svg { background: var(--star-ink); color: var(--star); }
-.primary:hover { background: var(--star-hover); }
-
-/* The hero's own action: navy with a lit chip. On hover the light spills
-   out of the chip and floods the button, and the label turns navy. */
-.primaryNavy {
-  background: var(--navy);
-  color: var(--cream);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.09), inset 0 1px 0 rgb(255 255 255 / 0.12);
-}
-.primaryNavy svg { background: var(--star); color: var(--star-ink); }
-.primaryNavy::before {
+.primary::before {
   content: "";
   position: absolute;
   z-index: -1;
@@ -171,14 +160,32 @@
   height: var(--chip);
   margin-top: calc(var(--chip) / -2);
   border-radius: 50%;
-  background: var(--star);
+  background: var(--star-ink);
   transform: scale(0);
   transition: transform 0.7s var(--ease-out);
 }
-.primaryNavy:hover { background: var(--navy); color: var(--star-ink); }
-.primaryNavy:hover::before { transform: scale(14); }
+.primary:hover { color: var(--star); box-shadow: inset 0 0 0 1.5px var(--star); }
+.primary:hover::before { transform: scale(14); }
+.primary:hover svg { background: var(--star); color: var(--star-ink); }
+.primary:disabled::before { transform: scale(0); }
+
+/* The hero's own action: navy with a lit chip. On hover the light spills
+   out of the chip and floods the button, and the label turns navy. */
+.primaryNavy {
+  background: var(--navy);
+  color: var(--cream);
+  box-shadow:
+    inset 0 0 0 1px rgb(244 239 228 / 0.14),
+    inset 0 1px 0 rgb(244 239 228 / 0.1),
+    0 10px 24px -12px rgb(3 7 22 / 0.8);
+}
+.primaryNavy svg { background: var(--star); color: var(--star-ink); }
+.primaryNavy::before { background: var(--star); }
+.primaryNavy:hover {
+  color: var(--star-ink);
+  box-shadow: 0 12px 28px -12px rgb(253 216 58 / 0.45);
+}
 .primaryNavy:hover svg { background: var(--star-ink); color: var(--star); }
-.primaryNavy:disabled::before { transform: scale(0); }
 
 /* Secondary: an outline, with the Google mark in cream so it stays in the
    palette. */
@@ -327,15 +334,42 @@
 }
 
 /* ---------- Night log (a fragment of the app) ---------- */
+/* A window onto the app: a lifted navy pane with a hairline rim, rows ruled
+   like a logbook, the Pi's row lit, and a thin light along the bottom that
+   fills toward the next check. */
 .log {
+  --pad: 24px;
+  position: relative;
+  overflow: hidden;
   margin: 0;
-  padding: 20px 22px 18px;
-  border-radius: 22px;
-  background: var(--surface);
+  padding: 22px var(--pad) 0;
+  /* The footer and the lit row run edge to edge. */
+  border-radius: 24px;
+  background: linear-gradient(to bottom, var(--surface-2), var(--surface) 42%);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 0 1px 0 rgb(244 239 228 / 0.06),
+    0 24px 48px -24px rgb(3 7 22 / 0.9);
   font-size: var(--size-s);
 }
-.logHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
-.logTitle { font-weight: 600; }
+.logHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.logTitle { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
+/* Watching: a small star light that breathes. */
+.logLive {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--star);
+}
+.logLive::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--star);
+  animation: ring 2.4s var(--ease-out) infinite;
+}
 .logTag {
   padding: 3px 10px;
   border-radius: 999px;
@@ -349,9 +383,18 @@
   grid-template-columns: 3.4rem 1fr auto;
   align-items: baseline;
   gap: 12px;
-  padding: 9px 0;
+  margin: 0 calc(var(--pad) * -1);
+  padding: 11px var(--pad);
+  border-top: 1px solid rgb(34 48 92 / 0.7);
   animation: logIn 0.9s var(--ease-out) both;
 }
+.logRow:first-child { border-top-color: transparent; }
+/* The one that needs you sits on a lifted band of navy, so the yellow word
+   is the only light in the row. */
+.logRow[data-tone="warn"] {
+  background: linear-gradient(to right, var(--surface-3), rgb(33 48 96 / 0.35));
+}
+.logRow[data-tone="warn"] + .logRow { border-top-color: transparent; }
 .logRow:last-child { animation-delay: 0.05s; }
 @keyframes logIn {
   from { opacity: 0; transform: translateY(12px); }
@@ -361,12 +404,49 @@
 .logRoom { font-weight: 400; color: var(--muted); }
 .logResult { display: inline-flex; align-items: center; gap: 8px; color: var(--ok); }
 .logRow[data-tone="warn"] .logResult { color: var(--warn); }
-.logDot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.logRow[data-tone="warn"] .logDot { animation: needs 2.2s ease-in-out infinite; }
-@keyframes needs {
-  50% { transform: scale(1.6); opacity: 0.5; }
+.logDot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.logRow[data-tone="warn"] .logResult { font-weight: 600; }
+.logRow[data-tone="warn"] .logDot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  animation: ring 2.2s var(--ease-out) infinite;
 }
-.logFoot { margin-top: 8px; padding-top: 12px; color: var(--muted); }
+@keyframes ring {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(3.2); opacity: 0; }
+}
+.log .logFoot {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 calc(var(--pad) * -1);
+  padding: 14px var(--pad) 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+.logFoot strong { color: var(--star); font-weight: 600; }
+/* Time to the next check: light filling along the footer's rule. */
+.logNext {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  background: var(--star);
+  transform-origin: left;
+  animation: next var(--every, 3.2s) linear both;
+}
+@keyframes next {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .logNext, .logLive::after, .logRow[data-tone="warn"] .logDot::after { display: none; }
+}
 
 /* ---------- Intro: marquee + statement ---------- */
 .intro { padding: clamp(100px, 14vw, 200px) 0 clamp(120px, 14vw, 220px); }
@@ -632,9 +712,26 @@
   font-size: 1.125rem;
   font-weight: 650;
   cursor: pointer;
-  transition: background-color 0.4s, transform 0.6s var(--ease-spring);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition: color 0.4s var(--ease-out), box-shadow 0.4s var(--ease-out), transform 0.6s var(--ease-spring);
 }
-.round:hover { background: var(--star-hover); transform: scale(1.08); }
+/* On hover the night closes in from the centre and the label turns to light,
+   ringed in yellow so it never sinks into the ground. */
+.round::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 50%;
+  background: var(--star-ink);
+  transform: scale(0);
+  transition: transform 0.7s var(--ease-out);
+}
+.round:hover { color: var(--star); box-shadow: inset 0 0 0 2px var(--star); transform: scale(1.06); }
+.round:hover::before { transform: scale(1); }
+.round:disabled::before { transform: scale(0); }
 .round:active { transform: scale(0.96); }
 .round svg { transition: transform 0.6s var(--ease-spring); }
 .round:hover svg { transform: translateX(6px) rotate(-30deg); }

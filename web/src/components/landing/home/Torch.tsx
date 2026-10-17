@@ -10,7 +10,8 @@ import s from "./Home.module.css";
 // blending in difference mode so the night turns light under it and the text
 // turns navy. It lives only in the first screen. As the hero scrolls away the
 // disc shrinks, turns star yellow and flies into the dot on the logo's "i",
-// so the light goes home; scrolling back up lets it out again. It flickers on
+// so the light goes home; scrolling back up lets it out again. It is widest
+// mid-hero and narrows toward the top and bottom edges. It flickers on
 // at the first move, steps aside over anything pressable, and hides when the pointer
 // leaves or someone moves with the keyboard. Touch and reduced motion get none.
 
@@ -19,6 +20,15 @@ const DOT = { x: (3376 + 40) / 5414, y: (-800 + 1230) / 1530, r: 150 / 1530 };
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const ramp = (a: number, b: number, v: number) => clamp01((v - a) / (b - a));
+
+// How small the light gets at the hero's top and bottom edges, as a share of
+// its full size in the middle band.
+const EDGE = 0.45;
+// Full size through the middle of the hero, easing down toward either edge.
+const bell = (v: number) => {
+  const u = Math.abs(clamp01(v) * 2 - 1);
+  return 1 - (1 - EDGE) * u * u * (3 - 2 * u);
+};
 
 export function Torch() {
   const disc = useRef<HTMLDivElement>(null);
@@ -53,6 +63,8 @@ export function Torch() {
       pos.y += (target.y - pos.y) * 0.16;
 
       const R = d.offsetWidth / 2 || 1;
+      const hb = hero.getBoundingClientRect();
+      const reach = bell((pos.y - hb.top) / (hb.height || 1));
       const lb = logo.getBoundingClientRect();
       const home = { x: lb.left + DOT.x * lb.width, y: lb.top + DOT.y * lb.height, r: DOT.r * lb.height };
 
@@ -60,7 +72,7 @@ export function Torch() {
       const t = gsap.parseEase("power2.inOut")(st.p);
       const x = pos.x + (home.x - pos.x) * t;
       const yy = pos.y + (home.y - pos.y) * t;
-      const scale = (1 + (home.r / R - 1) * t) * (1 + (st.hover - 1) * (1 - t));
+      const scale = (1 + (home.r / R - 1) * t) * (1 + (st.hover * reach - 1) * (1 - t));
       const transform = `translate3d(${x}px, ${yy}px, 0) scale(${scale})`;
 
       const docked = st.p >= 0.999;

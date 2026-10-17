@@ -17,6 +17,7 @@ const ROUND: Row[] = [
   { device: "Raspberry Pi", room: "Attic", result: "Disk 94% full", tone: "warn" },
 ];
 const SHOWN = 5;
+const EVERY = 3200;
 
 function clock(d: Date) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -33,7 +34,7 @@ export function NightLog() {
     const id = window.setInterval(() => {
       setStep((n) => n + 1);
       setNow(Date.now());
-    }, 3200);
+    }, EVERY);
     return () => window.clearInterval(id);
   }, []);
 
@@ -46,7 +47,10 @@ export function NightLog() {
   return (
     <figure className={s.log} data-ui aria-label="Tonight’s checks on the sample home">
       <figcaption className={s.logHead}>
-        <span className={s.logTitle}>Tonight, room by room</span>
+        <span className={s.logTitle}>
+          <span className={s.logLive} aria-hidden="true" />
+          Tonight, room by room
+        </span>
         <span className={s.logTag}>Sample home</span>
       </figcaption>
       <ol className={s.logRows} aria-live="off">
@@ -64,7 +68,16 @@ export function NightLog() {
           </li>
         ))}
       </ol>
-      <p className={s.logFoot}>{needs ? "1 thing needs you. The rest is fine." : "All fine so far."}</p>
+      <p className={s.logFoot}>
+        {needs ? (
+          <>
+            <strong>1 thing needs you.</strong> The rest is fine.
+          </>
+        ) : (
+          "All fine so far."
+        )}
+        <span key={step} className={s.logNext} style={{ "--every": `${EVERY}ms` } as React.CSSProperties} aria-hidden="true" />
+      </p>
     </figure>
   );
 }
