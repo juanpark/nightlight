@@ -768,7 +768,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
         Topics: add_device, remove_device, uninstall_by_hand, update_helper, what_the_helper_does,
         ssh_and_remote_access, silent_device, permissions, mac_privacy, what_leaves_the_device, memories,
-        checkups_and_cleanups, approvals_and_trust, sample_home, expert_sessions, investigate_mode.
+        checkups_and_cleanups, approvals_and_trust, sample_home, expert_sessions, investigate_mode, found_nearby.
 
         Args:
             topic: one topic name from the list.
