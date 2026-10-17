@@ -5,12 +5,13 @@ Every report carries: OS name, CPU architecture, CPU / memory / disk percentages
 image name and tag without any registry address or path, state, status text), the names of failed system services
 (and, on a Mac, of your own failing background items), how many software updates are waiting, two yes/no safety
 facts (administrator commands without a password; SSH password logins), what you allowed here, and up/down results
-for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
+for things you chose to have it watch. It never sends its host name, IP or hardware addresses, files, environment
 variables or passwords. To draw lines between your devices it sends keyed fingerprints of local network addresses
 (its own, its router's, and those it backs up to or relies on), never the addresses themselves. Things it finds nearby
 are sent as a guess of what they are and their maker and model (only a known brand, and a model that is a known Apple
-model or looks like a product code), never their names or addresses. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
-scrubbed here first. It talks only HTTPS to the address you joined with.
+model or looks like a product code), never their addresses; the names they announce ("Living Room") are sent only
+while your account shows names (on by default, a switch in Settings). Log lines leave only for a container or
+service you allowed with `allow logs NAME`, and are scrubbed here first. It talks only HTTPS to the address you joined with.
 
 By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
 container, restarting a failed system service, and reading why something is down. Even then a change runs only
@@ -1635,6 +1636,14 @@ def run_job(job, wait=5):
             return False, "Looked nearby but couldn't send the list.", None
         return True, (f"Found {n} thing(s) nearby; they're under Found nearby to add." if n
                       else "Looked nearby: nothing new to suggest."), None
+    if kind == "mac_folders":
+        # Chosen by the owner in the app's setup card while they're at the Mac: the same yes as at install.
+        if sys.platform != "darwin":
+            return False, "Only a Mac has private folders to allow; nothing was done.", None
+        if _manage() != "app":
+            return False, "This Mac is set to strict: run `nightlight settings` on it to allow its folders.", None
+        _allow_mac_private()
+        return True, "macOS asked about your folders; click Allow on the Mac.", None
     if kind == "update_helper":
         return self_update(params.get("version") if isinstance(params, dict) else None)
     if kind == "fix":
@@ -1790,6 +1799,9 @@ def once():
         key = body.get("netKey")
         if isinstance(key, str) and NET_KEY_RE.fullmatch(key) and key != cfg.get("netKey"):
             _update_config(lambda c: c.__setitem__("netKey", key))  # for fingerprints from the next report on
+        names = body.get("deviceNames") is True  # the owner's switch; an older server never says yes
+        if names != (cfg.get("deviceNames") is True):
+            _update_config(lambda c: c.__setitem__("deviceNames", names))
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -2005,8 +2017,9 @@ def pair(api, web=None, name=None):
 
 
 # ------------------------------------------------------------------ discovery (owner-run, reviewed here first)
-# What's nearby on this network. Addresses (IP, MAC) and names stay on this device; only a guess of what each thing is
-# ("Home Assistant", "Printer"), its maker and which known services answer are sent, and only the ones you pick.
+# What's nearby on this network. Addresses (IP, MAC) stay on this device; only a guess of what each thing is
+# ("Home Assistant", "Printer"), its maker and model, which known services answer and, while the account shows names,
+# the name it announces are sent, and only the ones you pick.
 
 PORTS = {22: "remote login (SSH)", 80: "web page", 443: "secure web page", 445: "file sharing", 631: "printer",
          8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
@@ -2050,7 +2063,7 @@ def _neighbours():
 def _mdns():
     """IP -> set of service kinds announced on the network (asked of the system's mDNS service)."""
     out = {}
-    for ip, kind, _txt_record in _hourly("mdns", _mdns_records, every=60):
+    for ip, kind, *_rest in _hourly("mdns", _mdns_records, every=60):
         if kind in MDNS:
             out.setdefault(ip, set()).add(MDNS[kind])
     return out
@@ -2110,7 +2123,8 @@ def _guess(vendor, services, ports):
 # few well-known places on the router only. What they announce is free text a person may have typed ("Alex MacBook"),
 # so nothing of it leaves as written: the maker must be one of the brands below (sent as the table spells it), and the
 # model must be an Apple model from the table below or look like a product code ("HL-L2350DW", "DocuPrint CP115/118
-# w"). Anything else is dropped here, and the server checks the same rules again. friendlyName is never read.
+# w"). Anything else is dropped here, and the server checks the same rules again. Names (Bonjour instance names, a
+# UPnP friendlyName, host names) are a separate field, sent only while the owner shows names (`_seen_name`).
 
 IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models, start to finish
 MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
@@ -2255,7 +2269,8 @@ def _watch(cmds, seconds):
 
 
 def _dns_sd_zone(text, kind):
-    """[(host, kind, txt)] from `dns-sd -Z <kind>` output (zone-file lines: PTR, then SRV and TXT per instance)."""
+    """[(host, kind, txt, instance name)] from `dns-sd -Z <kind>` output (zone-file lines: PTR, then SRV and TXT per
+    instance)."""
     hosts, txts = {}, {}
     for line in text.splitlines():
         m = re.match(r"^(\S+)\s+(SRV|TXT)\s+(.*)$", line)
@@ -2267,11 +2282,12 @@ def _dns_sd_zone(text, kind):
                 hosts[m.group(1)] = parts[3].rstrip(".")
         else:
             txts[m.group(1)] = _txt(m.group(3))
-    return [(host, kind, txts.get(owner, {})) for owner, host in hosts.items()]
+    return [(host, kind, txts.get(owner, {}), _unescape(owner[:-len(kind) - 1] if owner.endswith("." + kind) else ""))
+            for owner, host in hosts.items()]
 
 
 def _mdns_records(seconds=MDNS_SECONDS):
-    """[(address, kind, txt)] for services announced nearby, from the system's mDNS service (asked, not listened
+    """[(address, kind, txt, {"instance", "host"})] for services announced nearby, from the system's mDNS service (asked, not listened
     for). Takes at most twice `seconds`: on Linux avahi resolves the addresses itself; on a Mac the listings run for
     `seconds` and the host names are looked up in the time left."""
     out = []
@@ -2279,7 +2295,8 @@ def _mdns_records(seconds=MDNS_SECONDS):
         for line in _run(["avahi-browse", "-aprtk"], timeout=max(1.0, 2 * seconds)).splitlines():
             f = line.split(";")
             if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS_ASK and _private_v4(f[7]):
-                out.append((f[7], f[4], _txt(f[9]) if len(f) > 9 else {}))
+                out.append((f[7], f[4], _txt(f[9]) if len(f) > 9 else {},
+                            {"instance": _unescape(f[3]), "host": f[6]}))
         return out
     if sys.platform != "darwin" or not shutil.which("dns-sd"):
         return out
@@ -2288,19 +2305,20 @@ def _mdns_records(seconds=MDNS_SECONDS):
     for kind, text in zip(MDNS_ASK, _watch([["dns-sd", "-Z", k, "local"] for k in MDNS_ASK], seconds)):
         found += _dns_sd_zone(text, kind)
     addresses = {}
-    for host in list(dict.fromkeys(h for h, _k, _t in found))[:20]:
+    for host in list(dict.fromkeys(f[0] for f in found))[:20]:
         left = deadline - time.monotonic()
         if left <= 0.2:
             break
         addresses[host] = _resolve(host, min(1.0, left))
-    return [(addresses[h], k, t) for h, k, t in found if _private_v4(addresses.get(h))]
+    return [(addresses[h], k, t, {"instance": i, "host": h}) for h, k, t, i in found
+            if _private_v4(addresses.get(h))]
 
 
 def _upnp_about(data):
     """{maker, model, kind} as a UPnP description file announces them (raw: `_keep` decides what may leave). Only
     UTF-8 (or ASCII) files are read, and one with a DOCTYPE or ENTITY is refused (entities can make a few bytes expand
-    without end): the check runs on the decoded text, so another encoding can't hide them. friendlyName, often a
-    person's name, is never read."""
+    without end): the check runs on the decoded text, so another encoding can't hide them. The friendlyName is a name
+    someone gave it: it leaves only while the owner shows names (see `_seen_name`)."""
     import xml.etree.ElementTree as ET
     if not data or len(data) > DESCRIPTION_BYTES or data[:2] in (b"\xfe\xff", b"\xff\xfe") or b"\0" in data:
         return {}
@@ -2322,13 +2340,14 @@ def _upnp_about(data):
     got = {}
     for child in device:
         key = child.tag.rsplit("}", 1)[-1]
-        if key in ("manufacturer", "modelName", "modelNumber", "deviceType") and (child.text or "").strip():
+        if key in ("manufacturer", "modelName", "modelNumber", "deviceType", "friendlyName") \
+                and (child.text or "").strip():
             got[key] = child.text.strip()[:100]
     name, number = got.get("modelName", ""), got.get("modelNumber", "")
     models = [" ".join(x for x in (name, number if number not in name else "") if x), name, number]
     kind = next((w for t, w in UPNP_KIND if ":" + t + ":" in got.get("deviceType", "")), None)
     return {"maker": got.get("manufacturer"), "model": next((m for m in models if _product_code(m)), None),
-            "kind": kind}
+            "kind": kind, "name": got.get("friendlyName")}
 
 
 def _fetch(host, port, path, deadline):
@@ -2394,6 +2413,28 @@ def _keep(mine, about):
         mine["maker"] = maker
 
 
+def _seen_name(text):
+    """A name a thing announces ("Living Room", "Juans-MacBook-Pro"), as the owner would recognise it, or None. Sent
+    only while the owner shows names (on by default; a switch in Settings). Never anything holding an address or a
+    hardware id: a trailing "(1B:BE:CF)" is cut, and a name still holding one is dropped."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"\s*\((?:[0-9A-Fa-f]{2}[:-]){2,5}[0-9A-Fa-f]{2}\)$", "", " ".join(text.split()))
+    text = re.sub(r"(?i)\.local\.?$", "", text)
+    if not text or not text.isprintable() or scrub(text)[0] != text \
+            or re.search(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
+        return None
+    return text[:60].strip() or None
+
+
+def _name_from(mine, text, rank):
+    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2)."""
+    name = _seen_name(text)
+    if name and rank < mine.get("_rank", 9):
+        mine["name"], mine["_rank"] = name, rank
+
+
 def _identify(budget=IDENTIFY_BUDGET):
     """{address: {"services": set, "maker", "model"}} for things that say who made them. One deadline covers it all,
     from the mDNS listings to the last byte of the router's description; what doesn't fit is left out, and nothing
@@ -2401,19 +2442,26 @@ def _identify(budget=IDENTIFY_BUDGET):
     deadline = time.monotonic() + budget
     out = {}
     try:
-        for ip, kind, txt in _hourly("mdns", lambda: _mdns_records(min(MDNS_SECONDS, budget / 3)), every=60):
+        for ip, kind, txt, *label in _hourly("mdns", lambda: _mdns_records(min(MDNS_SECONDS, budget / 3)),
+                                             every=60):
             mine = out.setdefault(ip, {"services": set()})
             if kind in MDNS:
                 mine["services"].add(MDNS[kind])
             _keep(mine, _txt_about(kind, txt))
+            label = label[0] if label and isinstance(label[0], dict) else {}
+            _name_from(mine, label.get("instance"), 0)
+            _name_from(mine, label.get("host"), 2)
         router, about = _router_about(deadline)
         if about:
             mine = out.setdefault(router, {"services": set()})
             if about.get("kind"):
                 mine["services"].add(about["kind"])
             _keep(mine, about)
+            _name_from(mine, about.get("name"), 1)
     except Exception:  # makers and models are a nicety: they never cost the look
         pass
+    for mine in out.values():
+        mine.pop("_rank", None)
     return out
 
 
@@ -2437,7 +2485,7 @@ def discover(yes=False, quiet=False):
         cid = known.get(ip) or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
-        for k in ("maker", "model"):
+        for k in ("maker", "model") + (("name",) if cfg.get("deviceNames") is True else ()):
             if told.get(k):
                 items[-1][k] = told[k]
         tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
@@ -3015,14 +3063,18 @@ def _ask_mac_private(default_yes):
     own Allow prompts right away, so nobody has to come back to the terminal for this later."""
     if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
             "ask you to allow each one now; click Allow.", default_yes):
-        # The yes is recorded first: the privacy guard reads it, so only then can the folders be opened, which is
-        # what raises macOS's prompts now, while you're here to answer them.
-        _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
-        _inspect_until[0] = time.time() + 120
-        for _label, path in _mac_private_places():
-            _du(path)
+        _allow_mac_private()
     else:
         _update_config(lambda c: c.__setitem__("macPrivateFolders", False))  # a recorded no: not asked again
+
+
+def _allow_mac_private():
+    """Record the yes, then measure the private folders once so macOS raises its Allow prompts now. The yes comes
+    first: the privacy guard reads it, so only then can the folders be opened, while someone is there to answer."""
+    _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
+    _inspect_until[0] = time.time() + 120
+    for _label, path in _mac_private_places():
+        _du(path)
 
 
 def settings():

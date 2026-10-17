@@ -71,7 +71,7 @@ def test_the_router_description_is_asked_of_the_router_only(fresh, monkeypatch):
     monkeypatch.setattr(fresh, "_fetch", answer)
     router, about = fresh._router_about(time.monotonic() + 5)
     assert router == "192.168.1.1" and about == {"maker": "NETGEAR, Inc.", "model": "Nighthawk R7000",
-                                                  "kind": "router"}
+                                                  "kind": "router", "name": "Juan's Router"}
     assert all(h == "192.168.1.1" and left <= 1.0 for h, _p, left in asked) and len(asked) == 3
     monkeypatch.setattr(fresh, "_gateway", lambda timeout=5: "8.8.8.8")
     assert fresh._router_about(time.monotonic() + 5) == (None, {})  # not a private address: not asked
@@ -116,11 +116,12 @@ def test_the_whole_look_ends_on_time_even_when_bytes_trickle(fresh, monkeypatch)
     fast = _Trickle(body, 0)
     monkeypatch.setattr(fresh, "UPNP_PLACES", ((fast.port, "/rootDesc.xml"),))
     assert fresh._identify(budget=2) == {"127.0.0.1": {"services": {"router"}, "maker": "Netgear",
-                                                       "model": "Nighthawk R7000"}}
+                                                       "model": "Nighthawk R7000", "name": "Juan's Router"}}
 
 
 def test_a_description_gives_maker_model_and_kind_never_the_friendly_name(helper):
-    assert helper._upnp_about(DESCRIPTION) == {"maker": "NETGEAR, Inc.", "model": "Nighthawk R7000", "kind": "router"}
+    assert helper._upnp_about(DESCRIPTION) == {"maker": "NETGEAR, Inc.", "model": "Nighthawk R7000", "kind": "router",
+                                               "name": "Juan's Router"}  # the name leaves only if names are on
     assert helper._upnp_about(BOMB) == {}  # refused unread
     assert helper._upnp_about(DESCRIPTION + b" " * helper.DESCRIPTION_BYTES) == {}  # too big to be a description
     assert helper._upnp_about(b"<root><device>") == {} and helper._upnp_about(b"") == {}
@@ -217,8 +218,10 @@ def test_mdns_records_come_from_avahi_on_linux(fresh, monkeypatch):
     monkeypatch.setattr(fresh, "_run", lambda cmd, timeout=20: AVAHI if cmd[0] == "avahi-browse" else "")
     got = fresh._mdns_records()
     assert got == [("192.168.1.40", "_ipp._tcp", {"usb_MDL": "HL-L2350DW series", "usb_MFG": "Brother",
-                                                  "ty": "Brother HL-L2350DW series"}),
-                   ("192.168.1.41", "_airplay._tcp", {"model": "AppleTV14,1"})]  # no link-local, no public
+                                                  "ty": "Brother HL-L2350DW series"},
+                    {"instance": "Juan's Printer", "host": "BRN3C2AF4.local"}),
+                   ("192.168.1.41", "_airplay._tcp", {"model": "AppleTV14,1"},
+                    {"instance": "Living Room", "host": "Living-Room.local"})]  # no link-local, no public
     assert fresh._mdns() == {"192.168.1.40": {"printer"}, "192.168.1.41": {"AirPlay speaker or TV"}}
 
 
@@ -231,7 +234,8 @@ def test_mdns_records_come_from_dns_sd_on_a_mac_within_the_time(fresh, monkeypat
     monkeypatch.setattr(fresh, "_resolve", lambda host, timeout=3: "192.168.1.40" if host == "BRN3C2AF4.local" else None)
     got = fresh._mdns_records(seconds=2)
     assert got == [("192.168.1.40", "_ipp._tcp", {"txtvers": "1", "ty": "Brother HL-L2350DW series",
-                                                  "note": "Juan's room"})]
+                                                  "note": "Juan's room"},
+                    {"instance": "Juan's Printer", "host": "BRN3C2AF4.local"})]
     assert ran[0][1] == 2 and all(c[:2] == ["dns-sd", "-Z"] for c in ran[0][0])  # asked of the system, side by side
 
 
@@ -272,3 +276,43 @@ def test_a_helper_reports_all_its_own_addresses_as_fingerprints(helper, monkeypa
     assert net["selves"] == [helper.net_tag(KEY, "192.168.1.20"), helper.net_tag(KEY, "192.168.1.21")]
     assert net["peers"] == []  # a connection to its own other address is not something it relies on
     assert "192.168" not in json.dumps(net)
+
+
+def test_announced_names_are_cleaned_and_never_carry_an_address(helper):
+    for raw, name in (("FUJI XEROX DocuPrint CP115/118 w (1B:BE:CF)", "FUJI XEROX DocuPrint CP115/118 w"),
+                      ("Juans-MacBook-Pro.local", "Juans-MacBook-Pro"), ("Living  Room", "Living Room"),
+                      ("Caf\u00e9 du Coin", "Caf\u00e9 du Coin"), ("Living Room " * 8, ("Living Room " * 8)[:60].strip())):
+        assert helper._seen_name(raw) == name, raw
+    for bad in ("192.168.1.5", "printer-192-168-1-5", "BRN3C2AF4E5B6A7", "aa:bb:cc:dd:ee:ff", "nas 1B:BE:CF:00",
+                "juan@example.com", "Living\x07Room", "", None):
+        assert helper._seen_name(bad) is None, bad
+
+
+def test_the_helper_sends_names_only_after_the_server_says_so(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.1": "24:a4:3c:11:22:33"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.1": [80], "192.168.1.40": [631]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [
+        ("192.168.1.40", "_ipp._tcp", {"ty": "Brother HL-L2350DW"}, {"instance": "Office Printer (1B:BE:CF)",
+                                                                      "host": "BRN3C2AF4E5B6A7.local"}),
+        ("192.168.1.40", "_printer._tcp", {}, {"instance": "", "host": "BRN3C2AF4E5B6A7.local"})])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: ("192.168.1.1", helper._upnp_about(DESCRIPTION)))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    assert "name" not in json.dumps(sent) and "Juan" not in json.dumps(sent)  # no reply has said yes yet
+    monkeypatch.setattr(helper, "facts", lambda: {})
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: (200, {"ok": True, "deviceNames": True}))
+    assert helper.once() == 200 and helper._load()["deviceNames"] is True
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    sent.clear()
+    helper.discover(yes=True, quiet=True)
+    names = sorted(i.get("name") for i in sent[0]["items"])
+    assert names == ["Juan's Router", "Office Printer"]  # the instance name beats the host name; no hardware id
+    assert "192.168" not in json.dumps(sent) and "24:a4" not in json.dumps(sent)
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: (200, {"ok": True}))  # an older server
+    assert helper.once() == 200 and helper._load()["deviceNames"] is False
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    sent.clear()
+    helper.discover(yes=True, quiet=True)
+    assert all("name" not in i for i in sent[0]["items"])

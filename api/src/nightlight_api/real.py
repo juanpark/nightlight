@@ -317,21 +317,62 @@ def product(maker: str | None, model: str | None) -> tuple[str | None, str | Non
     return maker, model if product_code(model) == model else None
 
 
+def set_device_names(uid: str, on: bool) -> dict:
+    """The owner's switch for names of things nearby. Turning it off also removes every name already kept: from the
+    lists of what was found, and from watched things (one still called by its announced name goes back to its
+    guess). New lists keep no names from the moment the switch is saved."""
+    db.user(uid).set({"settings": {"deviceNames": on}}, merge=True)
+    if on:
+        return {"ok": True, "deviceNames": True}
+    for snap in discoveries_ref(uid).get():
+        items = snap.to_dict().get("items") or []
+        if any(it.get("name") for it in items):
+            snap.reference.update({"items": [{**it, "name": None} for it in items]})
+    for snap in db.devices(uid).where(filter=FieldFilter("kind", "==", "watched")).get():
+        d = snap.to_dict()
+        if d.get("seenName") or d.get("nameFromSeen"):
+            snap.reference.update({"seenName": firestore.DELETE_FIELD, "nameFromSeen": firestore.DELETE_FIELD,
+                                   **({"name": (d.get("guess") or "Found device")[:40]}
+                                      if d.get("nameFromSeen") else {})})
+    return {"ok": True, "deviceNames": False}
+
+
 def discoveries_ref(uid: str):
     return db.user(uid).collection("discoveries")
 
 
+def names_on(user: dict) -> bool:
+    """Whether this account shows the names things nearby announce ("Living Room"): on unless the owner turned it
+    off in Settings. Addresses never leave a device either way."""
+    return (user.get("settings") or {}).get("deviceNames", True) is not False
+
+
+def found_name(text: str | None) -> str | None:
+    """A name a thing announces, kept for the owner's own map: never one that holds an address, a hardware id or
+    something the scrubber hid."""
+    if not isinstance(text, str) or not text.strip() or not text.isprintable() or len(text) > 60:
+        return None
+    if re.search(r"\[(ip|mac|email|hidden|user)\]|\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b"
+                 r"|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
+        return None
+    return text.strip()
+
+
 def save_discoveries(token: str, items: list[dict]) -> dict:
-    """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list."""
+    """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list. Names are
+    kept only while the account shows them."""
     @firestore.transactional
     def run(tx):
         uid, device_id = token_owner(tx, token)
         dsnap = db.device(uid, device_id).get(transaction=tx)
         watched = db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)
+        names = names_on(db.user(uid).get(transaction=tx).to_dict() or {})
         name = (dsnap.to_dict() or {}).get("name", "A device")
         added = {w.to_dict().get("cid") for w in watched}  # already on the map: stays "added" across rediscovery
         tx.set(discoveries_ref(uid).document(device_id), {
-            "items": [{**it, "added": it["cid"] in added} for it in items], "by": device_id, "byName": name,
+            "items": [{**it, "name": found_name(it.get("name")) if names else None, "added": it["cid"] in added}
+                      for it in items], "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
         return {"ok": True, "items": len(items)}
@@ -408,7 +449,9 @@ def found_view(uid: str) -> list[dict]:
                 continue
             key = it.get("tag") or f"{snap.id}:{it.get('cid')}"
             row = rows.setdefault(key, {"guess": it.get("guess"), "vendor": it.get("vendor"), "tag": it.get("tag"),
-                                        "maker": None, "model": None, "services": [], "ports": [], "seenBy": []})
+                                        "name": None, "maker": None, "model": None, "services": [], "ports": [],
+                                        "seenBy": []})
+            row["name"] = row["name"] or it.get("name")
             row["vendor"] = row["vendor"] or it.get("vendor")
             if not row["model"] and it.get("model"):
                 row["maker"], row["model"] = it.get("maker") or row["maker"], it["model"]  # maker and model together
@@ -516,8 +559,9 @@ def discover_everywhere(uid: str, every_device: bool = False) -> dict:
     return {"asked": asked, "skipped": skipped}
 
 
-def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
-    """Put one found thing on the map, watched by the helper that found it (it checks the thing still answers)."""
+def add_found(uid: str, helper_id: str, cid: str, name: str | None) -> dict:
+    """Put one found thing on the map, watched by the helper that found it (it checks the thing still answers). With
+    no name typed, it takes the name it announced (`seenName`), else its guess."""
     dref = discoveries_ref(uid).document(helper_id)
     device_id = new_id("dev").lower()
 
@@ -542,22 +586,25 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
         if port is None:
             raise ApiError(422, "no_check_port")  # nothing we could check answers on it
         helper_name = hsnap.to_dict().get("name", "your device")
+        seen = item.get("name")
+        called = name or (seen or item.get("guess") or "Found device")[:40]
         tx.update(dref, {"items": [{**it, "added": it.get("cid") == cid or it.get("added")} for it in d["items"]]})
         routers = {(h.to_dict().get("net") or {}).get("gateway") for h in helpers_now
                    if not h.to_dict().get("archived")} - {None}
         role = role_for(item, routers)
         tx.set(db.device(uid, device_id), {
-            "name": name, "kind": "watched", "role": role,
+            "name": called, "kind": "watched", "role": role,
             "purpose": role_purpose(role, helper_name),
             "guess": item.get("guess"), "services": item.get("services") or [], "ports": item.get("ports") or [],
             "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
             "vendor": item.get("vendor"), "maker": item.get("maker"), "model": item.get("model"),
             "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
             "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
-            "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {})})
+            "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {}),
+            **({"seenName": seen, "nameFromSeen": not name} if seen else {})})
         tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
                {"uid": uid, "deviceId": device_id})
-        event(tx, uid, device_id, "joined", "info", f"{name} joined your map, watched by {helper_name}.", who="you")
+        event(tx, uid, device_id, "joined", "info", f"{called} joined your map, watched by {helper_name}.", who="you")
         links.mark_due(tx, uid)  # it sits behind its finder's router, and may be the router itself: lines change
         return {"ok": True, "deviceId": device_id}
 
@@ -948,7 +995,8 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         watch_list = [{"cid": w.to_dict().get("cid"), "port": w.to_dict().get("checkPort")} for w in watched
                       if w.to_dict().get("checkPort")][:10]
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
-                 "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
+                 "permissions": device.get("permissions") or DEFAULT_PERMISSIONS,
+                 "deviceNames": names_on(user)}  # whether the helper sends names of things nearby
         jobs = _hand_over(tx, approved, user) if take_jobs else []
         return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, lines_due
 

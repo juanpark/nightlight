@@ -794,3 +794,21 @@ def test_an_empty_look_from_the_app_clears_the_old_list(helper, monkeypatch):  #
     sent.clear()
     helper.discover()  # at a terminal, finding nothing sends nothing (as before)
     assert sent == []
+
+
+def test_the_app_can_raise_the_mac_folder_prompts_while_the_owner_is_there(helper, monkeypatch):
+    # The owner chose it in the app's setup card: an app-managed Mac records the yes first, then measures once so
+    # macOS asks now. A strict Mac or another system refuses and changes nothing.
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "strict"})
+    order = []
+    monkeypatch.setattr(helper, "_du", lambda path: order.append(helper._load().get("macPrivateFolders")))
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
+    assert not ok and "Mac" in words and "macPrivateFolders" not in helper._load()
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
+    assert not ok and "strict" in words and "macPrivateFolders" not in helper._load() and not order
+    helper._update_config(lambda c: c.__setitem__("manage", "app"))
+    ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
+    assert ok and "click Allow" in words and helper._load()["macPrivateFolders"] is True
+    assert order and all(seen is True for seen in order)  # recorded before any folder was opened

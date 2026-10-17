@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from google.cloud import firestore
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from . import __version__, actions, archive, db, expert, demo, links, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
@@ -170,8 +170,8 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
             watcher = (db.device(uid, d["watchedBy"]).get(transaction=tx).to_dict() or {}).get("name") \
                 if d.get("watchedBy") else None  # a read, before this transaction's writes
             update.update(role=body.role, roleSetBy="user", purpose=real.role_purpose(body.role, watcher))
-        if update:
-            tx.update(ref, update)
+        if update:  # a name the person typed is theirs: the names switch never takes it back
+            tx.update(ref, {**update, **({"nameFromSeen": False} if name is not None and d.get("nameFromSeen") else {})})
         return update
 
     return {"ok": True, **db.run_transaction(run)}
@@ -494,13 +494,15 @@ class Net(Strict):
 
 class Found(Strict):
     """The helper's fixed words, plus an allow-listed maker and a model that is an Apple model or a product code
-    (real.product): nothing free-form can carry an address or a name off the device."""
+    (real.product), and, while the account shows them, the name the thing announces (real.found_name). Nothing can
+    carry an address off the device."""
     cid: str = Field(pattern=r"^[0-9a-f]{12}$")
     guess: Literal[tuple(real.FOUND_GUESSES)]
     vendor: Literal[tuple(real.FOUND_VENDORS)] | None = None
     services: list[Literal[tuple(real.FOUND_SERVICES)]] = Field(default_factory=list, max_length=8)
     ports: list[Literal[tuple(real.FOUND_PORTS)]] = Field(default_factory=list, max_length=8)
     tag: str | None = Field(default=None, pattern=TAG)  # its address's keyed fingerprint (see Net), never the address
+    name: str | None = Field(default=None, min_length=1, max_length=60, pattern=r"^[^\x00-\x1f\x7f]+$")
     maker: Literal[tuple(real.MAKERS)] | None = None
     model: str | None = Field(default=None, pattern=real.MODEL_CHARS)
 
@@ -510,7 +512,11 @@ class DiscoveriesBody(Strict):
 
 
 class AddFoundBody(Strict):
-    name: str = Field(min_length=1, max_length=40)
+    name: str | None = Field(default=None, min_length=1, max_length=40)  # none: the name it announced, else its guess
+
+
+class SettingsBody(Strict):
+    deviceNames: StrictBool
 
 
 class HeartbeatBody(Strict):
@@ -836,7 +842,14 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
 def add_found(helper_id: str, cid: str, body: AddFoundBody, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"dev_[0-9a-z]{26}", helper_id) or not re.fullmatch(r"[0-9a-f]{12}", cid):
         raise not_found()
-    return real.add_found(uid, helper_id, cid, scrub(body.name)[0])
+    return real.add_found(uid, helper_id, cid, scrub(body.name)[0] if body.name else None)
+
+
+@app.post("/api/settings")
+def account_settings(body: SettingsBody, uid: str = Depends(owner_uid)):
+    """The owner's account switches. `deviceNames: false` stops keeping the names things nearby announce and removes
+    the ones already kept."""
+    return real.set_device_names(uid, body.deviceNames)
 
 
 @app.post("/helper/jobs/claim")
