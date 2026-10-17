@@ -84,7 +84,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   if (opened && !watched) {
     return (
       <div className="panel drawer" ref={box}>
-        <Head key={device.id} device={device} fav={fav} onClose={onClose} />
+        <Head key={device.id} device={device} onClose={onClose} />
         <AppDetail key={`app:${device.id}:${opened.id}`} uid={uid} generation={generation} device={device} app={opened}
           actions={actions} fav={fav} onBack={() => onApp?.(null)} onAsk={onAsk} />
       </div>
@@ -211,7 +211,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 type Finding = NonNullable<Device["findings"]>[number];
 
 /** Name (renamable on real devices), what kind of thing it is, Live or Sample, Close. */
-function Head({ device, fav, onClose }: { device: Device; fav: Favorites; onClose: () => void }) {
+function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClose: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
   const real = device.realm === "real";
@@ -236,9 +236,9 @@ function Head({ device, fav, onClose }: { device: Device; fav: Favorites; onClos
         Rename</button>}
       <span className={`pill ${real ? "live" : ""}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Sample"}</span>
       <span style={{ flex: 1 }} />
-      <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />
+      {fav && <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />}
       <button onClick={onClose}>Close</button>
-      {fav.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
+      {fav?.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
     </div>
   );
 }

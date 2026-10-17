@@ -10,7 +10,7 @@ import Notebook from "./Notebook";
 import Runbooks from "./Runbooks";
 import { appIcon } from "./map/kinds";
 
-const KIND: Record<string, string> = { container: "A Docker container", system: "A system service" };
+const KIND: Record<string, string> = { container: "Runs in a Docker container.", system: "A system service." };
 
 /** How it is, in words. */
 function state(s: Service): string {
@@ -25,7 +25,7 @@ export default function AppDetail({ uid, generation, device: d, app: s, actions,
 }) {
   const Icon = appIcon(s);
   const starred = fav.isFavoriteApp(s.id);
-  const what = s.about?.oneLiner || KIND[s.kind ?? ""] || (s.category ? `Something for ${s.category}.` : "");
+  const what = s.about?.oneLiner || KIND[s.kind ?? ""] || "";
   return (
     <div className="app-detail">
       <button className="linkish small" onClick={onBack}><ArrowLeft size={13} /> Everything on the {d.name}</button>
