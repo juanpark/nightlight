@@ -3,7 +3,7 @@
 // in the strip above the map. Nothing is stored: an item disappears when its reason does.
 import { useCallback, useEffect, useState } from "react";
 import { applied, normal } from "./permissions";
-import type { Action, Device, Discovery, TrustDoc } from "./types";
+import type { Action, Device, FoundThing, TrustDoc } from "./types";
 
 export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing" | "uninstallLine" | "expertHalf"
   | "permsWaiting" | "found" | "offer";
@@ -22,7 +22,7 @@ export interface Need {
 }
 
 export interface NeedsInput {
-  devices: Device[]; actions: Action[]; trust: TrustDoc[]; discoveries: Discovery[];
+  devices: Device[]; actions: Action[]; trust: TrustDoc[]; found: FoundThing[]; // found: what can go on the map
   release?: { version: string } | null; expert?: { enabled: boolean } | null; now: number;
   dismissed?: string[]; // items the person marked done (only the ones that can't clear themselves)
 }
@@ -130,8 +130,7 @@ export function needsYou(i: NeedsInput): Need[] {
       title: `Finish removing it: paste the uninstall line on the device`, detail: a.result.summary,
       cta: { label: "Show line", go: { to: "line", line: "uninstall" } }, at });
   }
-  const found = i.discoveries.filter((x) => (x.expiresAt?.getTime() ?? 0) > i.now)
-    .reduce((n, x) => n + x.items.filter((it) => !it.added).length, 0);
+  const found = i.found.length;
   if (found > 0) {
     out.push({ id: "found", kind: "found", priority: 3, title: `${found} thing${found === 1 ? "" : "s"} found nearby you can add`,
       cta: { label: "Review", go: { to: "panel", panel: "found" } }, at: i.now });

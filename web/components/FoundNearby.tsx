@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { newer, type Go } from "@/lib/needsYou";
+import type { Found } from "@/lib/found";
 import type { Device, Discovery, FoundThing } from "@/lib/types";
 
 const LOOKS = "0.9.21"; // first helper that looks nearby when the app asks
@@ -67,20 +68,11 @@ function LookNearby({ devices, discoveries, onGo, again }: {
 /** Things your devices found on their networks (no addresses), once per thing however many devices saw it. Add =
  * put it on the map, watched by a helper that saw it (it checks the thing still answers); the server lists a finder
  * that can watch it first. */
-export default function FoundNearby({ discoveries, devices, onGo }: {
-  discoveries: Discovery[]; devices: Device[]; onGo: (g: Go) => void;
+export default function FoundNearby({ found: { items, refresh }, discoveries, devices, onGo }: {
+  found: Found; discoveries: Discovery[]; devices: Device[]; onGo: (g: Go) => void;
 }) {
-  const [items, setItems] = useState<FoundThing[] | null>(null);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
-  const [tick, setTick] = useState(0);
-  // every discovery snapshot (a new scan, or something added from another tab) refreshes the server's merged view
-  useEffect(() => {
-    let live = true;
-    api<{ items: FoundThing[] }>("GET", "/api/found").then((r) => { if (live) setItems(r.items); })
-      .catch(() => { if (live) setItems((cur) => cur ?? []); });
-    return () => { live = false; };
-  }, [discoveries, tick]);
   const key = (t: FoundThing) => t.tag ?? `${t.seenBy[0]?.deviceId}:${t.seenBy[0]?.cid}`;
   async function add(t: FoundThing) {
     const by = t.seenBy[0];
@@ -88,7 +80,7 @@ export default function FoundNearby({ discoveries, devices, onGo }: {
     setMsg("");
     try {
       await api("POST", `/api/discoveries/${by.deviceId}/${by.cid}/add`, { name: (labels[key(t)] ?? t.guess).trim() || t.guess });
-      setTick((n) => n + 1);
+      refresh();
     } catch (e) {
       setMsg(e instanceof ApiError && e.code === "already_added" ? "That one is already on your map."
         : e instanceof ApiError && e.code === "no_check_port" ? "Nightlight can't check that one, so it can't watch it."
