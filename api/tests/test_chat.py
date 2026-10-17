@@ -371,3 +371,15 @@ def test_a_log_lock_fails_only_the_log_clean_up(client, started):  # Codex agent
     d = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()
     assert d["status"] == "failed"
     assert "locked" in db.action(started, card["id"]).get().to_dict()["result"]["summary"]
+
+
+def test_a_promise_about_another_device_is_not_moved_to_the_one_read(client, started):  # Codex rev2 #1
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put up a card to clean up logs on the Mac Mini.")
+    ev = events(ask(client, new_session(client), "Clean up the Mac Mini"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put up a card to clean up old logs on the Raspberry Pi.", "Waiting for you.")
+    ev = events(ask(client, new_session(client), "Clean up the Pi"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device", "rotate_logs"]
