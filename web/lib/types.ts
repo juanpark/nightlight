@@ -80,6 +80,7 @@ export interface Device {
   vendor?: string | null; checkPort?: number | null; watchedBy?: string | null; cid?: string;
   lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
   net?: { self?: string | null; gateway?: string | null } | null; // keyed fingerprints, never addresses
+  setupAt?: Date | null; setupPreset?: "watch" | "fix" | "custom"; // the owner's first choice of what it may do
 }
 /** A place's name (`users/{uid}/places/{placeId}`, placeId = a router's fingerprint, `net.gateway`). */
 export interface PlaceDoc { id: string; name: string }

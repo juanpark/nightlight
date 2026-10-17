@@ -14,7 +14,7 @@ type Preset = "watch" | "fix" | "custom";
 const WATCH: Perms = { ...DEFAULTS };
 const fixAll = (targets: string[], containers: string[], units: string[]): Perms => ({ diagnose: true, cleanup: true,
   updates: true, autoUpdate: true, logs: targets, restart_container: containers, restart_service: units });
-const PRESETS: { id: Preset; name: string; copy: string }[] = [
+export const PRESETS: { id: Preset; name: string; copy: string }[] = [
   { id: "watch", name: "Just watch", copy: "Reports health and explains problems. Changes nothing." },
   { id: "fix", name: "Watch and fix safe things", copy: "Also reads recent logs, restarts stopped apps and cleans up "
     + "space, each after your OK. Keeps its helper up to date." },

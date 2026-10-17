@@ -17,6 +17,7 @@ import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
 import NeedsList from "./NeedsList";
 import WatchedPanel from "./WatchedPanel";
+import SetupCard from "./SetupCard";
 import { deviceIcon } from "./map/kinds";
 
 type Tab = "overview" | "about" | "settings";
@@ -83,6 +84,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   return (
     <div className="panel drawer" ref={box}>
       <Head key={device.id} device={device} onClose={onClose} />
+      <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
       <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
         : statusSentence(device, Date.now(), removing)}</p>
       <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}

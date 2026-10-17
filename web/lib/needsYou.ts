@@ -6,7 +6,7 @@ import { applied, normal } from "./permissions";
 import type { Action, Device, FoundThing, TrustDoc } from "./types";
 
 export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing" | "uninstallLine" | "expertHalf"
-  | "permsWaiting" | "found" | "offer";
+  | "permsWaiting" | "found" | "offer" | "setup";
 export type Priority = 1 | 2 | 3; // 1 act now (red), 2 decide (orange), 3 finish setting up (grey)
 export type Go =
   | { to: "card"; actionId: string }
@@ -118,6 +118,12 @@ export function needsYou(i: NeedsInput): Need[] {
         cta: { label: "Update", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: i.now });
     }
     const sent = d.permissionsAt?.getTime();
+    // once, when it first connects: what may Nightlight do there (the card is in the device's panel)
+    if (real && d.kind !== "watched" && !d.setupAt && !d.revoked) {
+      out.push({ id: `setup:${d.id}`, kind: "setup", priority: 2, deviceId: d.id,
+        title: `Choose what Nightlight may do on your ${d.name}`, detail: "Once; you can change it later",
+        cta: { label: "Choose", go: { to: "drawer", deviceId: d.id } }, at: d.createdAt?.getTime() ?? i.now });
+    }
     if (real && d.manage === "app" && sent && i.now - sent > PERMS_GRACE
         && !applied(normal(d.permissions), d.allowedJobs ?? {}, (d.containerCount ?? 0) === 0)) {
       out.push({ id: `perms:${d.id}`, kind: "permsWaiting", priority: 3, deviceId: d.id,

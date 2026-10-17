@@ -20,6 +20,16 @@
 }
 
 .drawer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* the once-only "what may Nightlight do here?" card (SetupCard.tsx) */
+.setup-card { margin: 10px 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel)); display: flex; flex-direction: column; gap: 8px; }
+.setup-presets { display: flex; flex-direction: column; gap: 6px; }
+.setup-presets label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; background: var(--panel); }
+.setup-presets label.on { border-color: var(--accent); }
+.setup-presets label > span { display: flex; flex-direction: column; gap: 2px; }
+.setup-check { display: flex; gap: 8px; align-items: flex-start; }
+.setup-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .drawer-status { margin: 6px 0 4px; font-size: 15px; }
 /* a watched thing's panel (WatchedPanel.tsx) */
 .role-pick { display: block; margin-bottom: 6px; }
