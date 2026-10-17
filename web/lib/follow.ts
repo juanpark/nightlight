@@ -11,16 +11,22 @@ export type Followed = {
   apps: Record<string, string[]>; // device id → app names the steps named (lower case)
   done: boolean; // the answer has finished
   said: string; // the answer's words (lower case, capped): names an app on a device a step touched when no step did
+  last: string | null; lastWithApp: string | null; // the device the latest step touched, and that named an app
 };
 
-let state: Followed = { seq: 0, devices: [], apps: {}, done: true, said: "" };
+const EMPTY = { devices: [], apps: {}, said: "", last: null, lastWithApp: null };
+let state: Followed = { seq: 0, done: true, ...EMPTY };
 const SAID_MAX = 4000;
 const listeners = new Set<() => void>();
 const set = (next: Followed) => { state = next; listeners.forEach((l) => l()); };
 
 /** A new answer has started: forget what the last one touched. Returns the answer's number: an older answer still
  * streaming (a follow-up started while it finished) no longer moves the map. */
-export function followBegin(): number { set({ seq: state.seq + 1, devices: [], apps: {}, done: false, said: "" }); return state.seq; }
+export function followBegin(): number { set({ seq: state.seq + 1, done: false, ...EMPTY }); return state.seq; }
+
+/** The chat that owns the answers went away or changed home (sign-out, another sample): its answers still streaming
+ * no longer count, and nothing they lit stays lit. */
+export function followReset() { set({ seq: state.seq + 1, done: true, ...EMPTY }); }
 
 /** A step started: the device it works on, and the app it names, if any. */
 export function followStep(seq: number, args: Record<string, unknown> | undefined) {
@@ -29,9 +35,10 @@ export function followStep(seq: number, args: Record<string, unknown> | undefine
   const named = [args?.container, args?.service, args?.target].find((v) => typeof v === "string" && v.trim()) as string | undefined;
   const app = named?.trim().toLowerCase();
   const had = state.apps[id] ?? [];
-  if (state.devices.includes(id) && (!app || had.includes(app))) return;
+  // the latest step decides which card opens at the end, even when it revisits a device it already lit
   set({ ...state, devices: state.devices.includes(id) ? state.devices : [...state.devices, id],
-    apps: app && !had.includes(app) ? { ...state.apps, [id]: [...had, app] } : state.apps });
+    apps: app && !had.includes(app) ? { ...state.apps, [id]: [...had, app] } : state.apps,
+    last: id, lastWithApp: app ? id : state.lastWithApp });
 }
 
 /** Words of the answer as they stream in (kept quietly: the map only reads them once the answer is done). */
@@ -63,8 +70,7 @@ export function litApps(f: Followed, id: string): string[] | undefined {
   return f.apps[id]?.length ? f.apps[id] : f.done && f.said ? [f.said] : undefined;
 }
 
-/** The device to open at the end: the last one whose app a step named, else the last one touched. */
+/** The device to open at the end: the one the latest app-naming step touched, else the one the latest step touched. */
 export function mainDevice(f: Followed): string | null {
-  const withApp = f.devices.filter((d) => (f.apps[d]?.length ?? 0) > 0);
-  return withApp.at(-1) ?? f.devices.at(-1) ?? null;
+  return f.lastWithApp ?? f.last;
 }

@@ -3,7 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, savedSession } from "@/lib/session";
 import { ApiError, stream } from "@/lib/api";
-import { followBegin, followEnd, followStep, followText } from "@/lib/follow";
+import { followBegin, followEnd, followReset, followStep, followText } from "@/lib/follow";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
 import TurnView, { afterLine } from "./chat/TurnView";
@@ -63,6 +63,8 @@ const Chat = forwardRef<ChatHandle, {
     useEffect(() => {
       if (nearBottom.current) log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
     }, [turns]);
+    // Answers belong to this account and home: a new one (or leaving) makes the map forget what older answers lit.
+    useEffect(() => { followReset(); return () => followReset(); }, [uid, generation]);
     // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
     useEffect(() => {
       setTurns([]);

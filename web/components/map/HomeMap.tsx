@@ -118,6 +118,19 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const busyHands = useRef(false), lastHands = useRef(0);
   const lit = useCallback((id: string): "working" | "done" | undefined => followed.seq === dimmed
     || !followed.devices.includes(id) ? undefined : followed.done ? "done" : "working", [followed, dimmed]);
+  const fingers = useRef(new Set<number>()); // pointers down on the map (two for a pinch)
+  const hands = useCallback((e: React.PointerEvent) => {
+    const id = e.pointerId;
+    fingers.current.add(id);
+    busyHands.current = true;
+    const up = (u: PointerEvent) => {
+      if (u.pointerId !== id) return;
+      fingers.current.delete(id);
+      if (fingers.current.size === 0) { busyHands.current = false; lastHands.current = Date.now(); }
+      window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+  }, []);
   const opened = useRef(0);
   useEffect(() => {
     if (!followed.done || opened.current === followed.seq || followed.seq === dimmed) return;
@@ -291,7 +304,9 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);
     }}>
-      <div className="hm-canvas" ref={box}>
+      {/* any hand on the map (a card, the paper, the minimap, the zoom buttons, a pinch, a wheel) keeps the chat's
+          camera still until it has been off for a few seconds */}
+      <div className="hm-canvas" ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}>
       <ReactFlow<DeviceNodeType, LinkEdgeType>
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         onNodesChange={(ch: NodeChange<DeviceNodeType>[]) => onNodesChange(ch.filter((c) => c.type !== "remove"))}
