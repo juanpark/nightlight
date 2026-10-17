@@ -4,7 +4,7 @@
 .top-nav { display: contents; }
 
 @media (max-width: 900px) {
-  /* minmax(0, …): a wide child (the swipeable suggestion row) scrolls inside its pane instead of widening the page */
+  /* minmax(0, …): a wide child (a long command, a wide table) scrolls inside its pane instead of widening the page */
   .shell { height: 100dvh; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr); }
   .top { gap: 8px; padding: 8px 12px; flex-wrap: nowrap; position: relative; }
   .top > .small, .top > .pill { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
@@ -29,9 +29,7 @@
   .pane-count { font-size: 11px; min-width: 18px; padding: 1px 5px; border-radius: 9px; background: var(--warn);
     color: var(--bg); }
 
-  /* chat: suggestions in one swipeable row, the input never covered */
-  .suggest { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
-  .suggest button { flex: none; white-space: nowrap; }
+  /* chat: the input never covered */
   .chat-input input { font-size: 16px; } /* below 16px iOS zooms the page on focus */
   .bubble { max-width: 100%; }
 
