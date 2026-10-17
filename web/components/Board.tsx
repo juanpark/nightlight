@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Need } from "@/lib/needsYou";
+import NeedsMark from "./NeedsMark";
 import { api } from "@/lib/api";
 import type { Device } from "@/lib/types";
 
@@ -36,8 +38,9 @@ function place(devices: Device[], cols: number) {
   return out;
 }
 
-export default function Board({ devices, selected, onSelect, settingUp = false }: {
+export default function Board({ devices, selected, onSelect, settingUp = false, marks }: {
   devices: Device[]; selected: string | null; onSelect: (id: string) => void; settingUp?: boolean;
+  marks?: Map<string, Need[]>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
@@ -105,6 +108,7 @@ export default function Board({ devices, selected, onSelect, settingUp = false }
               setDrag({ id: d.id, dx: 0, dy: 0, sx: e.clientX, sy: e.clientY }); }}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(d.id); }}
             title="Click for details. Drag to move.">
+            <NeedsMark needs={marks?.get(d.id)} />
             <div className="row">
               <span className={`dot ${d.status}`} title={MEANING[d.status]} aria-label={MEANING[d.status]} />
               <span className="name">{d.name}</span>

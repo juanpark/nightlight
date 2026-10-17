@@ -3,10 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
-import { presented, useActions, useDevices, useDiscoveries, useEvents, useNow, useTrust, useUserDoc, useWatches }
-  from "@/lib/data";
+import { presented, useActions, useDevices, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
+  useUserDoc, useWatches } from "@/lib/data";
+import { byDevice, needsYou, verdict, type Go } from "@/lib/needsYou";
+import NeedsList from "./NeedsList";
 import FoundNearby from "./FoundNearby";
-import NeedsYou from "./NeedsYou";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
 import WatchedRow from "./WatchedRow";
@@ -34,8 +35,13 @@ export default function Home({ user }: { user: User }) {
   const trust = useTrust(uid, gen);
   const watches = useWatches(uid);
   const discoveries = useDiscoveries(uid);
-  const waitingFound = discoveries.filter((d) => (d.expiresAt?.getTime() ?? 0) > Date.now())
-    .reduce((n, d) => n + d.items.filter((i) => !i.added).length, 0);
+  const release = useRelease();
+  const expert = useExpertStatus();
+  // Everything waiting for the person, derived once: tile marks, the device panel and the strip use the same items.
+  const needs = useMemo(() => needsYou({ devices, actions, trust, discoveries, release, expert, now }),
+    [devices, actions, trust, discoveries, release, expert, now]);
+  const marks = useMemo(() => byDevice(needs), [needs]);
+  const [drawerTab, setDrawerTab] = useState<"overview" | "about" | "settings">("overview");
   const notify = useNotifySetting();
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
@@ -67,11 +73,13 @@ export default function Home({ user }: { user: User }) {
   // Watched websites are never samples: under a filter they show only when they carry one of its tags.
   const visibleWatches = tagFilter.length === 0 ? watches
     : watches.filter((w) => tagFilter.some((t) => (w.tags ?? []).includes(t)));
-  const needs = visible.filter((d) => d.status === "crit" || d.status === "warn").length
-    + visibleWatches.filter((w) => w.status === "crit").length;
-  const pending = actions.filter((a) => a.status === "pending").length;
   const resetting = me?.demo?.state === "resetting";
   const toggle = (p: Panel) => setPanel((cur) => (cur === p ? "none" : p));
+  function go(g: Go) {
+    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
+    else if (g.to === "panel") setPanel(g.panel);
+    else if (g.to === "chat") chat.current?.ask(g.ask);
+  }
 
   async function saveWithGoogle() {
     const { auth } = await firebase();
@@ -102,9 +110,8 @@ export default function Home({ user }: { user: User }) {
       <div className="main">
         <section className="left">
           <AwayBanner uid={uid} events={events} onSummarise={(q) => chat.current?.ask(q)} />
-          <div className="panel needs">
-            <strong>{needs ? `${needs} ${needs === 1 ? "thing needs" : "things need"} you` : "All quiet at home"}</strong>
-            {pending > 0 && <span className="pill">{pending} waiting for your approval</span>}
+          <div className="panel needs needs-strip">
+            <strong className="verdict">{verdict(needs)}</strong>
             <span className="spacer" />
             {notify.supported && (
               <button className={`small notify-toggle ${notify.on ? "on" : ""}`} onClick={notify.toggle}
@@ -113,22 +120,17 @@ export default function Home({ user }: { user: User }) {
                   : "Show a notification when something goes wrong, while this tab is open"}>
                 {notify.on ? "Notifying you" : "Notify me"}</button>)}
             <button onClick={() => chat.current?.ask("Is anything wrong at home?")}>Check-up now</button>
+            <div style={{ flexBasis: "100%" }}>
+              <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
+                onFollowUp={(id) => chat.current?.followUp(id)} />
+            </div>
           </div>
-          <NeedsYou actions={actions} trust={trust} devices={devices} onFollowUp={(id) => chat.current?.followUp(id)} />
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "memory" && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
           {panel === "found" && <FoundNearby discoveries={discoveries} />}
-          {waitingFound > 0 && panel !== "found" && (
-            <div className="panel needs">
-              <span>Your devices found <strong>{waitingFound}</strong> thing{waitingFound === 1 ? "" : "s"} nearby you
-                can add to the map.</span>
-              <span className="spacer" />
-              <button className="primary" onClick={() => setPanel("found")}>Review</button>
-            </div>
-          )}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
             <div className="chips" aria-label="Show only">
@@ -139,11 +141,14 @@ export default function Home({ user }: { user: User }) {
               ))}
             </div>
           )}
-          <Board devices={visible} selected={selected} onSelect={setSelected}
+          <Board devices={visible} selected={selected} onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }}
+            marks={marks}
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
           <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => chat.current?.ask(q)} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
+              needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
+              onGo={go} onFollowUp={(id) => chat.current?.followUp(id)}
               onAsk={(q) => chat.current?.ask(q)} onClose={() => setSelected(null)} />
           )}
         </section>
