@@ -6,6 +6,7 @@ is preceded by a cost reservation and an input-size bound, and followed by recon
 """
 
 import asyncio
+import functools
 import json
 import time
 from dataclasses import dataclass, field
@@ -799,7 +800,21 @@ def make_tools(ctx: TurnContext, read_only: bool):
              how_nightlight_works, run_command, update_profile, research, link_devices]
     if memory.enabled():
         tools.append(remember)
-    return tools if read_only else [*tools, *action_tools]
+    return [_tolerant(t) for t in (tools if read_only else [*tools, *action_tools])]
+
+
+def _tolerant(tool):
+    """A tool given an id that names no device (a name instead of an id, or a malformed one) answers "no such device"
+    so the model can look again; it never ends the person's answer. A stale turn still stops."""
+    @functools.wraps(tool)
+    async def run(*args, **kwargs):
+        try:
+            return await tool(*args, **kwargs)
+        except ApiError as e:
+            if e.code != "not_found":
+                raise
+            return {"status": "error", "reason": "no such device: use a device id from the home summary or list_fleet"}
+    return run
 
 
 # ------------------------------------------------------------------ callbacks: bound, reserve, reconcile

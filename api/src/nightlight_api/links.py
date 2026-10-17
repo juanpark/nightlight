@@ -31,6 +31,8 @@ def put(uid: str, src: str, dst: str, kind: str, fence=None) -> dict:
         raise ApiError(422, "unknown_kind")
     if src == dst:
         raise ApiError(422, "same_device")
+    if not all(isinstance(x, str) and db.DEVICE_ID.fullmatch(x) for x in (src, dst)):
+        raise not_found()  # checked before any path is built from them
     ref = db.links(uid).document(link_id(src, dst))
 
     @firestore.transactional
