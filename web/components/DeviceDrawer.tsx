@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
-import { statusSentence, type Go, type Need } from "@/lib/needsYou";
+import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
@@ -17,6 +17,8 @@ import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
 import NeedsList from "./NeedsList";
 import WatchedPanel from "./WatchedPanel";
+import SetupCard from "./SetupCard";
+import MacFolders, { FOLDERS_FROM } from "./MacFolders";
 import { deviceIcon } from "./map/kinds";
 
 type Tab = "overview" | "about" | "settings";
@@ -83,6 +85,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   return (
     <div className="panel drawer" ref={box}>
       <Head key={device.id} device={device} onClose={onClose} />
+      <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
       <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
         : statusSentence(device, Date.now(), removing)}</p>
       <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}
@@ -161,6 +164,11 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 
       {current === "settings" && <>
         <Permissions key={device.id} device={device} services={services} />
+        {device.manage === "app" && /mac/i.test(device.os ?? "") && !newer(FOLDERS_FROM, device.helperVersion) && (
+          <section className="drawer-section">
+            <h4>Personal folders</h4>
+            <MacFolders key={device.id} device={device} actions={actions} />
+          </section>)}
         <section className="drawer-section">
           <h4>Updates</h4>
           <HelperUpdate device={device} actions={actions} latest={release?.version}
