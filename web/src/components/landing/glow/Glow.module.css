@@ -230,7 +230,7 @@
   cursor: pointer;
   transition: border-color 0.25s ease;
 }
-.menuButton:hover { border-color: var(--muted); }
+.menuButton:hover:not(:disabled) { background: rgb(var(--surface-2-rgb) / 0.6); border-color: var(--muted); }
 .menuIcon { display: grid; gap: 5px; width: 16px; }
 .menuIcon span {
   display: block;
@@ -343,7 +343,12 @@
   border: 1px solid var(--star);
   box-shadow: 0 0 0 0 rgb(var(--star-rgb) / 0);
 }
-.primary:hover { box-shadow: 0 0 28px 2px rgb(var(--star-rgb) / 0.35); }
+/* :not(:disabled) outranks the app's global button hover, which would swap in a panel fill and hide the text. */
+.primary:hover:not(:disabled) {
+  background: var(--star-hover);
+  border-color: var(--star-hover);
+  box-shadow: 0 0 28px 2px rgb(var(--star-rgb) / 0.35);
+}
 .primary svg { transition: transform 0.2s ease; }
 .primary:hover svg { transform: translateX(2px); }
 .primary:active,
@@ -354,7 +359,7 @@
   border: 1px solid var(--line-strong);
   backdrop-filter: blur(8px);
 }
-.secondary:hover { border-color: var(--muted); }
+.secondary:hover:not(:disabled) { background: rgb(var(--surface-2-rgb) / 0.7); border-color: var(--muted); }
 .primary:disabled,
 .secondary:disabled { cursor: progress; opacity: 0.7; }
 .error { margin: 0; font-size: 0.875rem; color: var(--error); max-width: 26rem; text-align: center; }

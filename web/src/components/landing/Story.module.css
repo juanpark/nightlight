@@ -153,14 +153,15 @@
   border: 0;
   box-shadow: 0 6px 20px -6px rgb(var(--star-rgb) / 0.55);
 }
-.approve:hover { background: var(--star-hover); }
+/* :not(:disabled) outranks the app's global button hover, which would swap in a panel fill. */
+.approve:hover:not(:disabled) { background: var(--star-hover); }
 .approve:active { transform: translateY(1px); }
 .notNow {
   background: transparent;
   color: var(--text);
   border: 1px solid var(--line-strong);
 }
-.notNow:hover { border-color: var(--muted); background: var(--surface-2); }
+.notNow:hover:not(:disabled) { border-color: var(--muted); background: var(--surface-2); }
 
 .status {
   margin: 0;
@@ -192,7 +193,7 @@
   text-decoration-color: var(--line-strong);
   cursor: pointer;
 }
-.link:hover { text-decoration-color: currentColor; }
+.link:hover:not(:disabled) { background: none; text-decoration-color: currentColor; }
 
 .ladder { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
 .ladder li {
