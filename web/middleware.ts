@@ -8,7 +8,8 @@ const OTHER_HOSTS = new Set(["nightlight-web-5bum5nvvpq-du.a.run.app"]);
 
 export function middleware(req: NextRequest) {
   const host = (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
-  if (!OTHER_HOSTS.has(host)) return NextResponse.next();
+  // nothing to do on any other host, nor when the app's address is itself this host (that would loop)
+  if (!OTHER_HOSTS.has(host) || new URL(APP_URL).hostname.toLowerCase() === host) return NextResponse.next();
   // the path is set on the app's address, never resolved against it ("//elsewhere" would leave the site)
   const to = new URL(APP_URL);
   to.pathname = req.nextUrl.pathname;
