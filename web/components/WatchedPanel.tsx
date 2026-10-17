@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useEvents, useLinks, useNow } from "@/lib/data";
+import { madeBy } from "@/lib/found";
 import { answering, when, type Go } from "@/lib/needsYou";
 import type { Device, EventDoc, Role } from "@/lib/types";
 import { ROLES, roleOf } from "./map/kinds";
@@ -91,9 +92,9 @@ function Availability({ segs, now }: { segs: Seg[]; now: number }) {
   );
 }
 
-export default function WatchedPanel({ uid, generation, device: d, devices, onAsk, onGo, onClose }: {
+export default function WatchedPanel({ uid, generation, device: d, devices, onAsk, onGo, onClose, part = "overview" }: {
   uid: string; generation?: number; device: Device; devices: Device[]; onAsk: (q: string) => void;
-  onGo: (g: Go) => void; onClose: () => void;
+  onGo: (g: Go) => void; onClose: () => void; part?: "overview" | "settings"; // Settings: stop watching it
 }) {
   const now = useNow(60000);
   const events = useEvents(uid, generation);
@@ -106,6 +107,10 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
   const through = links.filter((l) => l.kind === "network" && (l.from === d.id || l.to === d.id))
     .map((l) => name(l.from === d.id ? l.to : l.from)).filter(Boolean) as string[];
   const since = downSince(events, d);
+  const made = madeBy(d);
+  // the name it announces (quoted: its words, not the owner's), when the owner calls it something else
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const calls = d.seenName && !d.nameFromSeen && !same(d.seenName, d.name) ? d.seenName : null;
   const sentence = d.status === "crit"
     ? (since ? `Hasn't answered since ${when(since, now)}.` : "Isn't answering.")
       + (by ? ` The ${by} keeps checking it${d.lastSeen ? ` (last check ${when(d.lastSeen, now)})` : ""}.`
@@ -119,6 +124,21 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
     try { await api("POST", `/api/devices/${d.id}/revoke`, {}); onClose(); }
     catch { setNote("Couldn't stop watching it. Please try again."); setStopping(false); }
   }
+  if (part === "settings") {
+    return (
+      <section className="drawer-section">
+        <h4>Stop watching</h4>
+        <div className="remove-device small">
+          {!stopping
+            ? <button className="linkish" onClick={() => setStopping(true)}>Stop watching it…</button>
+            : <>Take it off the map? Nothing changes on the device itself.{" "}
+                <button className="small" onClick={stop}>Stop watching</button>{" "}
+                <button className="small" onClick={() => setStopping(false)}>Keep it</button></>}
+        </div>
+        {note && <p className="small" style={{ color: "var(--crit)" }}>{note}</p>}
+      </section>
+    );
+  }
   return (
     <>
       <p className="drawer-status">{sentence}</p>
@@ -126,12 +146,6 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
         <button className="primary" onClick={() => onAsk(role === "router" ? "Is my internet connection all right?"
           : `How is my ${d.name} doing?`)}>Ask about it</button>
       </div>
-      {role === "router" && (
-        <section className="drawer-section">
-          <h4>Your internet connection</h4>
-          <p className="small">Your devices reach the internet through it.{through.length > 0 &&
-            <> Connected through it: {through.join(", ")}.</>}</p>
-        </section>)}
       <section className="drawer-section">
         <h4>What it is</h4>
         <label className="small role-pick">What is it?{" "}
@@ -141,12 +155,19 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
           {d.roleSetBy !== "user" && <span className="muted"> (Nightlight&apos;s guess)</span>}
         </label>
         <div className="details small">
-          <div><span className="muted">Maker</span>{d.vendor ?? "not known"}</div>
-          <div><span className="muted">Answered as</span>{d.services?.length ? d.services.join(", ") : "–"}</div>
+          <div><span className="muted">Made by</span>{made || "not known"}</div>
+          {calls && <div><span className="muted">Calls itself</span>&ldquo;{calls}&rdquo;</div>}
+          <div><span className="muted">Offers</span>{d.services?.length ? d.services.join(", ") : "–"}</div>
           <div><span className="muted">Checked on</span>{d.checkPort
             ? `port ${d.checkPort}${PORTS[d.checkPort] ? ` (${PORTS[d.checkPort]})` : ""}` : "–"}</div>
         </div>
       </section>
+      {role === "router" && (
+        <section className="drawer-section">
+          <h4>Your internet connection</h4>
+          <p className="small">Your devices reach the internet through it.{through.length > 0 &&
+            <> Connected through it: {through.join(", ")}.</>}</p>
+        </section>)}
       <Availability segs={availability(events, d, now)} now={now} />
       {(role === "computer" || role === "fileshare" || role === "server") && (
         <section className="drawer-section">
@@ -155,13 +176,6 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
             memory and what runs there, and Nightlight could fix things on it.</p>
           <button onClick={() => onGo({ to: "panel", panel: "add" })}>Install the helper on it</button>
         </section>)}
-      <div className="remove-device small">
-        {!stopping
-          ? <button className="linkish" onClick={() => setStopping(true)}>Stop watching it…</button>
-          : <>Take it off the map? Nothing changes on the device itself.{" "}
-              <button className="small" onClick={stop}>Stop watching</button>{" "}
-              <button className="small" onClick={() => setStopping(false)}>Keep it</button></>}
-      </div>
       {note && <p className="small" style={{ color: "var(--crit)" }}>{note}</p>}
     </>
   );

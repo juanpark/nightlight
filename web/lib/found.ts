@@ -25,3 +25,9 @@ export function useFound(discoveries: Discovery[], now: number): Found {
 
 /** Found things that can go on the map (a helper that saw it can check it). */
 export const addable = (items: FoundThing[] | null) => (items ?? []).filter((t) => t.seenBy[0]?.canWatch !== false);
+
+/** Who made it, in its own words: maker and model ("Apple TV", not "Apple Apple TV"), else the network card's maker. */
+export function madeBy(t: { maker?: string | null; model?: string | null; vendor?: string | null }): string | null {
+  if (!t.model) return t.maker || t.vendor || null;
+  return t.maker && !t.model.toLowerCase().startsWith(t.maker.toLowerCase()) ? `${t.maker} ${t.model}` : t.model;
+}

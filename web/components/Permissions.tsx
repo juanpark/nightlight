@@ -11,11 +11,13 @@ import type { Device, Permissions as Perms, Service } from "@/lib/types";
 // because without it Nightlight can't explain anything; "updates" too, since signed updates are how the helper gets
 // fixes without a terminal.
 type Preset = "watch" | "fix" | "custom";
-const WATCH: Perms = { ...DEFAULTS };
+// Reading recent log lines is part of watching (it is how Nightlight explains why something stopped); switch it off
+// below. Lines are scrubbed of secrets on the device before they leave.
+const watchAll = (targets: string[]): Perms => ({ ...DEFAULTS, logs: targets });
 const fixAll = (targets: string[], containers: string[], units: string[]): Perms => ({ diagnose: true, cleanup: true,
   updates: true, autoUpdate: true, logs: targets, restart_container: containers, restart_service: units });
 export const PRESETS: { id: Preset; name: string; copy: string }[] = [
-  { id: "watch", name: "Just watch", copy: "Reports health and explains problems. Changes nothing." },
+  { id: "watch", name: "Just watch", copy: "Reports health, reads recent logs and explains problems. Changes nothing." },
   { id: "fix", name: "Watch and fix safe things", copy: "Also reads recent logs, restarts stopped apps and cleans up "
     + "space, each after your OK. Keeps its helper up to date." },
   { id: "custom", name: "Custom", copy: "Your own mix below." },
@@ -87,7 +89,8 @@ export default function Permissions({ device, services }: { device: Device; serv
     ...want.restart_service])].sort();
   const targets = [...new Set([...containers, ...units, ...want.logs])].sort();
   const fix = fixAll(targets, containers, units);
-  const preset: Preset = samePerms(want, WATCH) ? "watch" : samePerms(want, fix) ? "fix" : "custom";
+  const watch = watchAll(targets);
+  const preset: Preset = samePerms(want, watch) ? "watch" : samePerms(want, fix) ? "fix" : "custom";
   // Permissions only change on a click: a preset chosen earlier never widens anything by itself. When apps appeared
   // after "Watch and fix safe things" was chosen, the person is told and taps it again to include them.
   const within = (a: string[], b: string[]) => a.every((x) => b.includes(x));
@@ -136,7 +139,7 @@ export default function Permissions({ device, services }: { device: Device; serv
   function pick(p: Preset) {
     try { localStorage.setItem(presetKey(device.id), p); } catch { /* remembered for this visit only */ }
     setChosen(p);
-    if (p === "watch") save(WATCH);
+    if (p === "watch") save(watch);
     else if (p === "fix") save(fix);
     else setOpen(true);
   }

@@ -39,6 +39,8 @@ class LayoutBody(Strict):
     name: str | None = Field(default=None, min_length=1, max_length=40)
     tags: list[str] | None = Field(default=None, max_length=6)
     role: Literal["router", "printer", "fileshare", "smarthome", "server", "speaker", "computer", "other"] | None = None
+    favorite: StrictBool | None = None  # starred by the owner: shown first and under the Favorites filter
+    favoriteApps: list[Annotated[str, Field(min_length=1, max_length=80)]] | None = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def short_tags(self):
@@ -163,7 +165,9 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
                 raise not_found()
             if name is not None:
                 raise ApiError(422, "sample_devices_keep_their_names")
-        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags)) if v is not None}
+        apps = None if body.favoriteApps is None else list(dict.fromkeys(body.favoriteApps))  # [] clears them
+        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags),
+                                    ("favorite", body.favorite), ("favoriteApps", apps)) if v is not None}
         if body.role is not None:
             if d.get("kind") != "watched":
                 raise ApiError(422, "role_is_for_watched_things")
@@ -265,13 +269,15 @@ def device_knowledge(device_id: str, uid: str = Depends(current_uid)):
 
 
 @app.get("/api/devices/{device_id}/log")
-def device_log(device_id: str, limit: int = 50, uid: str = Depends(current_uid)):
-    """Every job that finished on a device, newest first."""
+def device_log(device_id: str, limit: int = 50, service: str | None = None, uid: str = Depends(current_uid)):
+    """Every job that finished on a device, newest first; `service` (an app's id or name) keeps that app's jobs."""
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
         raise not_found()
     if not 1 <= limit <= knowledge.LOG_LIMIT:
         raise invalid("limit", "out_of_range")
-    return {"jobs": knowledge.log(uid, device_id, _generation(uid), limit=limit)}
+    if service is not None and not 1 <= len(service) <= 120:
+        raise invalid("service", "out_of_range")
+    return {"jobs": knowledge.log(uid, device_id, _generation(uid), limit=limit, service=service)}
 
 
 class RunbookBody(Strict):

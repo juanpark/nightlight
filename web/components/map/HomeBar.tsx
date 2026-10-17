@@ -1,10 +1,10 @@
 "use client";
 // The bar above the map: Map or List, then what to show: a place (one per router), kinds of things, only what needs
-// you, tags. Groups combine; within a group any choice matches. A chosen place can be renamed.
+// you, favourites, tags. Groups combine; within a group any choice matches. A chosen place can be renamed.
 import { useState } from "react";
-import { List, Map as MapIcon } from "lucide-react";
+import { List, Map as MapIcon, Star } from "lucide-react";
 import { api } from "@/lib/api";
-import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, NO_FILTER, type Category, type Filter, type Place } from "@/lib/homeFilter";
+import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, NO_FILTER, starred, type Category, type Filter, type Place } from "@/lib/homeFilter";
 import type { Device, Watch } from "@/lib/types";
 
 export type View = "map" | "list";
@@ -65,6 +65,9 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
       <div className="chips" role="group" aria-label="Show">
         <button className={filter.needsMe ? "on" : ""} aria-pressed={filter.needsMe}
           onClick={() => onFilter({ ...filter, needsMe: !filter.needsMe })}>Only what needs me</button>
+        {(filter.favorites || devices.some(starred)) && (
+          <button className={filter.favorites ? "on" : ""} aria-pressed={filter.favorites}
+            onClick={() => onFilter({ ...filter, favorites: !filter.favorites })}><Star size={13} /> Favorites</button>)}
         {tags.map((t) => (
           <button key={t} className={filter.tags.includes(t) ? "on" : ""} aria-pressed={filter.tags.includes(t)}
             onClick={() => onFilter({ ...filter, tags: toggle(filter.tags, t) })}>{t}</button>))}

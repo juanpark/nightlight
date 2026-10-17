@@ -4,6 +4,7 @@ import { Mascot } from "@/src/components/mascot/Mascot";
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, savedSession } from "@/lib/session";
 import { ApiError, stream } from "@/lib/api";
+import { followBegin, followEnd, followReset, followStep, followText } from "@/lib/follow";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
 import TurnView, { afterLine } from "./chat/TurnView";
@@ -63,6 +64,9 @@ const Chat = forwardRef<ChatHandle, {
     useEffect(() => {
       if (nearBottom.current) log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
     }, [turns]);
+    // Answers belong to this account and home: a new one (or leaving) makes the map forget what older answers lit.
+    const life = useRef(0); // which account-and-home this chat is for; work begun for an earlier one is dropped
+    useEffect(() => { life.current++; followReset(); return () => { life.current++; followReset(); }; }, [uid, generation]);
     // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
     useEffect(() => {
       setTurns([]);
@@ -83,7 +87,10 @@ const Chat = forwardRef<ChatHandle, {
       const ctl = new AbortController();
       watching.current.add(ctl);
       setTurns((cur) => [...cur, { kind: "agent", key: k, mode: turnMode, blocks: [], busy: true, after }]);
+      const followed = followBegin(); // the map lights up what this answer's steps touch
       const onEvent = (e: StreamEvent) => {
+        if (e.type === "tool_call") followStep(followed, e.args);
+        else if (e.type === "text") followText(followed, e.delta);
         // A device that answers later promises a follow-up turn: open it once its action points to it.
         if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
         else update(k, (t) => apply(t, e, devicesRef.current));
@@ -109,6 +116,7 @@ const Chat = forwardRef<ChatHandle, {
         }
       } finally {
         watching.current.delete(ctl);
+        followEnd(followed);
       }
     }, []);
 
@@ -128,6 +136,7 @@ const Chat = forwardRef<ChatHandle, {
       setText("");
       nearBottom.current = true;
       setTurns((cur) => [...cur, { kind: "user", key: key(), text: q }]);
+      const mine = life.current;
       let sid: string;
       try {
         sid = await chatSession(uid, generation);
@@ -139,6 +148,7 @@ const Chat = forwardRef<ChatHandle, {
         sendingRef.current = false;
         setSending(false);
       }
+      if (mine !== life.current) return; // signed out or moved to another home while the chat was being created
       await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID(), mode }, mode);
     }, [busy, run, uid, generation, mode]);
 

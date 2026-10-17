@@ -11,9 +11,10 @@ import WatchedRow from "../WatchedRow";
 import HomeBar, { type View } from "./HomeBar";
 import HomeMap from "./HomeMap";
 
-export default function HomeView({ uid, devices, watches, links, marks, selected, onSelect, onAsk, now, settingUp }: {
+export default function HomeView({ uid, devices, watches, links, marks, selected, onSelect, onApp, onAsk, now, settingUp }: {
   uid: string; devices: Device[]; watches: Watch[]; links: Link[]; marks?: Map<string, Need[]>; selected: string | null;
-  onSelect: (id: string) => void; onAsk: (q: string) => void; now: number; settingUp: boolean;
+  onSelect: (id: string) => void; onApp?: (id: string, svcId: string) => void; onAsk: (q: string) => void; now: number;
+  settingUp: boolean;
 }) {
   const [view, setView] = useState<View>("map");
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
@@ -33,7 +34,7 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
         : view === "list" || devices.length === 0
           ? <Board devices={shown} selected={selected} onSelect={onSelect} marks={marks} settingUp={settingUp} />
           : <HomeMap uid={uid} devices={shown} links={links} marks={marks} selected={selected} onSelect={onSelect}
-              onAsk={onAsk} now={now} />}
+              onApp={onApp} onAsk={onAsk} now={now} favorites={filter.favorites} />}
       <WatchedRow watches={filtering(filter) ? shownWatches : watches} now={now} onAsk={onAsk} />
     </div>
   );

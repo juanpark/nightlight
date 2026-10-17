@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
@@ -13,7 +13,7 @@ import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
 import AwayBanner from "./AwayBanner";
 import HomeView from "./map/HomeView";
-import DeviceDrawer from "./DeviceDrawer";
+import DeviceDrawer, { type Tab } from "./DeviceDrawer";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -52,10 +52,21 @@ export default function Home({ user }: { user: User }) {
   const needs = useMemo(() => needsYou({ devices, actions, trust, found: addable(found.items), release, expert, now,
     dismissed }), [devices, actions, trust, found.items, release, expert, now, dismissed]);
   const marks = useMemo(() => byDevice(needs), [needs]);
-  const [drawerTab, setDrawerTab] = useState<"overview" | "about" | "settings">("overview");
+  const [drawerTab, setDrawerTab] = useState<Tab | null>(null); // null: the last tab used for that kind of device
   const notify = useNotifySetting();
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
+  const [app, setApp] = useState<string | null>(null); // one app on the selected device, opened on its own
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const closeDrawer = useCallback(() => {
+    // keyboard focus goes back to the device on the map, when it was in the panel
+    const back = selectedRef.current;
+    const inPanel = document.activeElement?.closest(".drawer.side");
+    setSelected(null); setApp(null);
+    if (inPanel && back) requestAnimationFrame(() =>
+      (document.querySelector(`.react-flow__node[data-id="${CSS.escape(back)}"]`) as HTMLElement | null)?.focus());
+  }, []);
   const [panel, setPanel] = useState<Panel>("none");
   const chat = useRef<ChatHandle>(null);
   const starting = useRef(false);
@@ -84,7 +95,7 @@ export default function Home({ user }: { user: User }) {
   const open = (p: Panel) => { setMenu(false); setPane("home"); setPanel(p); };
   const [theme, flipTheme] = useTheme();
   function go(g: Go) {
-    if (g.to === "drawer") { setPanel("none"); setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
+    if (g.to === "drawer") { setPanel("none"); setSelected(g.deviceId); setDrawerTab(g.app ? "apps" : g.tab ?? null); setApp(g.app ?? null); }
     else if (g.to === "panel") setPanel(g.panel);
     else if (g.to === "chat") askChat(g.ask);
   }
@@ -168,14 +179,9 @@ export default function Home({ user }: { user: User }) {
               expert={expert} onAdd={() => open("add")} onWatch={() => open("watch")} onSave={saveWithGoogle}
               onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
             <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
-              onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
+              onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
+              onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
               settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
-            {selected && devices.find((d) => d.id === selected) && (
-              <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
-                needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
-                onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
-                onAsk={(q) => askChat(q)} onClose={() => setSelected(null)} />
-            )}
           </> : <div className="page">
             {panel === "trust" && <TrustPanel trust={trust} />}
             {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
@@ -186,6 +192,13 @@ export default function Home({ user }: { user: User }) {
             {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           </div>}
         </section>
+        {/* the device panel: from the left over the map's edge on a wide screen, a full-height sheet on a phone */}
+        {panel === "none" && selected && devices.find((d) => d.id === selected) && (
+          <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
+            needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
+            onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
+            onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} hidden={pane === "chat"} />
+        )}
         <aside className="right" aria-label="Ask Nightlight">
           <div className="chat-head">
             <MessageCircle size={18} strokeWidth={1.75} aria-hidden />

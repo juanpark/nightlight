@@ -6,11 +6,11 @@ import { applied, normal } from "./permissions";
 import type { Action, Device, FoundThing, TrustDoc } from "./types";
 
 export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing" | "uninstallLine" | "expertHalf"
-  | "permsWaiting" | "found" | "offer" | "setup";
+  | "permsWaiting" | "found" | "offer" | "setup" | "duplicate";
 export type Priority = 1 | 2 | 3; // 1 act now (red), 2 decide (orange), 3 finish setting up (grey)
 export type Go =
   | { to: "card"; actionId: string }
-  | { to: "drawer"; deviceId: string; tab?: "overview" | "about" | "settings" }
+  | { to: "drawer"; deviceId: string; tab?: "overview" | "apps" | "about" | "settings"; app?: string }
   | { to: "panel"; panel: "found" | "add" }
   | { to: "chat"; ask: string }
   | { to: "offer"; actionType: string; offerId: string }
@@ -85,6 +85,18 @@ export function needsYou(i: NeedsInput): Need[] {
       priority: a.riskClass === "destructive" || a.type === "remove_device" ? 1 : 2,
       title: a.plan, detail: "Waiting for your OK", cta: { label: "Review", go: { to: "card", actionId: a.id } },
       at: a.createdAt?.getTime() ?? 0 });
+  }
+  // A watched thing that is one of your own devices under another of its addresses (its Wi-Fi, a VPN): added from
+  // Found nearby before that address was known to be its own. Only the person removes it.
+  const own = i.devices.filter((h) => h.realm === "real" && h.kind !== "watched" && !h.revoked);
+  for (const d of i.devices) {
+    const tag = d.kind === "watched" && !d.revoked ? d.net?.self : null;
+    const twin = tag ? own.find((h) => h.net?.self === tag || (h.net?.selves ?? []).includes(tag)) : undefined;
+    if (!twin || i.dismissed?.includes(`duplicate:${d.id}`)) continue;
+    out.push({ id: `duplicate:${d.id}`, kind: "duplicate", priority: 2, deviceId: d.id,
+      title: `Another address of your ${twin.name}`,
+      detail: `"${d.name}" is your ${twin.name} again, so it's on your map twice. Stop watching "${d.name}" to remove the extra; your ${twin.name} stays.`,
+      cta: { label: "Review", go: { to: "drawer", deviceId: d.id } }, at: d.createdAt?.getTime() ?? i.now });
   }
   for (const d of i.devices) {
     const real = d.realm === "real";

@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.24"
+VERSION = "0.9.26"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2085,11 +2085,11 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
 # the name it announces are sent, and only the ones you pick.
 
 PORTS = {22: "remote login (SSH)", 80: "web page", 443: "secure web page", 445: "file sharing", 631: "printer",
-         8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
+         7000: "AirPlay receiver", 8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
 MDNS = {"_home-assistant._tcp": "Home Assistant", "_plexmediasvr._tcp": "Plex", "_smb._tcp": "file sharing",
         "_ipp._tcp": "printer", "_printer._tcp": "printer", "_googlecast._tcp": "Chromecast / Google speaker",
         "_airplay._tcp": "AirPlay speaker or TV", "_hap._tcp": "HomeKit accessory", "_ssh._tcp": "remote login (SSH)",
-        "_raop._tcp": "AirPlay speaker", "_companion-link._tcp": "Apple device"}
+        "_raop._tcp": "AirPlay speaker", "_companion-link._tcp": "Apple device", "_apple-mobdev2._tcp": "Apple device"}
 # A small, public table of makers by the first half of the hardware address (IEEE registry), common in homes.
 VENDORS = {"b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi", "28cdc1": "Raspberry Pi",
            "d83add": "Raspberry Pi", "2ccf67": "Raspberry Pi", "001132": "Synology", "245ebe": "QNAP",
@@ -2175,6 +2175,8 @@ def _guess(vendor, services, ports):
         return vendor
     if 22 in ports:
         return "Computer (remote login)"
+    if "AirPlay receiver" in services:  # a Mac has this too, but also remote login (above)
+        return "Speaker or TV"
     if 80 in ports or 443 in ports:
         return "Device with a web page"
     return vendor or "Unknown device"
@@ -2193,7 +2195,8 @@ IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models, start t
 MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
 DESCRIPTION_BYTES = 64 * 1024
 MDNS_ASK = ("_ipp._tcp", "_printer._tcp", "_airplay._tcp", "_raop._tcp", "_device-info._tcp", "_googlecast._tcp",
-            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp", "_companion-link._tcp")
+            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp", "_companion-link._tcp",
+            "_apple-mobdev2._tcp")
 # Where routers commonly keep their UPnP description (miniupnpd, Netgear, TP-Link, AVM, Broadcom/Realtek kits).
 UPNP_PLACES = ((1900, "/rootDesc.xml"), (5000, "/rootDesc.xml"), (49152, "/description.xml"), (2189, "/gatedesc.xml"),
                (52869, "/picsdesc.xml"), (80, "/rootDesc.xml"), (49000, "/igddesc.xml"))
@@ -2283,6 +2286,8 @@ def _txt_about(kind, txt):
             return {"maker": txt.get("manufacturer"), "model": code}  # another maker's AirPlay speaker or TV
     if kind == "_companion-link._tcp":  # iPhones, iPads, Macs and Apple TVs: only Apple announces this
         return {"maker": "Apple", "model": _apple_model(txt.get("rpMd"))}
+    if kind == "_apple-mobdev2._tcp":  # iPhones and iPads; the name comes from the host ("Juans-iPhone")
+        return {"maker": "Apple"}
     return {}
 
 
@@ -3233,7 +3238,7 @@ def settings():
                 "rebuild themselves, remove unused Docker images)?", False):
             allow["fix"] = ["all"]
         for t in targets[:20]:
-            if _ask(f"  Read recent log lines of {t}?", False):
+            if _ask(f"  Read recent log lines of {t} (secrets are removed before they leave)?", True):
                 allow["logs"].append(t)
             kind = "restart_container" if t in [c["name"] for c in _containers()] else "restart_service"
             if _ask(f"  Restart {t} when it has stopped (after you approve)?", False):

@@ -13,6 +13,8 @@ import "@/app/map.css";
 import { api } from "@/lib/api";
 import type { Need } from "@/lib/needsYou";
 import type { Device, Link, LinkKind } from "@/lib/types";
+import { litApps, mainDevice, useFollowed } from "@/lib/follow";
+import AppSheet from "./AppSheet";
 import DeviceNode, { type DeviceNodeType } from "./DeviceNode";
 import LinkEdge, { type LinkEdgeType } from "./LinkEdge";
 import { GRID, LINK, LINK_KINDS, NODE_H, NODE_W } from "./kinds";
@@ -48,9 +50,27 @@ function sides(a: { x: number; y: number }, b: { x: number; y: number }): [Posit
   return dy >= 0 ? [Position.Bottom, Position.Top] : [Position.Top, Position.Bottom];
 }
 
-export default function HomeMap({ uid, devices, links, marks, selected, onSelect, onAsk, now }: {
+const HANDS_OFF_MS = 3000; // the chat leaves the view alone this long after the person last moved it
+const FOCUS_ZOOM = 1.3, UNFOCUS_ZOOM = 1.2; // zoomed in this far, the card in the middle opens; a bit less, it closes
+
+/** An opened card grows downward: the cards below it, in its column, move down together to make room. Display only;
+ * it is never saved (a drag saves the card's real spot plus how far it was dragged). */
+function makeRoom(spots: Map<string, { x: number; y: number }>, id: string, h: number) {
+  const f = spots.get(id);
+  if (!f || h <= NODE_H) return spots;
+  const below = [...spots.entries()].filter(([k, p]) => k !== id && Math.abs(p.x - f.x) < NODE_W + 20 && p.y > f.y);
+  const top = Math.min(...below.map(([, p]) => p.y));
+  const dy = below.length ? Math.max(0, snap(f.y + h + 40 - top + GRID / 2)) : 0;
+  if (!dy) return spots;
+  const out = new Map(spots);
+  for (const [k, p] of below) out.set(k, { x: p.x, y: p.y + dy });
+  return out;
+}
+
+export default function HomeMap({ uid, devices, links, marks, selected, onSelect, onApp, onAsk, now, favorites }: {
   uid: string; devices: Device[]; links: Link[]; marks?: Map<string, Need[]>; selected: string | null;
-  onSelect: (id: string) => void; onAsk: (q: string) => void; now: number;
+  onSelect: (id: string) => void; onApp?: (id: string, svcId: string) => void; onAsk: (q: string) => void; now: number;
+  favorites?: boolean;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<DeviceNodeType>([]);
   const [edgeSel, setEdgeSel] = useState<string | null>(null);
@@ -63,14 +83,80 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const flow = useRef<ReactFlowInstance<DeviceNodeType, LinkEdgeType> | null>(null);
   const fitted = useRef(0);
   // The parent's callbacks change every render; nodes get stable ones that call the latest.
-  const cb = useRef({ onSelect, onAsk });
-  cb.current = { onSelect, onAsk };
+  const cb = useRef({ onSelect, onAsk, onApp });
+  cb.current = { onSelect, onAsk, onApp };
   const open = useCallback((id: string) => cb.current.onSelect(id), []);
   const ask = useCallback((q: string) => cb.current.onAsk(q), []);
+  const app = useCallback((id: string, svcId: string) => (cb.current.onApp ?? ((d: string) => cb.current.onSelect(d)))(id, svcId), []);
+  // One card at a time opens in place to show every app: by its Open button, or by zooming in on it. On a phone the
+  // apps come up in a sheet instead.
+  const [focus, setFocus] = useState<{ id: string; by: "tap" | "zoom" | "chat" } | null>(null);
+  const [focusH, setFocusH] = useState(0);
+  const [sheet, setSheet] = useState<string | null>(null);
+  const phone = useRef(false);
+  useEffect(() => {
+    const m = window.matchMedia("(max-width: 700px)");
+    phone.current = m.matches;
+    const on = () => { phone.current = m.matches; };
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  const focusOn = useCallback((id: string) => {
+    if (phone.current) setSheet(id); else { setFocusH(0); setFocus({ id, by: "tap" }); }
+  }, []);
+  useEffect(() => {
+    if (!focus) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setFocus(null); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [focus]);
+  // The chat's answer lights up the devices its steps touch; when it is done, the main one opens with the apps it named
+  // pulsing. Never the device panel, never on a phone (the chat covers the map there), and never a camera move while
+  // the person's hands are on the map. A tap on empty map puts the lights out.
+  const followed = useFollowed();
+  const [dimmed, setDimmed] = useState(0);
+  const busyHands = useRef(false), lastHands = useRef(0);
+  const lit = useCallback((id: string): "working" | "done" | undefined => followed.seq === dimmed
+    || !followed.devices.includes(id) ? undefined : followed.done ? "done" : "working", [followed, dimmed]);
+  const fingers = useRef(new Set<number>()); // pointers down on the map (two for a pinch)
+  const hands = useCallback((e: React.PointerEvent) => {
+    const id = e.pointerId;
+    fingers.current.add(id);
+    busyHands.current = true;
+    const up = (u: PointerEvent) => {
+      if (u.pointerId !== id) return;
+      fingers.current.delete(id);
+      if (fingers.current.size === 0) { busyHands.current = false; lastHands.current = Date.now(); }
+      window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+  }, []);
+  const opened = useRef(0);
+  useEffect(() => {
+    if (!followed.done || opened.current === followed.seq || followed.seq === dimmed) return;
+    opened.current = followed.seq;
+    const main = mainDevice(followed);
+    if (!main || phone.current || !devices.some((d) => d.id === main && d.kind !== "watched")) return;
+    if (focus?.id === main) return;
+    shown.current = null;
+    setFocusH(0);
+    setFocus({ id: main, by: "chat" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed]);
+  const sized = useCallback((id: string, h: number) => setFocusH((x) => (x === h ? x : h)), []);
 
   // Devices from the database become nodes. A node being dragged keeps its place, and a dropped one stays where it
-  // was dropped until the database has the new spot (or the save fails).
-  const spots = useMemo(() => arrange(devices), [devices]);
+  // was dropped until the database has the new spot (or the save fails). base is where each one really is (what gets
+  // saved); spots is where it shows, moved down while a card above it is open.
+  const base = useMemo(() => {
+    const b = arrange(devices);
+    for (const [id, p] of Object.entries(held)) if (b.has(id)) b.set(id, { x: p.x, y: p.y });
+    return b;
+  }, [devices, held]);
+  const focusId = focus && devices.some((d) => d.id === focus.id) ? focus.id : null;
+  const spots = useMemo(() => focusId ? makeRoom(base, focusId, focusH) : base, [base, focusId, focusH]);
+  // how far a card was shown away from its real spot when its drag began; the drop saves the real spot plus the drag
+  const shift = useRef<Record<string, { dx: number; dy: number }>>({});
   useEffect(() => setHeld((h) => {
     const left = Object.entries(h).filter(([id, p]) => devices.some((d) => d.id === id && (d.x !== p.x || d.y !== p.y)));
     return left.length === Object.keys(h).length ? h : Object.fromEntries(left);
@@ -80,12 +166,14 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const old = cur.find((n) => n.id === d.id);
       return {
         id: d.id, type: "device", deletable: false, selected: d.id === selected, dragging: old?.dragging,
-        position: old?.dragging ? old.position : (held[d.id] && { x: held[d.id].x, y: held[d.id].y }) ?? spots.get(d.id)!,
-        data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask,
+        position: old?.dragging ? old.position : spots.get(d.id)!,
+        data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask, favorites,
+          focused: d.id === focusId, onFocus: focusOn, onApp: app, onSize: sized,
+          lit: lit(d.id), litApps: lit(d.id) ? litApps(followed, d.id) : undefined,
           by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
-  }, [devices, spots, held, marks, selected, uid, now, open, ask, setNodes]);
+  }, [devices, spots, marks, selected, uid, now, open, ask, favorites, focusId, focusOn, app, sized, lit, followed, setNodes]);
   // A removed line's marker goes once the database no longer has that line (gone, or written again since).
   const hidden = useCallback((l: Link) => removed[l.id] === stamp(l), [removed]);
   useEffect(() => setRemoved((m) => {
@@ -147,6 +235,58 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     if (to) connect({ source: s.fromNode.id, target: to });
   }
 
+  // A card opened by its button (or by the chat) slides into view once it knows how tall it is (zoom stays as it was).
+  // The chat never moves the view while the person is moving it, or just did; with reduced motion it jumps.
+  const shown = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focus || focus.by === "zoom" || !focusH || shown.current === focus.id) return;
+    shown.current = focus.id;
+    if (focus.by === "chat" && (busyHands.current || Date.now() - lastHands.current < HANDS_OFF_MS)) return;
+    const p = spots.get(focus.id), f = flow.current;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (p && f) f.setCenter(p.x + NODE_W / 2, p.y + focusH / 2, { zoom: f.getZoom(), duration: still ? 0 : 300 });
+  }, [focus, focusH, spots]);
+  useEffect(() => { if (!focus) shown.current = null; }, [focus]);
+
+  // On a wide screen the device panel covers the map's left edge: a chosen device hidden under it (or off screen)
+  // slides into the part of the map still in view. Zoom stays as it was.
+  useEffect(() => {
+    if (!selected || window.matchMedia("(max-width: 900px)").matches) return;
+    const id = requestAnimationFrame(() => {
+      const f = flow.current, el = box.current, p = spots.get(selected);
+      if (!f || !el || !p) return;
+      const r = el.getBoundingClientRect();
+      const panel = document.querySelector(".drawer.side")?.getBoundingClientRect();
+      const cover = panel ? Math.max(0, Math.min(r.width, panel.right - r.left)) : 0;
+      const { x, y, zoom } = f.getViewport();
+      const sx = p.x * zoom + x, sy = p.y * zoom + y, w = NODE_W * zoom, h = NODE_H * zoom;
+      if (sx >= cover + 8 && sx + w <= r.width - 8 && sy >= 8 && sy + h <= r.height - 8) return;
+      const cx = cover + (r.width - cover) / 2, cy = r.height / 2;
+      f.setViewport({ x: cx - (p.x + NODE_W / 2) * zoom, y: cy - (p.y + NODE_H / 2) * zoom, zoom }, { duration: 300 });
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  // Zoomed in far enough, the card nearest the middle of the view opens; zoomed back out, a card opened that way closes.
+  const box = useRef<HTMLDivElement>(null);
+  function moved(v: { x: number; y: number; zoom: number }) {
+    if (phone.current) return;
+    if (v.zoom < UNFOCUS_ZOOM) { if (focus?.by === "zoom") setFocus(null); return; }
+    if (v.zoom < FOCUS_ZOOM) return;
+    const r = box.current?.getBoundingClientRect();
+    if (!r) return;
+    const cx = (r.width / 2 - v.x) / v.zoom, cy = (r.height / 2 - v.y) / v.zoom;
+    let best: string | null = null, dist = Infinity;
+    for (const [id, p] of base) {
+      const dd = Math.hypot(p.x + NODE_W / 2 - cx, p.y + NODE_H / 2 - cy);
+      if (dd < dist && devices.find((d) => d.id === id)?.kind !== "watched") { best = id; dist = dd; }
+    }
+    if (focus?.by === "tap" || focus?.by === "chat" || !best || focus?.id === best) return;
+    setFocusH(0);
+    setFocus({ id: best, by: "zoom" });
+  }
+
   function dropped(id: string, p: { x: number; y: number }) {
     const x = Math.max(-5000, Math.min(5000, snap(p.x))), y = Math.max(-5000, Math.min(5000, snap(p.y)));
     const n = ++drops.current;
@@ -164,15 +304,30 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);
     }}>
-      <div className="hm-canvas">
+      {/* any hand on the map (a card, the paper, the minimap, the zoom buttons, a pinch, a wheel, a key) keeps the
+          chat's camera still until it has been off for a few seconds */}
+      <div className="hm-canvas" ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}
+        onKeyDownCapture={() => { lastHands.current = Date.now(); }}>
       <ReactFlow<DeviceNodeType, LinkEdgeType>
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         onNodesChange={(ch: NodeChange<DeviceNodeType>[]) => onNodesChange(ch.filter((c) => c.type !== "remove"))}
         onInit={(i) => { flow.current = i; }}
         onNodeClick={(_, n) => { setEdgeSel(null); open(n.id); }}
-        onNodeDragStop={(_, n) => dropped(n.id, n.position)}
+        onNodeDragStart={(_, n) => {
+          busyHands.current = true;
+          const b = base.get(n.id), v = spots.get(n.id);
+          shift.current[n.id] = b && v ? { dx: v.x - b.x, dy: v.y - b.y } : { dx: 0, dy: 0 };
+        }}
+        onNodeDragStop={(_, n) => {
+          busyHands.current = false; lastHands.current = Date.now();
+          const o = shift.current[n.id] ?? { dx: 0, dy: 0 };
+          delete shift.current[n.id];
+          dropped(n.id, { x: n.position.x - o.dx, y: n.position.y - o.dy });
+        }}
+        onMoveStart={(e) => { if (e) busyHands.current = true; }} // e: the person moved it (not the app)
+        onMoveEnd={(e, v) => { if (e) { busyHands.current = false; lastHands.current = Date.now(); } moved(v); }}
         onEdgeClick={(_, e) => setEdgeSel(e.id)}
-        onPaneClick={() => setEdgeSel(null)}
+        onPaneClick={() => { setEdgeSel(null); setFocus(null); setDimmed(followed.seq); }}
         onConnect={connect} onConnectEnd={connectEnd} connectionMode={ConnectionMode.Loose} connectionRadius={30}
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
@@ -196,6 +351,9 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
           </span>
         </div>)}
       </div>
+      {sheet && devices.some((d) => d.id === sheet) && (
+        <AppSheet uid={uid} device={devices.find((d) => d.id === sheet)!} onApp={(id, svcId) => { setSheet(null); app(id, svcId); }}
+          onOpen={(id) => { setSheet(null); open(id); }} onClose={() => setSheet(null)} />)}
       {/* the key sits under the map, never over a device */}
       <div className="hm-legend small">
         {LINK_KINDS.map((k) => (

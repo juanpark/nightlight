@@ -125,3 +125,59 @@
   .hm-canvas { height: min(calc(100dvh - 320px), 440px); min-height: 340px; }
   .hm-minimap { display: none; }
 }
+
+/* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
+.dnode .dstar { color: var(--glow); fill: var(--glow); flex: none; }
+.dfavs { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+.dchip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; max-width: 100%;
+  font-size: 12px; line-height: 1; padding: 4px 6px; border-radius: 999px; background: var(--bg);
+  border: 1px solid var(--line); color: var(--ink); }
+.dchip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dchip svg { flex: none; }
+.dchip.ok svg { color: var(--ok); }
+.dchip.warn { border-color: var(--warn); }
+.dchip.warn svg { color: var(--warn); }
+.dchip.crit { border-color: var(--crit); }
+.dchip.crit svg { color: var(--crit); }
+.dfavs.hl .dchip { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }
+
+/* An opened card: every app as a chip, two to a row; the cards below move down to make room. */
+.dnode.focused { z-index: 5; box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.dappgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.dappgrid .dchip { cursor: pointer; justify-content: flex-start; min-height: 28px; font: inherit; font-size: 12px; }
+.dappgrid .dchip:hover { border-color: var(--accent); }
+.dappgrid .dchip.hl { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }
+.dappgrid .dchip.more { justify-content: center; color: var(--muted); }
+.dappgrid .dchip .dstar { margin-left: auto; }
+
+/* On a phone the apps come up in a sheet from the bottom. */
+.sheet-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 60; }
+.app-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 61; max-height: 70dvh; display: flex;
+  flex-direction: column; gap: 8px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--panel);
+  border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; box-shadow: var(--shadow); }
+.app-sheet-head { display: flex; align-items: center; gap: 8px; }
+.app-sheet-head button { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+.app-sheet-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.app-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; text-align: left; width: 100%; }
+.app-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.dapps { width: 100%; background: none; border: 0; border-top: 1px solid var(--line); padding: 6px 0 0; border-radius: 0; font: inherit; font-size: 12px; text-align: left;
+  cursor: pointer; min-height: 0; }
+button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underline; }
+
+/* The map follows the chat: a soft breathing ring on the devices the answer is working on, a steady one when it is
+   done, and a few pulses on the apps it named. Reduced motion: the rings and highlights stay, nothing moves. */
+.dnode.lit-working { animation: lit-ring 1.6s ease-in-out infinite; }
+.dnode.lit-done { box-shadow: 0 0 0 3px color-mix(in srgb, var(--glow) 70%, transparent), var(--shadow); }
+.dchip.lit-app { border-color: var(--glow); box-shadow: 0 0 0 2px var(--glow); animation: lit-chip 1.1s ease-in-out 5; }
+@keyframes lit-ring {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--glow) 35%, transparent), var(--shadow); }
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--glow) 55%, transparent), var(--shadow); }
+}
+@keyframes lit-chip {
+  0%, 100% { box-shadow: 0 0 0 2px var(--glow); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--glow) 40%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--glow) 70%, transparent), var(--shadow); }
+  .dchip.lit-app { animation: none; }
+}
