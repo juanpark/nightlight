@@ -4,12 +4,12 @@
 // what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
-import { Star } from "lucide-react";
+import { Star, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useServicesState } from "@/lib/data";
 import { useFavorites } from "@/lib/favorites";
 import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
-import type { Action, Device } from "@/lib/types";
+import type { Action, Device, Service } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
 import HelperUpdate from "./HelperUpdate";
@@ -25,9 +25,10 @@ import WatchedPanel from "./WatchedPanel";
 import AppDetail from "./AppDetail";
 import SetupCard from "./SetupCard";
 import MacFolders, { FOLDERS_FROM } from "./MacFolders";
-import { deviceIcon } from "./map/kinds";
+import { appIcon, deviceIcon } from "./map/kinds";
+import { appOrder } from "@/lib/apps";
 
-type Tab = "overview" | "about" | "settings";
+export type Tab = "overview" | "apps" | "about" | "settings";
 
 function Vital({ label, value }: { label: string; value?: number | null }) {
   return (
@@ -54,83 +55,88 @@ function updateMode(d: Device) {
   return (d.allowedJobs?.update ?? []).includes("signed") ? "updates when you tap Update" : "updates only on the device";
 }
 
+const TAB_NAME: Record<Tab, string> = { overview: "Overview", apps: "Apps", about: "Knowledge", settings: "Settings" };
+// the last tab opened, per kind of device (your own, sample, watched), so the next one opens there too
+const kindOf = (d: Device) => d.kind === "watched" ? "watched" : d.realm === "real" ? "device" : "sample";
+function lastTab(d: Device): Tab | null {
+  try { return localStorage.getItem(`nl_tab_${kindOf(d)}`) as Tab | null; } catch { return null; }
+}
+function keepTab(d: Device, t: Tab) {
+  try { localStorage.setItem(`nl_tab_${kindOf(d)}`, t); } catch { /* this visit only */ }
+}
+
 export default function DeviceDrawer({ uid, generation, device, actions, devices, needs, release, tab, onTab, onGo,
   onFollowUp, onAsk, onClose, app, onApp }: {
   uid: string; generation?: number; device: Device; actions: Action[]; devices: Device[]; needs: Need[];
-  release: { version: string } | null; tab: Tab; onTab: (t: Tab) => void; onGo: (g: Go) => void;
+  release: { version: string } | null; tab: Tab | null; onTab: (t: Tab) => void; onGo: (g: Go) => void;
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
-  app?: string | null; onApp?: (svcId: string | null) => void; // one app opened on its own
+  app?: string | null; onApp?: (svcId: string | null) => void; // one app opened on its own, in the Apps tab
 }) {
   const { rows: services, loaded } = useServicesState(uid, device.id);
   const fav = useFavorites(uid, device);
-  const [allServices, setAllServices] = useState(false);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
   const removing = needs.some((n) => n.kind === "removing");
-  // Opened from the map, the panel sits below it: bring it into view when its top would be off screen (phones).
   const box = useRef<HTMLDivElement>(null);
+  // Esc closes the panel (not while typing in it); on a phone the sheet takes the keyboard when it opens
   useEffect(() => {
-    const top = box.current?.getBoundingClientRect().top ?? 0;
-    if (top > window.innerHeight * 0.6) box.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [device.id, app]);
+    const esc = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key === "Escape" && !(t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) onClose();
+    };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 900px)").matches) box.current?.focus({ preventScroll: true });
+  }, [device.id]);
   // Each problem is said once: the urgent one as a row under the status sentence (with its "What should I do?"),
   // the rest under Problems.
   const listed = (f: Finding) => needs.some((n) => n.id === `critical:${device.id}:${f.id ?? f.message}`);
   const urgent = (device.findings ?? []).find(listed);
   const brief = !removing && !(real && device.status === "offline") && (device.status === "crit" || device.status === "warn");
-  const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
-  const current: Tab = tabs.includes(tab) ? tab : "overview";
+  const tabs: Tab[] = watched ? ["overview", "about", "settings"] : real ? ["overview", "apps", "about", "settings"]
+    : ["overview", "apps", "about"];
+  const wanted = app ? "apps" : tab ?? lastTab(device) ?? "overview";
+  const current: Tab = tabs.includes(wanted) ? wanted : "overview";
+  const pick = (t: Tab) => { keepTab(device, t); if (t !== "apps") onApp?.(null); onTab(t); };
   const opened = app ? services.find((s) => s.id === app) : undefined;
   // an app that isn't on this device (any more) closes, so it can't come back by itself later
   useEffect(() => { if (app && loaded && !opened) onApp?.(null); }, [app, loaded, opened, onApp]);
-  if (app && !watched && !opened) {
-    return (
-      <div className="panel drawer" ref={box}>
-        <Head key={device.id} device={device} onClose={onClose} />
-        <p className="small muted">{loaded ? "That app isn't on this device any more." : "Loading…"}</p>
-      </div>
-    );
-  }
-  if (opened && !watched) {
-    return (
-      <div className="panel drawer" ref={box}>
-        <Head key={device.id} device={device} onClose={onClose} />
-        <AppDetail key={`app:${device.id}:${opened.id}`} uid={uid} generation={generation} device={device} app={opened}
-          actions={actions} fav={fav} onBack={() => onApp?.(null)} onAsk={onAsk} />
-      </div>
-    );
-  }
-  if (watched) {
-    return (
-      <div className="panel drawer" ref={box}>
-        <Head key={device.id} device={device} fav={fav} onClose={onClose} />
-        <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
-        <WatchedPanel key={`watched:${device.id}`} uid={uid} generation={generation} device={device} devices={devices} onAsk={onAsk} onGo={onGo}
-          onClose={onClose} />
-      </div>
-    );
-  }
-  return (
-    <div className="panel drawer" ref={box}>
-      <Head key={device.id} device={device} fav={fav} onClose={onClose} />
-      <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
-      <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
-        : statusSentence(device, Date.now(), removing)}</p>
-      <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}
-        extra={(n) => urgent && real && n.kind === "critical" ? <IssueActions device={device} finding={urgent} /> : null} />
-      <div className="drawer-actions">
-        <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
-      </div>
-      {tabs.length > 0 && (
-        <div className="tabs" role="tablist">
-          {tabs.map((t) => (
-            <button key={t} role="tab" aria-selected={current === t} className={current === t ? "on" : ""}
-              onClick={() => onTab(t)}>{t === "overview" ? "Overview" : t === "about" ? "Knowledge" : "Settings"}</button>
-          ))}
-        </div>
-      )}
+  const favApps = fav.apps.map((id) => services.find((s) => s.id === id)).filter((s) => !!s);
+  const openApp = (id: string) => { keepTab(device, "apps"); onTab("apps"); onApp?.(id); };
 
-      {current === "overview" && <>
+  return (
+    <div className={`drawer side ${watched ? "watched" : ""}`} ref={box} tabIndex={-1} role="region"
+      aria-label={`${device.name}: details`}>
+      <Head key={device.id} device={device} fav={opened ? undefined : fav} onClose={onClose} />
+      <div className="tabs" role="tablist" aria-label={`About the ${device.name}`}>
+        {tabs.map((t) => (
+          <button key={t} role="tab" aria-selected={current === t} className={current === t ? "on" : ""}
+            onClick={() => pick(t)}>{TAB_NAME[t]}{t === "apps" && services.length > 0 &&
+              <span className="tab-count">{services.length}</span>}</button>))}
+      </div>
+      <div className="drawer-body" role="tabpanel">
+      {current === "overview" && watched && <>
+        <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
+        <WatchedPanel key={`watched:${device.id}`} uid={uid} generation={generation} device={device} devices={devices}
+          onAsk={onAsk} onGo={onGo} onClose={onClose} part="overview" />
+      </>}
+
+      {current === "overview" && !watched && <>
+        <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
+        <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
+          : statusSentence(device, Date.now(), removing)}</p>
+        <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}
+          extra={(n) => urgent && real && n.kind === "critical" ? <IssueActions device={device} finding={urgent} /> : null} />
+        <div className="drawer-actions">
+          <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
+        </div>
+        {favApps.length > 0 && (
+          <section className="drawer-section">
+            <h4>Your favorite apps here</h4>
+            <AppGrid apps={favApps} fav={fav} onApp={openApp} />
+          </section>)}
         {real && device.status === "offline"
           ? <p className="muted small">Last report {device.lastSeen ? device.lastSeen.toLocaleString() : "never"}: Nightlight
               will check what happened when it&apos;s back.</p>
@@ -140,48 +146,31 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
               <Vital label="CPU" value={device.vitals?.cpu} />
             </div>}
         <Problems device={device} skip={listed} onAsk={onAsk} />
-        {real && !watched && <Checkups uid={uid} generation={generation} deviceId={device.id}
+        {real && <Checkups uid={uid} generation={generation} deviceId={device.id}
           actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
-        <section className="drawer-section">
-          <h4>What runs here</h4>
-          {services.length === 0 && <p className="muted small">{real ? "Nothing running that Nightlight recognises yet. It "
-            + "lists Docker containers and failed system services." : "Nothing listed."}</p>}
-          {services.filter((s) => allServices || (s.status ?? "ok") !== "ok").map((s) => (
-            <div key={s.id} className="svc">
-              <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
-              <div style={{ flex: 1 }}>
-                <div><StarButton on={fav.isFavoriteApp(s.id)} label={`${s.name} as a favorite`} small
-                  onClick={() => fav.toggleApp(s.id)} />{" "}
-                  {onApp ? <button className="linkish app-link" onClick={() => onApp(s.id)}><strong>{s.name}</strong></button>
-                    : <strong>{s.name}</strong>} {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
-                  {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
-                {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
-                {s.detail && <div className="small muted">{s.detail}</div>}
-                {(s.findings ?? []).filter((f) => !(device.findings ?? []).some((g) => g.message === f.message)) // said above
-                  .map((f, i) => <div key={i} className="finding small">{f.message}</div>)}
-              </div>
-            </div>
-          ))}
-          {services.some((s) => (s.status ?? "ok") === "ok") && (
-            <button className="linkish small" onClick={() => setAllServices(!allServices)}>
-              {allServices ? "Show only what needs a look"
-                : `Show all ${services.length} (${services.filter((s) => (s.status ?? "ok") === "ok").length} running fine)`}
-            </button>)}
-        </section>
         {real && <DeviceHistory uid={uid} deviceId={device.id} />}
-        {!real && <DeviceProfile uid={uid} deviceId={device.id} />}
-        {!real && <Notebook uid={uid} deviceId={device.id} />}
-        {!real && <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />}
-        {!real && <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />}
       </>}
 
+      {current === "apps" && (opened
+        ? <AppDetail key={`app:${device.id}:${opened.id}`} uid={uid} generation={generation} device={device} app={opened}
+            actions={actions} fav={fav} onBack={() => onApp?.(null)} onAsk={onAsk} />
+        : app
+          ? <p className="small muted">{loaded ? "That app isn't on this device any more." : "Loading…"}</p>
+          : <section className="drawer-section">
+              {loaded && services.length === 0 && <p className="muted small">{real ? "Nothing running that Nightlight "
+                + "recognises yet. It lists Docker containers and failed system services." : "Nothing listed."}</p>}
+              {services.length > 0 && <p className="small muted" style={{ marginTop: 0 }}>Tap one to see how it is and
+                what Nightlight knows about it.</p>}
+              <AppGrid apps={appOrder(services, fav.apps)} fav={fav} onApp={openApp} />
+            </section>)}
+
       {current === "about" && <>
-        <DeviceProfile uid={uid} deviceId={device.id} />
+        {!watched && <DeviceProfile uid={uid} deviceId={device.id} />}
         <Notebook uid={uid} deviceId={device.id} />
-        <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />
-        <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />
+        {!watched && <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />}
+        {!watched && <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />}
         <Tags device={device} />
-        <section className="drawer-section">
+        {!watched && <section className="drawer-section">
           <h4>Details</h4>
           <div className="details small">
             <div><span className="muted">System</span>{device.os ?? "–"}</div>
@@ -194,10 +183,14 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
               {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
           </div>
           {device.purpose && <p className="muted small">{device.purpose}</p>}
-        </section>
+        </section>}
       </>}
 
-      {current === "settings" && <>
+      {current === "settings" && watched && (
+        <WatchedPanel key={`watched-s:${device.id}`} uid={uid} generation={generation} device={device} devices={devices}
+          onAsk={onAsk} onGo={onGo} onClose={onClose} part="settings" />)}
+
+      {current === "settings" && !watched && <>
         <Permissions key={device.id} device={device} services={services} />
         {device.manage === "app" && /mac/i.test(device.os ?? "") && !newer(FOLDERS_FROM, device.helperVersion) && (
           <section className="drawer-section">
@@ -214,6 +207,25 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         <ExpertSessions uid={uid} device={device} open={needs.some((n) => n.kind === "expertHalf")} />
         <RemoveDevice device={device} onRemoved={onClose} />
       </>}
+      </div>
+    </div>
+  );
+}
+
+/** Apps as chips, two to a row: icon, name, status colour, a star when starred; a tap opens the app. */
+function AppGrid({ apps, fav, onApp }: { apps: Service[]; fav: Favorites; onApp: (id: string) => void }) {
+  return (
+    <div className="app-grid">
+      {apps.map((s) => {
+        const Icon = appIcon(s);
+        return (
+          <button key={s.id} className={`app-chip ${s.status ?? "ok"}`} onClick={() => onApp(s.id)}
+            aria-label={`${s.name}: ${(s.status ?? "ok") === "ok" ? "running fine" : "needs a look"}`}>
+            <Icon size={15} aria-hidden /><span className="app-chip-name">{s.name}</span>
+            {fav.isFavoriteApp(s.id) && <Star className="dstar" size={12} aria-hidden />}
+            <span className={`dot ${s.status ?? "ok"}`} aria-hidden />
+          </button>);
+      })}
     </div>
   );
 }
@@ -247,7 +259,7 @@ function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClo
       <span className={`pill ${real ? "live" : ""}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Sample"}</span>
       <span style={{ flex: 1 }} />
       {fav && <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />}
-      <button onClick={onClose}>Close</button>
+      <button className="drawer-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
       {fav?.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
     </div>
   );

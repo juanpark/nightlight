@@ -16,10 +16,11 @@ export default function JobLog({ deviceId, actions, app }: { deviceId: string; a
   const finished = actions.filter((a) => a.deviceId === deviceId && (a.status === "done" || a.status === "failed")).length;
   useEffect(() => {
     let live = true;
-    api<{ jobs: LogJob[] }>("GET", `/api/devices/${deviceId}/log?limit=50`)
+    // given an app, the server picks its jobs from the whole log (the filter below covers an older server)
+    api<{ jobs: LogJob[] }>("GET", `/api/devices/${deviceId}/log?limit=50${app ? `&service=${encodeURIComponent(app.id)}` : ""}`)
       .then((r) => { if (live) setJobs(r.jobs); }).catch(() => { if (live) setJobs((cur) => cur ?? []); });
     return () => { live = false; };
-  }, [deviceId, finished]);
+  }, [deviceId, finished, app?.id]);
   const shown = (jobs ?? []).slice(0, all ? 50 : 5);
   return (
     <section className="drawer-section">
