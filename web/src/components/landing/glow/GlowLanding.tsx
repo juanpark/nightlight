@@ -10,6 +10,7 @@ import { AuthButtons } from "../AuthButtons";
 import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, type TrustState } from "../StoryCards";
 import { display, sans } from "../fonts";
 import { revealLines, riseIn } from "../motion/reveal";
+import { GlowNav } from "./GlowNav";
 import type { Probe, View } from "./scene";
 import s from "./Glow.module.css";
 
@@ -384,21 +385,7 @@ export function GlowLanding() {
       </svg>
       <p ref={tag} className={s.tag} aria-hidden="true" />
 
-      <header className={s.nav}>
-        <nav className={s.links} aria-label="Sections">
-          {LINKS.slice(0, 3).map((l) => (
-            <a key={l.href} href={l.href}>
-              {l.label}
-            </a>
-          ))}
-        </nav>
-        <a href="#glow-main" className={s.brand} aria-label="Nightlight, back to top">
-          <Logo height={24} />
-        </a>
-        <div className={s.navActions}>
-          <AuthButtons size="small" styles={s} />
-        </div>
-      </header>
+      <GlowNav links={LINKS.slice(0, 3)} menuLinks={LINKS} />
 
       <main id="glow-main" className={s.main}>
         <section ref={hero} className={s.hero} aria-labelledby="glow-title">

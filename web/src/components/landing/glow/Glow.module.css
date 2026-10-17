@@ -136,30 +136,152 @@
 .tag[data-tone="ok"]::before { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
 @keyframes blink { 50% { opacity: 0.35; } }
 
-/* ---------- Nav: links, logo centred, actions ---------- */
+/* ---------- Nav: one glass capsule floating over the scene ---------- */
 .nav {
   position: fixed;
-  inset: 0 0 auto;
+  inset: 12px 0 auto;
   z-index: 20;
-  height: 76px;
   padding-inline: var(--gutter);
+  pointer-events: none;
+}
+.bar {
+  position: relative;
+  pointer-events: auto;
+  max-width: 1180px;
+  height: 60px;
+  margin: 0 auto;
+  padding: 0 8px 0 10px;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
+  grid-template-areas: "links brand end";
   align-items: center;
-  background: linear-gradient(rgb(17 20 31 / 0.92), rgb(17 20 31 / 0.6) 60%, transparent);
+  gap: 16px;
+  border-radius: 999px;
+  background: rgb(17 20 31 / 0.55);
+  border: 1px solid rgb(61 69 99 / 0.55);
+  backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: 0 18px 40px -18px rgb(3 4 10 / 0.8);
 }
-.links { display: flex; gap: 28px; }
+.bar .actionsSmall .error { right: 0; top: 70px; }
+/* Links on the left, the logo in the middle, the actions on the right. */
+.brand { grid-area: brand; display: inline-flex; color: var(--text); padding: 6px 0; }
+.links {
+  grid-area: links;
+  position: relative;
+  justify-self: start;
+  display: flex;
+  gap: 4px;
+}
 .links a {
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  padding: 9px 14px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
   text-decoration: none;
   color: var(--muted);
-  transition: color 0.2s ease;
+  transition: color 0.25s ease, background-color 0.25s ease;
 }
-.links a:hover { color: var(--text); }
-.brand { display: inline-flex; color: var(--text); }
-.navActions { justify-self: end; }
+.links a:hover { color: var(--text); background: rgb(61 69 99 / 0.35); }
+.links a[aria-current] { color: var(--text); }
+/* The small warm light that marks where you are. */
+.navDot {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--star);
+  box-shadow: 0 0 10px 2px rgb(253 216 58 / 0.55);
+  translate: calc(var(--dot-x, 0px) - 2.5px) 0;
+  opacity: 0;
+  transition: translate 0.7s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease;
+}
+.links[data-dot] .navDot { opacity: 1; }
+.navActions { grid-area: end; justify-self: end; }
+/* How far through the night: a glowing line, brightest at its head. */
+.navLine {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 0;
+  height: 1.5px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgb(253 216 58 / 0), rgb(253 216 58 / 0.55) 70%, var(--star));
+  transform-origin: left;
+  transform: scaleX(0);
+  pointer-events: none;
+}
+.menuButton {
+  grid-area: links;
+  justify-self: start;
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgb(35 41 64 / 0.6);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.25s ease;
+}
+.menuButton:hover { border-color: var(--muted); }
+.menuIcon { display: grid; gap: 5px; width: 16px; }
+.menuIcon span {
+  display: block;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transition: translate 0.35s cubic-bezier(0.16, 1, 0.3, 1), rotate 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav[data-open] .menuIcon span:first-child { translate: 0 3.25px; rotate: 45deg; }
+.nav[data-open] .menuIcon span:last-child { translate: 0 -3.25px; rotate: -45deg; }
+.menu {
+  pointer-events: none;
+  max-width: 1180px;
+  margin: 8px auto 0;
+  padding: 8px;
+  display: none;
+  border-radius: 24px;
+  background: rgb(17 20 31 / 0.8);
+  border: 1px solid rgb(61 69 99 / 0.55);
+  backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: 0 24px 48px -18px rgb(3 4 10 / 0.8);
+  opacity: 0;
+  translate: 0 -8px;
+  transition: opacity 0.3s ease, translate 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav[data-open] .menu { pointer-events: auto; opacity: 1; translate: 0 0; }
+.menu a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.125rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--text);
+}
+.menu a:hover { background: rgb(61 69 99 / 0.35); }
+.menu a::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.menu a[aria-current]::before { background: var(--star); box-shadow: 0 0 10px rgb(253 216 58 / 0.6); }
+@media (max-width: 1100px) {
+  .links { display: none; }
+  .bar { gap: 8px; padding-left: 8px; }
+  .navActions .secondary { display: none; }
+  .menuButton { display: inline-grid; }
+  .menu { display: grid; }
+}
 
 /* ---------- Buttons (AuthButtons reads these names) ---------- */
 .actions { display: grid; gap: 10px; justify-items: center; }
@@ -632,10 +754,6 @@
   .privacyNote { grid-column: 1 / -1; }
 }
 @media (max-width: 820px) {
-  .links { display: none; }
-  .nav { grid-template-columns: auto 1fr; height: 64px; background: linear-gradient(rgb(17 20 31 / 0.9), transparent); }
-  .brand { order: -1; }
-  .navActions .secondary { display: none; }
   .hero { padding-top: 104px; }
   .sample { right: auto; left: 50%; translate: -50% 0; bottom: 80px; }
   .railWrap { display: none; }
@@ -685,4 +803,5 @@
 @media (prefers-reduced-motion: reduce) {
   .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
   .tag[data-tone="live"]::before { animation: none; }
+  .navDot, .menu, .menuIcon span { transition: none; }
 }
