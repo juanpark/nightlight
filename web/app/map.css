@@ -121,7 +121,7 @@
 
 /* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
 .dnode .dstar { color: var(--glow); fill: var(--glow); flex: none; }
-.dfavs { display: flex; gap: 4px; margin-top: 6px; min-width: 0; }
+.dfavs { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .dchip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; max-width: 100%;
   font-size: 12px; line-height: 1; padding: 4px 6px; border-radius: 999px; background: var(--bg);
   border: 1px solid var(--line); color: var(--ink); }

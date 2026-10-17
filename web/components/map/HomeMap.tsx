@@ -209,6 +209,26 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   }, [focus, focusH, spots]);
   useEffect(() => { if (!focus) shown.current = null; }, [focus]);
 
+  // On a wide screen the device panel covers the map's left edge: a chosen device hidden under it (or off screen)
+  // slides into the part of the map still in view. Zoom stays as it was.
+  useEffect(() => {
+    if (!selected || window.matchMedia("(max-width: 900px)").matches) return;
+    const id = requestAnimationFrame(() => {
+      const f = flow.current, el = box.current, p = spots.get(selected);
+      if (!f || !el || !p) return;
+      const r = el.getBoundingClientRect();
+      const panel = document.querySelector(".drawer.side")?.getBoundingClientRect();
+      const cover = panel ? Math.max(0, Math.min(r.width, panel.right - r.left)) : 0;
+      const { x, y, zoom } = f.getViewport();
+      const sx = p.x * zoom + x, sy = p.y * zoom + y, w = NODE_W * zoom, h = NODE_H * zoom;
+      if (sx >= cover + 8 && sx + w <= r.width - 8 && sy >= 8 && sy + h <= r.height - 8) return;
+      const cx = cover + (r.width - cover) / 2, cy = r.height / 2;
+      f.setViewport({ x: cx - (p.x + NODE_W / 2) * zoom, y: cy - (p.y + NODE_H / 2) * zoom, zoom }, { duration: 300 });
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
   // Zoomed in far enough, the card nearest the middle of the view opens; zoomed back out, a card opened that way closes.
   const box = useRef<HTMLDivElement>(null);
   function moved(v: { x: number; y: number; zoom: number }) {

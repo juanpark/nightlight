@@ -128,3 +128,35 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .app-link { padding: 0; color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
 .app-detail > .linkish { min-height: 40px; }
 .app-detail .details > div { overflow-wrap: anywhere; }
+
+/* The device panel. Wide screens: a drawer from the left over the map's edge; the map and chat stay usable. */
+.main { position: relative; }
+.drawer.side { position: absolute; z-index: 25; left: 0; top: 0; bottom: 0; width: min(440px, 46%); margin: 0;
+  display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line);
+  box-shadow: 8px 0 24px rgba(0, 0, 0, .12); animation: drawer-in .18s ease-out; outline: none; }
+.drawer.side > .drawer-head { padding: 12px 14px 4px; }
+.drawer.side > .tabs { padding: 0 14px; margin: 0; flex: none; }
+.drawer.side > .drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 18px; overscroll-behavior: contain; }
+.drawer-close { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.tab-count { margin-left: 5px; font-size: 11px; padding: 0 6px; border-radius: 9px; background: var(--line); color: var(--ink); }
+@keyframes drawer-in { from { transform: translateX(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes sheet-in { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .drawer.side { animation: none; } }
+
+/* Phones and narrow windows: a sheet that rises to full height, above the tab bar; hidden while the chat is shown. */
+@media (max-width: 900px) {
+  .drawer.side { position: fixed; z-index: 50; inset: 0; width: auto; top: env(safe-area-inset-top);
+    border-right: 0; border-radius: 16px 16px 0 0; box-shadow: 0 -8px 24px rgba(0, 0, 0, .2); animation-name: sheet-in;
+    padding-bottom: env(safe-area-inset-bottom); }
+  .main[data-pane="chat"] > .drawer.side { display: none; }
+}
+
+/* Apps as chips in the panel. */
+.app-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.app-chip { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 10px; text-align: left; min-width: 0;
+  font: inherit; font-size: 14px; }
+.app-chip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-chip.warn { border-color: var(--warn); }
+.app-chip.crit { border-color: var(--crit); }
+.app-chip .dstar { color: var(--glow); fill: var(--glow); flex: none; }
+@media (max-width: 380px) { .app-grid { grid-template-columns: minmax(0, 1fr); } }

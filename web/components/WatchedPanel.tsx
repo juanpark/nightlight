@@ -92,9 +92,9 @@ function Availability({ segs, now }: { segs: Seg[]; now: number }) {
   );
 }
 
-export default function WatchedPanel({ uid, generation, device: d, devices, onAsk, onGo, onClose }: {
+export default function WatchedPanel({ uid, generation, device: d, devices, onAsk, onGo, onClose, part = "overview" }: {
   uid: string; generation?: number; device: Device; devices: Device[]; onAsk: (q: string) => void;
-  onGo: (g: Go) => void; onClose: () => void;
+  onGo: (g: Go) => void; onClose: () => void; part?: "overview" | "settings"; // Settings: stop watching it
 }) {
   const now = useNow(60000);
   const events = useEvents(uid, generation);
@@ -123,6 +123,21 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
   async function stop() {
     try { await api("POST", `/api/devices/${d.id}/revoke`, {}); onClose(); }
     catch { setNote("Couldn't stop watching it. Please try again."); setStopping(false); }
+  }
+  if (part === "settings") {
+    return (
+      <section className="drawer-section">
+        <h4>Stop watching</h4>
+        <div className="remove-device small">
+          {!stopping
+            ? <button className="linkish" onClick={() => setStopping(true)}>Stop watching it…</button>
+            : <>Take it off the map? Nothing changes on the device itself.{" "}
+                <button className="small" onClick={stop}>Stop watching</button>{" "}
+                <button className="small" onClick={() => setStopping(false)}>Keep it</button></>}
+        </div>
+        {note && <p className="small" style={{ color: "var(--crit)" }}>{note}</p>}
+      </section>
+    );
   }
   return (
     <>
@@ -161,13 +176,6 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
             memory and what runs there, and Nightlight could fix things on it.</p>
           <button onClick={() => onGo({ to: "panel", panel: "add" })}>Install the helper on it</button>
         </section>)}
-      <div className="remove-device small">
-        {!stopping
-          ? <button className="linkish" onClick={() => setStopping(true)}>Stop watching it…</button>
-          : <>Take it off the map? Nothing changes on the device itself.{" "}
-              <button className="small" onClick={stop}>Stop watching</button>{" "}
-              <button className="small" onClick={() => setStopping(false)}>Keep it</button></>}
-      </div>
       {note && <p className="small" style={{ color: "var(--crit)" }}>{note}</p>}
     </>
   );
