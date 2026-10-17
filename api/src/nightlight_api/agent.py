@@ -178,7 +178,10 @@ def _device_summary(d: dict) -> dict:
     d = real.view(d)
     open_ = [f for f in d.get("findings") or [] if f.get("state", "new") == "new"]
     top = next(iter(open_), None)
-    return {"id": d["id"], "name": d.get("name"), "purpose": d.get("purpose"), "status": d.get("status"),
+    # A name the thing announced itself (adopted when nobody typed one) is quoted as data everywhere it appears,
+    # here and in the map's lines; a name the owner typed is theirs.
+    name = _quoted(d.get("name")) if d.get("nameFromSeen") else d.get("name")
+    return {"id": d["id"], "name": name, "purpose": d.get("purpose"), "status": d.get("status"),
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
             "topProblem": top and top.get("message"), "simulated": d.get("simulated", True),
             "real": d.get("realm") == "real", "lastReport": str(d.get("lastSeen")) if d.get("realm") == "real" else None,

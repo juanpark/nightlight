@@ -35,7 +35,7 @@ def test_names_are_shown_by_default_and_become_the_added_name(client, started):
     assert (speaker["name"], speaker["seenName"], speaker["nameFromSeen"]) == ("Kitchen TV", "Living Room", False)
     text = agentlib.fleet_summary(started, generation(started))
     assert 'announces itself as "Living Room"' in text
-    assert "Office Printer (Brother HL-L2350DW)" in text
+    assert '"Office Printer" (Brother HL-L2350DW)' in text  # adopted from the network: quoted as data
 
 
 def test_names_holding_an_address_are_dropped(client, started):
@@ -82,3 +82,11 @@ def test_turning_names_off_removes_them_everywhere(client, started):
     assert "Office Printer" not in text and "Living Room" not in text and "Hallway Hub" not in text
     assert client.post("/api/settings", json={"deviceNames": True}).json()["deviceNames"] is True
     assert client.post("/api/settings", json={"deviceNames": "yes"}).status_code == 422
+
+
+def test_codex_release_probes_are_closed(client, started):
+    # Models can't carry hardware ids or names even with names off; an adopted announced name is quoted everywhere.
+    from nightlight_api import real
+    for model in ("AA-BB-CC-DD-EE-12", "Alex2-MacBook", "3C2AF4E5B6A7"):
+        assert real.product("Brother", model) == ("Brother", None)
+    assert real.product("Brother", "HL-L2350DW") == ("Brother", "HL-L2350DW")

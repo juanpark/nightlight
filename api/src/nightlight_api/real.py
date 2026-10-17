@@ -15,7 +15,7 @@ import re
 from . import db, links, release
 from .errors import ApiError, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
-from .redact import scrub_value
+from .redact import scrub, scrub_value
 
 CODE_TTL = timedelta(minutes=10)
 CODES_PER_HOUR = 10
@@ -290,6 +290,9 @@ SERIES_WORDS = {"docuprint", "laserjet", "officejet", "deskjet", "envy", "pixma"
 MODEL_CHARS = r"^[A-Za-z0-9][A-Za-z0-9 /+-]{0,39}$"
 
 
+# Hardware ids in a model field: hex pairs joined by - or : ("AA-BB-CC-DD-EE-12"), or a long run of hex digits.
+HARDWARE_SHAPE = re.compile(r"(?i)(?:\b|^)[0-9a-f]{2}(?:[-:][0-9a-f]{2}){2,}|[0-9a-f]{8,}")
+
 def product_code(text: str | None) -> str | None:
     """A model that looks like a product code ("HL-L2350DW", "DocuPrint CP115/118 w"): at most 40 characters and 5
     words, a digit somewhere, each word of letters, digits and / + - holding a digit, or a short all-capitals code, a
@@ -300,10 +303,10 @@ def product_code(text: str | None) -> str | None:
     if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
         return None
     for w in words:
-        if not re.fullmatch(r"[A-Za-z0-9/+-]+", w) or not (
-                re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6) or len(w) == 1
-                or w.lower() in SERIES_WORDS):
-            return None
+        if not (w.lower() in SERIES_WORDS or (len(w) == 1 and w.isalnum()) or (
+                re.fullmatch(r"[A-Z0-9][A-Z0-9/+-]*[a-z]{0,3}", w) and not HARDWARE_SHAPE.search(w)
+                and (re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6)))):
+            return None  # a word that isn't a code: a name, a host name, a hardware address
     return text
 
 
@@ -314,7 +317,9 @@ def product(maker: str | None, model: str | None) -> tuple[str | None, str | Non
         return None, None
     if maker == "Apple":
         return maker, model if model in APPLE_MODELS else None
-    return maker, model if product_code(model) == model else None
+    if product_code(model) != model or scrub(model or "")[0] != model:
+        return maker, None  # not a product code, or holds something the scrubber hides
+    return maker, model
 
 
 def set_device_names(uid: str, on: bool) -> dict:
@@ -324,16 +329,29 @@ def set_device_names(uid: str, on: bool) -> dict:
     db.user(uid).set({"settings": {"deviceNames": on}}, merge=True)
     if on:
         return {"ok": True, "deviceNames": True}
-    for snap in discoveries_ref(uid).get():
-        items = snap.to_dict().get("items") or []
+    # Each change is decided on the document as it is now (a transaction per document), so a list saved or a rename
+    # made meanwhile is never undone by this cleanup.
+    @firestore.transactional
+    def clear_list(tx, ref):
+        snap = ref.get(transaction=tx)
+        items = (snap.to_dict() or {}).get("items") or [] if snap.exists else []
         if any(it.get("name") for it in items):
-            snap.reference.update({"items": [{**it, "name": None} for it in items]})
+            tx.update(ref, {"items": [{**it, "name": None} for it in items]})
+
+    @firestore.transactional
+    def clear_device(tx, ref):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or not (d.get("seenName") or d.get("nameFromSeen")):
+            return
+        still_announced = d.get("nameFromSeen") is True and d.get("name") == (d.get("seenName") or "")[:40]
+        tx.update(ref, {"seenName": firestore.DELETE_FIELD, "nameFromSeen": firestore.DELETE_FIELD,
+                        **({"name": (d.get("guess") or "Found device")[:40]} if still_announced else {})})
+
+    for snap in discoveries_ref(uid).get():
+        clear_list(db.client().transaction(), snap.reference)
     for snap in db.devices(uid).where(filter=FieldFilter("kind", "==", "watched")).get():
-        d = snap.to_dict()
-        if d.get("seenName") or d.get("nameFromSeen"):
-            snap.reference.update({"seenName": firestore.DELETE_FIELD, "nameFromSeen": firestore.DELETE_FIELD,
-                                   **({"name": (d.get("guess") or "Found device")[:40]}
-                                      if d.get("nameFromSeen") else {})})
+        clear_device(db.client().transaction(), snap.reference)
     return {"ok": True, "deviceNames": False}
 
 
@@ -1092,15 +1110,23 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
         d = snap.to_dict() if snap.exists else None
         if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived"):
             raise not_found()
-        if d.get("setup"):  # already chosen (or being applied right now): that outcome stands
-            return d, False
+        prior = d.get("setup") or {}
+        stalled = prior.get("state") == "applying" and prior.get("claimedAt") is not None \
+            and (_now() - prior["claimedAt"]).total_seconds() > SETUP_STALL_SECONDS
+        if prior and not stalled:  # already chosen (or being applied right now): that outcome stands
+            return d, None
+        # The choices are kept with the claim, so an attempt interrupted part-way is finished later with the same
+        # choices (never this request's, which may differ), and its folder job keeps one identity.
+        choice = {k: prior[k] for k in ("preset", "autoUpdate", "macFolders")} if stalled else \
+            {"preset": preset, "autoUpdate": auto_update, "macFolders": mac_folders}
         if d.get("manage") == "app":
-            tx.update(ref, {"setup": {"preset": preset, "state": "applying"}})
-        return d, True
+            tx.update(ref, {"setup": {**choice, "state": "applying", "claimedAt": _now()}})
+        return d, choice
 
-    d, mine = db.run_transaction(claim)
-    if not mine:
+    d, choice = db.run_transaction(claim)
+    if choice is None:
         return {"ok": True, **(d.get("setup") or {}), "already": True}
+    preset, auto_update, mac_folders = choice["preset"], choice["autoUpdate"], choice["macFolders"]
     out = {"preset": preset, "applied": False, "trimmed": False, "macFoldersAction": None}
     why = None
     if d.get("manage") == "app":
@@ -1144,6 +1170,7 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
 
 
 PERMISSION_TARGETS = 20  # per list, as PermissionsBody and the helper allow
+SETUP_STALL_SECONDS = 120  # a setup still "applying" after this was interrupted: the next request finishes it
 
 
 def request_mac_folders(uid: str, device_id: str) -> dict:

@@ -2236,6 +2236,9 @@ def _maker(text):
                  if words == key or words.startswith(key + " ")), None)
 
 
+# Hardware ids in a model field: hex pairs joined by - or : ("AA-BB-CC-DD-EE-12"), or a long run of hex digits.
+HARDWARE_SHAPE = re.compile(r"(?i)(?:\b|^)[0-9a-f]{2}(?:[-:][0-9a-f]{2}){2,}|[0-9a-f]{8,}")
+
 def _product_code(text):
     """A model kept only when it looks like a product code: at most 40 characters and 5 words, with a digit somewhere;
     each word made of letters, digits and / + - only, and either holding a digit, or a short all-capitals code, a single
@@ -2243,14 +2246,16 @@ def _product_code(text):
     if not isinstance(text, str):
         return None
     text = re.sub(r"(?i)\s+series$", "", " ".join(text.split()))
+    if scrub(text)[0] != text:
+        return None  # holds something the scrubber hides (an address, a key)
     words = text.split(" ")
     if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
         return None
     for w in words:
-        if not re.fullmatch(r"[A-Za-z0-9/+-]+", w) or not (
-                re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6) or len(w) == 1
-                or w.lower() in SERIES_WORDS):
-            return None
+        if not (w.lower() in SERIES_WORDS or (len(w) == 1 and w.isalnum()) or (
+                re.fullmatch(r"[A-Z0-9][A-Z0-9/+-]*[a-z]{0,3}", w) and not HARDWARE_SHAPE.search(w)
+                and (re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6)))):
+            return None  # a word that isn't a code: a name, a host name, a hardware address
     return text
 
 

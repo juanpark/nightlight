@@ -85,3 +85,15 @@ def test_mac_folders_can_be_asked_again_and_the_answer_is_reported(client, start
     pi = enrolled(client, "Pi")
     beat(client, pi["token"], {**FACTS, "manage": "app", "os": "Debian 12", "helperVersion": "0.9.23"})
     assert client.post(f"/api/devices/{pi['deviceId']}/mac-folders", json={}).json()["code"] == "not_a_mac"
+
+
+def test_an_interrupted_setup_is_finished_later_with_its_own_choices(client, started):  # codex release #2
+    from datetime import datetime, timedelta, timezone
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "os": "Debian 12"})
+    db.device(started, dev["deviceId"]).update({"setup": {"preset": "fix", "autoUpdate": True, "macFolders": False,
+                                                         "state": "applying",
+                                                         "claimedAt": datetime.now(timezone.utc) - timedelta(minutes=5)}})
+    r = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "watch"}).json()
+    d = db.device(started, dev["deviceId"]).get().to_dict()
+    assert r["done"] and d["setupPreset"] == "fix" and d["permissions"]["cleanup"] and d["permissions"]["autoUpdate"]
