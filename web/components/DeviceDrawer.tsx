@@ -159,7 +159,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
       </>}
 
       {current === "settings" && <>
-        <Permissions device={device} services={services} />
+        <Permissions key={device.id} device={device} services={services} />
         <section className="drawer-section">
           <h4>Updates</h4>
           <HelperUpdate device={device} actions={actions} latest={release?.version}

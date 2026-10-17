@@ -88,12 +88,12 @@ export default function Permissions({ device, services }: { device: Device; serv
   const targets = [...new Set([...containers, ...units, ...want.logs])].sort();
   const fix = fixAll(targets, containers, units);
   const preset: Preset = samePerms(want, WATCH) ? "watch" : samePerms(want, fix) ? "fix" : "custom";
-  // "Watch and fix safe things" covers apps that appear later too: re-applied when a new one shows up.
-  const targetsKey = targets.join("|");
-  useEffect(() => {
-    if (device.manage === "app" && chosen === "fix" && !pending && preset !== "fix") save(fix);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetsKey, chosen]);
+  // Permissions only change on a click: a preset chosen earlier never widens anything by itself. When apps appeared
+  // after "Watch and fix safe things" was chosen, the person is told and taps it again to include them.
+  const within = (a: string[], b: string[]) => a.every((x) => b.includes(x));
+  const grew = chosen === "fix" && preset === "custom" && want.diagnose && want.cleanup && want.updates
+    && want.autoUpdate && within(want.logs, fix.logs) && within(want.restart_container, fix.restart_container)
+    && within(want.restart_service, fix.restart_service);
 
   if (device.manage !== "app") {
     return (
@@ -150,7 +150,8 @@ export default function Permissions({ device, services }: { device: Device; serv
             {p.name}{p.id === "fix" && <span className="small"> (recommended)</span>}</button>
         ))}
         <span className="mode-hint small muted">
-          {PRESETS.find((p) => p.id === (chosen === "custom" ? "custom" : preset))?.copy}</span>
+          {grew ? "New apps appeared since you chose this. Tap Watch and fix safe things again to include them."
+            : PRESETS.find((p) => p.id === (chosen === "custom" ? "custom" : preset))?.copy}</span>
       </div>
       <details className="perm-switches" open={open || preset === "custom"}
         onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>

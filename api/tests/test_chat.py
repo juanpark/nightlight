@@ -230,3 +230,23 @@ def test_a_dropped_stream_stops_the_turn_and_frees_the_chat(client, started):
     assert step.get("unfinished") is True and step["ok"] is False
     FakeLlm.behavior = None
     assert ask(client, sid, "And now?").status_code == 200  # the chat is free right away
+
+
+def test_stopping_on_the_first_frame_also_frees_the_chat(client, started):
+    import asyncio
+    sid = new_session(client)
+    turn_id = turns.accept_message(started, sid, "Hello?", str(uuid.uuid4()))
+    claimed = turns.claim(started, turn_id)
+
+    async def first_frame_then_drop():
+        gen = turns.stream(started, claimed, "127.0.0.1")
+        assert json.loads((await gen.__anext__())[5:])["type"] == "turn_start"
+        await gen.aclose()
+
+    asyncio.run(first_frame_then_drop())
+    turn = db.turns(started, sid).document(turn_id).get().to_dict()
+    assert turn["status"] == "failed" and turn["error"]["code"] == "stopped"
+    assert db.session(started, sid).get().to_dict()["activeTurn"] is None
+    # a turn that is already over is never touched by a dropped replay
+    replay = turns.claim(started, turn_id)
+    assert replay.mode == "failed"

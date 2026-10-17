@@ -272,9 +272,14 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     generation stops the producer before any further model call.
     """
     t0 = time.monotonic()
-    yield sse({"type": "turn_start", "turnId": c.turn_id, "attempt": c.attempt,
-               "messageId": c.turn.get("userMessageId"), "at": _iso(_utcnow()), "mode": c.turn.get("mode", "quick"),
-               **({"replay": True} if c.mode == "replay" else {})})
+    try:
+        yield sse({"type": "turn_start", "turnId": c.turn_id, "attempt": c.attempt,
+                   "messageId": c.turn.get("userMessageId"), "at": _iso(_utcnow()),
+                   "mode": c.turn.get("mode", "quick"), **({"replay": True} if c.mode == "replay" else {})})
+    except (asyncio.CancelledError, GeneratorExit):
+        if c.mode == "run":  # claimed but stopped before anything ran (replayed or failed turns are already over)
+            _stop(uid, c, text=None, tool_calls=[], action_ids=[])
+        raise
     if c.mode == "replay":
         msg = await asyncio.to_thread(lambda: db.messages(uid, c.session_id).document(c.turn["finalMessageId"]).get())
         yield sse({"type": "text", "delta": msg.to_dict()["text"]})
@@ -421,12 +426,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         # Synchronous on purpose: nothing can be awaited in a cancelled task.
         if not finishing:
             finishing = True
-            try:
-                finish(uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics, tool_calls=tool_calls,
-                       action_ids=[a["id"] for a in ctx.actions],
-                       error={"code": "stopped", "message": "Stopped before it finished."})
-            except Exception:
-                pass  # superseded or already finished: nothing to record
+            _stop(uid, c, text=shown if shown.strip() else None, tool_calls=tool_calls,
+                  action_ids=[a["id"] for a in ctx.actions], metrics=ctx.metrics)
         raise
     except ApiError as e:
         if e.code == "stale":
@@ -509,6 +510,16 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if status:
         return f"Result: {status}", None
     return "Done", None
+
+
+def _stop(uid: str, c: Claim, *, text: str | None, tool_calls: list, action_ids: list, metrics: dict | None = None):
+    """End a claimed turn whose stream was closed: kept as failed `stopped`, and the session freed at once.
+    Synchronous on purpose: nothing can be awaited in a cancelled task."""
+    try:
+        finish(uid, c, text=text, metrics=metrics or {}, tool_calls=tool_calls, action_ids=action_ids,
+               error={"code": "stopped", "message": "Stopped before it finished."})
+    except Exception:
+        pass  # superseded or already finished: nothing to record
 
 
 def _u16(text: str) -> int:
