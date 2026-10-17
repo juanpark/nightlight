@@ -31,7 +31,11 @@ class Capability:
     on_device: bool = True  # handed to the device's helper (False: the server finishes it, e.g. a grant)
     while_silent: bool = False  # may be asked for while the device isn't reporting
     after_approval: Callable | None = None  # (uid, action) after it was approved, outside the transaction
-    on_result: Callable | None = None  # (tx, uid, action, device) -> [(ref, doc, merge)]: reads here, writes returned
+    on_signed: Callable | None = None  # (tx, uid, action) -> [(ref, doc, merge)]: committed with the signature
+    # (tx, uid, action, device, current) -> [(ref, doc, merge)]: reads here, writes returned. `current` is False
+    # when a sample-home reset replaced the chat that asked: the device's own state is still recorded then, but
+    # nothing new is created for the old conversation.
+    on_result: Callable | None = None
 
 
 def _card(device: dict, plan: str, what: str, undo: str, risk: str, svc_id: str | None = None) -> dict:
@@ -62,6 +66,8 @@ def _update(c: Ctx):
     d = c.device
     if not offer:
         raise ValueError("no_release")
+    if c.params != {"version": offer["version"]}:  # the version is part of the request (and so of its identity)
+        raise ValueError("not_the_release_on_offer")
     if d.get("kind") == "watched" or d.get("revoked"):
         raise ValueError("not_applicable")
     if not release.newer(offer["version"], d.get("helperVersion")):
@@ -117,23 +123,22 @@ def _finish_removal(uid: str, a: dict) -> None:
     archive.after_approval(uid, a["id"])
 
 
-def _playbook_result(tx, uid: str, a: dict, device: dict) -> list:
-    """A playbook's checks came back: match causes in code and make a card per allowed clean-up (reads here, the
-    writes are returned for the caller to apply after all reads)."""
-    from . import actions, playbooks
+def _playbook_result(tx, uid: str, a: dict, device: dict, current: bool) -> list:
+    """A playbook's checks came back: match causes in code; for the chat that asked, a card per allowed clean-up."""
+    from . import playbooks
     book = playbooks.library().get(a.get("playbook"))
     if not book or not a["result"]["ok"]:
         return []
     a["result"]["playbook"] = playbooks.evaluate(book, a["result"].get("output") or "", device)
-    return actions.cards_for_findings(tx, uid, a, device)
+    return playbooks.cards_for_findings(tx, uid, a, device) if current else []
 
 
-def _store_grant(uid: str, a: dict) -> None:
+def _store_grant(tx, uid: str, a: dict) -> list:
     from . import expert
-    expert.store_grant(uid, a)
+    return [expert.grant_write(uid, a)]
 
 
-def _service_recovered(tx, uid: str, a: dict, device: dict) -> list:
+def _service_recovered(tx, uid: str, a: dict, device: dict, current: bool) -> list:
     from . import db
     if not a["result"]["ok"] or not a.get("svcId"):
         return []
@@ -158,7 +163,7 @@ REGISTRY: dict[str, Capability] = {c.name: c for c in (
                keeps_output=True),
     Capability("expert_command", "Run a command you signed", "passkey", _expert_command, keeps_output=True),
     Capability("expert_grant", "Investigate with commands (read-only, 15 minutes)", "passkey", _expert_grant,
-               on_device=False, after_approval=_store_grant),
+               on_device=False, on_signed=_store_grant),
 )}
 
 

@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
+from google.cloud import firestore
 
 from . import actions, real
 
@@ -106,3 +107,34 @@ def summary(result: dict) -> str:
     if pb.get("nothing"):
         lines.append(pb["nothing"])
     return "\n".join(lines)
+
+
+def cards_for_findings(tx, uid: str, a: dict, device: dict) -> list:
+    """One pending clean-up card per allowed fix a playbook found. Reads only (the caller writes, after all reads);
+    each finding gets `card` = the card's id, or None when no card could be made."""
+    from . import capabilities, db
+    from .ids import action_id as make_action_id, proposal_key
+    cap = capabilities.get("fix")
+    out = []
+    for f in a["result"]["playbook"]["found"]:
+        if not f.get("fixAllowed"):
+            continue
+        params = {"recipe": f["fix"]}
+        key = proposal_key(a["demoGeneration"], f"{a['turnId']}:{a['id']}", device["id"], None, "fix", params)
+        aid = make_action_id(key)
+        f["card"] = None
+        if db.action(uid, aid).get(transaction=tx).exists:
+            continue  # can't happen for a first result; never make a second card
+        try:
+            fields, clean = cap.build(capabilities.Ctx(uid, device, {}, params))
+        except ValueError:
+            continue
+        f["card"] = aid
+        out.append((db.action(uid, aid), {
+            "proposalKey": key, "type": "fix", "deviceId": device["id"], "params": clean, **fields,
+            "status": "pending", "demoGeneration": a["demoGeneration"], "deviceVersion": device.get("version"),
+            "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
+            "sessionId": a["sessionId"], "turnId": a["turnId"], "mode": a.get("mode", "quick"),
+            "fromPlaybook": a["id"],
+            "createdAt": firestore.SERVER_TIMESTAMP}, False))
+    return out

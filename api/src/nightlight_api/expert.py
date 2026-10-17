@@ -179,7 +179,9 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
     k = _ref(uid).get().to_dict() or {}
     ref = db.action(uid, action_id)
     a = ref.get().to_dict()
-    if not a or a.get("type") not in ("expert_command", "expert_grant"):
+    from . import capabilities
+    cap = capabilities.get((a or {}).get("type"))
+    if not a or not cap or cap.approval != "passkey":
         raise not_found()
     if a.get("status") != "pending":
         raise ApiError(409, "not_pending")
@@ -196,18 +198,20 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
                                            require_user_verification=True)
     except Exception:
         raise ApiError(422, "signature_not_accepted") from None
-    if v.new_sign_count:  # counterless passkeys stay at 0; a counter that goes backwards was refused above
-        _ref(uid).update({"signCount": v.new_sign_count})
     signed = {x: assertion[x] for x in ("authenticatorData", "clientDataJSON", "signature")}
     from . import actions
     summary = None
-    if a["type"] == "expert_grant":
+    if not cap.on_device:  # it unlocks other jobs until its expiry
         until = datetime.fromtimestamp(a["params"]["payload"]["expires"], timezone.utc)
         summary = f"Investigation unlocked until {until:%H:%M} UTC."
-    return actions.signed(uid, action_id, signed, summary)
+    out = actions.signed(uid, action_id, signed, summary)
+    if v.new_sign_count:  # counterless passkeys stay at 0; recorded once the approval has committed
+        _ref(uid).update({"signCount": v.new_sign_count})
+    return out
 
 
-def store_grant(uid: str, a: dict) -> None:
-    """A signed investigation grant: kept for the device until it expires (run_command reads it)."""
-    _grants(uid).document(f"grant_{a['deviceId']}").set({"payload": a["params"]["payload"],
-                                                       "signed": a["params"]["signed"], "actionId": a["id"]})
+def grant_write(uid: str, a: dict) -> tuple:
+    """A signed investigation grant, kept for the device until it expires (run_command reads it): a write committed
+    together with the signature, the card's completion and the event that resumes the chat."""
+    return (_grants(uid).document(f"grant_{a['deviceId']}"),
+            {"payload": a["params"]["payload"], "signed": a["params"]["signed"], "actionId": a["id"]}, False)

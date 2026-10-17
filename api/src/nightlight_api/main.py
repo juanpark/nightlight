@@ -658,7 +658,9 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
         raise not_found()
     try:
-        a = actions.request(uid, "update_helper", device_id, {}, session_id=None, turn_id="app_update", origin="app")
+        offer = release.latest()
+        a = actions.request(uid, "update_helper", device_id, {"version": offer["version"]} if offer else {},
+                            session_id=None, turn_id="app_update", origin="app")
     except ValueError as e:
         raise (not_found() if str(e) == "not_applicable" else ApiError(409, str(e))) from None
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}

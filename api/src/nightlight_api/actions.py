@@ -294,6 +294,7 @@ def signed(uid: str, action_id_: str, signature: dict, result_summary: str | Non
         cap = capabilities.get(a["type"])
         a["params"] = {**a["params"], "signed": signature}
         a["decision"] = {"by": "user", "decision": "approve", "with": "passkey"}
+        writes = cap.on_signed(tx, uid, a) if cap.on_signed else []
         if cap.on_device:
             a["status"] = "approved"
         else:
@@ -304,11 +305,13 @@ def signed(uid: str, action_id_: str, signature: dict, result_summary: str | Non
                                   ((dsnap.to_dict() if dsnap and dsnap.exists else {}) or {}).get("name", "device"),
                                   mode="investigate")
         tx.set(ref, {k: v for k, v in a.items() if k != "id"})
+        for wref, doc, merge in writes:  # e.g. the grant: activation commits with the card and its event
+            tx.set(wref, doc, merge=merge)
         return a
 
     a = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
     cap = capabilities.get(a["type"])
-    if cap.after_approval:
+    if cap.after_approval and cap.on_device:
         cap.after_approval(uid, a)
     return {"ok": True, "actionId": action_id_, "status": a["status"],
             **({"continuationTurnId": a["continuationTurnId"]} if a.get("continuationTurnId") else {})}
@@ -359,34 +362,6 @@ def await_diagnosis(uid: str, action_id_: str) -> dict | None:
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
 
 
-def cards_for_findings(tx, uid: str, a: dict, device: dict) -> list:
-    """One pending clean-up card per allowed fix a playbook found. Reads only (the caller writes, after all reads);
-    each finding gets `card` = the card's id, or None when no card could be made."""
-    cap = capabilities.get("fix")
-    out = []
-    for f in a["result"]["playbook"]["found"]:
-        if not f.get("fixAllowed"):
-            continue
-        params = {"recipe": f["fix"]}
-        key = proposal_key(a["demoGeneration"], f"{a['turnId']}:{a['id']}", device["id"], None, "fix", params)
-        aid = make_action_id(key)
-        f["card"] = None
-        if db.action(uid, aid).get(transaction=tx).exists:
-            continue  # can't happen for a first result; never make a second card
-        try:
-            fields, clean = cap.build(capabilities.Ctx(uid, device, {}, params))
-        except ValueError:
-            continue
-        f["card"] = aid
-        out.append((db.action(uid, aid), {
-            "proposalKey": key, "type": "fix", "deviceId": device["id"], "params": clean, **fields,
-            "status": "pending", "demoGeneration": a["demoGeneration"], "deviceVersion": device.get("version"),
-            "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
-            "sessionId": a["sessionId"], "turnId": a["turnId"], "mode": a.get("mode", "quick"),
-            "fromPlaybook": a["id"], "createdAt": _now()}, False))
-    return out
-
-
 def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None,
                output: str | None = None) -> dict:
     """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once. The
@@ -416,15 +391,16 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
             a["result"].update(output=found[:4000], hidden=hidden)
         if cap.reports_state:
             a["result"].update(before={"state": "stopped"}, after={"state": state})
+        # A sample-home reset replaces the chat, never a real device: its state and Activity are always recorded; only
+        # what belongs to the conversation (events, new cards) needs the chat that asked to still exist.
         current = user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration")
-        writes = cap.on_result(tx, uid, a, device) if cap.on_result and current else []  # its reads happen here
+        writes = cap.on_result(tx, uid, a, device, current) if cap.on_result else []  # its reads happen here
         for ref, doc, merge in writes:
             tx.set(ref, doc, merge=merge)
         name = device.get("name", "device")
         if not a.get("sessionId"):
             a["followUp"] = "none"
-            if current:
-                conversation.to_activity(tx, uid, a, device)
+            conversation.to_activity(tx, uid, a, device)
         elif not current:
             a["followUp"] = "skipped_after_reset"  # the chat that asked is gone; the result is still recorded
         elif not cap.reads or a.get("followUp") == "wanted":  # a change, or a read the asking turn stopped waiting for
