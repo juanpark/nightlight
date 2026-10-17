@@ -77,7 +77,8 @@ export interface Device {
   tags?: string[];
   /** Watched things (kind "watched", added from Found nearby): what it is, who checks it and how. */
   role?: Role; roleSetBy?: "auto" | "user"; guess?: string; services?: string[]; ports?: number[];
-  vendor?: string | null; checkPort?: number | null; watchedBy?: string | null; cid?: string;
+  vendor?: string | null; maker?: string | null; model?: string | null; seenName?: string | null;
+  checkPort?: number | null; watchedBy?: string | null; cid?: string;
   lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
   net?: { self?: string | null; gateway?: string | null } | null; // keyed fingerprints, never addresses
   setupAt?: Date | null; setupPreset?: "watch" | "fix" | "custom"; // the owner's first choice of what it may do
