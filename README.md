@@ -308,6 +308,20 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `firebase.json`, `firestore.rules` | emulator settings; browsers read only their own data |
 | `scripts/` | tests, secret scan, deploys, benchmark, smoke tests, mock generation |
 
+## How we built it
+
+Two AI coding sessions worked in parallel on one repository, with a human lead deciding and a third model reviewing.
+
+- **One repo, two desks.** Git's `worktree` feature checks out a second branch into a second folder that shares the
+  same repository. The orchestrator session (backend, agent, infra) works on `main` in `nightlight/`; the frontend
+  session works on `fe` in `nightlight-fe/`. Neither switches branches under the other, and every commit lands in the
+  same history at once, so merging needs no copying or extra pushes.
+- **Short-lived helpers.** Larger backlog items went to sub-agents, each in its own throwaway worktree and branch.
+  The orchestrator verified, fixed and merged them.
+- **Reviewed before main.** Every slice was reviewed by a separate model (OpenAI Codex) before it reached `main`.
+  Unreviewed work stays on its side branch, and peers are merged at the exact commit that was approved.
+- **The product's AI is Gemini only.** Claude and Codex were development tools; nothing of them ships in Nightlight.
+
 ## Team
 
 **8yte**
