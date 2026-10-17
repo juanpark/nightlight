@@ -531,14 +531,15 @@ def remove_watched(uid: str, device_id: str) -> dict:
             raise not_found()
         dref = discoveries_ref(uid).document(d.get("watchedBy", "_"))
         disc = dref.get(transaction=tx)
-        tx.update(ref, {"revoked": True, "status": "offline", "health": "unknown", "watchedBy": None,
-                        "archived": True, "archivedAt": firestore.SERVER_TIMESTAMP})  # off the map, for everyone
-        tx.delete(db.client().collection("realDevices").document(f"{uid}__{device_id}"))
+        from . import archive
+        tx.update(ref, {"watchedBy": None})
+        # Off the map for everyone and kept like any removed device (purged after the archive period).
+        archive.archive(tx, uid, device_id, d.get("name", "a device"), f"You took {d.get('name', 'a device')} off the map.",
+                        "you")
         if disc.exists:
             items = disc.to_dict().get("items") or []
             tx.update(dref, {"items": [{**it, "added": False if it.get("cid") == d.get("cid") else it.get("added")}
                                        for it in items]})
-        event(tx, uid, device_id, "removed", "info", f"You took {d.get('name', 'a device')} off the map.", who="you")
         return {"ok": True, "deviceId": device_id}
 
     return db.run_transaction(run)

@@ -276,3 +276,17 @@ def test_stop_watching_takes_it_off_the_map_and_last_answer_is_kept(client, star
     assert client.post(f"/api/devices/{wid}/revoke", json={}).status_code == 200
     assert db.device(started, wid).get().to_dict()["archived"] is True
     assert wid not in agentlib.fleet_summary(started, generation(started))
+
+
+def test_a_thing_you_stop_watching_is_purged_like_any_removed_device(client, started):  # codex watched fields #1
+    from datetime import datetime, timedelta, timezone
+    from nightlight_api import archive
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], FACTS)
+    h = {"X-Device-Token": dev["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ITEM]}, headers=h).status_code == 200
+    wid = client.post(f"/api/discoveries/{dev['deviceId']}/{ITEM['cid']}/add", json={"name": "HA"}).json()["deviceId"]
+    assert client.post(f"/api/devices/{wid}/revoke", json={}).status_code == 200
+    assert db.device(started, wid).get().to_dict()["purgeAt"]
+    archive.index().document(f"{started}__{wid}").update({"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})
+    assert archive.purge_due() >= 1 and not db.device(started, wid).get().exists
