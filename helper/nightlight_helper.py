@@ -254,12 +254,25 @@ def facts():
            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
            "watchResults": _watch_results(), "failedAgents": _failed_agents(),
            "manage": _manage(),
+           "macFolders": _mac_folders_state(),
            "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
                       "sshPasswordLogin": _ssh_password_login()}}
     net = _net()
     if net:
         out["net"] = net
     return out
+
+
+def _mac_folders_state():
+    """On a Mac: whether the private folders may be measured ("allowed"), were declined here ("declined"), or were
+    never asked (None). Elsewhere None. macOS's own answer per folder stays with macOS."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        v = _load().get("macPrivateFolders")
+    except (OSError, ValueError):
+        return None
+    return "allowed" if v is True else "declined" if v is False else None
 
 
 def _allowed():

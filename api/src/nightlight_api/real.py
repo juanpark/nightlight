@@ -965,6 +965,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
             "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {},
             "updatesPending": facts.get("updatesPending"), "containerCount": len(facts.get("containers") or []),
             "manage": facts.get("manage"),
+            "macFolders": facts.get("macFolders"),
             "containersRunning": sum(1 for c in facts.get("containers") or [] if c.get("state") == "running")})
         for ref in old:
             if ref.id not in services:
@@ -1143,6 +1144,27 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
 
 
 PERMISSION_TARGETS = 20  # per list, as PermissionsBody and the helper allow
+
+
+def request_mac_folders(uid: str, device_id: str) -> dict:
+    """Ask an app-managed Mac (helper 0.9.22+) to raise macOS's folder prompts now. One request under way at a time:
+    asking again while it runs returns it; a finished one is followed by a new one (each its own identity)."""
+    from . import actions, release
+    d = db.device(uid, device_id).get().to_dict() or {}
+    if d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived"):
+        raise not_found()
+    if "mac" not in (d.get("os") or "").lower():
+        raise ValueError("not_a_mac")
+    if d.get("manage") != "app" or release.newer(MAC_FOLDERS_FROM, d.get("helperVersion")):
+        raise ValueError("update_helper")
+    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("type", "==", "mac_folders"))
+    for snap in q.get():
+        if snap.to_dict().get("status") in ("pending", "approved", "running"):
+            return {"actionId": snap.id, "status": snap.to_dict()["status"]}
+    a = actions.request(uid, "mac_folders", device_id, {}, session_id=None,
+                        turn_id=f"app_macfolders_{new_id('ask')}", origin="app", once=True)
+    return {"actionId": a["id"], "status": a["status"]}
 
 def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device

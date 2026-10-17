@@ -71,3 +71,17 @@ def test_a_sleeping_mac_still_finishes_setup_with_a_reason(client, started):  # 
     r = client.post(f"/api/devices/{mac['deviceId']}/setup", json={"preset": "watch", "macFolders": True})
     assert r.status_code == 200 and r.json()["applied"] and r.json()["why"] == "device_not_reporting"
     assert db.device(started, mac["deviceId"]).get().to_dict()["setupAt"]
+
+
+def test_mac_folders_can_be_asked_again_and_the_answer_is_reported(client, started):
+    mac = enrolled(client, "Mac")
+    beat(client, mac["token"], {**FACTS, "manage": "app", "os": "macOS 26.1", "helperVersion": "0.9.23",
+                               "macFolders": "declined"})
+    assert db.device(started, mac["deviceId"]).get().to_dict()["macFolders"] == "declined"
+    a = client.post(f"/api/devices/{mac['deviceId']}/mac-folders", json={}).json()
+    assert client.post(f"/api/devices/{mac['deviceId']}/mac-folders", json={}).json()["actionId"] == a["actionId"]
+    db.action(started, a["actionId"]).update({"status": "done"})
+    assert client.post(f"/api/devices/{mac['deviceId']}/mac-folders", json={}).json()["actionId"] != a["actionId"]
+    pi = enrolled(client, "Pi")
+    beat(client, pi["token"], {**FACTS, "manage": "app", "os": "Debian 12", "helperVersion": "0.9.23"})
+    assert client.post(f"/api/devices/{pi['deviceId']}/mac-folders", json={}).json()["code"] == "not_a_mac"

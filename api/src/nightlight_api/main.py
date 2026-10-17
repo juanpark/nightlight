@@ -537,6 +537,7 @@ class HeartbeatBody(Strict):
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
     manage: Literal["app", "strict"] | None = None  # chosen on the device; the server can't change it
+    macFolders: Literal["allowed", "declined"] | None = None  # a Mac's answer about its private folders
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
     net: Net | None = None  # for lines on the map; helpers before 0.9.20 send none
@@ -734,6 +735,18 @@ def device_setup(device_id: str, body: SetupBody, uid: str = Depends(owner_uid))
     if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
         raise not_found()
     return real.device_setup(uid, device_id, body.preset, body.autoUpdate, body.macFolders)
+
+
+@app.post("/api/devices/{device_id}/mac-folders", status_code=202)
+def ask_mac_folders(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Ask a Mac (again) to let Nightlight measure its private folders: macOS asks on the Mac right away. A request
+    still under way is that request."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    try:
+        return real.request_mac_folders(uid, device_id)
+    except ValueError as e:
+        raise ApiError(409, str(e)) from None
 
 
 class PlaceBody(Strict):
