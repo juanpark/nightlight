@@ -17,7 +17,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import ToolContext
 from google.genai import types
 
-from . import actions, db, guide, memory, notebook, playbooks, quota, real
+from . import actions, db, guide, memory, notebook, playbooks, quota, real, sim
 from .config import settings
 from .errors import ApiError
 from .fence import turn_fence
@@ -296,6 +296,9 @@ def make_tools(ctx: TurnContext, read_only: bool):
                             if s.get(k) is not None} for s in services]
         out["notebook"] = notebook.recent(ctx.uid, device_id, ctx.generation)
         out["profile"] = (notebook.profile(ctx.uid, device_id) or {}).get("text")
+        if d.get("realm") != "real":  # sample devices: which tool fixes which problem, so the next step is explicit
+            out["fixes_you_can_propose"] = sim.fixes(dict(snap.to_dict(), id=device_id),
+                                                     {s["id"]: s for s in services})
         return _bounded(out, ctx)
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
