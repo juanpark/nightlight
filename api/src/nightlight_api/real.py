@@ -260,10 +260,10 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
 DISCOVERY_TTL = timedelta(hours=24)
 WATCHED_PER_HELPER = 10
 # The helper's vocabulary (nightlight_helper.py PORTS / MDNS / VENDORS / _guess); anything else is refused.
-FOUND_PORTS = (22, 80, 443, 445, 631, 8123, 25565, 32400)
+FOUND_PORTS = (22, 80, 443, 445, 631, 7000, 8123, 25565, 32400)
 FOUND_SERVICES = ("remote login (SSH)", "web page", "secure web page", "file sharing", "printer", "Home Assistant",
                   "Minecraft", "Plex", "Chromecast / Google speaker", "AirPlay speaker or TV", "HomeKit accessory",
-                  "AirPlay speaker", "router", "media player", "media server", "Apple device")
+                  "AirPlay speaker", "router", "media player", "media server", "Apple device", "AirPlay receiver")
 FOUND_VENDORS = ("Raspberry Pi", "Synology", "QNAP", "VMware virtual machine", "Philips Hue", "Sonos",
                  "Espressif (smart-home gadget)", "Google", "Amazon", "Ubiquiti", "Nintendo",
                  "private address (likely a phone or laptop)")
@@ -446,7 +446,7 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
     return db.run_transaction(run)
 
 
-WATCH_PORTS = (8123, 32400, 25565, 445, 631, 443, 80, 22)  # a watched thing is checked on the first one it answers
+WATCH_PORTS = (8123, 32400, 25565, 445, 631, 443, 80, 22, 7000)  # checked on the first one it answers; AirPlay last
 
 
 ROLES = ("router", "printer", "fileshare", "smarthome", "server", "speaker", "computer", "other")
@@ -654,6 +654,10 @@ def add_found(uid: str, helper_id: str, cid: str, name: str | None) -> dict:
             raise not_found()
         if item.get("added") or any(w.get("cid") == cid and not w.get("revoked") for w in watched):
             raise ApiError(409, "already_added")
+        own = next((h.to_dict() for h in helpers_now if h.to_dict().get("kind") != "watched"
+                    and not h.to_dict().get("archived") and item.get("tag") in links.tags_of(h.to_dict())), None)
+        if own:  # one of its other addresses (Wi-Fi, a VPN): it is already on the map as itself
+            raise ApiError(409, "your_own_device", name=own.get("name"))
         if sum(1 for w in watched if not w.get("revoked")) >= WATCHED_PER_HELPER:  # removed ones free a place
             raise ApiError(429, "watch_capacity")
         port = next((p for p in WATCH_PORTS if p in (item.get("ports") or [])), None)

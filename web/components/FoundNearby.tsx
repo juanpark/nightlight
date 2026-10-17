@@ -95,6 +95,8 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
     } catch (e) {
       setMsg(e instanceof ApiError && e.code === "already_added" ? "That one is already on your map."
         : e instanceof ApiError && e.code === "no_check_port" ? "Nightlight can't check that one, so it can't watch it."
+        : e instanceof ApiError && e.code === "your_own_device"
+          ? `That's your ${typeof e.body.name === "string" ? e.body.name : "own device"}, already on your map.`
         : e instanceof ApiError && e.code === "watch_capacity" ? "That device already watches as many things as it can (10)."
         : "Couldn't add it.");
     }
