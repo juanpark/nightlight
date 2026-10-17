@@ -69,7 +69,7 @@ def evaluate(book: dict, output: str, device: dict) -> dict:
             row["fix"] = cause["fix"]
             row["fixAllowed"] = cause["fix"] in allowed
             if cleanup_on and not row["fixAllowed"]:
-                row["fixUnavailable"] = True  # switched on, but the device can't run it (e.g. it needs root)
+                row["fixUnavailable"] = True  # switched on, but the device doesn't offer it (why isn't known here)
         found.append(row)
     return {"id": book["id"], "title": book["title"], "found": found,
             "nothing": None if found else book.get("nothing")}
@@ -104,8 +104,7 @@ def summary(result: dict) -> str:
         tail = ""
         if f.get("fix"):
             tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("card")
-                    else " A clean-up exists, but the helper on this device can't run it (it needs administrator "
-                         "rights the helper doesn't have)." if f.get("fixUnavailable")
+                    else " A clean-up exists, but it isn't available on this device." if f.get("fixUnavailable")
                     else " A clean-up exists, but \"clean up space\" isn't switched on for this device."
                     if not f.get("fixAllowed") else " A clean-up exists, but no card could be made right now.")
         lines.append(f"- {f['say']}{tail}" + (f" {f['advice']}" if f.get("advice") else ""))

@@ -490,7 +490,8 @@ def _look_container(name, logs):
     if health.get("Status"):
         lines.append(f"health check: {health['Status']}, failed {health.get('FailingStreak', 0)} times in a row")
         last = (health.get("Log") or [{}])[-1] if isinstance(health.get("Log"), list) else {}
-        if isinstance(last, dict) and str(last.get("Output") or "").strip():
+        # what the check printed is log text: only with the logs permission
+        if logs and isinstance(last, dict) and str(last.get("Output") or "").strip():
             lines.append(f"last health check said: {_one_line(str(last['Output']).strip(), 200)}")
     if st.get("Error"):
         lines.append(f"error: {st['Error'][:200]}")
@@ -661,30 +662,39 @@ def _size(mb):
     return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
 
 
-def _file_mb(fd, name):
-    """(is a folder, MB on disk) for one name in the pinned folder `fd`; MB is None for a folder (measure it with
-    `du`). A link counts 0 and is never followed. Blocks really used, so a sparse file (lastlog) doesn't look huge."""
-    try:
-        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-    except OSError:
-        return False, 0
-    if stat.S_ISDIR(st.st_mode):
-        return True, None
-    return False, round(st.st_blocks * 512 / 1024 ** 2) if stat.S_ISREG(st.st_mode) else 0
-
-
-def _biggest_file(folder):
-    """(name, MB) of the biggest file right inside `folder` (pinned, no link followed), or None."""
+def _scan(folder):
+    """(name, is a folder, MB on disk) for what is right inside `folder`, or None when it can't be read. The folder
+    is pinned and no link is followed (a link counts 0); MB is None for a folder (measure it with `du`). Blocks really
+    used, so a sparse file (lastlog) doesn't look huge. Bounded: stops after LOG_NAMES names, or when the inspect
+    job's time is nearly up, without listing the rest."""
     fd = _pin(folder)
     if fd is None:
         return None
+    out = []
     try:
-        sizes = [(_file_mb(fd, n), n) for n in sorted(os.listdir(fd))[:LOG_NAMES]]
+        with os.scandir(fd) as names:
+            for entry in names:
+                if len(out) >= LOG_NAMES or _left(5) < 1:
+                    break
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    out.append((entry.name, True, None))
+                else:
+                    out.append((entry.name, False, round(st.st_blocks * 512 / 1024 ** 2)
+                                if stat.S_ISREG(st.st_mode) else 0))
     except OSError:
         return None
     finally:
         os.close(fd)
-    files = [(mb, n) for (is_dir, mb), n in sizes if not is_dir and mb]
+    return out
+
+
+def _biggest_file(folder):
+    """(name, MB) of the biggest file right inside `folder` (pinned, no link followed), or None."""
+    files = [(mb, n) for n, is_dir, mb in _scan(folder) or [] if not is_dir and mb]
     return max(files)[::-1] if files else None
 
 
@@ -693,17 +703,13 @@ def _logs():
     few entries as (path, MB)). A big folder is named by its biggest file when that file is most of it, so the owner
     sees the one log that grew (say an app's debug log), not just "System logs". Bounded: LOG_NAMES names per folder
     and the inspect job's time budget."""
-    fd = _pin(_LOGS)
-    if fd is None:
+    entries = _scan(_LOGS)
+    if entries is None:
         return None, None, []
-    try:
-        entries = [(n, *_file_mb(fd, n)) for n in sorted(os.listdir(fd))[:LOG_NAMES]]
-    except OSError:
-        return None, None, []
-    finally:
-        os.close(fd)
     journal, total, rows = None, 0, []
     for name, is_dir, mb in entries:
+        if _left(5) < 1:
+            break
         if is_dir:
             mb = _du(f"{_LOGS}/{name}")
         if mb is None:
@@ -715,7 +721,7 @@ def _logs():
             rows.append((mb, name, is_dir))
     big = []
     for mb, name, is_dir in sorted(rows, reverse=True)[:5]:
-        if mb < BIG_LOG_MB:
+        if mb < BIG_LOG_MB or _left(5) < 1:
             break
         inside = _biggest_file(f"{_LOGS}/{name}") if is_dir else None
         if inside and inside[1] * 2 >= mb:
@@ -1075,21 +1081,22 @@ def _empty_dir(parts):
     return False, f"{len(errors)} item(s) couldn't be removed; first: {_why(err, path)}{more}"
 
 
-_NO_ADMIN = re.compile(r"password|sudo|permission denied|not permitted|no new privileges|are you root|must be root|"
-                       r"superuser|access denied", re.I)
+_SUDO_REFUSED = re.compile(r"^sudo: .*(a password is required|no new privileges|not in the sudoers|"
+                           r"is not allowed to)", re.I | re.M)
 
 
 def _fix_cmd(cmd, timeout=300):
-    """Runs a clean-up command. On failure, a plain reason, never the command's raw error text."""
+    """Runs a clean-up command. On failure, a reason only when it is known for sure (sudo refused), else "";
+    never the command's raw error text."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
-        return False, "its program couldn't be started"
+        return False, ""
     if r.returncode == 0:
         return True, ""
-    if cmd[:1] == ["sudo"] or _NO_ADMIN.search(r.stderr or ""):
+    if cmd[:1] == ["sudo"] and _SUDO_REFUSED.search(r.stderr or ""):  # sudo itself said no, before running anything
         return False, "it needs administrator rights the helper doesn't have"
-    return False, f"it stopped with an error (exit code {r.returncode})"
+    return False, ""  # the command's own error text stays on the device
 
 
 _ROOT_OK = {}  # the answer to "can the helper act as administrator?", and when it was asked
@@ -1164,8 +1171,8 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    text = (f"Done.{freed}" if ok else f"Couldn't run that clean-up on this device: {_one_line(str(why), 300)}.{freed}"
-            ).strip()
+    reason = f": {_one_line(str(why), 300)}" if why else ""
+    text = (f"Done.{freed}" if ok else f"Couldn't run that clean-up on this device{reason}.{freed}").strip()
     return ok, scrub(text)[0], None  # scrubbed again at the boundary
 
 
