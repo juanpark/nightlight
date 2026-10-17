@@ -20,6 +20,7 @@ import Activity from "./Activity";
 import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
 import FirstRun from "./FirstRun";
+import "@/app/mobile.css";
 import MemoryPanel from "./MemoryPanel";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
@@ -76,11 +77,15 @@ export default function Home({ user }: { user: User }) {
   const visibleWatches = tagFilter.length === 0 ? watches
     : watches.filter((w) => tagFilter.some((t) => (w.tags ?? []).includes(t)));
   const resetting = me?.demo?.state === "resetting";
-  const toggle = (p: Panel) => setPanel((cur) => (cur === p ? "none" : p));
+  // Phones show one pane at a time (Home or Chat, switched by the tab bar) and fold the header into a menu.
+  const [pane, setPane] = useState<"home" | "chat">("home");
+  const [menu, setMenu] = useState(false);
+  const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
+  const toggle = (p: Panel) => { setMenu(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
   function go(g: Go) {
     if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
     else if (g.to === "panel") setPanel(g.panel);
-    else if (g.to === "chat") chat.current?.ask(g.ask);
+    else if (g.to === "chat") askChat(g.ask);
   }
 
   async function saveWithGoogle() {
@@ -97,6 +102,8 @@ export default function Home({ user }: { user: User }) {
           : <button className="small" disabled={switching || !me} onClick={toggleSample}
               title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
         <span className="spacer" />
+        <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
+        <nav className={`top-nav ${menu ? "open" : ""}`}>
         <button onClick={() => toggle("trust")}>Trust</button>
         <button onClick={() => toggle("activity")}>Activity</button>
         <button onClick={() => toggle("memory")}>Memory</button>
@@ -108,10 +115,11 @@ export default function Home({ user }: { user: User }) {
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
           : <span className="small muted">{user.email}</span>}
         <button onClick={async () => signOut((await firebase()).auth)}>Sign out</button>
+        </nav>
       </header>
-      <div className="main">
+      <div className="main" data-pane={pane}>
         <section className="left">
-          <AwayBanner uid={uid} events={events} onSummarise={(q) => chat.current?.ask(q)} />
+          <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
           <div className="panel needs needs-strip">
             <strong className="verdict">{verdict(needs)}</strong>
             <span className="spacer" />
@@ -121,10 +129,10 @@ export default function Home({ user }: { user: User }) {
                   ? "Notifications are blocked for this site in your browser settings"
                   : "Show a notification when something goes wrong, while this tab is open"}>
                 {notify.on ? "Notifying you" : "Notify me"}</button>)}
-            <button onClick={() => chat.current?.ask("Is anything wrong at home?")}>Check-up now</button>
+            <button onClick={() => askChat("Is anything wrong at home?")}>Check-up now</button>
             <div style={{ flexBasis: "100%" }}>
               <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
-                onFollowUp={(id) => chat.current?.followUp(id)} />
+                onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
             </div>
           </div>
           {panel === "trust" && <TrustPanel trust={trust} />}
@@ -149,18 +157,23 @@ export default function Home({ user }: { user: User }) {
           <Board devices={visible} selected={selected} onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }}
             marks={marks}
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
-          <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => chat.current?.ask(q)} />
+          <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => askChat(q)} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
               needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
-              onGo={go} onFollowUp={(id) => chat.current?.followUp(id)}
-              onAsk={(q) => chat.current?.ask(q)} onClose={() => setSelected(null)} />
+              onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
+              onAsk={(q) => askChat(q)} onClose={() => setSelected(null)} />
           )}
         </section>
         <aside className="right">
           <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
         </aside>
       </div>
+      <nav className="pane-tabs" aria-label="Show">
+        <button className={pane === "home" ? "on" : ""} onClick={() => setPane("home")}>
+          Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
+        <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
+      </nav>
       {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
     </div>
   );
