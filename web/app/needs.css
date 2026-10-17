@@ -103,10 +103,10 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .look-nearby { margin-top: 10px; } /* FoundNearby */
 .found-row { flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .found-row.router { border-left: 3px solid var(--accent); padding-left: 8px; }
-.found-what { flex: 1 1 260px; min-width: 0; }
+.found-what { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
 .found-hint { display: block; color: var(--accent); margin-top: 2px; }
 .found-add { display: flex; gap: 6px; flex: 1 1 240px; max-width: 360px; }
 .found-add input { flex: 1; min-width: 0; }
 .found-more { margin-top: 8px; }
-.found-more ul { margin: 6px 0 0; padding-left: 18px; }
+.found-more ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 .look-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

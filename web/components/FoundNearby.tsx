@@ -102,8 +102,10 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
   const found = items ?? [];
   const named = (t: FoundThing) => (t.router ? "Router" : t.name ?? t.guess).slice(0, 40); // the API takes 40
   const label = (t: FoundThing) => labels[key(t)] ?? named(t);
-  // phones and laptops with a private Wi-Fi address and no name fold into one line: there is nothing to tell them apart
-  const anon = (t: FoundThing) => !!t.privateAddress && !t.name && t.guess === "Phone or laptop";
+  // phones and laptops with a private Wi-Fi address, no name and nothing to check fold into one line: there is
+  // nothing to tell them apart by (one a finder can check stays in the Add list)
+  const anon = (t: FoundThing) => !!t.privateAddress && !t.name && t.guess === "Phone or laptop"
+    && t.seenBy[0]?.canWatch === false;
   const privates = found.filter(anon), rest = found.filter((t) => !anon(t));
   // what can go on the map first (the server puts the router at the top); the rest folds into one line
   const watchable = rest.filter((t) => t.seenBy[0]?.canWatch !== false);
