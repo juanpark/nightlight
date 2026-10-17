@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 PROJECT=${PROJECT:-nightlight-aibc}
 REGION=${REGION:-asia-northeast3}
 WEB_APP_ID=${WEB_APP_ID:-1:1032111130355:web:ad4468c6b1182412aa9986}  # public Firebase app id (not a secret)
-# PREVIEW=name deploys a tagged revision with no traffic, at https://name---<service host>, for checking a change
+# PREVIEW=name (3+ characters, e.g. fe-preview) deploys a tagged revision with no traffic, at
+# https://name---<service host>, for checking a change
 # before it goes live; production keeps serving the previous revision.
 PREVIEW=${PREVIEW:-}
 API_URL=${API_URL:-$(gcloud run services describe nightlight-api --project "$PROJECT" --region "$REGION" --format 'value(status.url)')}

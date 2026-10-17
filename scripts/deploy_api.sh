@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PROJECT=${PROJECT:-nightlight-aibc}
 REGION=${REGION:-asia-northeast3}
-WEB_ORIGINS=${WEB_ORIGINS:-http://localhost:3000,https://nightlight-web-1032111130355.asia-northeast3.run.app,https://fe---nightlight-web-1032111130355.asia-northeast3.run.app}
+WEB_ORIGINS=${WEB_ORIGINS:-http://localhost:3000,https://nightlight-web-1032111130355.asia-northeast3.run.app,https://fe-preview---nightlight-web-1032111130355.asia-northeast3.run.app}
 # Optional: the Memory Bank id (last segment of .../reasoningEngines/<id>). Unset = memory off.
 MEMORY_BANK_ID=${MEMORY_BANK_ID:-4443553098354393088}  # Agent Platform Memory Bank (resource id, not a secret)
 API_URL=${API_URL:-https://nightlight-api-1032111130355.${REGION}.run.app}
