@@ -45,6 +45,8 @@ export default function SetupCard({ device: d, actions, onGo }: { device: Device
         <strong>Saved.</strong>{" "}
         {asking ? <>macOS is asking on the {d.name} now: click <em>Allow</em> for each folder there.</>
           : job?.status === "done" ? <>{job.result?.summary ?? "The folders can be measured now."}</>
+          // TODO: "Ask again" here and in Settings once a folders-only route exists (asked for POST
+          // /api/devices/{id}/mac-folders); /setup would re-apply the preset and could undo later permission changes.
           : <>{job?.result?.summary ?? "macOS didn't allow it."} The rest of your choice is saved.</>}
       </div>
     );
