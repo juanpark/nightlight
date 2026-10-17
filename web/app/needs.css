@@ -16,6 +16,7 @@
   .needs-strip > button { font-size: 13px; padding: 6px 10px; }
   .needs-row .needs-text { flex-basis: calc(100% - 24px); }
   .needs-row > button { margin-left: 16px; }
+  .needs-list { gap: 12px; }
 }
 
 .drawer-status { margin: 6px 0 4px; font-size: 15px; }
