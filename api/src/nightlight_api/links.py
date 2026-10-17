@@ -114,7 +114,7 @@ def summary(uid: str, generation: int, names: dict) -> list[str]:
 
 def same_network(devices: dict) -> list[str]:
     """Devices whose helpers report the same router while the router itself isn't on the map, in plain words."""
-    selves = set().union(*(tags_of(d) for d in devices.values()))
+    selves = {(d.get("net") or {}).get("self") for d in devices.values()}
     groups = {}
     for i, d in devices.items():
         gateway = (d.get("net") or {}).get("gateway")
@@ -172,39 +172,26 @@ def _why(reason: str) -> tuple[str, str]:
     return "depends", f"connects to its {words} (port {port})" if words else f"connects to port {port}"
 
 
-def tags_of(d: dict) -> set:
-    """Every fingerprint a device answers to: its main address and (helper 0.9.22+) all its others."""
-    net = d.get("net") or {}
-    return {net.get("self"), *(net.get("selves") or [])} - {None}
-
-
 def wanted(devices: dict) -> dict:
     """The lines the fingerprints show among these real devices: {link id: (from, to, kind, why)}."""
     by_self = {}
     for i, d in sorted(devices.items(), key=lambda x: x[1].get("kind") == "watched"):  # a helper's own device wins
-        for tag in sorted(tags_of(d)):  # over the same box added from Found nearby
-            by_self.setdefault(tag, i)
+        by_self.setdefault((d.get("net") or {}).get("self"), i)  # over the same box added from Found nearby
+    by_self.pop(None, None)
     out = {}
     for i, d in devices.items():
         net = d.get("net") or {}
         for peer in net.get("peers") or []:
             dst = by_self.get(peer.get("tag"))
-            if not dst or dst == i or peer.get("tag") in tags_of(d):
+            if not dst or peer.get("tag") == net.get("self"):
                 continue  # not on the map, or itself
             kind, why = _why(peer.get("why", ""))
             lid = link_id(i, dst)
             if lid not in out or (kind == "backup" and out[lid][2] != "backup"):
                 out[lid] = (i, dst, kind, why)
         router = by_self.get(net.get("gateway"))
-        if router and router != i and net.get("gateway") not in tags_of(d) and link_id(i, router) not in out:
+        if router and net.get("gateway") != net.get("self") and link_id(i, router) not in out:
             out[link_id(i, router)] = (i, router, "network", "its router: it reaches the internet through it")
-    # Anything found nearby sits behind the router of the device that found it (unless it is that router).
-    for i, d in devices.items():
-        watcher = devices.get(d.get("watchedBy")) if d.get("kind") == "watched" else None
-        router = by_self.get((watcher.get("net") or {}).get("gateway")) if watcher else None
-        if router and router != i and router != d.get("watchedBy") and link_id(i, router) not in out:
-            out[link_id(i, router)] = (i, router, "network",
-                                       f"found on the same network as {watcher.get('name') or 'one of your devices'}")
     return out
 
 

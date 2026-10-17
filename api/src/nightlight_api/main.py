@@ -487,22 +487,18 @@ class Net(Strict):
     """Keyed fingerprints of private addresses (HMAC-SHA256 with the account's netKey, 20 hex characters): enough to
     match two devices of one account, never the address itself."""
     self: str | None = Field(default=None, pattern=TAG)
-    selves: list[Annotated[str, Field(pattern=TAG)]] = Field(default_factory=list, max_length=8)  # one per interface
     gateway: str | None = Field(default=None, pattern=TAG)
     peers: list[Peer] = Field(default_factory=list, max_length=20)
 
 
 class Found(Strict):
-    """The helper's fixed words, plus a maker and model in plain product characters (no apostrophes, no '@' or ':'),
-    which the helper and the server both refuse when they read like a name or an address."""
+    """Only the helper's fixed words: nothing free-form can carry an address or a name off the device."""
     cid: str = Field(pattern=r"^[0-9a-f]{12}$")
     guess: Literal[tuple(real.FOUND_GUESSES)]
     vendor: Literal[tuple(real.FOUND_VENDORS)] | None = None
     services: list[Literal[tuple(real.FOUND_SERVICES)]] = Field(default_factory=list, max_length=8)
     ports: list[Literal[tuple(real.FOUND_PORTS)]] = Field(default_factory=list, max_length=8)
     tag: str | None = Field(default=None, pattern=TAG)  # its address's keyed fingerprint (see Net), never the address
-    maker: str | None = Field(default=None, pattern=real.PRODUCT % 39)
-    model: str | None = Field(default=None, pattern=real.PRODUCT % 59)
 
 
 class DiscoveriesBody(Strict):
@@ -793,8 +789,6 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
     items, _ = scrub_value([i.model_dump() for i in body.items])
-    for it in items:
-        it["maker"], it["model"] = real.product(it.get("maker")), real.product(it.get("model"))
     return real.save_discoveries(token, items)
 
 

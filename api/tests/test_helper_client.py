@@ -20,9 +20,6 @@ def helper(tmp_path, monkeypatch):
     monkeypatch.setenv("NIGHTLIGHT_HOME", str(tmp_path / "cfg"))
     mod = importlib.util.module_from_spec(SPEC)
     SPEC.loader.exec_module(mod)
-    # Never ask the real network (or this machine's mDNS service) who is there.
-    monkeypatch.setattr(mod, "_mdns_records", lambda seconds=None: [])
-    monkeypatch.setattr(mod, "_router_about", lambda budget: (None, {}))
     return mod
 
 

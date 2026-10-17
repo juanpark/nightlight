@@ -110,9 +110,7 @@ what_leaves_the_device:
     allowed (folder sizes, program names, update names; recent log lines only for apps you allowed). Never files,
     host names or addresses. To draw lines between your devices by itself (this Mac backs up to that NAS), it sends
     scrambled fingerprints of local addresses, made with a key only your account's devices get: your devices can be
-    matched to each other, but the addresses never leave them. For things it finds nearby it sends what they seem to
-    be and, when they announce it, their maker and model ("Brother HL-L2350DW"), never their names or addresses: a
-    maker or model that reads like a person's name ("Juan's iPhone") is left out. Anything that looks like a password, key or address is hidden on the device before it is
+    matched to each other, but the addresses never leave them. Anything that looks like a password, key or address is hidden on the device before it is
     sent, and again in the cloud; that hiding is careful but can't catch every possible secret, which is why the
     helper collects as little as it can in the first place.
 
