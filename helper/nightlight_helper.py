@@ -2263,17 +2263,17 @@ def _mount_host(source):
     return re.sub(r"\._[a-z-]+\._tcp(\.local)?\.?$", ".local", host).rstrip(".") or None
 
 
-def _time_machine_hosts():
+def _time_machine_hosts(timeout=5):
     if sys.platform != "darwin" or not shutil.which("tmutil"):
         return []
-    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=5), re.M)
+    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=timeout), re.M)
     return [h for h in (_mount_host("//" + u.split("://", 1)[-1]) for u in urls) if h]
 
 
-def _drive_hosts():
+def _drive_hosts(timeout=5):
     if sys.platform == "darwin":
         lines = [m.group(1) for m in (re.match(r"^(\S+) on .+ \((smbfs|afpfs|nfs|webdav)\b", ln)
-                                      for ln in _run(["mount"], timeout=5).splitlines()) if m]
+                                      for ln in _run(["mount"], timeout=timeout).splitlines()) if m]
     else:
         try:
             with open("/proc/mounts") as f:
@@ -2284,7 +2284,7 @@ def _drive_hosts():
     return [h for h in map(_mount_host, lines) if h]
 
 
-def _connections():
+def _connections(timeout=5):
     """(remote address, port) of established TCP connections from here to a known service port."""
     out = []
     try:
@@ -2295,7 +2295,7 @@ def _connections():
                     ip, port = parts[2].split(":")
                     out.append((_hex_v4(ip), int(port, 16)))
     except (OSError, ValueError):
-        for line in _run(["netstat", "-an", "-p", "tcp"], timeout=5).splitlines():
+        for line in _run(["netstat", "-an", "-p", "tcp"], timeout=timeout).splitlines():
             parts = line.split()  # tcp4  0  0  192.168.1.5.51234  192.168.1.10.5432  ESTABLISHED
             if len(parts) >= 6 and parts[0] == "tcp4" and parts[5] == "ESTABLISHED" and "." in parts[4]:
                 ip, port = parts[4].rsplit(".", 1)
@@ -2324,10 +2324,13 @@ def _relied_on(budget=NET_BUDGET):
                 out.append((ip, why))
         return out
 
+    def left():  # what a command may still take: the shared deadline, never more than 5 s
+        return max(0.5, min(5.0, deadline - time.monotonic()))
+
     found = []
-    for step in (lambda: [(ip, "service:%d" % port) for ip, port in _connections()],
-                 lambda: resolved(_time_machine_hosts(), "time_machine"),
-                 lambda: resolved(_drive_hosts(), "network_drive")):
+    for step in (lambda: [(ip, "service:%d" % port) for ip, port in _connections(left())],
+                 lambda: resolved(_time_machine_hosts(left()), "time_machine"),
+                 lambda: resolved(_drive_hosts(left()), "network_drive")):
         if deadline - time.monotonic() <= 0.5:
             break
         try:

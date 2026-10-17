@@ -148,3 +148,31 @@ def test_a_failed_attempt_is_retried_by_a_later_identical_report(client, started
     calls.clear()
     _report(client, mac, _net(MAC, peers=[(NAS, "time_machine")]))  # done now: no more work per report
     assert not calls
+
+
+ROUTER_ITEM = {**ITEM, "guess": "Device with a web page", "vendor": None, "services": ["web page"], "ports": [80],
+               "tag": ROUTER}
+
+
+def test_adding_a_found_router_before_any_report_never_breaks_reports(client, started):  # codex auto_links rev2 #1
+    mac = enrolled(client, "Mac")
+    h = {"X-Device-Token": mac["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ROUTER_ITEM]}, headers=h).status_code == 200
+    client.post(f"/api/discoveries/{mac['deviceId']}/{ITEM['cid']}/add", json={"name": "Router"})
+    first = _report(client, mac, _net(MAC))  # the account's state was started by the add: the key is made now
+    assert len(first["netKey"]) == 64 and _report(client, mac, _net(MAC))["netKey"] == first["netKey"]
+
+
+def test_a_failed_attempt_after_adding_a_router_is_retried(client, started, monkeypatch):  # codex auto_links rev2 #2
+    mac = enrolled(client, "Mac")
+    _report(client, mac, _net(MAC))  # the account's lines are worked out (nothing to draw yet): not due
+    h = {"X-Device-Token": mac["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ROUTER_ITEM]}, headers=h).status_code == 200
+    real_infer = links.infer
+    monkeypatch.setattr(links, "infer", lambda uid: (_ for _ in ()).throw(RuntimeError("hiccup")))
+    rid = client.post(f"/api/discoveries/{mac['deviceId']}/{ITEM['cid']}/add", json={"name": "Router"}).json()["deviceId"]
+    assert not _links(started)
+    monkeypatch.setattr(links, "infer", real_infer)
+    monkeypatch.setattr(links, "RETRY_SECONDS", 0)
+    _report(client, mac, _net(MAC))  # nothing changed on the Mac, but the add left the lines due
+    assert f"{mac['deviceId']}__{rid}" in _links(started)

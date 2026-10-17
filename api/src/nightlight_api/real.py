@@ -329,6 +329,7 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
         tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
                {"uid": uid, "deviceId": device_id})
         event(tx, uid, device_id, "joined", "info", f"{name} joined your map, watched by {helper_name}.", who="you")
+        links.mark_due(tx, uid)  # a found thing with a fingerprint may be someone's router: lines may change
         return {"ok": True, "deviceId": device_id}, bool(item.get("tag"))
 
     result, fingerprinted = db.run_transaction(run)

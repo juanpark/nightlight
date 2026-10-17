@@ -143,13 +143,22 @@ def net_state(tx, uid: str, changed: bool) -> tuple[str, bool]:
     write: call it after the transaction's other reads."""
     ref = _net_ref(uid)
     snap = ref.get(transaction=tx)
-    doc = snap.to_dict() if snap.exists else {"key": secrets.token_hex(32), "createdAt": firestore.SERVER_TIMESTAMP}
+    doc = snap.to_dict() if snap.exists else {}
+    keyless = not isinstance(doc.get("key"), str)  # never made, or the state was started elsewhere (mark_due)
+    if keyless:
+        doc = {**doc, "key": secrets.token_hex(32), "createdAt": firestore.SERVER_TIMESTAMP}
     tried = doc.get("triedAt")
     retry = bool(doc.get("linesDue")) and (tried is None or (datetime.now(timezone.utc) - tried).total_seconds()
                                            > RETRY_SECONDS)
-    if changed or not snap.exists:
+    if changed or keyless:
         tx.set(ref, {**doc, **({"linesDue": True} if changed else {})})
     return doc["key"], changed or retry
+
+
+def mark_due(tx, uid: str) -> None:
+    """Something that can change the lines (a device added from Found nearby) happened in this transaction: the lines
+    stay due until worked out, whatever happens to the attempt that follows. A write only: call after all reads."""
+    tx.set(_net_ref(uid), {"linesDue": True}, merge=True)
 
 
 def _why(reason: str) -> tuple[str, str]:
