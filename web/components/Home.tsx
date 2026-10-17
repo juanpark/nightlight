@@ -39,7 +39,7 @@ export default function Home({ user }: { user: User }) {
   const trust = useTrust(uid, gen);
   const watches = useWatches(uid);
   const discoveries = useDiscoveries(uid);
-  const found = useFound(discoveries);
+  const found = useFound(discoveries, now);
   const release = useRelease();
   const expert = useExpertStatus();
   // Everything waiting for the person, derived once: tile marks, the device panel and the strip use the same items.
