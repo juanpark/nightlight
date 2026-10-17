@@ -38,7 +38,7 @@ function WorkLog({ blocks, busy, investigate, ms }: { blocks: Block[]; busy: boo
   const n = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
   // Folded, the log still shows what is happening now and anything that went wrong: failures are never hidden.
   const visible = open ? blocks
-    : blocks.filter((b) => b.kind === "lead" || (b.kind === "step" && (b === running || b.status === "failed")));
+    : blocks.filter((b) => (b.kind === "lead" && busy) || (b.kind === "step" && (b === running || b.status === "failed")));
   return (
     <div className={`worklog ${open ? "open" : ""}`}>
       <button className="wl-head" onClick={() => setOpen(!open)} aria-expanded={open}>
