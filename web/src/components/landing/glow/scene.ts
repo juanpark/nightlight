@@ -122,6 +122,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   geos.push(groundGeo);
   const ground = new THREE.Mesh(groundGeo, mats.ground);
   ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.02; // just under the house base, which also tops out at 0 (avoids z-fighting)
   ground.receiveShadow = true;
   scene.add(ground);
 
