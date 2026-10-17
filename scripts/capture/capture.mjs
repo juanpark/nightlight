@@ -66,6 +66,7 @@ async function record(page, name) {
   const mark = (step) => marks.push({ step, at: +(Date.now() / 1000 - t0).toFixed(2) });
   const stop = async () => {
     await beat(300);
+    const end = Date.now() / 1000; // a still screen sends no frames: the last one is held until here
     await cdp.send("Page.stopScreencast").catch(() => {});
     if (frames.length < 2) throw new Error("no frames recorded");
     const dir = path.join(RAW, `.frames-${name}`);
@@ -74,7 +75,7 @@ async function record(page, name) {
     for (const [i, f] of frames.entries()) {
       const file = `f${String(i).padStart(5, "0")}.jpg`;
       await writeFile(path.join(dir, file), Buffer.from(f.data, "base64"));
-      const next = frames[i + 1]?.t ?? f.t + 1.5; // hold the last frame a moment
+      const next = frames[i + 1]?.t ?? Math.max(end, f.t) + 0.5; // hold the last frame to the stop, then a moment
       list.push(`file '${file}'`, `duration ${Math.max(0.001, next - f.t).toFixed(3)}`);
     }
     list.push(`file 'f${String(frames.length - 1).padStart(5, "0")}.jpg'`);
