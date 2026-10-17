@@ -727,3 +727,12 @@ def helper_claim(body: Empty, request: Request):
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
     return real.claim(token)
+
+
+@app.post("/helper/jobs/wait")
+def helper_wait(body: Empty, request: Request):
+    """The work channel: held up to 25 s, answered as soon as this device has approved work (ADR 0003)."""
+    token = request.headers.get("x-device-token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
+        raise ApiError(401, "invalid_token")
+    return real.wait_for_jobs(token)

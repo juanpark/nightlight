@@ -209,6 +209,11 @@ approved (`device`: allowed on the device, no card; `card`: one tap, or the owne
 `continue`: carry on with tools, e.g. after an investigation was approved). The turn id is still
 `cont_<actionId>` and is opened the same way.
 
+**Work channel.** Between reports the helper keeps `POST /helper/jobs/wait {}` open: the server holds it up to 25 s
+with a Firestore listener on the device's approved jobs and answers as soon as one appears (`{jobs:[...]}`, the same
+at-most-once hand-over as `claim`), or with `{jobs:[]}` when the hold ends. `POST /helper/jobs/claim` stays for helpers
+older than 0.9.13 (`docs/adr/0003-job-channel.md`).
+
 **Helper updates.** `GET /helper/release` → `{version, sha256}`; `GET /helper/release/nightlight_helper.py` and
 `.sig` (public). Heartbeat responses carry `latestHelper`. `POST /api/devices/{id}/update {}` (signed-in owner) →
 `202 {actionId, version}`, an approved `update_helper` job; `409` codes: `no_release`, `up_to_date`,

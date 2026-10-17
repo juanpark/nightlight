@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.12"
+VERSION = "0.9.13"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1837,7 +1837,7 @@ def run(every):
                       "delete its files, run the uninstall line from the Nightlight app on this device.")
                 sys.exit(0)  # a clean exit isn't restarted
             print("Nightlight refused this device's key; trying again later.")
-            _wait_and_claim(REFUSED_RETRY)
+            time.sleep(REFUSED_RETRY)  # no work can come while the key is refused
             continue
         refused = None
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
@@ -1847,8 +1847,41 @@ def run(every):
         _wait_and_claim(wait if status == 200 else wait)
 
 
+_CHANNEL = {"ok": True}  # False once a server said it has no work channel (an older server): poll instead
+
+
 def _wait_and_claim(seconds):
-    """Sleep until the next report; while the owner is chatting, check for approved work every few seconds."""
+    """Until the next report, keep the work channel open (docs/adr/0003-job-channel.md): the server holds the
+    request and answers the moment a job is approved here, so approvals start within about a second."""
+    end = time.time() + seconds
+    while time.time() < end and not _RESTART:
+        if not _CHANNEL["ok"]:
+            return _poll_until(max(0.0, end - time.time()))
+        try:
+            cfg = _load()
+            api, token = check_api(cfg["api"]), cfg["token"]
+        except Exception:  # not joined (or config unreadable): nothing to wait for
+            time.sleep(max(0.0, end - time.time()))
+            return
+        try:
+            st, body = _post(api + "/helper/jobs/wait", {}, {"X-Device-Token": token})
+        except Exception:
+            st, body = 0, {}
+        if st == 404:
+            _CHANNEL["ok"] = False
+            continue
+        if st != 200:  # network or server trouble: wait a little, never spin
+            time.sleep(min(15.0, max(0.0, end - time.time())))
+            continue
+        jobs = body.get("jobs")
+        for job in jobs if isinstance(jobs, list) else []:
+            if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
+                _do_job(api, token, job)
+
+
+def _poll_until(seconds):
+    """For older servers: sleep until the next report; while the owner is chatting, check for work every few
+    seconds."""
     if not _POLL["every"]:
         time.sleep(seconds)
         return

@@ -162,7 +162,8 @@ def test_a_refused_key_waits_and_recovers_then_gives_up_after_a_week(helper, mon
         if len(waits) > 400:
             raise RuntimeError("never gave up")
     monkeypatch.setattr(helper, "once", once)
-    monkeypatch.setattr(helper, "_wait_and_claim", wait)
+    monkeypatch.setattr(helper, "_wait_and_claim", wait)  # the work channel between healthy reports
+    monkeypatch.setattr(helper.time, "sleep", wait)  # plain waiting while the key is refused
     with pytest.raises(SystemExit) as e:
         helper.run(60)
     assert e.value.code == 0

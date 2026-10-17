@@ -110,7 +110,8 @@ def test_run_survives_network_failures(helper, monkeypatch):
             raise KeyboardInterrupt  # not an Exception: ends the loop (a test must never be able to spin forever)
     sleeps = []
     monkeypatch.setattr(helper, "once", once)
-    monkeypatch.setattr(helper.time, "sleep", sleeps.append)
+    monkeypatch.setattr(helper, "_wait_and_claim", sleeps.append)  # between reports (the work channel)
+    monkeypatch.setattr(helper.time, "sleep", sleeps.append)  # while the key is refused
     with pytest.raises(KeyboardInterrupt):
         helper.run(60)
     # backs off on failure, returns to normal after success, waits long (not stops) when the key is refused
@@ -587,3 +588,15 @@ def test_wrapper_is_quoted_and_never_clobbers_other_files(helper, monkeypatch, t
     assert helper.WRAPPER_MARK in text and "'" in text and helper._is_our_wrapper(str(theirs))
     out = subprocess.run(["sh", "-n", str(theirs)], capture_output=True)
     assert out.returncode == 0
+
+
+def test_waiting_uses_the_work_channel_and_falls_back_on_old_servers(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43})
+    calls, ran = [], []
+    answers = iter([(200, {"jobs": [{"id": "act_" + "a" * 26, "type": "diagnose", "params": {}}]}), (404, {})])
+    monkeypatch.setattr(helper, "_post", lambda url, body, h=None: calls.append(url) or next(answers))
+    monkeypatch.setattr(helper, "_do_job", lambda api, token, job: ran.append(job["id"]))
+    monkeypatch.setattr(helper, "_poll_until", lambda seconds: calls.append("poll"))
+    helper._wait_and_claim(60)
+    assert calls[:2] == ["https://api.example.com/helper/jobs/wait"] * 2 and calls[2] == "poll"
+    assert ran == ["act_" + "a" * 26] and helper._CHANNEL["ok"] is False

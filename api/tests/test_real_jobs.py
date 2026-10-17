@@ -249,3 +249,27 @@ def test_a_report_only_heartbeat_never_takes_jobs(client, started):
     r = client.post("/helper/heartbeat?jobs=0", json=ALLOW, headers={"X-Device-Token": dev["token"]})
     assert r.status_code == 200 and r.json()["jobs"] == []
     assert db.action(started, a["id"]).get().to_dict()["status"] == "approved"  # still waiting for the service
+
+
+def test_the_work_channel_answers_as_soon_as_a_job_is_approved(client, started):
+    import threading
+    import time
+    from nightlight_api import actions, db
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = actions.propose(started, session_id="sess_test", turn_id="tw", generation=generation(started),
+                        action_type="restart_container", device_id=dev["deviceId"], params={"container": "pi-grafana-1"})
+    threading.Timer(1.0, lambda: client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})).start()
+    t = time.monotonic()
+    r = client.post("/helper/jobs/wait", json={}, headers={"X-Device-Token": dev["token"]})
+    assert r.status_code == 200 and [j["id"] for j in r.json()["jobs"]] == [a["id"]]
+    assert time.monotonic() - t < 10  # woke on the approval, not at the end of the hold
+    assert db.action(started, a["id"]).get().to_dict()["status"] == "running"
+
+
+def test_the_work_channel_comes_back_empty_after_its_hold(client, started, monkeypatch):
+    from nightlight_api import real
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    monkeypatch.setattr(real, "WAIT_SECONDS", 1)
+    assert real.wait_for_jobs(dev["token"], hold=1)["jobs"] == []

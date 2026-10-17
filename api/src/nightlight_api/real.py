@@ -881,8 +881,9 @@ def _poll_every(user: dict) -> int:
     return FAST_POLL_SECONDS if last and _now() - last < CHAT_ACTIVE else 0
 
 
-def claim(token: str) -> dict:
-    """A light check for approved work between reports (only used while the owner is chatting)."""
+def claim(token: str, rate_limited: bool = True) -> dict:
+    """Hand over this device's approved work (at most once). Older helpers poll this between reports; newer ones
+    wait on `wait_for_jobs`, which calls it when work appears."""
     tref = tokens_ref().document(_sha(token))
 
     @firestore.transactional
@@ -892,7 +893,7 @@ def claim(token: str) -> dict:
         if not t or t.get("revoked"):
             raise ApiError(401, "invalid_token")
         last = t.get("lastClaimAt")
-        if last and (_now() - last).total_seconds() < CLAIM_MIN_SECONDS:
+        if rate_limited and last and (_now() - last).total_seconds() < CLAIM_MIN_SECONDS:
             raise ApiError(429, "too_frequent", retryAfter=CLAIM_MIN_SECONDS)
         uid, device_id = t["uid"], t["deviceId"]
         approved = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
@@ -903,6 +904,31 @@ def claim(token: str) -> dict:
 
     jobs, poll = db.run_transaction(run)
     return {"ok": True, "jobs": jobs, "pollEverySec": poll}
+
+
+WAIT_SECONDS = 25
+
+
+def wait_for_jobs(token: str, hold: float = WAIT_SECONDS) -> dict:
+    """The work channel (docs/adr/0003-job-channel.md): answer as soon as this device has approved work, or after
+    `hold` seconds with none. A Firestore listener on the device's approved jobs wakes it; the hand-over itself is
+    the same at-most-once transaction as every other."""
+    import threading
+    t = tokens_ref().document(_sha(token)).get().to_dict()
+    if not t or t.get("revoked"):
+        raise ApiError(401, "invalid_token")
+    first = claim(token, rate_limited=False)
+    if first["jobs"]:
+        return first
+    woke = threading.Event()
+    query = db.actions(t["uid"]).where(filter=FieldFilter("deviceId", "==", t["deviceId"])).where(
+        filter=FieldFilter("status", "==", "approved"))
+    watch = query.on_snapshot(lambda docs, changes, read_time: woke.set() if docs else None)
+    try:
+        woke.wait(max(0.0, min(hold, WAIT_SECONDS)))
+    finally:
+        watch.unsubscribe()
+    return claim(token, rate_limited=False) if woke.is_set() else {"ok": True, "jobs": [], "pollEverySec": 0}
 
 
 def diagnose_target_ok(device: dict, services: dict, target: str) -> None:
