@@ -1148,7 +1148,9 @@ def _claims(text: str) -> list[re.Match]:
     for m in CARD_CLAIM.finditer(text):
         start, end = _sentence_span(text, m)
         before = text[max(start, m.start() - 60):m.start()].lower()
-        if NEGATED.search(before + " " + text[m.start():end].lower()) or '"' in before[-3:]:
+        # Only what comes before the claim can undo it ("that wasn't right: I've put…"); words after it ("no
+        # changes happen until you approve") don't. The claim's own negative forms never match CARD_CLAIM.
+        if NEGATED.search(before) or '"' in before[-3:]:
             continue
         out.append(m)
     return out

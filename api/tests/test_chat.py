@@ -462,3 +462,13 @@ def test_a_declined_card_says_nothing_changed_and_carries_the_known_state(client
 def test_why_questions_build_on_what_was_already_found():
     assert "When they ask why something broke, start from what this conversation" in agentlib.INSTRUCTION
     assert "the note records the cause, not just" in agentlib.INSTRUCTION
+
+
+def test_words_after_a_claim_never_excuse_it(client, started):  # Codex claims #1
+    said = "I've put up a card to restart the Minecraft game server; no changes happen until you approve."
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), said)
+    sid = new_session(client)
+    ev = events(ask(client, sid, "And the game?"))
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    stored = next(m.to_dict()["text"] for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    assert "I've put up a card" not in text and stored == text and not any(e["type"] == "approval_request" for e in ev)
