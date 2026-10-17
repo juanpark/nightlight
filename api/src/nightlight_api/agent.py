@@ -81,6 +81,19 @@ How to answer:
   in at most 150 words, in this order: what you checked; what you found (names and sizes); what you've put up as
   cards; what the person can do themselves."""
 
+DEEP = """
+
+Investigate mode (the person asked you to dig in, like a system administrator would):
+- Work in a loop: form one or two hypotheses, gather evidence, read it, refine, until you know the cause or run out
+  of steps. Use playbooks and inspect first; then, on a REAL device with an active investigation (run_command), run
+  read-only commands one at a time and read each result before choosing the next. If there's no active
+  investigation, call start_investigation once and tell them to approve it with their passkey.
+- Read the device notebook first and write what you learned to it at the end (write_note).
+- When something must change, propose it (a card); for anything outside your fixed jobs use propose_command, which
+  they sign with their passkey.
+- Answer in at most 300 words, in this order: what I checked (the commands, briefly); what I found; the likely cause
+  (say how sure you are); what I've put up as cards; what you can do; what I'd check next."""
+
 MEMORY_RULES = """
 - When the person tells you a lasting preference or fact about their home or household (for example "the kids play
   Minecraft on weekends" or "never restart anything during my work calls"), save it with remember, then say you'll
@@ -116,6 +129,16 @@ class TurnContext:
     memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
     redacted: int = 0
+    deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
+    started: float = field(default_factory=time.monotonic)
+
+    @property
+    def max_calls(self) -> int:
+        return settings.deep_calls_per_turn if self.deep else settings.model_calls_per_turn
+
+    @property
+    def max_tools(self) -> int:
+        return settings.deep_calls_per_turn if self.deep else settings.tool_calls_per_turn
 
 
 def _bounded(value: dict, ctx: TurnContext) -> dict:
@@ -189,10 +212,14 @@ def fleet_summary(uid: str, generation: int) -> str:
             units = ", ".join(s["allowedJobs"].get("restart_service", [])) or "nothing"
             around = ", ".join(s["allowedJobs"].get("inspect", [])) or "nothing"
             cleans = ", ".join(s["allowedJobs"].get("fix", [])) or "nothing"
+            from . import expert
+            grant = expert.active_grant(uid, s["id"]) if "on" in s["allowedJobs"].get("expert", []) else None
+            xs = ("on, investigation ACTIVE (use run_command)" if grant else "on (start_investigation to dig in)") \
+                if "on" in s["allowedJobs"].get("expert", []) else "off"
             books = ", ".join(b["id"] + ("(suggested)" if b["suggested"] else "")
                               for b in playbooks.offered(d)) or "none"
             kind = (f"REAL device, can restart: {allowed}; can restart services: {units}; can look into: {look}; "
-                    f"can look around: {around}; can clean up: {cleans}; playbooks: {books}; ") + (
+                    f"can look around: {around}; can clean up: {cleans}; playbooks: {books}; expert sessions: {xs}; ") + (
                 f"{why}, health unknown{_silence(d, s, everyone)}" if s["stale"] else f"last report {s['lastReport']}"
                 + ("" if gap.get("restarted") is None else
                    "; after its last silence it " + ("had restarted" if gap["restarted"] else "came back without "
@@ -515,6 +542,74 @@ def make_tools(ctx: TurnContext, read_only: bool):
     remove_device = _wrap(_remove_device_sync)
     action_tools.append(remove_device)
 
+    def _start_investigation_sync(device_id: str, reason: str, tool_context: ToolContext) -> dict:
+        """Ask to investigate a REAL device with read-only commands for 15 minutes (the owner approves once with
+        their passkey). Only for devices listed with "expert sessions: on". If one is already active, says so.
+
+        Args:
+            device_id: the real device's id from list_fleet.
+            reason: one plain sentence: what you want to find out.
+        """
+        from . import expert
+        g = expert.active_grant(ctx.uid, device_id)
+        if g:
+            return {"status": "active", "until_epoch": g["payload"]["expires"], "say": "Investigation is active: "
+                    "use run_command."}
+        return _propose("expert_grant", device_id, {"why": reason})
+
+    def _run_command_sync(device_id: str, command: str, tool_context: ToolContext) -> dict:
+        """Run ONE read-only command on a REAL device during an active investigation and get its output, like a
+        system administrator would (e.g. "last reboot", "df -h", "ps aux", "log show --last 2h --predicate
+        'eventMessage contains \"error\"'", "journalctl -p err -n 50", "docker logs NAME", "pmset -g").
+        One plain command: no pipes, redirects or chaining; reading files only under log folders. The device itself
+        refuses anything else and says why: then try another way.
+
+        Args:
+            device_id: the real device's id from list_fleet.
+            command: the command line.
+        """
+        try:
+            a = actions.request_read_command(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id,
+                                             generation=ctx.generation, device_id=device_id, command=command,
+                                             fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt,
+                                                              ctx.generation))
+        except ApiError as e:
+            if e.code == "stale":
+                raise
+            return {"status": "error", "reason": e.code}
+        except ValueError as e:
+            reason = {"no_investigation": "no active investigation on this device: call start_investigation first",
+                      "device_not_reporting": "the device isn't reporting right now",
+                      "bad_target": "that isn't a usable command"}.get(str(e))
+            return {"status": "error", "reason": reason or "not applicable to this device"}
+        return _await_read(a)
+
+    def _propose_command_sync(device_id: str, command: str, why: str, tool_context: ToolContext) -> dict:
+        """Propose a command that CHANGES something on a REAL device (anything your fixed jobs can't do). It is a
+        card the owner signs with their passkey; nothing runs before that. Explain plainly what it does and why, and
+        prefer the smallest, safest command. Only for devices with "expert sessions: on".
+
+        Args:
+            device_id: the real device's id from list_fleet.
+            command: the exact command line to run.
+            why: one or two plain sentences: what it does and why it helps.
+        """
+        return _propose("expert_command", device_id, {"command": command, "why": why})
+
+    async def start_investigation(device_id: str, reason: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_start_investigation_sync, device_id, reason, tool_context)
+
+    async def run_command(device_id: str, command: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_run_command_sync, device_id, command, tool_context)
+
+    async def propose_command(device_id: str, command: str, why: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_propose_command_sync, device_id, command, why, tool_context)
+
+    for w, f in ((start_investigation, _start_investigation_sync), (run_command, _run_command_sync),
+                 (propose_command, _propose_command_sync)):
+        w.__doc__ = f.__doc__
+    action_tools.extend([start_investigation, propose_command])
+
     def _write_note_sync(device_id: str, note: str, tool_context: ToolContext) -> dict:
         """Write one short note in a device's notebook, for next time: a quirk, the cause you found, what fixed it.
 
@@ -546,7 +641,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
         Topics: add_device, remove_device, uninstall_by_hand, update_helper, what_the_helper_does,
         ssh_and_remote_access, silent_device, permissions, mac_privacy, what_leaves_the_device, memories,
-        checkups_and_cleanups, approvals_and_trust, sample_home.
+        checkups_and_cleanups, approvals_and_trust, sample_home, expert_sessions, investigate_mode.
 
         Args:
             topic: one topic name from the list.
@@ -579,7 +674,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                           (run_playbook, _run_playbook_sync), (how_nightlight_works, _how_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events, look_into, inspect, run_playbook, write_note,
-             how_nightlight_works]
+             how_nightlight_works, run_command]
     if memory.enabled():
         tools.append(remember)
     return tools if read_only else [*tools, *action_tools]
@@ -666,14 +761,15 @@ def make_callbacks(ctx: TurnContext):
     fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
 
     async def before_model(callback_context, llm_request):
-        if ctx.metrics["modelCalls"] >= settings.model_calls_per_turn:
+        if ctx.metrics["modelCalls"] >= ctx.max_calls:
             raise ApiError(429, "too_many_steps")
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
             scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
         await asyncio.to_thread(bound_input, llm_request)
         # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
-        ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence))
+        ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence,
+                                                        settings.deep_c_max if ctx.deep else None))
         ctx.metrics["modelCalls"] += 1
         return None
 
@@ -684,7 +780,7 @@ def make_callbacks(ctx: TurnContext):
         scrub_content(llm_response.content)
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
-        actual = quota.cost_of(u)
+        actual = quota.cost_of(u, (settings.deep_price_in_per_m, settings.deep_price_out_per_m) if ctx.deep else None)
         if u:
             ctx.metrics["tokensIn"] += u.prompt_token_count or 0
             ctx.metrics["tokensOut"] += u.candidates_token_count or 0
@@ -696,8 +792,10 @@ def make_callbacks(ctx: TurnContext):
 
     def before_tool(tool, args, tool_context):
         # Admission happens before the tool runs, so a batch of parallel calls can't exceed the limit.
-        if ctx.metrics["toolCalls"] >= settings.tool_calls_per_turn:
+        if ctx.metrics["toolCalls"] >= ctx.max_tools:
             return {"error": "tool limit reached for this answer; reply with what you have"}
+        if ctx.deep and time.monotonic() - ctx.started > settings.deep_turn_seconds:
+            return {"error": "time is up for this investigation; reply with what you found and what to check next"}
         ctx.metrics["toolCalls"] += 1
         return None
 
@@ -711,19 +809,20 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     if continuation:
         instruction = CONTINUATION
     else:
-        instruction = INSTRUCTION + (MEMORY_RULES if memory.enabled() else "")
+        instruction = INSTRUCTION + (MEMORY_RULES if memory.enabled() else "") + (DEEP if ctx.deep else "")
         instruction += "\n\nTheir home right now:\n" + (ctx.fleet or "- no devices")
         if ctx.memories:
             instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
                             "always win):\n" + memory_summary(ctx.memories))
     return LlmAgent(
         name="nightlight",
-        model=model or settings.model,
+        model=model or (settings.deep_model if ctx.deep and not continuation else settings.model),
         instruction=instruction,
         tools=[] if continuation else make_tools(ctx, read_only=False),
         generate_content_config=types.GenerateContentConfig(
-            max_output_tokens=settings.max_output_tokens,
-            thinking_config=types.ThinkingConfig(thinking_level=settings.thinking_level)),
+            max_output_tokens=settings.deep_max_output_tokens if ctx.deep else settings.max_output_tokens,
+            thinking_config=types.ThinkingConfig(
+                thinking_level=settings.deep_thinking if ctx.deep and not continuation else settings.thinking_level)),
         before_model_callback=before_model,
         after_model_callback=after_model,
         before_tool_callback=before_tool,

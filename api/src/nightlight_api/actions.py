@@ -91,6 +91,8 @@ def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
     verb = {"done": "was approved and completed", "failed": "was approved but failed",
             "denied": "was declined"}[a["status"]]
     summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
+    if a["type"] == "expert_command" and a.get("result"):
+        summary += f"\nCommand: {a['params'].get('command')}\nOutput:\n{a['result'].get('output') or ''}".rstrip()
     if a["type"] in real.READS:
         target = a["params"].get("target") or ", ".join(a["params"].get("what") or [])
         verb = "finished" if a["status"] == "done" else "couldn't finish"
@@ -173,7 +175,11 @@ def _propose_real(tx, uid, user, device, services, action_type, params, generati
         return dict(existing.to_dict(), id=aid)  # recovery first: identity never depends on current state
     if real.view(device).get("stale") and action_type != "remove_device":  # removing a silent device is the point
         raise ValueError("device_not_reporting")
-    c = real.card(device, _by_id(services), action_type, params)
+    if action_type in ("expert_command", "expert_grant"):
+        from . import expert
+        c, params = (expert.card if action_type == "expert_command" else expert.grant_card)(device, params)
+    else:
+        c = real.card(device, _by_id(services), action_type, params)
     action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device["id"], "params": params, **c,
               "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
               "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
@@ -220,6 +226,8 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         if not action_snap.exists:
             raise not_found()
         action = dict(action_snap.to_dict(), id=action_id_)
+        if decision == "approve" and action.get("type") in ("expert_command", "expert_grant"):
+            raise conflict("needs_passkey", actionId=action_id_)  # only the owner's passkey signature approves
         user_snap, device_snap, services, trust_ref, trust_snap = _read_context(
             tx, uid, action["deviceId"], action["type"])
         user = user_snap.to_dict() if user_snap.exists else None
@@ -297,6 +305,13 @@ def request_inspection(uid: str, *, session_id: str, turn_id: str, generation: i
                          generation=generation, device_id=device_id, fence=fence, extra=extra)
 
 
+def request_read_command(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, command: str,
+                         fence=None) -> dict:
+    """One read-only command under the owner's signed investigation grant (the device checks both again)."""
+    return _request_read(uid, "expert_read", {"command": command}, session_id=session_id, turn_id=turn_id,
+                         generation=generation, device_id=device_id, fence=fence)
+
+
 def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id: str, generation: int,
                   device_id: str, fence=None, extra: dict | None = None) -> dict:
 
@@ -315,6 +330,9 @@ def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id
         clean = dict(params)
         if kind == "inspect":
             clean["what"] = real.inspect_ok(device, params.get("what"))
+        if kind == "expert_read":
+            from . import expert
+            clean = expert.read_params(uid, device, params.get("command"))
         key = proposal_key(generation, turn_id, device_id, None, kind, clean)
         aid = make_action_id(key)
         existing = db.action(uid, aid).get(transaction=tx)
@@ -322,7 +340,10 @@ def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id
             return dict(existing.to_dict(), id=aid)
         if real.view(device).get("stale"):
             raise ValueError("device_not_reporting")
-        if kind == "diagnose":
+        if kind == "expert_read":
+            plan = f"Run on the {device['name']} (read-only): {clean['command']}"
+            dry = "A read-only command under the investigation you signed; the device checks it is read-only."
+        elif kind == "diagnose":
             target = clean["target"]
             real.diagnose_target_ok(device, _by_id(services), target)
             plan = f"Look into {target} on the {device['name']} (read-only)."
@@ -448,8 +469,14 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
                 _report_auto_look(tx, uid, a, dsnap.to_dict() or {})
             tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
             return {"ok": True, "actionId": action_id_, "status": a["status"]}
-        a["result"] = {"ok": ok, "summary": text} if a["type"] in ("fix", "update_helper") else \
-            {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
+        if a["type"] == "expert_command":
+            found, hidden = scrub(output or "")
+            a["result"] = {"ok": ok, "summary": text, "output": found[:4000], "hidden": hidden}
+        elif a["type"] in ("fix", "update_helper"):
+            a["result"] = {"ok": ok, "summary": text}
+        else:
+            a["result"] = \
+                {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
         if not a.get("sessionId"):  # asked from the app, not from a chat (a helper update): Activity tells it
             real.event(tx, uid, device_id, a["type"], "info" if ok else "warn",
                        f"{(dsnap.to_dict() or {}).get('name', 'A device')}: {text}")

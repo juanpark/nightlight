@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, archive, db, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, archive, db, expert, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
@@ -84,6 +84,7 @@ class InjectBody(Strict):
 
 class MessageBody(Strict):
     text: str = Field(min_length=1, max_length=2000)
+    mode: Literal["quick", "investigate"] = "quick"  # investigate: a stronger model that digs in (slower)
     clientRequestId: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
     @model_validator(mode="after")
@@ -386,7 +387,7 @@ def chat_session(body: Empty, uid: str = Depends(current_uid)):
 @app.post("/api/chat/sessions/{session_id}/messages")
 def chat_message(session_id: str, body: MessageBody, request: Request, uid: str = Depends(current_uid)):
     _session_id_ok(session_id)
-    turn_id = turns.accept_message(uid, session_id, body.text, body.clientRequestId)
+    turn_id = turns.accept_message(uid, session_id, body.text, body.clientRequestId, body.mode)
     claimed = turns.claim(uid, turn_id)
     return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
                              headers=SSE_HEADERS)
@@ -462,7 +463,8 @@ class HeartbeatBody(Strict):
     failedUnits: list[str] = Field(default_factory=list, max_length=50)
     updatesPending: int | None = Field(default=None, ge=0, le=100000)
     # What the owner allowed on the device itself (job type -> targets). The server can't widen it.
-    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update"],
+    allowedJobs: dict[Literal["restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update",
+                              "expert"],
                       list[str]] = \
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
@@ -480,6 +482,8 @@ class HeartbeatBody(Strict):
                 raise ValueError("allowedJobs: unknown check")
             if kind == "fix" and not all(t in real.FIX for t in targets):
                 raise ValueError("allowedJobs: unknown clean-up")
+            if kind == "expert" and targets != ["on"]:
+                raise ValueError("allowedJobs: expert is [\"on\"]")
             if kind == "update" and targets != ["signed"]:
                 raise ValueError("allowedJobs: update is [\"signed\"]")
             if len(targets) > 20 or not all(pattern.fullmatch(t) for t in targets):
@@ -640,6 +644,47 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
         raise not_found()
     a = real.request_update(uid, device_id)
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
+
+
+class SignBody(Strict):
+    authenticatorData: str = Field(max_length=2000, pattern=r"^[A-Za-z0-9_-]+$")
+    clientDataJSON: str = Field(max_length=4000, pattern=r"^[A-Za-z0-9_-]+$")
+    signature: str = Field(max_length=400, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@app.get("/api/expert")
+def expert_status(uid: str = Depends(current_uid)):
+    return expert.status(uid)
+
+
+@app.post("/api/expert/register/options")
+def expert_register_options(body: Empty, request: Request, uid: str = Depends(owner_uid)):
+    return expert.register_options(uid, request.headers.get("origin"))
+
+
+@app.post("/api/expert/register")
+def expert_register(body: dict, uid: str = Depends(owner_uid)):
+    """The new passkey's registration (WebAuthn), checked by the webauthn library."""
+    return expert.register(uid, body)
+
+
+@app.post("/api/actions/{action_id}/sign")
+def sign_action(action_id: str, body: SignBody, uid: str = Depends(owner_uid)):
+    """Approve an expert card with a passkey signature (the device checks it again before running anything)."""
+    if not re.fullmatch(r"act_[0-9a-f]{26}", action_id):
+        raise not_found()
+    return expert.sign(uid, action_id, body.model_dump())
+
+
+@app.get("/helper/expert-key")
+def helper_expert_key(request: Request):
+    token = request.headers.get("x-device-token", "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
+        raise ApiError(401, "invalid_token")
+    t = real.tokens_ref().document(real._sha(token)).get().to_dict()
+    if not t or t.get("revoked"):
+        raise ApiError(401, "invalid_token")
+    return expert.key_for_device(t["uid"])
 
 
 @app.post("/helper/discoveries")

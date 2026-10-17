@@ -28,7 +28,7 @@ from .redact import scrub, scrub_value
 
 APP = "nightlight"
 ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server", "restart_container", "restart_service",
-                "clean_up", "remove_device"}
+                "clean_up", "remove_device", "start_investigation", "propose_command"}
 
 
 def _utcnow() -> datetime:
@@ -79,7 +79,7 @@ def create_session(uid: str) -> dict:
     return {"sessionId": session_id}
 
 
-def accept_message(uid: str, session_id: str, text: str, client_request_id: str) -> str:
+def accept_message(uid: str, session_id: str, text: str, client_request_id: str, mode: str = "quick") -> str:
     """Store the user's message and its queued turn, once per clientRequestId. Returns the turn id."""
     turn_id = f"turn_{client_request_id}"
     text_hash = hashlib.sha256(text.encode()).hexdigest()
@@ -112,6 +112,7 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str)
             "expiresAt": _keep_until()})
         tx.set(t_ref, {"kind": "user", "status": "queued", "attempt": 0, "demoGeneration": user["demoGeneration"],
                        "clientRequestId": client_request_id, "textSha256": text_hash, "userMessageId": msg_id,
+                       "mode": mode,
                        "input": clean, "createdAt": firestore.SERVER_TIMESTAMP})
         tx.set(turn_index(uid, turn_id), {"sessionId": session_id, "demoGeneration": user["demoGeneration"]})
         title = clean[:40] + ("…" if len(clean) > 40 else "") if seq == 1 else session.get("title")
@@ -283,7 +284,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         return
 
     ctx = agentlib.TurnContext(uid=uid, session_id=c.session_id, turn_id=c.turn_id, attempt=c.attempt,
-                               generation=c.generation, ip=ip)
+                               generation=c.generation, ip=ip, deep=c.turn.get("mode") == "investigate")
     queue: asyncio.Queue = asyncio.Queue()
     lost = asyncio.Event()
     # Text is released only when a model call has finished, so it is always scrubbed as a whole: a secret can't
@@ -428,7 +429,7 @@ def _keep_until():
     return datetime.now(timezone.utc) + timedelta(days=CHAT_KEEP_DAYS)
 
 
-DEVICE_READS = {"look_into", "inspect", "run_playbook"}  # the device answers; slow ones finish in a follow-up
+DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command"}  # the device answers; slow ones finish in a follow-up
 DETAILS_CHARS = 2000
 
 

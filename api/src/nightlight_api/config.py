@@ -56,6 +56,20 @@ class Settings:
     memory_recall_seconds: float = 3.0
     memory_write_seconds: float = 10.0
 
+    # Investigate mode: a stronger model that thinks longer and may take many more steps (the person chose it).
+    deep_model: str = os.environ.get("DEEP_MODEL", "gemini-3.8-flash")
+    deep_thinking: str = os.environ.get("DEEP_THINKING", "HIGH")
+    deep_price_in_per_m: float = float(os.environ.get("DEEP_PRICE_IN_PER_M", "0.75"))
+    deep_price_out_per_m: float = float(os.environ.get("DEEP_PRICE_OUT_PER_M", "3.75"))
+    deep_max_output_tokens: int = int(os.environ.get("DEEP_MAX_OUTPUT_TOKENS", "4096"))
+    deep_calls_per_turn: int = int(os.environ.get("DEEP_CALLS_PER_TURN", "24"))
+    deep_turn_seconds: int = int(os.environ.get("DEEP_TURN_SECONDS", "240"))
+
+    @property
+    def deep_c_max(self) -> float:
+        return (self.max_input_tokens * self.deep_price_in_per_m
+                + self.deep_max_output_tokens * self.deep_price_out_per_m) / 1e6
+
     @property
     def c_max(self) -> float:
         """Worst-case dollar cost of one model call under the enforced limits."""

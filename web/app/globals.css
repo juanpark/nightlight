@@ -235,3 +235,9 @@ button.danger { background: var(--crit); color: #fff; border-color: var(--crit);
 
 .chat-log .past { opacity: .7; }
 .chat-past-note { text-align: center; }
+
+.expert { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.expert-body ol { padding-left: 18px; margin: 6px 0; }
+.risk.read { color: var(--ok); border-color: var(--ok); }
+
+.deep-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 2px; color: var(--muted); }

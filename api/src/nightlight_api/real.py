@@ -33,7 +33,9 @@ JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass
         "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"},
         "fix": {"label": "Clean up space", "riskClass": "service"},
         "update_helper": {"label": "Update the helper", "riskClass": "service"},
-        "remove_device": {"label": "Remove a device", "riskClass": "service"}}
+        "remove_device": {"label": "Remove a device", "riskClass": "service"},
+        "expert_command": {"label": "Run a command you signed", "riskClass": "destructive"},
+        "expert_grant": {"label": "Investigate with commands (read-only, 15 minutes)", "riskClass": "read"}}
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
 FIX = {
@@ -56,7 +58,8 @@ FIX = {
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 READS = {"diagnose": {"label": "Look into", "riskClass": "read"},
-         "inspect": {"label": "Look around", "riskClass": "read"}}
+         "inspect": {"label": "Look around", "riskClass": "read"},
+         "expert_read": {"label": "Investigate (read-only command)", "riskClass": "read"}}
 ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
 # The helper's fixed read-only checks (`inspect`); it runs only these names, at most MAX_INSPECT per job.
 INSPECT = {"disk": "which known folders take the most space", "processes": "which programs use the most memory and CPU",

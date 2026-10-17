@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.7"
+VERSION = "0.9.8"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -271,6 +271,8 @@ def _allowed():
         out["fix"] = _available_fixes()
     if "all" in (allow.get("update") or []):
         out["update"] = ["signed"]
+    if (cfg.get("expert") or {}).get("pem"):
+        out["expert"] = ["on"]
     return out
 
 
@@ -294,6 +296,11 @@ def _from_remote(remote):
         out["fix"] = _available_fixes()
     if remote.get("updates", True) is not False:
         out["update"] = ["signed"]
+    try:
+        if (_load().get("expert") or {}).get("pem"):
+            out["expert"] = ["on"]  # pinned at the device: the app can't switch this on
+    except (OSError, ValueError):
+        pass
     return out
 
 
@@ -1170,10 +1177,231 @@ def rollback():
           "background service (or log out and in) to use it.")
 
 
+# ------------------------------------------------------------------ expert sessions: owner-signed commands
+# Off until the owner pins their passkey's public key here, at the device (`nightlight expert`, after comparing the
+# fingerprint the app shows). A command runs only with a valid passkey signature over exactly this command, for this
+# device, before its expiry, used once. The cloud can relay such a command but can't make one. docs/DESIGN-trust.md
+
+import base64
+import hashlib
+
+EXPERT_TIMEOUT = 60
+EXPERT_OUTPUT = 64 * 1024
+
+
+def _b64u(s):
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _canonical(payload):
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
+def _openssl_verify(pem, data, sig):
+    tool = shutil.which("openssl")
+    if not tool:
+        return False
+    with tempfile.TemporaryDirectory(dir=_own_dir(APP_DIR)) as d:
+        paths = {}
+        for name, content in (("k", pem.encode()), ("d", data), ("s", sig)):
+            paths[name] = os.path.join(d, name)
+            with open(paths[name], "wb") as f:
+                f.write(content)
+        try:
+            r = subprocess.run([tool, "dgst", "-sha256", "-verify", paths["k"], "-signature", paths["s"], paths["d"]],
+                               capture_output=True, text=True, timeout=20, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return r.returncode == 0 and "Verified OK" in r.stdout
+
+
+def expert_check(payload, signed, cfg, now=None, reusable=False):
+    """None if the owner's passkey signed exactly this command for this device and it is still valid; else why not."""
+    pinned = cfg.get("expert") or {}
+    if not pinned.get("pem"):
+        return "expert sessions aren't switched on at this device (run `nightlight expert` there)"
+    if not isinstance(payload, dict) or not isinstance(signed, dict):
+        return "the command isn't signed"
+    if payload.get("device") != cfg.get("deviceId"):
+        return "the command was signed for another device"
+    if not isinstance(payload.get("expires"), int) or payload["expires"] < (now or time.time()):
+        return "the signature has expired"
+    if not reusable and payload.get("nonce") in (cfg.get("usedNonces") or []):
+        return "this signed command was already used"
+    try:
+        auth = _b64u(signed["authenticatorData"])
+        client_raw = _b64u(signed["clientDataJSON"])
+        client = json.loads(client_raw)
+        sig = _b64u(signed["signature"])
+    except (KeyError, ValueError, TypeError):
+        return "the signature is malformed"
+    want = base64.urlsafe_b64encode(hashlib.sha256(_canonical(payload)).digest()).decode().rstrip("=")
+    if client.get("type") != "webauthn.get" or client.get("challenge") != want:
+        return "the signature is for a different command"
+    if client.get("origin") != pinned.get("origin"):
+        return "the signature came from another site"
+    if len(auth) < 37 or auth[:32] != hashlib.sha256(pinned.get("rpId", "").encode()).digest():
+        return "the signature is for another site"
+    if auth[32] & 0x05 != 0x05:  # user present (0x01) and user verified (0x04)
+        return "the passkey didn't verify the person"
+    if not _openssl_verify(pinned["pem"], auth + hashlib.sha256(client_raw).digest(), sig):
+        return "the signature didn't check out"
+    return None
+
+
+# Investigation sessions: with one signed, time-boxed grant, the agent may run READ-ONLY commands in a loop. "Read
+# only" is decided here, on the device: one plain command (no pipes, redirects, chaining or substitution), a program
+# from this list with only its reading sub-commands, never secret places, and file reads only under log folders.
+_RO_PROGRAMS = {
+    "ls", "df", "du", "ps", "uptime", "last", "who", "w", "uname", "sw_vers", "sysctl", "vm_stat", "pmset", "log",
+    "journalctl", "systemctl", "launchctl", "docker", "free", "lsblk", "mount", "ip", "ifconfig", "netstat", "ping",
+    "dig", "nslookup", "host", "find", "stat", "file", "wc", "cat", "head", "tail", "grep", "apt", "brew",
+    "softwareupdate", "diskutil", "top", "date", "hostinfo", "system_profiler", "lsof", "id", "groups", "tmutil",
+}
+_RO_SUBCOMMANDS = {  # programs that can also change things: only these first arguments
+    "systemctl": {"status", "list-units", "list-timers", "show", "is-active", "is-failed", "is-enabled", "--failed"},
+    "launchctl": {"list", "print"}, "docker": {"ps", "logs", "inspect", "stats", "images", "system", "info", "version"},
+    "pmset": {"-g"}, "log": {"show"}, "apt": {"list", "policy", "show"}, "ip": {"addr", "address", "route", "link"},
+    "brew": {"list", "outdated", "info", "config", "doctor", "--version"}, "softwareupdate": {"-l", "--list"},
+    "diskutil": {"list", "info", "apfs"}, "tmutil": {"status", "listbackups", "latestbackup", "destinationinfo"},
+}
+_RO_FILE_READERS = {"cat", "head", "tail", "grep"}
+_RO_LOG_ROOTS = ("/var/log", "/Library/Logs", "~/Library/Logs", "/private/var/log")
+_RO_SECRET_WORDS = (".ssh", "keychain", ".gnupg", ".env", "id_rsa", "id_ed25519", "credential", ".aws", "gcloud",
+                    "token", "passw", "secret", "shadow", "cookie", ".netrc", "nightlight/config")
+_RO_BAD_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-w", "--write",
+                 "-o", "--output", "-f", "--follow"}
+
+
+def readonly_ok(command):
+    """None if `command` is a plain read-only command this device accepts in an investigation; else why not."""
+    import shlex
+    if not isinstance(command, str) or not command.strip() or len(command) > 500:
+        return "empty or too long"
+    if any(c in command for c in ";|&<>`$\n\r") or "\x00" in command:
+        return "only one plain command is allowed (no pipes, redirects, chaining or substitution)"
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return "it couldn't be read as one command"
+    prog = os.path.basename(argv[0])
+    if prog not in _RO_PROGRAMS:
+        return f"{prog} isn't on this device's read-only list"
+    if prog in _RO_SUBCOMMANDS and (len(argv) < 2 or argv[1] not in _RO_SUBCOMMANDS[prog]):
+        return f"only reading {prog} sub-commands are allowed ({', '.join(sorted(_RO_SUBCOMMANDS[prog]))})"
+    if prog == "sysctl" and any("=" in a or a == "-w" for a in argv[1:]):
+        return "sysctl may only read"
+    if prog == "ping" and "-c" not in argv:
+        return "ping needs -c (a count)"
+    if prog == "top" and "-l" not in argv and "-b" not in argv:
+        return "top needs -l 1 (macOS) or -b -n 1 (Linux)"
+    low = command.lower()
+    if any(w in low for w in _RO_SECRET_WORDS):
+        return "it touches a place where secrets are kept"
+    if any(a in _RO_BAD_FLAGS for a in argv[1:]):
+        return "that option can write, run or follow things"
+    if prog in _RO_FILE_READERS:
+        paths = [a for a in argv[1:] if not a.startswith("-") and not a.lstrip("+").isdigit()]
+        if prog == "grep":
+            paths = paths[1:]  # the first plain argument is the pattern
+        roots = [os.path.realpath(os.path.expanduser(r)) for r in _RO_LOG_ROOTS]
+        for f in paths:
+            real = os.path.realpath(os.path.expanduser(f))
+            if not any(real == r or real.startswith(r + os.sep) for r in roots):
+                return f"{prog} may only read log files (under {', '.join(_RO_LOG_ROOTS)})"
+        if not paths:
+            return f"{prog} needs a log file"
+    return None
+
+
+def run_readonly(params):
+    """One read-only command under a signed investigation grant (checked here: signature, device, expiry)."""
+    params = params if isinstance(params, dict) else {}
+    cfg = _load()
+    grant, signed, command = params.get("grant"), params.get("signed"), params.get("command")
+    if not isinstance(grant, dict) or grant.get("mode") != "read-only":
+        return False, "Not run: there's no read-only investigation grant.", None
+    why = expert_check(grant, signed, cfg, reusable=True)
+    if why:
+        return False, f"Not run: {why}.", None
+    why = readonly_ok(command)
+    if why:
+        return False, f"Not run on this device: {why}.", None
+    return _execute(command)
+
+
+def run_expert(params):
+    params = params if isinstance(params, dict) else {}
+    cfg = _load()
+    payload, signed = params.get("payload"), params.get("signed")
+    why = expert_check(payload, signed, cfg)
+    if why:
+        return False, f"Not run: {why}.", None
+    _update_config(lambda c: c.__setitem__("usedNonces", ((c.get("usedNonces") or []) + [payload["nonce"]])[-200:]))
+    return _execute(payload["command"], shell=True)
+
+
+def _execute(command, shell=False):
+    """Run it (a shell only for a command the owner signed by itself; read-only ones run without a shell), keep a
+    transcript on the device, and return the scrubbed output."""
+    import shlex
+    try:
+        argv = ["/bin/sh", "-c", command] if shell else shlex.split(command)
+        r = subprocess.run(argv, capture_output=True, timeout=EXPERT_TIMEOUT,
+                           cwd=_HOME, stdin=subprocess.DEVNULL, check=False)
+        out, code = (r.stdout[-EXPERT_OUTPUT:] + r.stderr[-EXPERT_OUTPUT:]).decode(errors="replace"), r.returncode
+    except subprocess.TimeoutExpired:
+        out, code = "(stopped after 60 seconds)", None
+    except OSError as e:
+        out, code = f"couldn't run it ({type(e).__name__})", None
+    try:  # a transcript stays on the device (owner-only folder)
+        with open(os.path.join(_own_dir(APP_DIR), "expert-transcript.log"), "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} exit={code} $ {command}\n")
+    except OSError:
+        pass
+    text, hidden = scrub(out.replace(_HOME, "~"))
+    tail = _tail(text, lines=80, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
+    return code == 0, f"Ran it (exit code {code})." if code is not None else "It didn't finish.", tail
+
+
+def expert_setup(turn_off=False):
+    """At the device: pin (or forget) the owner's passkey for expert sessions, after comparing its fingerprint."""
+    if turn_off:
+        _update_config(lambda c: c.pop("expert", None))
+        print("Expert sessions are off on this device.")
+        return
+    cfg = _load()
+    st, body = _get_json(check_api(cfg["api"]) + "/helper/expert-key", cfg["token"])
+    if st != 200:
+        sys.exit("The owner hasn't created a passkey for expert sessions yet (in the app: the device > Expert sessions).")
+    print(f"The passkey's code is {body['fingerprint']}.")
+    if not sys.stdin.isatty() or not _ask("Does the Nightlight app show the same code?", False):
+        sys.exit("Nothing was changed.")
+    pinned = {k: body[k] for k in ("pem", "rpId", "origin", "fingerprint")}
+    _update_config(lambda c: c.__setitem__("expert", pinned))
+    print("Expert sessions are on: commands you sign with that passkey can run here. `nightlight expert --off` "
+          "turns them off.")
+
+
+def _get_json(url, token):
+    req = urllib.request.Request(url, method="GET", headers={"X-Device-Token": token})
+    try:
+        with _OPENER.open(req, timeout=30) as r:
+            return r.status, json.loads(r.read(65536) or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
+        return 0, {}
+
+
 def run_job(job, wait=5):
     """Run one approved job, only if it is a known kind on a target the owner allowed here. Returns
     (ok, summary, state). Commands are fixed argument lists; nothing from the server reaches a shell."""
     kind, params = job.get("type"), job.get("params")
+    if kind == "expert_command":
+        return run_expert(params)
+    if kind == "expert_read":
+        return run_readonly(params)
     if kind == "remove_device":  # allowed in both modes: it only removes Nightlight itself
         ok, summary = remove_from_app()
         _RESTART.append("exit")  # nothing to restart into: the loop ends after reporting
@@ -1349,7 +1577,7 @@ def _do_job(api, token, job):
         ok, summary, extra = False, f"The helper hit an error ({type(e).__name__}).", None
     print(("Job done: " if ok else "Job failed: ") + summary)
     body = {"ok": ok, "summary": summary[:200]}
-    if job.get("type") in ("diagnose", "inspect"):
+    if job.get("type") in ("diagnose", "inspect", "expert_command", "expert_read"):
         body["output"] = (extra or "")[:4000] or None  # what the look found (already scrubbed here)
     else:
         body["state"] = extra if extra in STATES else None
@@ -1955,7 +2183,8 @@ def status():
     allowed = _allowed()
     words = {"diagnose": "check why it stopped", "logs": "read recent log lines", "restart_container": "restart",
              "restart_service": "restart the service", "inspect": "look around (reads only)",
-             "fix": "clean up space after you approve", "update": "install signed updates from the app"}
+             "fix": "clean up space after you approve", "update": "install signed updates from the app",
+             "expert": "run commands you sign with your passkey"}
     print("  Nightlight may: " + ("; ".join(f"{words.get(k, k)}: {', '.join(v)}" for k, v in allowed.items())
                                   or "nothing yet"))
 
@@ -2024,6 +2253,8 @@ def main():
     sub.add_parser("status")
     sub.add_parser("settings")
     sub.add_parser("version")
+    ex = sub.add_parser("expert", help="switch expert sessions on (pin your passkey) or off, at this device")
+    ex.add_argument("--off", action="store_true")
     sub.add_parser("rollback", help="go back to the version before the last update")
     sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
@@ -2049,6 +2280,8 @@ def main():
         status()
     elif a.cmd == "version":
         print(VERSION)
+    elif a.cmd == "expert":
+        expert_setup(a.off)
     elif a.cmd == "rollback":
         rollback()
     elif a.cmd == "settings":

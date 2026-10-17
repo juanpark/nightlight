@@ -1,12 +1,14 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { passkeysSupported, signWithPasskey } from "@/lib/passkey";
 import type { Action, Device } from "@/lib/types";
 
-const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky" } as const;
+const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky", read: "Read-only" } as const;
+const SIGNED = new Set(["expert_command", "expert_grant"]); // approved only with the owner's passkey
 const STATUS: Record<Action["status"], string> = {
   pending: "Waiting for you", approved: "Approved, waiting for the device…", running: "Running on the device…",
-  done: "Done", failed: "Didn't work: nothing was changed", denied: "Declined", stale: "Out of date",
+  done: "Done", failed: "Didn't work", denied: "Declined", stale: "Out of date",
 };
 
 export default function ApprovalCard({ action, device, onFollowUp }: {
@@ -38,6 +40,23 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       setBusy(false);
     }
   }
+  async function signIt() {
+    setBusy(true); setErr("");
+    try {
+      const k = await api<{ enabled: boolean; credentialId?: string; rpId?: string }>("GET", "/api/expert");
+      if (!k.enabled || !k.credentialId || !k.rpId) throw new Error("Create your passkey first (open the device > Expert sessions).");
+      const challenge = (action!.params as { challenge?: string } | undefined)?.challenge ?? "";
+      const signed = await signWithPasskey(challenge, k.credentialId, k.rpId);
+      await api("POST", `/api/actions/${action!.id}/sign`, signed);
+    } catch (e) {
+      setErr(e instanceof ApiError ? (e.code === "signature_not_accepted" ? "That passkey didn't sign it." : e.code)
+        : e instanceof Error ? e.message : "Couldn't sign it");
+    } finally {
+      setBusy(false);
+    }
+  }
+  const command = (action.params as { command?: string } | undefined)?.command;
+  const signedCard = SIGNED.has(action.type);
   return (
     <div className="card">
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -45,6 +64,7 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
         <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
       </div>
       <dl>
+        {command && <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>}
         <dt>What happens</dt><dd>{action.dryRun}</dd>
         <dt>Touches</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (live device)" : " (sample)"}</dd>
         <dt>Undo</dt><dd>{action.rollback}</dd>
@@ -53,7 +73,10 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       </dl>
       {action.status === "pending" && (
         <div className="actions">
-          <button className="primary" disabled={busy} onClick={() => decide("approve")}>Approve</button>
+          {signedCard
+            ? <button className="primary" disabled={busy || !passkeysSupported()} onClick={signIt}>
+                {busy ? "Waiting for your passkey…" : "Approve with passkey"}</button>
+            : <button className="primary" disabled={busy} onClick={() => decide("approve")}>Approve</button>}
           <button disabled={busy} onClick={() => decide("deny")}>Not now</button>
         </div>
       )}

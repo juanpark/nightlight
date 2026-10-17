@@ -46,7 +46,7 @@ if os.environ.get("SMOKE_INJECT"):  # e.g. "server_lagging:game-1"
     kind, device = os.environ["SMOKE_INJECT"].split(":")
     print("inject:", c.post("/api/demo/inject", json={"kind": kind, "deviceId": device}).json())
 print("Q:", QUESTION)
-evs = run(f"/api/chat/sessions/{sid}/messages", {"text": QUESTION, "clientRequestId": str(uuid.uuid4())})
+evs = run(f"/api/chat/sessions/{sid}/messages", {"text": QUESTION, "clientRequestId": str(uuid.uuid4()), "mode": os.environ.get("SMOKE_MODE", "quick")})
 print("  metrics:", evs[-1].get("metrics"))
 card = next((e["actionId"] for e in evs if e["type"] == "approval_request"), None)
 if card:

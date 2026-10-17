@@ -44,7 +44,7 @@ def flags_ref():
     return db.client().collection("ops").document("flags")
 
 
-def reserve(uid: str, ip: str, now: datetime | None = None, fence=None) -> float:
+def reserve(uid: str, ip: str, now: datetime | None = None, fence=None, c_max: float | None = None) -> float:
     """Reserve one model call. Returns the reserved amount (USD). Raises QuotaExceeded or ApiError(403/409).
 
     `fence(tx)` (the turn's ownership check) runs in the same transaction, so a turn made stale by a reset or a
@@ -52,7 +52,7 @@ def reserve(uid: str, ip: str, now: datetime | None = None, fence=None) -> float
     """
     now = now or datetime.now(timezone.utc)
     hour, day = _hour_key(now), _day_key(now)
-    c_max = settings.c_max
+    c_max = c_max or settings.c_max
     if settings.kill_switch:
         raise ApiError(403, "kill_switch")
 
@@ -88,7 +88,7 @@ def reserve(uid: str, ip: str, now: datetime | None = None, fence=None) -> float
     return db.run_transaction(run)
 
 
-def cost_of(usage) -> float | None:
+def cost_of(usage, prices: tuple[float, float] | None = None) -> float | None:
     """Actual cost of one model call from its usage metadata, or None if billable usage isn't fully known.
 
     Prompt tokens bill at the input price; every other counted token (output, thinking, tool-use prompt) is billed
@@ -98,7 +98,8 @@ def cost_of(usage) -> float | None:
         return None
     prompt = usage.prompt_token_count
     rest = max(usage.total_token_count - prompt, 0)
-    return (prompt * settings.price_in_per_m + rest * settings.price_out_per_m) / 1e6
+    p_in, p_out = prices or (settings.price_in_per_m, settings.price_out_per_m)
+    return (prompt * p_in + rest * p_out) / 1e6
 
 
 def reconcile(reserved: float, actual: float | None) -> None:

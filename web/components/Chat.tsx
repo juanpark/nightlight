@@ -29,6 +29,9 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
     inspect: `Looking around the ${name}…`, run_playbook: `Running a checkup on the ${name}…`,
     write_note: `Noting what I learned about the ${name}…`, how_nightlight_works: "Checking how Nightlight does this…",
     remove_device: `Preparing to remove the ${name}…`,
+    start_investigation: `Asking to investigate the ${name}…`,
+    run_command: `$ ${(e.args?.command as string) ?? ""}`,
+    propose_command: `Preparing a command for the ${name}…`,
   } as Record<string, string>)[e.name] ?? `Working on the ${name}…`;
 }
 
@@ -39,6 +42,7 @@ const Chat = forwardRef<ChatHandle, {
     const [items, setItems] = useState<Item[]>([]);
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
+    const [deep, setDeep] = useState(false); // Investigate: a stronger model that digs in (slower, a few cents)
     const log = useRef<HTMLDivElement>(null);
     const streamed = useRef(new Set<string>());
     const pending = useRef(new Set<string>()); // follow-ups promised by a device that hasn't answered yet
@@ -118,12 +122,13 @@ const Chat = forwardRef<ChatHandle, {
       setItems((cur) => [...cur, { kind: "user", text: q }]);
       try {
         const sid = await session();
-        await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID() });
+        await run(`/api/chat/sessions/${sid}/messages`,
+          { text: q, clientRequestId: crypto.randomUUID(), mode: deep ? "investigate" : "quick" });
       } finally {
         setBusy(false);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [busy, run, uid, generation]);
+    }, [busy, run, uid, generation, deep]);
 
 
 
@@ -187,6 +192,9 @@ const Chat = forwardRef<ChatHandle, {
         <div className="suggest">
           {SUGGESTIONS.map((s) => <button key={s} disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>)}
         </div>
+        <label className="deep-toggle small" title="A stronger model that investigates step by step (slower)">
+          <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} /> Investigate deeply
+        </label>
         <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} />

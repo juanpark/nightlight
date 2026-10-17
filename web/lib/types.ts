@@ -1,7 +1,7 @@
 // Shapes from docs/API.md (Firestore documents and stream events). Only the fields the UI uses.
 
 export type Status = "ok" | "warn" | "crit" | "offline";
-export type RiskClass = "routine" | "service" | "destructive";
+export type RiskClass = "routine" | "service" | "destructive" | "read";
 export type Level = "ask" | "ask_new" | "auto";
 
 export interface Finding {
