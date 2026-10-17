@@ -132,7 +132,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         onPaneClick={() => setEdgeSel(null)}
         onConnect={connect} connectionMode={ConnectionMode.Loose}
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
-        snapToGrid snapGrid={[GRID, GRID]} minZoom={0.25} maxZoom={2}
+        snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
         panOnScroll zoomOnScroll={false} zoomOnPinch zoomOnDoubleClick={false}
         fitView fitViewOptions={{ padding: 0.2, maxZoom: 1.1 }}>
         {/* graph paper: fine squares, with a stronger line every fifth */}

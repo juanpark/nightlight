@@ -73,10 +73,10 @@
 .etools button.on { background: var(--accent); color: var(--bg); }
 
 /* legend and controls */
-.hm-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 11px; color: var(--muted);
+.homemap .hm-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 11px; color: var(--muted);
   background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 10px;
   padding: 5px 9px; max-width: min(560px, calc(100% - 80px)); }
-.hm-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.homemap .hm-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .hm-hint { flex-basis: 100%; opacity: .8; }
 
 @media (max-width: 900px) {

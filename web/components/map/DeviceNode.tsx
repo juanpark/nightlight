@@ -41,7 +41,7 @@ const SIDES = [Position.Top, Position.Right, Position.Bottom, Position.Left];
 function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   const { device: d, needs, now } = data;
   const services = useServices(data.uid, d.id);
-  const compact = useStore((s) => s.transform[2] < 0.6); // zoomed out: icon and name only
+  const compact = useStore((s) => s.transform[2] < 0.45); // zoomed far out: icon and name only
   const Icon = iconFor(d.kind);
   const sample = d.realm !== "real";
   const silent = d.realm === "real" && d.status === "offline";
