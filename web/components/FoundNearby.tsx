@@ -82,6 +82,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [showPrivate, setShowPrivate] = useState(false);
   useEffect(() => { refresh(); }, [refresh]); // opening the panel always shows the server's current list
   const key = (t: FoundThing) => t.tag ?? `${t.seenBy[0]?.deviceId}:${t.seenBy[0]?.cid}`;
   async function add(t: FoundThing) {
@@ -99,15 +100,20 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
     }
   }
   const found = items ?? [];
-  const named = (t: FoundThing) => t.router ? "Router" : t.guess;
+  const named = (t: FoundThing) => t.router ? "Router" : t.name ?? t.guess;
   const label = (t: FoundThing) => labels[key(t)] ?? named(t);
+  // phones and laptops with a private Wi-Fi address and no name fold into one line: there is nothing to tell them apart
+  const anon = (t: FoundThing) => !!t.privateAddress && !t.name && t.guess === "Phone or laptop";
+  const privates = found.filter(anon), rest = found.filter((t) => !anon(t));
   // what can go on the map first (the server puts the router at the top); the rest folds into one line
-  const watchable = found.filter((t) => t.seenBy[0]?.canWatch !== false);
-  const unwatchable = found.filter((t) => t.seenBy[0]?.canWatch === false);
+  const watchable = rest.filter((t) => t.seenBy[0]?.canWatch !== false);
+  const unwatchable = rest.filter((t) => t.seenBy[0]?.canWatch === false);
+  const made = (t: FoundThing) => t.model ? [t.maker, t.model].filter(Boolean).join(" ") : t.vendor;
   const what = (t: FoundThing) => <>
-    <strong>{t.guess}</strong>
+    <strong>{t.name ?? t.guess}</strong>
+    {t.name && <span className="muted"> · {t.guess}</span>}
     {t.privateAddress && t.services.length > 0 ? <span className="muted small"> · uses a private Wi-Fi address</span>
-      : t.vendor && <span className="muted"> · {t.vendor}</span>}
+      : made(t) && <span className="muted"> · {made(t)}</span>}
     {t.services.length > 0 && <span className="muted small"> ({t.services.join(", ")})</span>}
     <span className="muted small"> · seen by the {names(t.seenBy.map((b) => b.name))}</span>
   </>;
@@ -136,9 +142,18 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
       )}
       {unwatchable.length > 0 && (
         <div className="found-more small muted">
-          {unwatchable.length} {watchable.length ? "more " : ""}Nightlight can&apos;t check (phones, laptops…){" "}
+          {unwatchable.length} {watchable.length ? "more " : ""}Nightlight can&apos;t check{" "}
           <button className="linkish small" onClick={() => setShowAll(!showAll)}>{showAll ? "Hide" : "Show"}</button>
           {showAll && <ul>{unwatchable.map((t) => <li key={key(t)}>{what(t)}</li>)}</ul>}
+        </div>
+      )}
+      {privates.length > 0 && (
+        <div className="found-more small muted">
+          {privates.length === 1
+            ? "1 phone or laptop: a private Wi-Fi address, Nightlight can't check it. It makes up a new address on each network to stay private, so there's nothing to know it by."
+            : `${privates.length} phones and laptops: private Wi-Fi addresses, Nightlight can't check them. They make up a new address on each network to stay private, so there's nothing to tell them apart by.`}{" "}
+          <button className="linkish small" onClick={() => setShowPrivate(!showPrivate)}>{showPrivate ? "Hide" : "Show"}</button>
+          {showPrivate && <ul>{privates.map((t) => <li key={key(t)}>{what(t)}</li>)}</ul>}
         </div>
       )}
       {msg && <p className="small" style={{ color: "var(--crit)" }}>{msg}</p>}
