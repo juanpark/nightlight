@@ -21,6 +21,7 @@ const nodeTypes = { device: DeviceNode };
 const STATUS_HEX: Record<string, string> = { ok: "#3aa776", warn: "#e0a028", crit: "#d9534f", offline: "#9aa1ad" };
 const edgeTypes = { link: LinkEdge };
 const snap = (v: number) => Math.round(v / GRID) * GRID;
+const stamp = (l: Link) => l.createdAt?.getTime() ?? 0;
 
 /** Where each device sits: its saved spot, nudged right when it would cover another; new ones in a row below. */
 function arrange(devices: Device[]): Map<string, { x: number; y: number }> {
@@ -53,8 +54,12 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<DeviceNodeType>([]);
   const [edgeSel, setEdgeSel] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, LinkKind | null>>({}); // drawn or changed here, not yet back
-  const [held, setHeld] = useState<Record<string, { x: number; y: number }>>({}); // dropped here, save not back yet
+  const [drafts, setDrafts] = useState<Record<string, LinkKind>>({}); // kind changed here, not yet back
+  // Lines removed here, by the createdAt of the removed one: a line written again under the same id is newer and shows.
+  const [removed, setRemoved] = useState<Record<string, number>>({});
+  // Devices dropped here whose new spot isn't back yet; n tells a later drop's save from an earlier one's.
+  const [held, setHeld] = useState<Record<string, { x: number; y: number; n: number }>>({});
+  const drops = useRef(0);
   const flow = useRef<ReactFlowInstance<DeviceNodeType, LinkEdgeType> | null>(null);
   const fitted = useRef(0);
   // The parent's callbacks change every render; nodes get stable ones that call the latest.
@@ -75,18 +80,16 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const old = cur.find((n) => n.id === d.id);
       return {
         id: d.id, type: "device", deletable: false, selected: d.id === selected, dragging: old?.dragging,
-        position: old?.dragging ? old.position : held[d.id] ?? spots.get(d.id)!,
+        position: old?.dragging ? old.position : (held[d.id] && { x: held[d.id].x, y: held[d.id].y }) ?? spots.get(d.id)!,
         data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask },
       };
     }));
   }, [devices, spots, held, marks, selected, uid, now, open, ask, setNodes]);
-  // A removed line's marker goes once the database no longer has it, so the same pair can be linked again.
-  useEffect(() => setDrafts((m) => {
-    const gone = Object.keys(m).filter((id) => m[id] === null && !links.some((l) => l.id === id));
-    if (!gone.length) return m;
-    const rest = { ...m };
-    gone.forEach((id) => delete rest[id]);
-    return rest;
+  // A removed line's marker goes once the database no longer has that line (gone, or written again since).
+  const hidden = useCallback((l: Link) => removed[l.id] === stamp(l), [removed]);
+  useEffect(() => setRemoved((m) => {
+    const left = Object.entries(m).filter(([id, t]) => links.some((l) => l.id === id && stamp(l) === t));
+    return left.length === Object.keys(m).length ? m : Object.fromEntries(left);
   }), [links]);
   // Fit the whole home on screen when it first appears and whenever devices come or go.
   useEffect(() => {
@@ -103,15 +106,15 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       setDrafts(({ [l.id]: _, ...rest }) => rest));
   }, []);
   const remove = useCallback((l: Link) => {
-    setDrafts((m) => ({ ...m, [l.id]: null }));
+    setRemoved((m) => ({ ...m, [l.id]: stamp(l) }));
     setEdgeSel(null);
-    api("DELETE", `/api/links/${l.id}`).catch(() => setDrafts(({ [l.id]: _, ...rest }) => rest));
+    api("DELETE", `/api/links/${l.id}`).catch(() => setRemoved(({ [l.id]: _, ...rest }) => rest));
   }, []);
 
   const edges: LinkEdgeType[] = useMemo(() => {
     const on = new Set(devices.map((d) => d.id));
     const silent = new Set(devices.filter((d) => d.status === "offline").map((d) => d.id));
-    return links.filter((l) => on.has(l.from) && on.has(l.to) && drafts[l.id] !== null).map((l) => {
+    return links.filter((l) => on.has(l.from) && on.has(l.to) && !hidden(l)).map((l) => {
       const a = pos(l.from), b = pos(l.to);
       const [s, t] = a && b ? sides(a, b) : [Position.Right, Position.Left];
       const kind = drafts[l.id] ?? l.kind;
@@ -121,16 +124,16 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         data: { kind, faded: silent.has(l.from) || silent.has(l.to) },
       };
     });
-  }, [links, devices, drafts, edgeSel, pos]);
+  }, [links, devices, drafts, edgeSel, pos, hidden]);
   // The selected line's controls sit in a bar at screen size, whatever the zoom and wherever the line is.
-  const chosen = edgeSel && drafts[edgeSel] !== null ? links.find((l) => l.id === edgeSel) : undefined;
+  const chosen = links.find((l) => l.id === edgeSel && !hidden(l));
   const chosenKind = chosen && (drafts[chosen.id] ?? chosen.kind);
   const named = (id: string) => devices.find((d) => d.id === id)?.name ?? id;
 
   function connect(c: { source: string | null; target: string | null }) {
     if (!c.source || !c.target || c.source === c.target) return;
     const id = `${c.source}__${c.target}`;
-    setDrafts(({ [id]: _, ...rest }) => rest);
+    setRemoved(({ [id]: _, ...rest }) => rest);
     api("POST", "/api/links", { from: c.source, to: c.target, kind: "network" }).then(() => setEdgeSel(id))
       .catch(() => {});
   }
@@ -145,8 +148,13 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
 
   function dropped(id: string, p: { x: number; y: number }) {
     const x = Math.max(-5000, Math.min(5000, snap(p.x))), y = Math.max(-5000, Math.min(5000, snap(p.y)));
-    setHeld((h) => ({ ...h, [id]: { x, y } }));
-    api("POST", `/api/devices/${id}/layout`, { x, y }).catch(() => setHeld(({ [id]: _, ...rest }) => rest));
+    const n = ++drops.current;
+    setHeld((h) => ({ ...h, [id]: { x, y, n } }));
+    api("POST", `/api/devices/${id}/layout`, { x, y }).catch(() => setHeld((h) => {
+      if (h[id]?.n !== n) return h; // a later drop is still saving
+      const { [id]: _, ...rest } = h;
+      return rest;
+    }));
   }
 
   return (
