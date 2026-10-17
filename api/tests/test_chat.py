@@ -320,3 +320,54 @@ def test_an_unbacked_card_claim_becomes_the_tool_call(client, started):
     text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
     assert names == ["get_device", "rotate_logs"] and any(e["type"] == "approval_request" for e in ev)
     assert turns.NO_CARD not in text and "I've put a card up" not in text
+
+
+def _scripted(*steps):
+    from google.adk.models.llm_response import LlmResponse as R
+    calls = []
+
+    async def behave(llm_request, stream):
+        step = steps[min(len(calls), len(steps) - 1)]
+        calls.append(1)
+        part = types.Part(function_call=types.FunctionCall(name=step[0], args=step[1])) if isinstance(step, tuple) \
+            else types.Part(text=step)
+        u = types.GenerateContentResponseUsageMetadata(prompt_token_count=500, candidates_token_count=20,
+                                                       total_token_count=520)
+        yield R(content=types.Content(role="model", parts=[part]), partial=False, usage_metadata=u,
+                turn_complete=True)
+    return behave
+
+
+def test_a_promise_never_runs_a_trusted_job_or_picks_an_unrelated_fix(client, started):  # Codex agent quality #1
+    from nightlight_api import trust as trustlib
+    from conftest import generation
+    ref = db.trust_doc(started, "sim", "rotate_logs")
+    ref.set({**trustlib.new_doc("rotate_logs", generation(started)), "level": "auto"})
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), "I've put a card up to clean up old logs.",
+                                 "It's waiting for your tap.")
+    ev = events(ask(client, new_session(client), "Is anything wrong at home?"))
+    aid = next(e["actionId"] for e in ev if e["type"] == "approval_request")
+    assert db.action(started, aid).get().to_dict()["status"] == "pending"  # a card, though trust says auto
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put a card up to restart the Minecraft game server.")
+    ev = events(ask(client, new_session(client), "And the game?"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "Earlier I said \"I've put a card up to clean up logs\" but that wasn't right.")
+    ev = events(ask(client, new_session(client), "Did you?"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+
+
+def test_a_log_lock_fails_only_the_log_clean_up(client, started):  # Codex agent quality #2
+    from nightlight_api import actions
+    from conftest import generation
+    assert client.post("/api/demo/inject", json={"kind": "logs_locked", "deviceId": "pi-1"}).status_code == 201
+    card = actions.propose(started, session_id="s", turn_id="t", generation=generation(started),
+                           action_type="clear_images", device_id="pi-1", params={})
+    assert client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()["status"] == "done"
+    card = actions.propose(started, session_id="s", turn_id="t2", generation=generation(started),
+                           action_type="rotate_logs", device_id="pi-1", params={})
+    d = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()
+    assert d["status"] == "failed"
+    assert "locked" in db.action(started, card["id"]).get().to_dict()["result"]["summary"]

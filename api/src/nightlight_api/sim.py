@@ -103,7 +103,7 @@ def inject(device: dict, services: dict, kind: str) -> tuple[dict, dict, dict]:
         logs["sizeGb"] = round(max(0.94 * d["diskGb"] - others, 0.1), 1)
         event = {"kind": "disk_full", "severity": "crit", "svcId": DISK_SERVICE.get(d["id"])}
     elif kind == "logs_locked":
-        d["simFailNext"] = True
+        d["simFailNext"] = "rotate_logs"  # only the job this incident is about fails
         event = {"kind": "logs_locked", "severity": "info", "svcId": DISK_SERVICE.get(d["id"]),
                  "message": f"Another program is holding the {d['name']}'s log folder."}
     elif kind == "server_lagging":
@@ -356,14 +356,22 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     return {**c, "blastRadius": [device["id"]], "riskClass": ACTIONS[action_type]["riskClass"]}
 
 
+FAILS_BECAUSE = {"rotate_logs": "log folder was locked by another program",
+                 "clear_images": "Docker was busy with another task",
+                 "restart_app": "app didn't stop in time",
+                 "backup_world": "game server didn't respond in time", "restart_server": "game server didn't respond in time",
+                 "update_server": "game server didn't respond in time"}
+
+
 def apply(device: dict, services: dict, action_type: str, params: dict) -> tuple[bool, dict, dict, dict]:
     """Run the action on the simulated device. Returns (ok, result, device, services)."""
     if action_type not in ACTIONS:
         raise ValueError("unknown_action")
     d, svcs = deepcopy(device), deepcopy(services)
-    if d.pop("simFailNext", False):
-        what = "log folder was locked by another program" if action_type == "rotate_logs" \
-            else "game server didn't respond in time"
+    fail = d.get("simFailNext")
+    if fail is True or fail == action_type:  # True: an incident from before failures named their job
+        d.pop("simFailNext")
+        what = FAILS_BECAUSE.get(action_type, "job didn't finish in time")
         snap = ACTIONS[action_type]["snapshot"](d, svcs)  # unchanged state, shown on the failed card
         return False, {"ok": False, "summary": f"The {d['name']}'s {what}, so nothing was changed.",
                        "before": snap, "after": dict(snap)}, d, svcs

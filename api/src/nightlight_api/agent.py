@@ -173,6 +173,7 @@ class TurnContext:
     memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
     fixes: list = field(default_factory=list)  # (tool, device id, plan) a sample device read this turn offers
+    promised: tuple | None = None  # (tool, device id) of a call made from the model's words: always a card
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
 
@@ -371,7 +372,8 @@ def make_tools(ctx: TurnContext, read_only: bool):
         try:
             a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode, generation=ctx.generation,
                                 action_type=action_type, device_id=device_id, params=params or {},
-                                fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
+                                fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation),
+                                ask=ctx.promised == (action_type, device_id))
         except ApiError as e:
             if e.code == "stale":
                 raise
@@ -1103,9 +1105,18 @@ def _keep_card_promise(ctx: TurnContext, llm_response) -> None:
     text = "".join(p.text for p in parts if p.text and not p.thought)
     if ctx.actions or not ctx.fixes or any(p.function_call for p in parts) or not CARD_CLAIM.search(text):
         return
-    said = text[CARD_CLAIM.search(text).start():][:200].lower()
-    named = [tool for tool, words in FIX_WORDS if re.search(words, said)]
-    pick = next((f for t in named for f in ctx.fixes if f[0] == t), None) or ctx.fixes[0]
+    claim = CARD_CLAIM.search(text)
+    sentence = re.split(r"(?<=[.!?])\s+", text[claim.start():])[0].lower()
+    before = text[max(0, claim.start() - 60):claim.start()].lower()
+    if re.search(r"\b(not|no|never|wasn't|isn't|didn't|haven't|hadn't|inaccurate|wrong|mistake)\b|n't\b",
+                 before + " " + sentence) or '"' in before[-3:]:
+        return  # a negated or quoted mention is not a promise (the visible correction still applies)
+    named = next((tool for tool, words in FIX_WORDS if re.search(words, sentence)), None)
+    matches = [f for f in ctx.fixes if f[0] == named]
+    if len({(t, d) for t, d, _p in matches}) != 1:
+        return  # only an unambiguous fix on one device this turn read; otherwise the correction applies
+    pick = matches[0]
+    ctx.promised = (pick[0], pick[1])
     # Gemini 3 wants a thought signature on every call in the history: carry the model's own over, else the
     # documented placeholder for a call the client made.
     signature = next((p.thought_signature for p in parts if p.thought_signature), None) \

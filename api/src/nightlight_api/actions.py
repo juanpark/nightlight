@@ -110,7 +110,7 @@ def _waiting_card(tx, uid: str, device_id: str, action_type: str, params: dict, 
 
 
 def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_type: str, device_id: str,
-            params: dict, fence=None, mode: str = "quick") -> dict:
+            params: dict, fence=None, mode: str = "quick", ask: bool = False) -> dict:
     """Create (or find) the action for this logical operation. Sample-home jobs run at once when trust allows; a
     real device's capability follows its own approval rule (capabilities.py).
 
@@ -150,7 +150,7 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
                   **c, "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
                   "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
                   "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now()}
-        if decision["auto"]:
+        if decision["auto"] and not ask:  # `ask`: always a card, whatever trust allows
             return _finish(tx, uid, action, device, services, trust_doc, trust_ref, "approve", "auto", None)
         tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
         return action
