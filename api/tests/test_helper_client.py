@@ -680,3 +680,64 @@ def test_saying_yes_at_install_really_opens_the_private_folders(helper, monkeypa
     helper.install()
     assert helper._load()["macPrivateFolders"] is True
     assert {p for _n, p in places} <= {os.path.abspath(p) for p in opened}
+
+
+KEY = "0f" * 32
+
+
+def test_fingerprints_only_for_private_addresses(helper):
+    tag = helper.net_tag(KEY, "192.168.1.20")
+    assert len(tag) == 20 and "192" not in tag and tag == helper.net_tag(KEY, "192.168.1.20")
+    assert helper.net_tag("1e" * 32, "192.168.1.20") != tag  # another account's key: unrelated fingerprints
+    assert helper.net_tag(KEY, "10.0.0.1") and helper.net_tag(KEY, "172.31.255.1")
+    for other in ("8.8.8.8", "172.32.0.1", "169.254.1.1", "100.64.0.1", "127.0.0.1", "::1", "nas.local", None,
+                  3232235796):
+        assert helper.net_tag(KEY, other) is None, other
+    assert helper.net_tag("not-a-key", "192.168.1.20") is None
+
+
+def test_reports_carry_fingerprints_never_addresses(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "_own_ip", lambda: "192.168.1.5")
+    monkeypatch.setattr(helper, "_gateway", lambda: "192.168.1.1")
+    monkeypatch.setattr(helper, "_relied_on", lambda: [("192.168.1.10", "time_machine"), ("8.8.8.8", "service:445"),
+                                                       ("192.168.1.11", "service:5432"), ("192.168.1.5", "service:445")])
+    assert helper._net() is None  # no key yet: nothing to send
+    helper._update_config(lambda c: c.__setitem__("netKey", KEY))
+    net = helper._net()
+    assert net["self"] == helper.net_tag(KEY, "192.168.1.5") and net["gateway"] == helper.net_tag(KEY, "192.168.1.1")
+    assert net["peers"] == [{"tag": helper.net_tag(KEY, "192.168.1.10"), "why": "time_machine"},
+                            {"tag": helper.net_tag(KEY, "192.168.1.11"), "why": "service:5432"}]  # public, self: out
+    body = json.dumps(net)
+    assert "192.168" not in body and "8.8.8.8" not in body
+    monkeypatch.setattr(helper, "_relied_on", lambda: 1 / 0)
+    helper._SLOW.clear()
+    assert helper._net() is None  # a failing probe costs the fingerprints, never the report
+
+
+def test_the_key_from_the_server_is_kept(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "facts", lambda: {})
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: (200, {"ok": True, "netKey": KEY}))
+    assert helper.once() == 200 and helper._load()["netKey"] == KEY
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: (200, {"ok": True, "netKey": "../x"}))
+    assert helper.once() == 200 and helper._load()["netKey"] == KEY  # a malformed one is ignored
+
+
+def test_found_things_carry_a_fingerprint_once_the_key_is_known(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.1": "24:a4:3c:11:22:33"})
+    monkeypatch.setattr(helper, "_mdns", lambda: {})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.1": [80]})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True)
+    assert sent[0]["items"][0]["tag"] == helper.net_tag(KEY, "192.168.1.1") and "192.168" not in json.dumps(sent)
+
+
+def test_where_shared_folders_and_backups_live(helper):
+    assert helper._mount_host("//juan@NAS._smb._tcp.local/share") == "NAS.local"
+    assert helper._mount_host("//GUEST:@192.168.1.10:445/x") == "192.168.1.10"
+    assert helper._mount_host("nas:/export") == "nas"
+    assert helper._mount_host("/dev/disk3s1") is None
+    assert helper._hex_v4("0101A8C0") in ("192.168.1.1", "1.1.168.192")  # /proc/net: this machine's byte order

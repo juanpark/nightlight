@@ -6,7 +6,8 @@ image name and tag without any registry address or path, state, status text), th
 (and, on a Mac, of your own failing background items), how many software updates are waiting, two yes/no safety
 facts (administrator commands without a password; SSH password logins), what you allowed here, and up/down results
 for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
-variables or passwords. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
+variables or passwords. To draw lines between your devices it sends keyed fingerprints of local network addresses
+(its own, its router's, and those it backs up to or relies on), never the addresses themselves. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
 scrubbed here first. It talks only HTTPS to the address you joined with.
 
 By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
@@ -47,7 +48,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.19"
+VERSION = "0.9.20"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -173,9 +174,9 @@ def _failed_units(timeout=20):
 _SLOW = {}  # slow checks are re-run at most hourly
 
 
-def _hourly(key, fn):
+def _hourly(key, fn, every=3600):
     hit = _SLOW.get(key)
-    if hit and time.time() - hit[0] < 3600:
+    if hit and time.time() - hit[0] < every:
         return hit[1]
     value = fn()
     _SLOW[key] = (time.time(), value)
@@ -244,13 +245,17 @@ def _ssh_password_login():
 
 def facts():
     cpu, mem, up = _cpu_mem_uptime()
-    return {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
-            "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
-            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
-            "watchResults": _watch_results(), "failedAgents": _failed_agents(),
-            "manage": _manage(),
-            "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
-                       "sshPasswordLogin": _ssh_password_login()}}
+    out = {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
+           "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
+           "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
+           "watchResults": _watch_results(), "failedAgents": _failed_agents(),
+           "manage": _manage(),
+           "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
+                      "sshPasswordLogin": _ssh_password_login()}}
+    net = _net()
+    if net:
+        out["net"] = net
+    return out
 
 
 def _allowed():
@@ -1770,6 +1775,9 @@ def once():
         if isinstance(watch, list) and watch != cfg.get("watch"):
             wl = [w for w in watch if isinstance(w, dict)][:10]
             _update_config(lambda c: c.__setitem__("watch", wl))  # only this field; addresses stay local
+        key = body.get("netKey")
+        if isinstance(key, str) and NET_KEY_RE.fullmatch(key) and key != cfg.get("netKey"):
+            _update_config(lambda c: c.__setitem__("netKey", key))  # for fingerprints from the next report on
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -2102,6 +2110,9 @@ def discover(yes=False):
         cid = known.get(ip) or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
+        tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
+        if tag:
+            items[-1]["tag"] = tag
         local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
     if not items:
         print("Didn't find anything to suggest on this network.")
@@ -2157,6 +2168,171 @@ def _watch_results():
         except OSError:
             out.append({"cid": w["cid"], "up": False, "ms": None})
     return out
+
+
+# ------------------------------------------------------------------ lines on the map, without addresses
+# Which of your devices rely on each other, told without any address leaving this one. Each private IPv4 address
+# (10/8, 172.16/12, 192.168/16) is replaced by a keyed fingerprint: HMAC-SHA256 with your account's own key (sent only
+# to your account's helpers), first 20 hex characters. Your devices give the same address the same fingerprint, so the
+# app can match "this Mac backs up to that NAS" without learning either address. Link-local (169.254/16), shared or
+# public addresses are left out: they say nothing stable about your own network.
+
+NET_PORTS = (445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000)  # services others rely on; never SSH (22)
+NET_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+NET_EVERY = 1800  # what this device relies on is looked up at most every 30 minutes
+_PRIVATE = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+
+
+def _private_v4(ip):
+    import ipaddress
+    try:
+        a = ipaddress.IPv4Address(ip if isinstance(ip, str) else "")
+    except ValueError:
+        return False
+    return any(a in ipaddress.IPv4Network(n) for n in _PRIVATE)
+
+
+def net_tag(key, ip):
+    """The keyed fingerprint of a private IPv4 address, or None for anything else."""
+    import hashlib
+    import hmac
+    if not _private_v4(ip) or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+        return None
+    return hmac.new(bytes.fromhex(key), ip.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def _own_ip():
+    """This device's address on the local network: the one it would use to reach the internet (a UDP "connect" only
+    picks the route; no packet is sent)."""
+    import socket as _s
+    s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def _hex_v4(h):
+    """An IPv4 address as /proc/net prints it (hex, in this machine's byte order)."""
+    import socket as _s
+    import struct
+    return _s.inet_ntoa(struct.pack("=I", int(h, 16)))
+
+
+def _gateway():
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 4 and parts[1] == "00000000" and int(parts[3], 16) & 2:  # default route, via a gateway
+                    return _hex_v4(parts[2])
+        return None
+    except (OSError, ValueError):
+        pass
+    if sys.platform == "darwin":
+        m = re.search(r"gateway:\s*([\d.]+)", _run(["route", "-n", "get", "default"], timeout=5))
+        return m.group(1) if m else None
+    return None
+
+
+def _resolve(host, timeout=3):
+    """A host name to an IPv4 address, here on the device; None if it doesn't resolve in time."""
+    import socket as _s
+    import threading
+    if _private_v4(host):
+        return host
+    got = []
+    t = threading.Thread(target=lambda: got.append(_s.gethostbyname(host)), daemon=True)  # no timeout of its own
+    t.start()
+    t.join(timeout)
+    return got[0] if got else None
+
+
+def _mount_host(source):
+    """The server's name in a network mount source: //user@nas.local/share, nas:/export, afp_x@nas._afpovertcp..."""
+    if source.startswith("//"):
+        host = source[2:].split("/", 1)[0].rsplit("@", 1)[-1]
+    elif ":" in source:
+        host = source.split(":", 1)[0]
+    else:
+        return None
+    host = urllib.parse.unquote(host).split(":")[0]
+    return re.sub(r"\._[a-z-]+\._tcp(\.local)?\.?$", ".local", host).rstrip(".") or None
+
+
+def _time_machine_hosts():
+    if sys.platform != "darwin" or not shutil.which("tmutil"):
+        return []
+    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=10), re.M)
+    return [h for h in (_mount_host("//" + u.split("://", 1)[-1]) for u in urls) if h]
+
+
+def _drive_hosts():
+    if sys.platform == "darwin":
+        lines = [m.group(1) for m in (re.match(r"^(\S+) on .+ \((smbfs|afpfs|nfs|webdav)\b", ln)
+                                      for ln in _run(["mount"], timeout=5).splitlines()) if m]
+    else:
+        try:
+            with open("/proc/mounts") as f:
+                lines = [p[0] for p in (ln.split() for ln in f)
+                         if len(p) > 2 and p[2] in ("nfs", "nfs4", "cifs", "smb3")]
+        except OSError:
+            lines = []
+    return [h for h in map(_mount_host, lines) if h]
+
+
+def _connections():
+    """(remote address, port) of established TCP connections from here to a known service port."""
+    out = []
+    try:
+        with open("/proc/net/tcp") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) > 3 and parts[3] == "01":  # ESTABLISHED
+                    ip, port = parts[2].split(":")
+                    out.append((_hex_v4(ip), int(port, 16)))
+    except (OSError, ValueError):
+        for line in _run(["netstat", "-an", "-p", "tcp"], timeout=5).splitlines():
+            parts = line.split()  # tcp4  0  0  192.168.1.5.51234  192.168.1.10.5432  ESTABLISHED
+            if len(parts) >= 6 and parts[0] == "tcp4" and parts[5] == "ESTABLISHED" and "." in parts[4]:
+                ip, port = parts[4].rsplit(".", 1)
+                if port.isdigit():
+                    out.append((ip, int(port)))
+    return [(ip, port) for ip, port in out if port in NET_PORTS]
+
+
+def _relied_on():
+    """[(address, why)]: where this device backs up to, whose shared folders it mounts, which services it uses."""
+    found = []
+    for step in (lambda: [(_resolve(h), "time_machine") for h in _time_machine_hosts()],
+                 lambda: [(_resolve(h), "network_drive") for h in _drive_hosts()],
+                 lambda: [(ip, "service:%d" % port) for ip, port in _connections()]):
+        try:
+            found += [(ip, why) for ip, why in step() if ip]
+        except Exception:  # one probe failing never hides the others
+            pass
+    return found
+
+
+def _net():
+    """What the app needs to draw lines between your devices, as fingerprints; None before the key arrived."""
+    try:
+        key = _load().get("netKey")
+        if not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+            return None
+        me = net_tag(key, _own_ip())
+        peers, seen = [], set()
+        for ip, why in _hourly("net", _relied_on, every=NET_EVERY):
+            tag = net_tag(key, ip)
+            if tag and tag != me and (tag, why) not in seen and len(peers) < 20:
+                seen.add((tag, why))
+                peers.append({"tag": tag, "why": why})
+        return {"self": me, "gateway": net_tag(key, _gateway()), "peers": peers}
+    except Exception:  # never let this cost a report
+        return None
 
 
 # ------------------------------------------------------------------ running in the background
