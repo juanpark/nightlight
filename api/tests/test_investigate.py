@@ -136,3 +136,12 @@ def test_a_silent_investigation_is_told_to_answer_now(client, started, monkeypat
     FakeLlm.behavior = speaks_then_checks
     events(dig(client, new_session(client)))
     assert seen == [True, False]  # once the person has words, the next call isn't hurried
+
+
+def test_an_answer_that_is_all_notes_to_itself_is_not_shown(client, started):  # Codex investigate rev2 #1
+    assert _tidied("Let me think. I should check the backup logs before answering.") == ""
+    async def behave(llm_request, stream):
+        yield _answer("Let me think. I should check the backup logs first.")
+    FakeLlm.behavior = behave
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["type"] == "done" and "Let me think" not in said(ev) and said(ev) == agentlib.FALLBACK

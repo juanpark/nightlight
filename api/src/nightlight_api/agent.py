@@ -1179,7 +1179,7 @@ def _tidy_thinking(ctx: TurnContext, llm_response) -> None:
     out = text
     paras = re.split(r"\n\s*\n", out.strip())
     talk = [i for i, p in enumerate(paras) if SELF_TALK.search(p)]
-    if talk and len(talk) < len(paras):
+    if talk:  # all of it notes to itself: nothing is said, and the turn's empty-answer fallback speaks instead
         out = "\n\n".join(p for i, p in enumerate(paras) if i not in talk)
     if talk or llm_response.finish_reason == types.FinishReason.MAX_TOKENS:
         ends = list(SENTENCE_END.finditer(out.rstrip()))
