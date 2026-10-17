@@ -143,15 +143,15 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         {real && <DeviceHistory uid={uid} deviceId={device.id} />}
         {!real && <DeviceProfile uid={uid} deviceId={device.id} />}
         {!real && <Notebook uid={uid} deviceId={device.id} />}
-        {!real && <Runbooks uid={uid} generation={generation} device={device} onAsk={onAsk} />}
-        {!real && <JobLog deviceId={device.id} actions={actions} />}
+        {!real && <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />}
+        {!real && <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />}
       </>}
 
       {current === "about" && <>
         <DeviceProfile uid={uid} deviceId={device.id} />
         <Notebook uid={uid} deviceId={device.id} />
-        <Runbooks uid={uid} generation={generation} device={device} onAsk={onAsk} />
-        <JobLog deviceId={device.id} actions={actions} />
+        <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />
+        <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />
         <Tags device={device} />
         <section className="drawer-section">
           <h4>Details</h4>
