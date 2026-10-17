@@ -20,7 +20,7 @@ Everything here was written during the hackathon window.
    Approve.
 4. Tap Approve. The job runs, the card updates, and the chat tells you what happened.
 
-The demo panel lets you trigger more incidents (disk full, a lagging game server, an overdue backup, an available
+**Demo tools** lets you trigger more incidents (disk full, a lagging game server, an overdue backup, an available
 update) and reset the sample home. Signing in with Google lets you add your own devices.
 
 ## The core loop
@@ -47,7 +47,7 @@ trust settings say.
 
 | Area | In short |
 |---|---|
-| Map | devices on a grid you can drag; lines between devices (connected through, backs up to, relies on, powered by) that the agent uses to reason about what depends on what; tags and filters; Live / Sample marks |
+| Map | a canvas on graph paper that opens fitted to any screen (pan, pinch or zoom); devices snap to the grid where you drop them; a list view too; lines between devices (connected through, backs up to, relies on, powered by) that the agent uses to reason about what depends on what; tags and filters; Live / Sample marks |
 | Chat | streamed answers with the agent's steps shown; cards inline; history kept 30 days; starter questions when the chat is empty |
 | Checkups (playbooks) | known problems (disk filling up, slow, no internet, updates, after a restart) written once as data; checks run, causes are matched in code, safe clean-ups come up as cards, with no AI call |
 | Investigate mode | a toggle under the chat: a stronger model with high thinking and up to 24 steps works like an administrator and reports what it checked, found and recommends |
@@ -115,7 +115,7 @@ How the pieces talk:
 
 | Service | What it does here | Why |
 |---|---|---|
-| **Gemini on Google Agent Platform** | `gemini-3.5-flash-lite` (low thinking) answers everyday questions; `gemini-3.8-flash` (high thinking, up to 24 steps) runs Investigate mode | Flash-Lite measured about twice as fast as Flash with equally plain answers; the stronger model is a choice the person makes, with its own budget |
+| **Gemini on Google Agent Platform** | `gemini-3.5-flash-lite` (low thinking) answers everyday questions; `gemini-3.8-flash` (high thinking, up to 24 steps) runs Investigate mode | Flash-Lite answered faster in our tests with equally plain answers; the stronger model is a choice the person makes, with its own budget |
 | **Agent Development Kit (ADK, Python)** | the agent loop, tools, callbacks before and after each model call (cost reservation, size checks, scrubbing) | one place to bound every call |
 | **Agent Platform Memory Bank** | facts about the person, scoped to the verified user id, written only by the agent's `remember` tool, kept 180 days | memory that survives a cleared browser, without extracting it from transcripts behind the person's back |
 | **Google Search grounding** | one grounded Gemini call for unknown errors, sources returned | the agent should not guess at error messages it has never seen |
@@ -125,7 +125,7 @@ How the pieces talk:
 | **Firebase Authentication** | Google sign-in, and anonymous sign-in for the one-click demo | judges never create an account; real devices are always tied to a Google account |
 | **Firebase emulator** | the whole API test suite runs against the Firestore emulator | no cloud access needed to test |
 
-No API keys are used: the API reaches Firestore, Gemini and Memory Bank through its Cloud Run service account.
+No server-side API keys: the API reaches Firestore, Gemini and Memory Bank through its Cloud Run service account. The only key in the browser is the Firebase web config, which is public by design.
 
 ## The safety model
 
@@ -193,7 +193,9 @@ Answers are kept short on purpose. Very long conversations are trimmed or refuse
 Signed in with Google, open **Add a device**. The app shows a one-line install command for Linux or macOS. The
 installer downloads the helper from the same web address, checks its sha256, joins with a one-time code (or shows a
 code and a QR code for you to approve on your phone), and installs a background service that runs as your normal
-user. The helper is [`helper/nightlight_helper.py`](helper/nightlight_helper.py): Python 3.8+, standard library
+user. On a Mac it asks once, there and then, whether it may measure Downloads, Desktop, Documents, Movies and the
+Trash, so nobody has to come back to the terminal for it. If someone else set the device up for you, **Send to whoever
+set up this device** shares the line with three plain steps. The helper is [`helper/nightlight_helper.py`](helper/nightlight_helper.py): Python 3.8+, standard library
 only, about 2,500 lines, reviewable in one sitting.
 
 It changes nothing by default. What it can do, and only after you allow it:
