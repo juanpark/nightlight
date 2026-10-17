@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.11"
+VERSION = "0.9.12"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -357,6 +357,7 @@ def set_allowed(kind, name, on):
         cfg["allow"] = {**(cfg.get("allow") or {}), kind: sorted(names)}
     _update_config(change)
     print(("Allowed" if on else "No longer allowed") + f": {kind} {name}")
+    report_now()
 
 
 def _container_state(name):
@@ -1539,6 +1540,7 @@ def expert_setup(turn_off=False):
     if turn_off:
         _update_config(lambda c: c.pop("expert", None))
         print("Expert sessions are off on this device.")
+        report_now()
         return
     cfg = _load()
     st, body = _get_json(check_api(cfg["api"]) + "/helper/expert-key", cfg["token"])
@@ -1555,6 +1557,7 @@ def expert_setup(turn_off=False):
     _update_config(lambda c: c.__setitem__("expert", pinned))
     print("Expert sessions are on: commands you sign with that passkey can run here. `nightlight expert --off` "
           "turns them off.")
+    report_now()
 
 
 def key_fingerprint(pem):
@@ -1565,6 +1568,28 @@ def key_fingerprint(pem):
         return None
     h = hashlib.sha256(der).hexdigest()[:16].upper()
     return "-".join(h[i:i + 4] for i in range(0, 16, 4)) if der else None
+
+
+def report_now():
+    """Tell Nightlight right away (a change made here shows in the app in seconds, not at the next regular report).
+    Only the report itself: jobs stay with the background service. Waits out the server's short minimum gap.
+    Only when a person runs the command in a terminal; scripted use waits for the next regular report."""
+    if not sys.stdout.isatty():
+        return
+    for attempt in range(3):
+        try:
+            cfg = _load()
+            st, body = _post(check_api(cfg["api"]) + "/helper/heartbeat?jobs=0", facts(),
+                             {"X-Device-Token": cfg["token"]})
+        except Exception:  # a courtesy: never let it fail the command that just succeeded
+            return
+        if st == 200:
+            print("The app shows it now.")
+            return
+        if st != 429:
+            break
+        time.sleep(min(int(body.get("retryAfter") or 20), 20) + 1)
+    print("The app shows it at the next report (within a minute).")
 
 
 def _get_json(url, token):
@@ -2412,7 +2437,8 @@ def settings():
         cfg["allow"] = {k: v for k, v in allow.items() if v}
     chosen = {k: cfg[k] for k in ("manage", "allow") if k in cfg}
     _update_config(lambda c: c.update(chosen))
-    print("Saved. It applies on the next report (within a minute).")
+    print("Saved.")
+    report_now()
 
 
 def main():

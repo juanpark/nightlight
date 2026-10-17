@@ -621,7 +621,9 @@ def helper_heartbeat(body: HeartbeatBody, request: Request):
     token = request.headers.get("x-device-token", "")
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
-    return real.heartbeat(token, body.model_dump())
+    # ?jobs=0: a report from the helper's command line (after a change made at the device): it never takes jobs,
+    # which stay for the background service that runs them
+    return real.heartbeat(token, body.model_dump(), take_jobs=request.query_params.get("jobs") != "0")
 
 
 @app.post("/helper/jobs/{action_id}/result")

@@ -613,7 +613,7 @@ def back_words(last_seen, uptime_sec) -> dict:
     return {"restarted": None, "words": f"it was silent for {_span(silent)}."}
 
 
-def heartbeat(token: str, facts: dict) -> dict:
+def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
     tref = tokens_ref().document(_sha(token))
     facts, _ = scrub_value(facts)
     findings = checks(facts)
@@ -719,7 +719,8 @@ def heartbeat(token: str, facts: dict) -> dict:
                       if w.to_dict().get("checkPort")][:10]
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
                  "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
-        return device_id, _hand_over(tx, approved, user), _poll_every(user), watch_list, about
+        jobs = _hand_over(tx, approved, user) if take_jobs else []
+        return device_id, jobs, _poll_every(user), watch_list, about
 
     restarted = [False]
     device_id, jobs, poll, watch_list, about = db.run_transaction(run)

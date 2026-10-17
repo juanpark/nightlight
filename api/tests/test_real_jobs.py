@@ -236,3 +236,16 @@ def test_a_restarted_service_gets_no_new_card_until_it_fails_again(client, start
     with pytest.raises(ValueError, match="not_failed"):
         actions.propose(started, session_id="sess_test", turn_id="t_r2", generation=generation(started),
                         action_type="restart_service", device_id=dev["deviceId"], params={"unit": "pihole-FTL.service"})
+
+
+def test_a_report_only_heartbeat_never_takes_jobs(client, started):
+    from nightlight_api import actions, db
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = actions.propose(started, session_id="sess_test", turn_id="tj", generation=generation(started),
+                        action_type="restart_container", device_id=dev["deviceId"], params={"container": "pi-grafana-1"})
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    _again(dev["token"])
+    r = client.post("/helper/heartbeat?jobs=0", json=ALLOW, headers={"X-Device-Token": dev["token"]})
+    assert r.status_code == 200 and r.json()["jobs"] == []
+    assert db.action(started, a["id"]).get().to_dict()["status"] == "approved"  # still waiting for the service
