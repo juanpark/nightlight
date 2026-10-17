@@ -155,7 +155,7 @@ def test_turn_rate_limit(client, started, monkeypatch):
 def test_fleet_summary_goes_into_the_instruction(started):
     from nightlight_api import agent as agentlib_
     text = agentlib_.fleet_summary(started, 1)
-    assert "pi-1" in text and "94%" in text and "game-1" in text and "{" not in text and len(text.splitlines()) == 6
+    assert "pi-1" in text and "94%" in text and "game-1" in text and "{" not in text and len(text.split("\nHow they connect")[0].splitlines()) == 6
 
 
 def test_conversations_are_kept_for_30_days_and_readable_in_order(client, started):

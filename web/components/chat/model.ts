@@ -39,6 +39,7 @@ export function label(name: string, args: Record<string, unknown> | undefined, d
     start_investigation: `Asking to investigate the ${dev}`, run_command: `Running a command on the ${dev}`,
     propose_command: `Preparing a command for the ${dev}`, update_profile: `Updating what I know about the ${dev}`,
     research: `Searching the web: ${(args?.question as string) ?? ""}`,
+    link_devices: "Adding a line to your map",
   } as Record<string, string>)[name] ?? `Working on the ${dev}`;
 }
 

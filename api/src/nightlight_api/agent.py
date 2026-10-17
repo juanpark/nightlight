@@ -26,6 +26,8 @@ from .redact import scrub, scrub_value
 INSTRUCTION = """You are Nightlight, a calm house-sitter for someone's home and small-office servers.
 The person is not technical. Speak plainly: no jargon, no commands, no acronyms without a short explanation.
 Call devices by their names ("the Raspberry Pi"), never by their ids (pi-1): ids are only for tool arguments.
+The lines under "How they connect" are the person's own map: use them to reason about what depends on what (what a
+failure would take down, where backups go). When they tell you how two devices relate, draw it with link_devices.
 
 How to answer:
 - The summary of their home is below; use get_device for details before proposing a fix. Never invent device
@@ -253,7 +255,10 @@ def fleet_summary(uid: str, generation: int) -> str:
         state = {"ok": "up", "crit": "NOT ANSWERING", "unknown": "not checked yet"}.get(w.get("status"), "unknown")
         tags = f" Tags: {', '.join(w['tags'])}." if w.get("tags") else ""
         lines.append(f"- watched address {w.get('name')} (checked every 5 minutes from the internet): {state}.{tags}")
-    text = scrub("\n".join(sorted(lines)))[0]
+    from . import links
+    wiring = links.summary(uid, generation, {s["id"]: s["name"] for s in everyone})
+    text = scrub("\n".join(sorted(lines)) + ("\nHow they connect (lines on the map):\n" + "\n".join(wiring)
+                                              if wiring else ""))[0]
     return text.replace("{", "(").replace("}", ")")
 
 
@@ -671,6 +676,36 @@ def make_tools(ctx: TurnContext, read_only: bool):
     async def write_note(device_id: str, note: str, tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_write_note_sync, device_id, note, tool_context)
 
+    def _link_devices_sync(from_device: str, to_device: str, kind: str, tool_context: ToolContext) -> dict:
+        """Draw a line between two devices on the person's map, showing how they relate. It changes nothing on any
+        device (it is only the map), so no card is needed; say in a few words that you added it.
+
+        Use it when the person tells you how two devices relate, or you learned it for sure (for example the game
+        server's backups go to the NAS). Drawing the same pair again changes the kind.
+
+        Args:
+            from_device: device id from list_fleet (the one that backs up, relies on, or is connected or powered).
+            to_device: device id from list_fleet (the one it backs up to, relies on, goes through, or is powered by).
+            kind: one of "network" (connected through), "backup" (backs up to), "depends" (relies on),
+                "power" (powered by).
+        """
+        from . import links
+        try:
+            links.put(ctx.uid, from_device, to_device, kind,
+                      fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
+        except ApiError as e:
+            if e.code == "stale":
+                raise
+            return {"status": "error", "reason": {"not_found": "no such device on the map", "unknown_kind": "unknown kind",
+                                                  "same_device": "a device can't link to itself"}.get(e.code, e.code)}
+        names = {i: (db.device(ctx.uid, i).get().to_dict() or {}).get("name", i) for i in (from_device, to_device)}
+        verb = {"network": "is connected through", "backup": "backs up to", "depends": "relies on",
+                "power": "is powered by"}[kind]
+        return {"status": "saved", "note": f"on your map: {names[from_device]} {verb} {names[to_device]}"}
+
+    async def link_devices(from_device: str, to_device: str, kind: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_link_devices_sync, from_device, to_device, kind, tool_context)
+
     def _update_profile_sync(device_id: str, profile: str, tool_context: ToolContext) -> dict:
         """Rewrite a device's profile: the administrator's notes on that machine. Keep what is still true from the
         current profile (in get_device) and add what you learned: what it is and is used for, what runs there and
@@ -756,11 +791,12 @@ def make_tools(ctx: TurnContext, read_only: bool):
                           (get_recent_events, _get_recent_events_sync), (restart_container, _restart_container_sync),
                           (look_into, _look_into_sync), (restart_service, _restart_service_sync),
                           (inspect, _inspect_sync), (write_note, _write_note_sync),
+                          (link_devices, _link_devices_sync),
                           (run_playbook, _run_playbook_sync), (how_nightlight_works, _how_sync),
                           (update_profile, _update_profile_sync), (research, _research_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events, look_into, inspect, run_playbook, write_note,
-             how_nightlight_works, run_command, update_profile, research]
+             how_nightlight_works, run_command, update_profile, research, link_devices]
     if memory.enabled():
         tools.append(remember)
     return tools if read_only else [*tools, *action_tools]

@@ -55,3 +55,22 @@ def test_a_line_from_an_older_sample_home_is_not_found(client, started):
     db.links(started).document("old-1__old-2").set({"from": "old-1", "to": "old-2", "kind": "network", "realm": "sim",
                                                      "demoGeneration": -1})
     assert client.delete("/api/links/old-1__old-2").status_code == 404
+
+
+def test_the_agent_sees_the_map_lines_in_plain_words(started):
+    from nightlight_api import agent as agentlib, db as dbm
+    gen = dbm.user(started).get().to_dict()["demoGeneration"]
+    text = agentlib.fleet_summary(started, gen)
+    assert "How they connect" in text and "game-1 (Game server) backs up to nas-1 (NAS)" in text
+
+
+def test_a_stale_turn_cannot_draw_lines(started):
+    import pytest
+    from nightlight_api import links as linklib
+    from nightlight_api.errors import ApiError
+
+    def stale(tx):
+        raise ApiError(409, "stale")
+    with pytest.raises(ApiError):
+        linklib.put(started, "nvr-1", "nas-1", "backup", fence=stale)
+    assert "nvr-1__nas-1" not in _links(started)

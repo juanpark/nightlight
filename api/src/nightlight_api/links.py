@@ -25,7 +25,8 @@ def _usable(d: dict | None, user: dict) -> bool:
     return d.get("realm") == "real" or d.get("demoGeneration") == user.get("demoGeneration")
 
 
-def put(uid: str, src: str, dst: str, kind: str) -> dict:
+def put(uid: str, src: str, dst: str, kind: str, fence=None) -> dict:
+    """Draw (or re-kind) one line. `fence(tx)` lets a chat turn write only while it still owns the conversation."""
     if kind not in KINDS:
         raise ApiError(422, "unknown_kind")
     if src == dst:
@@ -34,6 +35,8 @@ def put(uid: str, src: str, dst: str, kind: str) -> dict:
 
     @firestore.transactional
     def run(tx):
+        if fence:
+            fence(tx)
         user = db.user(uid).get(transaction=tx).to_dict() or {}
         a, b = (db.device(uid, x).get(transaction=tx) for x in (src, dst))
         ends = [s.to_dict() if s.exists else None for s in (a, b)]
@@ -73,6 +76,20 @@ def remove(uid: str, lid: str) -> None:
         tx.delete(ref)
 
     db.run_transaction(run)
+
+
+def summary(uid: str, generation: int, names: dict) -> list[str]:
+    """The map's lines in plain words, for the agent ("game-1 (Game server) backs up to nas-1 (NAS)")."""
+    verb = {"network": "is connected through", "backup": "backs up to", "depends": "relies on", "power": "is powered by"}
+    out = []
+    for snap in db.links(uid).get():
+        l = snap.to_dict()
+        if l.get("realm") != "real" and l.get("demoGeneration") != generation:
+            continue
+        if l.get("from") in names and l.get("to") in names:
+            out.append(f"- {l['from']} ({names[l['from']]}) {verb.get(l.get('kind'), 'is linked to')} "
+                       f"{l['to']} ({names[l['to']]})")
+    return sorted(out)
 
 
 def touching(uid: str, device_id: str) -> list:

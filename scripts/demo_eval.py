@@ -34,6 +34,7 @@ SCENES = {
     "deep": [("investigate", "The Raspberry Pi's disk keeps filling up. Find out why and what we can safely do.")],
     "router": [("quick", "What would stop working if the router went down tonight?")],
     "add": [("quick", "How do I add my own computer to Nightlight?")],
+    "link": [("quick", "By the way, the camera recorder also saves its footage to the NAS every night.")],
     "trust": [("quick", "What are you allowed to do without asking me?")],
 }
 
