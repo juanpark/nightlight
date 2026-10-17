@@ -156,3 +156,33 @@ def test_each_look_is_its_own_job_and_an_empty_one_clears_the_list(client, start
     db.action(started, second).update({"status": "done"})
     r = client.post(f"/api/devices/{dev['deviceId']}/discover", json={})
     assert r.status_code == 409 and r.json()["code"] == "update_helper_first"
+
+
+def test_two_requests_at_once_start_one_look(client, started):  # codex discover rev2 #1
+    from concurrent.futures import ThreadPoolExecutor
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21"})
+    with ThreadPoolExecutor(4) as pool:
+        ids = list(pool.map(lambda _: real.request_discover(started, dev["deviceId"])["id"], range(4)))
+    assert len(set(ids)) == 1
+    everywhere = client.post("/api/discover", json={}).json()  # the global button joins the same look
+    assert everywhere["asked"][0]["deviceId"] == dev["deviceId"]
+    assert len([a for a in db.actions(started).get() if a.to_dict()["type"] == "discover"]) == 1
+
+
+def test_a_thing_seen_differently_by_two_devices_can_still_be_added(client, started):  # codex discover rev2 #2
+    mac, pi = enrolled(client, "Mac"), enrolled(client, "Pi")
+    beat(client, mac["token"], FACTS)
+    beat(client, pi["token"], FACTS)
+    seen_quietly = {**ITEM, "cid": "aaaaaaaaaaa2", "guess": "Unknown device", "services": [], "ports": [],
+                    "tag": "e" * 20}
+    seen_well = {**ITEM, "cid": "bbbbbbbbbbb2", "tag": "e" * 20}  # Home Assistant on 8123
+    for dev, it in ((mac, seen_quietly), (pi, seen_well)):
+        h = {"X-Device-Token": dev["token"]}
+        assert client.post("/helper/discoveries", json={"items": [it]}, headers=h).status_code == 200
+    [row] = client.get("/api/found").json()["items"]
+    assert row["guess"] == "Home Assistant" and 8123 in row["ports"]
+    first = row["seenBy"][0]
+    assert first["canWatch"] and first["deviceId"] == pi["deviceId"]
+    r = client.post(f"/api/discoveries/{first['deviceId']}/{first['cid']}/add", json={"name": "Home Assistant"})
+    assert r.status_code == 201

@@ -294,6 +294,9 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
     return db.run_transaction(run)
 
 
+WATCH_PORTS = (8123, 32400, 25565, 445, 631, 443, 80, 22)  # a watched thing is checked on the first one it answers
+
+
 def found_view(uid: str) -> list[dict]:
     """Everything found nearby that isn't on the map yet, once each: two devices that saw the same thing share its
     fingerprint (same address, same account key), so it becomes one row listing who saw it; a thing whose fingerprint
@@ -310,9 +313,17 @@ def found_view(uid: str) -> list[dict]:
             if it.get("added") or it.get("tag") in mine:
                 continue
             key = it.get("tag") or f"{snap.id}:{it.get('cid')}"
-            row = rows.setdefault(key, {**{k: it.get(k) for k in ("guess", "vendor", "services", "ports", "tag")},
-                                        "seenBy": []})
-            row["seenBy"].append({"deviceId": snap.id, "name": d.get("byName"), "cid": it.get("cid")})
+            row = rows.setdefault(key, {"guess": it.get("guess"), "vendor": it.get("vendor"), "tag": it.get("tag"),
+                                        "services": [], "ports": [], "seenBy": []})
+            row["vendor"] = row["vendor"] or it.get("vendor")
+            row["services"] = sorted(set(row["services"]) | set(it.get("services") or []))[:8]
+            row["ports"] = sorted(set(row["ports"]) | set(it.get("ports") or []))[:8]
+            if row["guess"] in (None, "Unknown device", "Device with a web page") and it.get("guess"):
+                row["guess"] = it["guess"]  # the more specific guess wins
+            row["seenBy"].append({"deviceId": snap.id, "name": d.get("byName"), "cid": it.get("cid"),
+                                  "canWatch": any(p in WATCH_PORTS for p in it.get("ports") or [])})
+    for row in rows.values():  # Add uses the first finder: one that can watch it (it saw a port to check)
+        row["seenBy"].sort(key=lambda f: not f["canWatch"])
     return list(rows.values())
 
 
@@ -323,14 +334,27 @@ def request_discover(uid: str, device_id: str) -> dict:
     """Ask one device to look nearby. A scan still under way is that scan (asking twice doesn't queue a second); a new
     scan gets its own identity, so a late result from an earlier one can never finish it."""
     from . import actions
-    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
-        filter=FieldFilter("type", "==", "discover"))
-    for snap in q.get():
-        a = snap.to_dict()
-        if a.get("status") in ("pending", "approved", "running"):
-            return dict(a, id=snap.id)
-    return actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{new_id('scan')}",
-                           origin="app")
+    slot = db.user(uid).collection("scans").document(device_id)  # which scan this device is on, in order
+
+    @firestore.transactional
+    def which(tx):
+        """The scan number to ask for: the current one while it is being made or still under way, else the next.
+        Two requests at once agree on one number (the transaction), and one number is one job (its identity)."""
+        snap = slot.get(transaction=tx)
+        cur = snap.to_dict() if snap.exists else {"n": 0}
+        if snap.exists and not cur.get("actionId"):
+            return cur["n"]  # being made by another request right now
+        if cur.get("actionId"):
+            a = db.action(uid, cur["actionId"]).get(transaction=tx)
+            if not a.exists or (a.to_dict() or {}).get("status") in ("pending", "approved", "running"):
+                return cur["n"]
+        tx.set(slot, {"n": cur["n"] + 1, "actionId": None})
+        return cur["n"] + 1
+
+    n = db.run_transaction(which)
+    a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{n}", origin="app")
+    slot.set({"n": n, "actionId": a["id"]}, merge=True)
+    return a
 
 
 def discover_everywhere(uid: str) -> dict:
@@ -383,7 +407,7 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
             raise ApiError(409, "already_added")
         if sum(1 for w in watched if not w.get("revoked")) >= WATCHED_PER_HELPER:  # removed ones free a place
             raise ApiError(429, "watch_capacity")
-        port = next((p for p in (8123, 32400, 25565, 445, 631, 443, 80, 22) if p in (item.get("ports") or [])), None)
+        port = next((p for p in WATCH_PORTS if p in (item.get("ports") or [])), None)
         if port is None:
             raise ApiError(422, "no_check_port")  # nothing we could check answers on it
         helper_name = hsnap.to_dict().get("name", "your device")
