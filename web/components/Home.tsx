@@ -144,7 +144,7 @@ export default function Home({ user }: { user: User }) {
           {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby discoveries={discoveries} />}
+          {panel === "found" && <FoundNearby discoveries={discoveries} devices={devices} onGo={go} />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
             <div className="chips" aria-label="Show only">
