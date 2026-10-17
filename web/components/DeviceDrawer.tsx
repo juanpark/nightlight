@@ -75,7 +75,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
       <div className="panel drawer" ref={box}>
         <Head key={device.id} device={device} onClose={onClose} />
         <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
-        <WatchedPanel uid={uid} generation={generation} device={device} devices={devices} onAsk={onAsk} onGo={onGo}
+        <WatchedPanel key={device.id} uid={uid} generation={generation} device={device} devices={devices} onAsk={onAsk} onGo={onGo}
           onClose={onClose} />
       </div>
     );

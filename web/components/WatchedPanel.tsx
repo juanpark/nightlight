@@ -11,50 +11,75 @@ import { ROLES, roleOf } from "./map/kinds";
 
 const PORTS: Record<number, string> = { 22: "remote login", 80: "web page", 443: "secure web page", 445: "file sharing",
   631: "printer", 8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex" };
-const UP = new Set(["status_ok", "watch_ok", "back"]), DOWN = new Set(["status_crit", "watch_crit", "silent"]);
+// whether it answers (reachability) vs. whether anyone was checking (coverage: the watcher went silent and came back)
+const UP = new Set(["status_ok", "watch_ok"]), DOWN = new Set(["status_crit", "watch_crit"]);
+const GONE = "silent", BACK = "back";
 const DAY = 86400000;
 
 type Seg = { from: number; to: number; state: "ok" | "crit" | "none" };
 
-/** The last 24 hours as up/down stretches, from the device's status events (unknown before it was added). */
+/** The last 24 hours from the device's status events: answering, not answering, or unknown (before it was added, or
+ * while its watcher wasn't reporting). Status changes are always recorded, so with none the state held throughout. */
 function availability(events: EventDoc[], d: Device, now: number): Seg[] {
   const start = now - DAY, born = Math.max(start, d.createdAt?.getTime() ?? start);
-  const evs = events.filter((e) => e.deviceId === d.id && e.at && (UP.has(e.kind) || DOWN.has(e.kind)))
-    .sort((a, b) => a.at!.getTime() - b.at!.getTime());
-  const stateOf = (e: EventDoc) => (UP.has(e.kind) ? "ok" : "crit") as Seg["state"];
-  const before = evs.filter((e) => e.at!.getTime() <= born).at(-1);
-  const inside = evs.filter((e) => e.at!.getTime() > born);
-  // with nothing before the window, the first change inside it tells what came before it; with no changes at all,
-  // a thing that isn't answering now was answering until its last answer
-  const quiet = d.status === "crit" && d.lastSeen && d.lastSeen.getTime() > born ? d.lastSeen.getTime() : null;
-  let state: Seg["state"] = before ? stateOf(before) : inside[0] ? (stateOf(inside[0]) === "ok" ? "crit" : "ok")
-    : quiet || d.status === "ok" ? "ok" : d.status === "crit" ? "crit" : "none";
-  if (!evs.length && quiet) inside.push({ id: "quiet", kind: "status_crit", severity: "crit", message: "", at: new Date(quiet) });
+  const evs = events.filter((e) => e.deviceId === d.id && e.at && (UP.has(e.kind) || DOWN.has(e.kind)
+    || e.kind === GONE || e.kind === BACK)).sort((a, b) => a.at!.getTime() - b.at!.getTime());
+  const reach = (e: EventDoc) => (UP.has(e.kind) ? "ok" : "crit") as "ok" | "crit";
+  const changes = evs.filter((e) => UP.has(e.kind) || DOWN.has(e.kind));
+  const before = changes.filter((e) => e.at!.getTime() <= born).at(-1);
+  const firstIn = changes.find((e) => e.at!.getTime() > born);
+  // reachability at the window's start: the last change before it, else the opposite of the first change in it,
+  // else what it is now
+  let reachable: "ok" | "crit" | null = before ? reach(before) : firstIn ? (reach(firstIn) === "ok" ? "crit" : "ok")
+    : d.status === "ok" || d.status === "crit" ? d.status : null;
+  const cover = evs.filter((e) => e.at!.getTime() <= born && (e.kind === GONE || e.kind === BACK)).at(-1);
+  let watched = cover?.kind !== GONE;
   const segs: Seg[] = born > start ? [{ from: start, to: born, state: "none" }] : [];
+  const state = (): Seg["state"] => watched && reachable ? reachable : "none";
   let t = born;
-  for (const e of inside) {
-    segs.push({ from: t, to: e.at!.getTime(), state });
-    t = e.at!.getTime(); state = stateOf(e);
+  for (const e of evs.filter((x) => x.at!.getTime() > born)) {
+    segs.push({ from: t, to: e.at!.getTime(), state: state() });
+    t = e.at!.getTime();
+    if (e.kind === GONE) watched = false; else if (e.kind === BACK) watched = true; else reachable = reach(e);
   }
-  segs.push({ from: t, to: now, state });
-  return segs.filter((s) => s.to > s.from);
+  segs.push({ from: t, to: now, state: state() });
+  // merge neighbours in the same state, so one outage is one stretch
+  return segs.filter((s) => s.to > s.from).reduce<Seg[]>((out, s) => {
+    const last = out.at(-1);
+    if (last && last.state === s.state) last.to = s.to; else out.push({ ...s });
+    return out;
+  }, []);
+}
+
+/** When it stopped answering: its latest change to "not answering", if that is the state it is in. */
+function downSince(events: EventDoc[], d: Device): Date | null {
+  const last = events.filter((e) => e.deviceId === d.id && e.at && (UP.has(e.kind) || DOWN.has(e.kind)))
+    .sort((a, b) => b.at!.getTime() - a.at!.getTime())[0];
+  return d.status === "crit" && last && DOWN.has(last.kind) ? last.at! : null;
 }
 
 function Availability({ segs, now }: { segs: Seg[]; now: number }) {
   const down = segs.filter((s) => s.state === "crit");
   const mins = Math.round(down.reduce((n, s) => n + s.to - s.from, 0) / 60000);
+  // an outage its watcher was silent in the middle of is still one outage
+  let outages = 0, prev: Seg["state"] | null = null;
+  for (const s of segs) {
+    if (s.state === "none") continue;
+    if (s.state === "crit" && prev !== "crit") outages++;
+    prev = s.state;
+  }
   const known = segs.some((s) => s.state !== "none");
   return (
     <section className="drawer-section">
       <h4>Availability, last 24 hours</h4>
-      <div className="avail" role="img" aria-label={down.length ? `Not answering ${down.length} times` : "Answering throughout"}>
+      <div className="avail" role="img" aria-label={outages ? `Not answering ${outages} times` : "Answering throughout"}>
         {segs.map((s) => <i key={s.from} className={s.state} style={{ width: `${((s.to - s.from) / DAY) * 100}%` }}
           title={`${s.state === "ok" ? "Answering" : s.state === "crit" ? "Not answering" : "Not watched yet"} from ${when(new Date(s.from), now)}`} />)}
       </div>
       <div className="avail-scale small muted"><span>24 h ago</span><span>now</span></div>
       <p className="small muted">{!known ? "Nothing to show yet: it was added just now."
-        : down.length === 0 ? "Answered every check."
-        : `Didn't answer ${down.length} time${down.length === 1 ? "" : "s"}, ${mins < 90 ? `${Math.max(1, mins)} min` : `${Math.round(mins / 60)} hours`} in all.`}</p>
+        : outages === 0 ? "Answered every check."
+        : `Didn't answer ${outages} time${outages === 1 ? "" : "s"}, ${mins < 90 ? `${Math.max(1, mins)} min` : `${Math.round(mins / 60)} hours`} in all.`}</p>
     </section>
   );
 }
@@ -73,8 +98,11 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
   const name = (id: string) => devices.find((x) => x.id === id)?.name;
   const through = links.filter((l) => l.kind === "network" && (l.from === d.id || l.to === d.id))
     .map((l) => name(l.from === d.id ? l.to : l.from)).filter(Boolean) as string[];
+  const since = downSince(events, d);
   const sentence = d.status === "crit"
-    ? `Hasn't answered since ${d.lastSeen ? when(d.lastSeen, now) : "it was added"}${by ? `. The ${by} keeps checking it` : ""}.`
+    ? (since ? `Hasn't answered since ${when(since, now)}.` : "Isn't answering.")
+      + (by ? ` The ${by} keeps checking it${d.lastSeen ? ` (last check ${when(d.lastSeen, now)})` : ""}.`
+        : d.lastSeen ? ` Last checked ${when(d.lastSeen, now)}.` : "")
     : d.status === "offline" ? `Not checked lately: ${by ? `the ${by}` : "the device that watches it"} isn't reporting.`
     : `${answering(d, now).replace(/^a/, "A")}, checked every minute by ${by ? `the ${by}` : "one of your devices"}.`;
   async function setRole(r: Role) {

@@ -67,9 +67,9 @@ export function ago(ms: number): string {
 export const when = (at: Date, now: number) => now - at.getTime() < 20 * 3600000
   ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : `${ago(now - at.getTime())} ago`;
 
-/** How a watched thing is doing, in a few words: "answers in 12 ms", "not answering since 19:40". */
+/** How a watched thing is doing, in a few words: "answers in 12 ms", "not answering" (since when needs its events). */
 export function answering(d: Device, now: number): string {
-  if (d.status === "crit") return d.lastSeen ? `not answering since ${when(d.lastSeen, now)}` : "not answering";
+  if (d.status === "crit") return "not answering";
   if (d.status === "offline") return "not checked lately";
   const ms = d.vitals?.latencyMs;
   return ms != null ? `answers in ${Math.max(1, Math.round(ms))} ms` : "answers";
