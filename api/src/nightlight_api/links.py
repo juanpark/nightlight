@@ -1,9 +1,18 @@
-"""Links between devices on the map: how things relate, drawn by the owner (or seeded for the sample home).
+"""Links between devices on the map: how things relate, drawn by the owner (or seeded for the sample home), or seen
+by the helpers (`source: "auto"`).
 
 A link is layout, not device state: it changes nothing on any device. One link per ordered pair of devices (drawing
 it again changes its kind). A link is "real" only when both ends are real devices; any other link belongs to the sample
 home and goes away with it on a reset.
+
+Automatic lines come from keyed fingerprints, never addresses: a helper reports `net`, the fingerprints of its own
+local address, of its router's, and of the addresses it relies on (a Time Machine disk, a mounted shared folder, a
+database it is connected to). A fingerprint is HMAC-SHA256 with the account's own key (`netKey`), so within one account
+equal fingerprints mean the same address. A line the person drew is never changed, and an automatic line the person
+deleted is not drawn again.
 """
+
+import secrets
 
 from google.cloud import firestore
 
@@ -12,6 +21,11 @@ from .errors import ApiError, conflict, not_found
 
 KINDS = ("network", "backup", "depends", "power")  # connected through · backs up to · relies on · powered by
 MAX_LINKS = 200
+# Ports a helper may report a connection to (nightlight_helper.py NET_PORTS), in plain words. Remote login (22) is left
+# out on purpose: someone administering a machine is not something it relies on.
+SERVICE_PORTS = {445: "shared folders", 2049: "shared folders (NFS)", 548: "shared folders (AFP)",
+                 873: "rsync backups", 5432: "PostgreSQL database", 3306: "MySQL database",
+                 1883: "smart-home messages (MQTT)", 8123: "Home Assistant", 32400: "Plex", 9000: None}
 
 
 def link_id(src: str, dst: str) -> str:
@@ -50,7 +64,7 @@ def put(uid: str, src: str, dst: str, kind: str, fence=None) -> dict:
         if not existing.exists and len(list(db.links(uid).limit(MAX_LINKS).get(transaction=tx))) >= MAX_LINKS:
             raise ApiError(409, "too_many_links")
         real = all(d.get("realm") == "real" for d in ends)
-        doc = {"from": src, "to": dst, "kind": kind, "realm": "real" if real else "sim",
+        doc = {"from": src, "to": dst, "kind": kind, "realm": "real" if real else "sim", "source": "user",
                "demoGeneration": user.get("demoGeneration", 0), "createdAt": firestore.SERVER_TIMESTAMP}
         tx.set(ref, doc)
         return {"id": ref.id, **{k: v for k, v in doc.items() if k != "createdAt"}}
@@ -60,7 +74,7 @@ def put(uid: str, src: str, dst: str, kind: str, fence=None) -> dict:
 
 def remove(uid: str, lid: str) -> None:
     """Delete a line. A sample-home line follows the same barrier as every other demo write: never while a reset is
-    rebuilding the home, and never one from an older sample home."""
+    rebuilding the home, and never one from an older sample home. A deleted automatic line is not drawn again."""
     ref = db.links(uid).document(lid)
 
     @firestore.transactional
@@ -75,6 +89,8 @@ def remove(uid: str, lid: str) -> None:
                 raise conflict("resetting", retryAfter=5)
             if link.get("demoGeneration") != user.get("demoGeneration"):
                 raise not_found()
+        if link.get("source") == "auto":
+            tx.set(db.user(uid), {"dismissedLinks": firestore.ArrayUnion([lid])}, merge=True)
         tx.delete(ref)
 
     db.run_transaction(run)
@@ -89,9 +105,110 @@ def summary(uid: str, generation: int, names: dict) -> list[str]:
         if l.get("realm") != "real" and l.get("demoGeneration") != generation:
             continue
         if l.get("from") in names and l.get("to") in names:
+            seen = f" (seen by its helper: {l['why']})" if l.get("source") == "auto" and l.get("why") else ""
             out.append(f"- {l['from']} ({names[l['from']]}) {verb.get(l.get('kind'), 'is linked to')} "
-                       f"{l['to']} ({names[l['to']]})")
+                       f"{l['to']} ({names[l['to']]}){seen}")
     return sorted(out)
+
+
+def same_network(devices: dict) -> list[str]:
+    """Devices whose helpers report the same router while the router itself isn't on the map, in plain words."""
+    selves = {(d.get("net") or {}).get("self") for d in devices.values()}
+    groups = {}
+    for i, d in devices.items():
+        gateway = (d.get("net") or {}).get("gateway")
+        if gateway and gateway not in selves:
+            groups.setdefault(gateway, []).append(f"{i} ({d.get('name', i)})")
+    return sorted(f"- {', '.join(sorted(names))} are on the same home network (the router isn't on the map; it may be "
+                  "under Found nearby)" for names in groups.values() if len(names) >= 2)
+
+
+# ------------------------------------------------------------------ lines the helpers see
+
+def net_key(tx, uid: str) -> str:
+    """The account's fingerprint key (32 random bytes, hex), created on first use. Kept outside `users/{uid}`, which
+    browsers can read: only the account's own helpers receive it, in their report replies. Reads, then may write: call
+    it after the transaction's other reads."""
+    ref = db.client().collection("netKeys").document(uid)
+    snap = ref.get(transaction=tx)
+    if snap.exists:
+        return snap.to_dict()["key"]
+    key = secrets.token_hex(32)
+    tx.set(ref, {"key": key, "createdAt": firestore.SERVER_TIMESTAMP})
+    return key
+
+
+def _why(reason: str) -> tuple[str, str]:
+    """(kind, plain words) for one reason a helper gave."""
+    if reason == "time_machine":
+        return "backup", "Time Machine backs up here"
+    if reason == "network_drive":
+        return "depends", "uses its shared folder"
+    port = int(reason.split(":", 1)[1])
+    words = SERVICE_PORTS.get(port)
+    return "depends", f"connects to its {words} (port {port})" if words else f"connects to port {port}"
+
+
+def wanted(devices: dict) -> dict:
+    """The lines the fingerprints show among these real devices: {link id: (from, to, kind, why)}."""
+    by_self = {}
+    for i, d in sorted(devices.items(), key=lambda x: x[1].get("kind") == "watched"):  # a helper's own device wins
+        by_self.setdefault((d.get("net") or {}).get("self"), i)  # over the same box added from Found nearby
+    by_self.pop(None, None)
+    out = {}
+    for i, d in devices.items():
+        net = d.get("net") or {}
+        for peer in net.get("peers") or []:
+            dst = by_self.get(peer.get("tag"))
+            if not dst or peer.get("tag") == net.get("self"):
+                continue  # not on the map, or itself
+            kind, why = _why(peer.get("why", ""))
+            lid = link_id(i, dst)
+            if lid not in out or (kind == "backup" and out[lid][2] != "backup"):
+                out[lid] = (i, dst, kind, why)
+        router = by_self.get(net.get("gateway"))
+        if router and net.get("gateway") != net.get("self") and link_id(i, router) not in out:
+            out[link_id(i, router)] = (i, router, "network", "its router: it reaches the internet through it")
+    return out
+
+
+def infer(uid: str) -> int:
+    """Draw the lines the helpers' fingerprints show. Never touches a line the person drew (nor draws another between
+    the same two devices), and never draws again one the person deleted. Lines stay until deleted. Returns how many
+    lines were drawn or changed."""
+    @firestore.transactional
+    def run(tx):
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
+        devices = {s.id: s.to_dict() for s in db.devices(uid).get(transaction=tx)}
+        existing = {s.id: s.to_dict() for s in db.links(uid).get(transaction=tx)}
+        devices = {i: d for i, d in devices.items() if d.get("realm") == "real" and not d.get("archived")}
+        dismissed = set(user.get("dismissedLinks") or [])
+        drawn = {frozenset((l.get("from"), l.get("to"))) for l in existing.values() if l.get("source") != "auto"}
+        count, changed = len(existing), 0
+        for lid, (src, dst, kind, why) in wanted(devices).items():
+            old = existing.get(lid)
+            if lid in dismissed or frozenset((src, dst)) in drawn or (not old and count >= MAX_LINKS):
+                continue
+            if old and (old.get("kind"), old.get("why")) == (kind, why):
+                continue
+            tx.set(db.links(uid).document(lid), {"from": src, "to": dst, "kind": kind, "realm": "real",
+                                                 "source": "auto", "why": why,
+                                                 "demoGeneration": user.get("demoGeneration", 0),
+                                                 "createdAt": firestore.SERVER_TIMESTAMP})
+            count += not old
+            changed += 1
+        return changed
+
+    return db.run_transaction(run)
+
+
+def infer_quietly(uid: str) -> None:
+    """`infer` after a report or an added device: drawing lines must never break what just succeeded."""
+    try:
+        infer(uid)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).info("automatic lines not drawn: %s", type(e).__name__)
 
 
 def touching(uid: str, device_id: str) -> list:

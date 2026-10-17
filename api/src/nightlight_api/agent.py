@@ -257,7 +257,8 @@ def fleet_summary(uid: str, generation: int) -> str:
         tags = f" Tags: {', '.join(w['tags'])}." if w.get("tags") else ""
         lines.append(f"- watched address {w.get('name')} (checked every 5 minutes from the internet): {state}.{tags}")
     from . import links
-    wiring = links.summary(uid, generation, {s["id"]: s["name"] for s in everyone})
+    wiring = links.summary(uid, generation, {s["id"]: s["name"] for s in everyone}) + \
+        links.same_network({i: d for i, d in docs if d.get("realm") == "real"})
     text = scrub("\n".join(sorted(lines)) + ("\nHow they connect (lines on the map):\n" + "\n".join(wiring)
                                               if wiring else ""))[0]
     return text.replace("{", "(").replace("}", ")")

@@ -12,7 +12,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 import re
 
-from . import db, release
+from . import db, links, release
 from .errors import ApiError, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub_value
@@ -325,13 +325,16 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
             "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
             "vendor": item.get("vendor"), "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
             "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
-            "registered": True})
+            "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {})})
         tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
                {"uid": uid, "deviceId": device_id})
         event(tx, uid, device_id, "joined", "info", f"{name} joined your map, watched by {helper_name}.", who="you")
-        return {"ok": True, "deviceId": device_id}
+        return {"ok": True, "deviceId": device_id}, bool(item.get("tag"))
 
-    return db.run_transaction(run)
+    result, fingerprinted = db.run_transaction(run)
+    if fingerprinted:
+        links.infer_quietly(uid)  # e.g. the router: the devices behind it get their lines
+    return result
 
 
 def leave(token: str, cleanup: str | None = None) -> dict:
@@ -639,6 +642,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
                    if not (w.to_dict() or {}).get("revoked")]
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
+        net_key = links.net_key(tx, uid)  # the last read (it may write)
         device = dsnap.to_dict()
         trend, to_full = disk_forecast(device.get("diskTrend"), facts.get("diskPct"), _now())
         escalate_disk(findings, facts.get("diskPct"), to_full)
@@ -670,6 +674,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
                   + gap["words"])
         tx.update(tref, {"lastSeen": _now()})
         extra["diskTrend"] = trend
+        net = facts.get("net")  # fingerprints only; an older helper sends none and keeps what was there
+        if net is not None and net != device.get("net"):
+            extra["net"] = net
         tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
@@ -710,12 +717,14 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
                  "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
         jobs = _hand_over(tx, approved, user) if take_jobs else []
-        return device_id, jobs, _poll_every(user), watch_list, about
+        return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, "net" in extra
 
     restarted = [False]
-    device_id, jobs, poll, watch_list, about = db.run_transaction(run)
+    uid, device_id, jobs, poll, watch_list, about, net_changed = db.run_transaction(run)
     if restarted[0]:
         post_mortem(token, device_id, facts)
+    if net_changed:
+        links.infer_quietly(uid)  # its fingerprints changed: lines on the map may have too
     offer = release.latest()
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
             "watch": watch_list, **about, **({"latestHelper": offer["version"]} if offer else {})}

@@ -27,9 +27,9 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 
 | Path | What |
 |---|---|
-| `users/{uid}` | `demoGeneration`, `demo.state` (`ready` / `resetting`), `trustDefault`, `template` (`home-pi` = sample home shown, `empty` = hidden), `lastChatAt`, `memoryEpoch` |
+| `users/{uid}` | `demoGeneration`, `demo.state` (`ready` / `resetting`), `trustDefault`, `template` (`home-pi` = sample home shown, `empty` = hidden), `lastChatAt`, `memoryEpoch`, `dismissedLinks` (ids of automatic lines the person deleted) |
 | `users/{uid}/devices/{deviceId}` | name, `kind`, `purpose` (plain words), `status` (`ok`/`warn`/`crit`/`offline`), `health` (`verified`/`unknown`), `vitals`, `version`, `simulated`, `realm` (`real` for helper devices), map position `x`,`y`, `tags[]`, `findings[]` |
-| `users/{uid}/links/{from}__{to}` | `{from, to, kind, realm, demoGeneration, createdAt}`: lines between devices on the map (see `POST /api/links`) |
+| `users/{uid}/links/{from}__{to}` | `{from, to, kind, realm, demoGeneration, createdAt, source, why}`: lines between devices on the map (see `POST /api/links`). `source` is `user` (drawn by the person or by Nightlight when told), `auto` (seen by the helpers, see [Lines the helpers see](#lines-the-helpers-see)) or missing (sample home, drawn before 0.9.20); `auto` lines carry `why` in plain words ("Time Machine backs up here") |
 | `…/devices/{deviceId}/services/{svcId}` | name, status, version, `updateAvailable`, `category`, `findings[]` (plain message + evidence) |
 | `…/devices/{deviceId}/history/{YYYYMMDDTHHMMSS}` | real devices only: `{at, cpu, mem, disk, status, problems, expiresAt}`, at most one point per 5 minutes, deleted after 8 days (Firestore TTL on `expiresAt`) |
 | `users/{uid}/events/{eventId}` | Activity: what happened, when, how serious (see Events) |
@@ -37,7 +37,7 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 | `users/{uid}/trust/{realm}:{actionType}` | trust level per kind of job, `pinned`, `successes`, promotion `offer` |
 | `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status |
 | `users/{uid}/watches/{watchId}` | watched websites: `name`, `url`, `tags`, `status` (`unknown`/`ok`/`crit`), `httpStatus`, `latencyMs`, `lastCheckedAt`, `lastChange`, `createdAt`, `expiresAt` (30 days after adding) |
-| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, services[], ports[], added}`, `by`, `byName`, `at`, `expiresAt` (24 h) |
+| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, services[], ports[], tag, added}`, `by`, `byName`, `at`, `expiresAt` (24 h) |
 
 Every sample-home document carries `demoGeneration`. Show only documents whose `demoGeneration` equals the user's
 current `demoGeneration` (older ones are leftovers from before a reset), plus real devices and real events
@@ -57,8 +57,8 @@ Mocks: `phases/<phase>/user.json`, `devices.json` (services nested), `events.jso
 | `POST /api/demo/reset` | `{}` | `200 {ok, demoGeneration}`; `409 reset_in_progress`. Also forgets memories |
 | `POST /api/demo/inject` | `{"kind":"disk_full","deviceId":"pi-1"}` | `201 {eventId}`; `422 real_device_read_only` for a real device |
 | `POST /api/devices/{deviceId}/layout` | `{"x":-5000-5000, "y":-5000-5000, "name":"…", "tags":["…"]}`, every field optional | `200 {ok, …fields written}`. `name` (1-40) only for real devices (`422 sample_devices_keep_their_names`); `tags` at most 6, 1-20 characters, scrubbed, de-duplicated, sorted (`422 tag_too_long` if scrubbing made one longer). Sample devices: `409 resetting`, `404` for an old generation. Position doesn't change `version` |
-| `POST /api/links` | `{"from":deviceId, "to":deviceId, "kind":"network"\|"backup"\|"depends"\|"power"}` | `201 {id, from, to, kind, realm, demoGeneration}`: a line on the map (connected through / backs up to / relies on / powered by). One per ordered pair (`id` = `{from}__{to}`); drawing it again changes the kind. Layout only: no device is touched. `realm` is `real` only when both ends are real devices; other links go away with the sample home on a reset. `422` same device or unknown kind, `404` a device that isn't on the map, `409 too_many_links` (200) |
-| `DELETE /api/links/{linkId}` | — | `200 {ok}`; `404` if there is none or it belongs to an older sample home; `409 resetting` for a sample line while the sample home is being rebuilt |
+| `POST /api/links` | `{"from":deviceId, "to":deviceId, "kind":"network"\|"backup"\|"depends"\|"power"}` | `201 {id, from, to, kind, realm, demoGeneration}`: a line on the map (connected through / backs up to / relies on / powered by). One per ordered pair (`id` = `{from}__{to}`); drawing it again changes the kind (an automatic line drawn again becomes the person's: `source: "user"`). Layout only: no device is touched. `realm` is `real` only when both ends are real devices; other links go away with the sample home on a reset. `422` same device or unknown kind, `404` a device that isn't on the map, `409 too_many_links` (200) |
+| `DELETE /api/links/{linkId}` | — | `200 {ok}`; an automatic line (`source: "auto"`) deleted here is never drawn again; `404` if there is none or it belongs to an older sample home; `409 resetting` for a sample line while the sample home is being rebuilt |
 | `POST /api/devices/{deviceId}/issues/{findingId}` | `{"state":"new" \| "known" \| "snoozed","days":1-90}` (`days` required for snoozed) | `200 {ok, state, status}`; real devices only (`404` otherwise or if the finding isn't there); `422 snooze_needs_days` |
 | `POST /api/chat/sessions` | `{}` | `201 {sessionId}` |
 | `POST /api/chat/sessions/{sid}/messages` | `{"text":"…","clientRequestId":"<uuid v4>"}` (text ≤ 2,000 bytes) | `200` stream; same `clientRequestId` → the same turn (a finished turn replays); same id with different text → `409 request_mismatch`; `409 turn_in_progress` |
@@ -90,7 +90,7 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `POST /helper/enrol` | the one-time code | `{"code":"ABCD-EFGH","name":"My Pi"}` | `201 {deviceId, token}`: the token is shown only here; `401 invalid_code` if unknown, used or expired |
 | `POST /helper/pair/start` | none (20 per network address per hour, `429 quota_ip`) | `{"name":"Raspberry Pi","os":"Debian 12"}` | `201 {code, pollSecret, interval:3, expiresAt}` (10 minutes) |
 | `POST /helper/pair/poll` | `pollSecret` | `{"code":"…","pollSecret":"…"}` | `202 {status:"waiting"}`; `200 {deviceId, token}` once, after the owner approved; `401 invalid_code` (unknown, expired, used, declined or wrong secret, all alike); `429 slow_down` (polls under 2 s apart) |
-| `POST /helper/heartbeat` | `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}], pollEverySec, watch:[{cid, port}]}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
+| `POST /helper/heartbeat` | `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}], pollEverySec, watch:[{cid, port}], netKey}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
 | `POST /helper/jobs/claim` | `X-Device-Token` | `{}` | `200 {ok, jobs, pollEverySec}`: a light check for approved work between reports; `429 too_frequent` (4 s apart) |
 | `POST /helper/jobs/{actionId}/result` | `X-Device-Token` | `{"ok":true,"summary":"…","state":"running","output":null}` | `200 {ok, actionId, status}`; a repeated report changes nothing; `409 illegal_transition` before the job was handed to this device; `404` for any other device |
 | `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
@@ -103,6 +103,8 @@ Heartbeat reply fields:
 - `pollEverySec`: `5` while the owner chatted in the last 5 minutes (the helper then calls `/helper/jobs/claim`
   every 5 s), else `0`.
 - `watch`: up to 10 found devices this helper should check (`cid` and a port it reported open).
+- `netKey`: the account's fingerprint key (64 hex characters), the same for all of its helpers; see
+  [Lines the helpers see](#lines-the-helpers-see).
 
 Heartbeat facts (anything else is rejected):
 
@@ -119,11 +121,12 @@ Heartbeat facts (anything else is rejected):
 | `watchResults[] {cid, up, ms}` | ≤10; `cid` 12 hex characters, `ms` 0-60,000 or null |
 | `failedAgents[]` | ≤20 labels, ≤100 characters: macOS background items (not Apple's) whose last run failed |
 | `safety` | keys `passwordlessSudo`, `sshPasswordLogin`: true, false or null (unknown) |
+| `net` | optional (helper 0.9.20+): `{self, gateway, peers[] {tag, why}}`; every tag is 20 hex characters or null; ≤20 peers; `why` is `time_machine`, `network_drive` or `service:<port>` with a port from 445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000. Omitted, the stored `net` stays |
 
 Discovery items use a fixed vocabulary: `guess`, `vendor`, `services` and `ports` (22, 80, 443, 445, 631, 8123,
-25565, 32400) must be one of the helper's known words or numbers; `cid` is a random 12-hex id. No addresses or
-free text. The server scrubs every value of every helper request. Free-text values such as container names come from
-the device and are shown as reported.
+25565, 32400) must be one of the helper's known words or numbers; `cid` is a random 12-hex id; the optional `tag` is
+the keyed fingerprint of its address (20 hex). No addresses or free text. The server scrubs every value of every
+helper request. Free-text values such as container names come from the device and are shown as reported.
 
 ## Real devices
 
@@ -133,14 +136,34 @@ A real device that hasn't reported for **5 minutes** (or was revoked) is present
 switch.
 
 Extra device fields from the helper: `os`, `arch`, `helperVersion`, `allowedJobs`, `updatesPending`,
-`containerCount`, `containersRunning`, `issueStates`, `historyAt`, `lastSeen`, `watchState` (`silent` after the sweep
-noticed it stopped reporting, cleared by the next report), `revoked`, `uninstalled`. Services come from containers
-(`category: "containers"`, `kind: "container"`) and failed system services (`category: "system"`, `kind: "system"`,
-`unit`, `failed: true`).
+`containerCount`, `containersRunning`, `issueStates`, `historyAt`, `lastSeen`, `net` (fingerprints, below),
+`watchState` (`silent` after the sweep noticed it stopped reporting, cleared by the next report), `revoked`,
+`uninstalled`. Services come from containers (`category: "containers"`, `kind: "container"`) and failed system
+services (`category: "system"`, `kind: "system"`, `unit`, `failed: true`).
 
 **Watched devices** (added from discovery) have `kind: "watched"`, `realm: "real"`, `watchedBy` (the helper's device
 id), `cid`, `checkPort`, `vendor`, `vitals.latencyMs`. Their helper checks them each report (a TCP connect, 1 s):
 `ok`, or `crit` with a `watched_down` finding. If the helper stops reporting, they go stale by the same 5-minute rule.
+
+### Lines the helpers see
+
+Helpers (0.9.20+) report which of your devices they rely on, so the map draws lines by itself, without any address
+leaving a device. The server gives each account a random key (`netKey`, kept in `netKeys/{uid}`, which browsers can't
+read) and hands it to that account's helpers only, in the heartbeat reply. A helper replaces every private IPv4
+address (10/8, 172.16/12, 192.168/16; link-local, shared and public addresses are left out) by
+`HMAC-SHA256(netKey, address)`, first 20 hex characters, and sends `net`: its own address's tag (`self`), its router's
+(`gateway`) and `peers`: its Time Machine destination (`time_machine`), the servers of mounted network folders
+(`network_drive`) and established connections to known service ports (`service:<port>`; never remote login, port 22),
+looked up at most every 30 minutes. A found device's `tag` becomes its `net.self` when it is added to the map. Equal
+tags within one account mean the same address, so the server matches them: a peer that is another device's `self`
+gives a `backup` line (Time Machine) or a `depends` line (shared folder, service), from the device that relies to the
+one it relies on; a device whose `self` is the others' `gateway` gets a `network` line from each of them. Automatic
+lines have `source: "auto"` and `why`; a line the person drew (or one between the same two devices) is never changed,
+a deleted automatic line is not drawn again, and automatic lines stay until deleted. **Privacy reasoning:** stored
+data, logs, exports and other accounts never see an address, and tags from different accounts can't be compared. A
+tag is not encryption: whoever holds the key could try every private address, which is why the key stays on the
+server and the account's own helpers. Two places on one account that use the same private addresses (two homes both
+on 192.168.1.x) can look like one network.
 
 **Findings** on real devices carry `state`: `new` (needs a look), `known` (leaving it on purpose) or `snoozed`.
 The health light counts only `new` findings. A known or snoozed finding becomes `new` again when its severity rises or
