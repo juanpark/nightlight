@@ -124,6 +124,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   }, [links, devices, drafts, edgeSel, pos]);
   // The selected line's controls sit in a bar at screen size, whatever the zoom and wherever the line is.
   const chosen = edgeSel && drafts[edgeSel] !== null ? links.find((l) => l.id === edgeSel) : undefined;
+  const chosenKind = chosen && (drafts[chosen.id] ?? chosen.kind);
   const named = (id: string) => devices.find((d) => d.id === id)?.name ?? id;
 
   function connect(c: { source: string | null; target: string | null }) {
@@ -175,13 +176,12 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         <MiniMap className="hm-minimap" pannable zoomable style={{ width: 140, height: 90 }}
           nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />
       </ReactFlow>
-      {chosen && (
+      {chosen && chosenKind && (
         <div className="hm-linkbar" role="group" aria-label="This line">
-          <span className="small">{named(chosen.from)} {LINK[drafts[chosen.id] ?? chosen.kind].verb} {named(chosen.to)}</span>
+          <span className="small">{named(chosen.from)} {LINK[chosenKind].verb} {named(chosen.to)}</span>
           <span className="etools">
             {LINK_KINDS.map((k) => (
-              <button key={k} className={k === (drafts[chosen.id] ?? chosen.kind) ? "on" : ""} aria-pressed={k === (drafts[chosen.id] ?? chosen.kind)}
-                onClick={() => setKind(chosen, k)}>{LINK[k].label}</button>))}
+              <button key={k} className={k === chosenKind ? "on" : ""} aria-pressed={k === chosenKind} onClick={() => setKind(chosen, k)}>{LINK[k].label}</button>))}
             <button onClick={() => remove(chosen)} aria-label="Remove this line" title="Remove this line"><Trash2 size={15} /></button>
           </span>
         </div>)}
