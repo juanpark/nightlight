@@ -1,15 +1,19 @@
 /* The layered chat: work log, system lines, mode switch (UX spec 2026-10-17 §4). Existing tokens only. */
 .turn-wrap, .turn { display: flex; flex-direction: column; gap: 6px; }
-.turn.past, .chat-log .past { opacity: .75; }
+/* earlier turns fade, but a card still waiting for an answer keeps full strength */
+.bubble.past, .turn.past > :not(.card):not(:has(.card)) { opacity: .75; }
 .turn-mode { align-self: flex-start; font-size: 11px; }
-.bubble.agent.thinking { color: var(--muted); }
+.bubble.agent.thinking { color: var(--muted); display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 8px; }
 .bubble.agent { line-height: 1.55; } /* long answers */
 
 /* An empty chat: what it is for, and questions about what is on the map to start with (centred, not at the bottom). */
 .chat-empty { margin: auto 0; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 4px; }
-.chat-empty strong { font-size: 16px; }
+.chat-empty { padding: 8px 6px; gap: 10px; }
+.chat-mascot { margin-bottom: 4px; }
+.chat-empty strong { font: 650 21px/1.25 var(--font-head); letter-spacing: -.01em; }
 .chat-empty p { margin: 0 0 4px; }
-.chat-starter { text-align: left; padding: 10px 12px; border-radius: 12px; overflow-wrap: anywhere; }
+.chat-starter { text-align: left; padding: 11px 14px; border-radius: 12px; overflow-wrap: anywhere; border-color: var(--line); font-weight: 500; }
+.chat-starter:hover:not(:disabled) { border-color: var(--accent); }
 .turn-error { color: var(--crit); }
 
 .worklog { border: 1px solid var(--line); border-radius: 10px; font-size: 12px; background: var(--bg); max-width: 100%; }
@@ -46,10 +50,12 @@
 .mode-switch button { font-size: 12px; padding: 4px 10px; border-radius: 0; }
 .mode-switch button:first-child { border-radius: 8px 0 0 8px; }
 .mode-switch button:nth-child(2) { border-radius: 0 8px 8px 0; margin-left: -1px; }
-.mode-switch button.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.mode-switch button.on, .mode-switch button.on:hover { background: var(--select); color: var(--ink); border-color: var(--accent); font-weight: 650; position: relative; z-index: 1; }
 .mode-hint { flex-basis: 100%; padding-top: 3px; }
 
 /* Permission presets reuse the segmented control; the switches sit folded under them. */
 .presets { padding: 0 0 6px; }
 .presets button .small { opacity: .8; }
 .perm-switches > summary { cursor: pointer; margin: 4px 0; }
+
+.thinking-mascot { align-self: flex-start; padding: 2px 4px; }

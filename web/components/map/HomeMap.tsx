@@ -18,7 +18,7 @@ import LinkEdge, { type LinkEdgeType } from "./LinkEdge";
 import { GRID, LINK, LINK_KINDS, NODE_H, NODE_W } from "./kinds";
 
 const nodeTypes = { device: DeviceNode };
-const STATUS_HEX: Record<string, string> = { ok: "#3aa776", warn: "#e0a028", crit: "#d9534f", offline: "#9aa1ad" };
+const STATUS_HEX: Record<string, string> = { ok: "#5fb487", warn: "#e9a63a", crit: "#e7826d", offline: "#8a93b3" };
 const edgeTypes = { link: LinkEdge };
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 const stamp = (l: Link) => l.createdAt?.getTime() ?? 0;
@@ -179,8 +179,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         panOnScroll zoomOnScroll={false} zoomOnPinch zoomOnDoubleClick={false}
         fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }}>
         {/* graph paper: fine squares, with a stronger line every fifth */}
-        <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(120,128,150,.16)" />
-        <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(120,128,150,.3)" />
+        <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(128,142,190,.14)" />
+        <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(128,142,190,.26)" />
         <Controls showInteractive={false} position="top-right" />
         <MiniMap className="hm-minimap" pannable zoomable style={{ width: 140, height: 90 }}
           nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />

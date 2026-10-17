@@ -91,7 +91,8 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
           {services.slice(0, 5).map((s) => <span key={s.id} className={`dot ${s.status ?? "ok"}`} />)}
           {services.length > 5 && <span className="more">+{services.length - 5}</span>}
           <span className="dapps-text">{services.length} app{services.length === 1 ? "" : "s"}
-            {bad > 0 && <b> · {bad} need{bad === 1 ? "s" : ""} a look</b>}</span>
+            {bad > 0 ? <b> · {bad} need{bad === 1 ? "s" : ""} a look</b>
+              : (d.status === "crit" || d.status === "warn") && <b className={d.status}> · {d.status === "crit" ? "needs you" : "needs a look"}</b>}</span>
         </div>)}
     </div>
   );

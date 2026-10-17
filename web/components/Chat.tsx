@@ -1,5 +1,6 @@
 "use client";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { Mascot } from "@/src/components/mascot/Mascot";
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, savedSession } from "@/lib/session";
 import { ApiError, stream } from "@/lib/api";
@@ -178,6 +179,7 @@ const Chat = forwardRef<ChatHandle, {
         }}>
           {turns.length === 0 && (
             <div className="chat-empty">
+              <Mascot size={64} className="chat-mascot" />
               <strong>Ask about your home</strong>
               <p className="muted small">Nightlight looks at your devices, explains what it finds in plain words, and asks
                 before it changes anything.</p>

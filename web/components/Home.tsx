@@ -21,7 +21,13 @@ import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
 import FirstRun from "./FirstRun";
 import "@/app/mobile.css";
+import "@/app/shell.css";
 import MemoryPanel from "./MemoryPanel";
+import { Activity as ActivityIcon, FlaskConical, Globe, House, LogOut, Menu, MessageCircle, Moon, NotebookPen, Plus,
+  Radar, ShieldCheck, Sun, X, type LucideIcon } from "lucide-react";
+import { Logo } from "@/src/components/brand/Logo";
+import { Mascot } from "@/src/components/mascot/Mascot";
+import { display, sans } from "@/src/components/landing/fonts";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
 
@@ -75,9 +81,10 @@ export default function Home({ user }: { user: User }) {
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
   const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
-  const toggle = (p: Panel) => { setMenu(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
+  const open = (p: Panel) => { setMenu(false); setPane("home"); setPanel(p); };
+  const [theme, flipTheme] = useTheme();
   function go(g: Go) {
-    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
+    if (g.to === "drawer") { setPanel("none"); setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
     else if (g.to === "panel") setPanel(g.panel);
     else if (g.to === "chat") askChat(g.ask);
   }
@@ -87,80 +94,139 @@ export default function Home({ user }: { user: User }) {
     if (auth.currentUser) await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e) => alertless(e));
   }
 
+  const item = (p: Panel, label: string, Icon: LucideIcon, count?: number) => (
+    <button className={`side-item ${panel === p ? "on" : ""}`} aria-current={panel === p ? "page" : undefined}
+      onClick={() => open(p)}>
+      <Icon size={18} strokeWidth={1.75} aria-hidden /> <span>{label}</span>
+      {!!count && <span className="side-count">{count}</span>}
+    </button>
+  );
+
   return (
-    <div className="shell">
+    <div className={`shell ${display.variable} ${sans.variable}`} data-theme={theme}>
       <header className="top">
-        <div className="brand"><span className="bulb" /> Nightlight</div>
-        {user.isAnonymous
-          ? <span className="pill">Sample home: simulated</span>
-          : <button className="small" disabled={switching || !me} onClick={toggleSample}
-              title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
+        <Logo height={22} className="top-logo" />
         <span className="spacer" />
-        <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
-        <nav className={`top-nav ${menu ? "open" : ""}`}>
-        <button onClick={() => toggle("trust")}>Trust</button>
-        <button onClick={() => toggle("activity")}>Activity</button>
-        <button onClick={() => toggle("memory")}>Memory</button>
-        <button onClick={() => toggle("add")}>Add a device</button>
-        <button onClick={() => toggle("watch")}>Watch a website</button>
-        <button onClick={() => toggle("found")}>Found nearby</button>
-        <button onClick={() => toggle("demo")}>Demo tools</button>
-        {user.isAnonymous
-          ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
-          : <span className="small muted">{user.email}</span>}
-        <button onClick={async () => signOut((await firebase()).auth)}>Sign out</button>
-        </nav>
+        <button className="icon-btn" aria-expanded={menu} aria-controls="side" onClick={() => setMenu(!menu)}
+          aria-label={menu ? "Close menu" : "Open menu"}>{menu ? <X size={20} /> : <Menu size={20} />}</button>
       </header>
+      <aside id="side" className={`side ${menu ? "open" : ""}`}>
+        <div className="side-brand"><Logo height={26} /></div>
+        <button className="icon-btn side-close" aria-label="Close menu" onClick={() => setMenu(false)}><X size={20} /></button>
+        {user.isAnonymous
+          ? <span className="side-sample" title="These devices are simulated, so you can try things safely">
+              <span className="dot sample" aria-hidden /> Sample home, simulated</span>
+          : <button className="side-sample as-button" disabled={switching || !me} onClick={toggleSample}
+              title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
+        <nav className="side-nav" aria-label="Main">
+          {item("none", "Home", House, needs.length)}
+          {item("activity", "Activity", ActivityIcon)}
+          {item("trust", "Trust", ShieldCheck)}
+          {item("memory", "Memory", NotebookPen)}
+          <p className="side-label">Add to your home</p>
+          {item("add", "Add a device", Plus)}
+          {item("watch", "Watch a website", Globe)}
+          {item("found", "Found nearby", Radar, addable(found.items).length)}
+        </nav>
+        <div className="side-foot">
+          {item("demo", "Demo tools", FlaskConical)}
+          <button className="side-item" onClick={flipTheme} aria-label={`Switch to ${theme === "night" ? "day" : "night"} theme`}>
+            {theme === "night" ? <Sun size={18} strokeWidth={1.75} /> : <Moon size={18} strokeWidth={1.75} />}
+            <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
+          <div className="side-account">
+            {user.isAnonymous
+              ? <button className="primary side-save" onClick={saveWithGoogle}
+                  title="Keep this home by linking a Google account">Save with Google</button>
+              : <span className="small muted side-email">{user.email}</span>}
+            <button className="side-item" onClick={async () => signOut((await firebase()).auth)}>
+              <LogOut size={18} strokeWidth={1.75} /> <span>Sign out</span></button>
+          </div>
+        </div>
+      </aside>
+      {menu && <button className="side-scrim" aria-label="Close menu" onClick={() => setMenu(false)} />}
       <div className="main" data-pane={pane}>
         <section className="left">
-          <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
-          <div className="panel needs needs-strip">
-            <strong className="verdict">{verdict(needs)}</strong>
-            <span className="spacer" />
-            {notify.supported && (
-              <button className={`small notify-toggle ${notify.on ? "on" : ""}`} onClick={notify.toggle}
-                aria-pressed={notify.on} title={notify.denied
-                  ? "Notifications are blocked for this site in your browser settings"
-                  : "Show a notification when something goes wrong, while this tab is open"}>
-                {notify.on ? "Notifying you" : "Notify me"}</button>)}
-            <button onClick={() => askChat("Is anything wrong at home?")}>Check-up now</button>
-            <div style={{ flexBasis: "100%" }}>
-              <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
-                onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
+          {panel === "none" ? <>
+            <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
+            <div className="panel needs needs-strip" data-state={needs.length ? "needs" : "ok"}>
+              <span className="verdict-light" aria-hidden />
+              <h1 className="verdict">{verdict(needs)}</h1>
+              <span className="spacer" />
+              {notify.supported && (
+                <button className={`small notify-toggle ${notify.on ? "on" : ""}`} onClick={notify.toggle}
+                  aria-pressed={notify.on} title={notify.denied
+                    ? "Notifications are blocked for this site in your browser settings"
+                    : "Show a notification when something goes wrong, while this tab is open"}>
+                  {notify.on ? "Notifying you" : "Notify me"}</button>)}
+              <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Check-up now</button>
+              {needs.length > 0 && <div className="needs-body">
+                <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
+                  onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
+              </div>}
             </div>
-          </div>
-          {panel === "trust" && <TrustPanel trust={trust} />}
-          {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
-          {panel === "demo" && <DemoTools devices={devices} />}
-          {panel === "memory" && <MemoryPanel />}
-          {panel === "watch" && <WatchPanel watches={watches} now={now} />}
-          {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
-            expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
-            onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
-          <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
-            onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
-            settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
-          {selected && devices.find((d) => d.id === selected) && (
-            <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
-              needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
-              onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
-              onAsk={(q) => askChat(q)} onClose={() => setSelected(null)} />
-          )}
+            {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
+              expert={expert} onAdd={() => open("add")} onWatch={() => open("watch")} onSave={saveWithGoogle}
+              onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
+            <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
+              onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
+              settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
+            {selected && devices.find((d) => d.id === selected) && (
+              <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
+                needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
+                onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
+                onAsk={(q) => askChat(q)} onClose={() => setSelected(null)} />
+            )}
+          </> : <div className="page">
+            {panel === "trust" && <TrustPanel trust={trust} />}
+            {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
+            {panel === "demo" && <DemoTools devices={devices} />}
+            {panel === "memory" && <MemoryPanel />}
+            {panel === "watch" && <WatchPanel watches={watches} now={now} />}
+            {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
+            {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
+          </div>}
         </section>
-        <aside className="right">
+        <aside className="right" aria-label="Ask Nightlight">
+          <div className="chat-head">
+            <MessageCircle size={18} strokeWidth={1.75} aria-hidden />
+            <h2>Ask Nightlight</h2>
+          </div>
           <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
-        <button className={pane === "home" ? "on" : ""} onClick={() => setPane("home")}>
-          Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
-        <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
+        <button className={pane === "home" ? "on" : ""} aria-current={pane === "home" ? "page" : undefined}
+          onClick={() => setPane("home")}>
+          <House size={18} strokeWidth={1.75} aria-hidden /> Home
+          {needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
+        <button className={pane === "chat" ? "on" : ""} aria-current={pane === "chat" ? "page" : undefined}
+          onClick={() => setPane("chat")}><MessageCircle size={18} strokeWidth={1.75} aria-hidden /> Chat</button>
       </nav>
-      {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
+      {resetting && <div className="overlay"><div className="modal resetting" role="status">
+        <Mascot size={56} mood="thinking" /> <span>Resetting the demo…</span></div></div>}
     </div>
   );
+}
+
+// Night or day: follows the system until the person picks one, then remembers it in this browser.
+function useTheme(): ["night" | "day", () => void] {
+  const [picked, setPicked] = useState<"night" | "day" | null>(null);
+  const [system, setSystem] = useState<"night" | "day">("night");
+  useEffect(() => {
+    try { const t = localStorage.getItem("nl_theme"); if (t === "night" || t === "day") setPicked(t); } catch { /* system */ }
+    const q = window.matchMedia("(prefers-color-scheme: light)");
+    const read = () => setSystem(q.matches ? "day" : "night");
+    read();
+    q.addEventListener("change", read);
+    return () => q.removeEventListener("change", read);
+  }, []);
+  const theme = picked ?? system;
+  const flip = () => {
+    const next = theme === "night" ? "day" : "night";
+    setPicked(next);
+    try { localStorage.setItem("nl_theme", next); } catch { /* this visit */ }
+  };
+  return [theme, flip];
 }
 
 function alertless(e: unknown) {

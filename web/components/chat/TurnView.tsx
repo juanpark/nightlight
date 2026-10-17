@@ -4,6 +4,7 @@
 import { useState, type JSX } from "react";
 import type { Action, Device } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
+import { Mascot } from "@/src/components/mascot/Mascot";
 import type { AgentTurn, Block } from "./model";
 
 type Step = Extract<Block, { kind: "step" }>;
@@ -94,7 +95,9 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
     <div className={`turn agent ${turn.past ? "past" : ""}`}>
       {turn.mode === "investigate" && <span className="pill turn-mode">Investigated</span>}
       {parts}
-      {turn.busy && final < 0 && lastStep < 0 && <div className="bubble agent thinking">Thinking…</div>}
+      {turn.busy && final < 0 && (lastStep < 0
+        ? <div className="bubble agent thinking"><Mascot size={36} mood="thinking" /> Thinking…</div>
+        : <div className="thinking-mascot"><Mascot size={36} mood="thinking" label="Nightlight is working" /></div>)}
       {turn.error && <div className="turn-error small">Problem: {turn.error}</div>}
     </div>
   );

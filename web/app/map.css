@@ -2,8 +2,15 @@
 .homeview { display: flex; flex-direction: column; gap: 8px; flex: none; } /* never squeezed: the pane scrolls instead */
 .view-switch { padding: 0; }
 /* the bar above the map (HomeBar.tsx): Map or List, then place / kind / show chips, wrapping on narrow screens */
-.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.homebar { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px 14px; overflow-x: auto; scrollbar-width: none;
+  padding: 2px; margin: -2px; }
+.homebar > * { flex: none; }
+/* a soft fade at the right edge says the row scrolls when it is wider than the pane */
+.homebar { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+.homebar .chips { flex-wrap: nowrap; }
 .homebar .chips { align-items: center; }
+.dapps-text b.crit { color: var(--crit); }
 .place-name { display: inline-flex; gap: 6px; align-items: center; }
 .place-name input { width: 180px; }
 @media (max-width: 600px) { /* one swipeable row per group */
@@ -106,7 +113,7 @@
 .etools { display: flex; flex-wrap: wrap; gap: 4px; }
 .etools button { font-size: 13px; padding: 0 10px; min-height: 34px; min-width: 34px; border: 0; display: inline-flex;
   align-items: center; justify-content: center; }
-.etools button.on { background: var(--accent); color: var(--bg); }
+.etools button.on { background: var(--accent); color: var(--on-accent); }
 
 /* legend and controls */
 .homemap .hm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; color: var(--muted);
