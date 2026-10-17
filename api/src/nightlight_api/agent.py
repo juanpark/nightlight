@@ -88,7 +88,8 @@ Investigate mode (the person asked you to dig in, like a system administrator wo
   of steps. Use playbooks and inspect first; then, on a REAL device with an active investigation (run_command), run
   read-only commands one at a time and read each result before choosing the next. If there's no active
   investigation, call start_investigation once and tell them to approve it with their passkey.
-- Read the device notebook first and write what you learned to it at the end (write_note).
+- Read the device's profile and notebook first (get_device). At the end, write one dated note (write_note) and
+  rewrite the profile (update_profile) so the next investigation starts from everything known about that machine.
 - When something must change, propose it (a card); for anything outside your fixed jobs use propose_command, which
   they sign with their passkey.
 - Answer in at most 300 words, in this order: what I checked (the commands, briefly); what I found; the likely cause
@@ -274,6 +275,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                                                   "updateAvailable", "players", "lastBackupDaysAgo", "findings")
                             if s.get(k) is not None} for s in services]
         out["notebook"] = notebook.recent(ctx.uid, device_id, ctx.generation)
+        out["profile"] = (notebook.profile(ctx.uid, device_id) or {}).get("text")
         return _bounded(out, ctx)
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
@@ -636,6 +638,30 @@ def make_tools(ctx: TurnContext, read_only: bool):
     async def write_note(device_id: str, note: str, tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_write_note_sync, device_id, note, tool_context)
 
+    def _update_profile_sync(device_id: str, profile: str, tool_context: ToolContext) -> dict:
+        """Rewrite a device's profile: the administrator's notes on that machine. Keep what is still true from the
+        current profile (in get_device) and add what you learned: what it is and is used for, what runs there and
+        how it is set up, quirks, past incidents with dates and what fixed them, things to watch. Plain short
+        lines, at most 2000 characters, never passwords, keys or addresses. Do it at the end of an investigation.
+
+        Args:
+            device_id: the device id from list_fleet.
+            profile: the whole new profile text.
+        """
+        try:
+            notebook.set_profile(ctx.uid, device_id, profile, "nightlight", ctx.generation)
+        except ApiError as e:
+            if e.code == "stale":
+                raise
+            return {"status": "error", "reason": "no such device" if e.code == "not_found" else e.code}
+        except ValueError as e:
+            return {"status": "refused", "reason": "it looked like a password, key or address" if str(e) ==
+                    "looks_secret" else "nothing to save"}
+        return {"status": "saved"}
+
+    async def update_profile(device_id: str, profile: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_update_profile_sync, device_id, profile, tool_context)
+
     def _how_sync(topic: str, tool_context: ToolContext) -> dict:
         """Read Nightlight's own guide on one topic, to answer exactly how the product works (never guess).
 
@@ -671,10 +697,11 @@ def make_tools(ctx: TurnContext, read_only: bool):
                           (get_recent_events, _get_recent_events_sync), (restart_container, _restart_container_sync),
                           (look_into, _look_into_sync), (restart_service, _restart_service_sync),
                           (inspect, _inspect_sync), (write_note, _write_note_sync),
-                          (run_playbook, _run_playbook_sync), (how_nightlight_works, _how_sync)):
+                          (run_playbook, _run_playbook_sync), (how_nightlight_works, _how_sync),
+                          (update_profile, _update_profile_sync)):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events, look_into, inspect, run_playbook, write_note,
-             how_nightlight_works, run_command]
+             how_nightlight_works, run_command, update_profile]
     if memory.enabled():
         tools.append(remember)
     return tools if read_only else [*tools, *action_tools]

@@ -122,7 +122,7 @@ def forget(uid: str, device_id: str) -> dict:
 
 def purge(uid: str, device_id: str) -> None:
     dref = db.device(uid, device_id)
-    refs = [s.reference for sub in ("services", "history", "notes") for s in dref.collection(sub).stream()]
+    refs = [s.reference for sub in ("services", "history", "notes", "profile") for s in dref.collection(sub).stream()]
     for coll in (db.events(uid), db.actions(uid)):
         refs += [s.reference for s in coll.where(filter=FieldFilter("deviceId", "==", device_id)).stream()]
     for i in range(0, len(refs), 400):

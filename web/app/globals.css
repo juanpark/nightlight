@@ -241,3 +241,7 @@ button.danger { background: var(--crit); color: #fff; border-color: var(--crit);
 .risk.read { color: var(--ok); border-color: var(--ok); }
 
 .deep-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 2px; color: var(--muted); }
+
+.profile { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.profile h4 { margin: 0 0 6px; }
+.profile-text { white-space: pre-wrap; }

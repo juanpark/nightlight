@@ -102,8 +102,9 @@ what_leaves_the_device:
 memories:
   title: What Nightlight remembers
   text: |
-    Three kinds: the conversation (this chat, kept 30 days and shown again when you come back); each device's
-    notebook (what Nightlight learned there, and your own notes; under the device in the app); and things about you
+    Four kinds: the conversation (this chat, kept 30 days and shown again when you come back); each device's
+    profile ("About this device": what it is, what runs there, quirks, past incidents and fixes; Nightlight rewrites it
+    after investigating and you can edit it); each device's notebook (dated notes); and things about you
     (preferences such as "never restart anything during my work calls", saved only when you tell it, forgotten with
     "Forget what you know about me").
 

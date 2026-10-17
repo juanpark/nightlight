@@ -77,3 +77,18 @@ def test_old_generation_notes_are_never_shown(client, started):  # review B #1, 
     db.notes(started, dev).document("note_x").set({"text": "left over", "by": "nightlight", "at": None,
                                                     "demoGeneration": generation(started) - 1})
     assert notebook.recent(started, dev, generation(started)) == []
+
+
+def test_profile_is_kept_scrubbed_read_by_the_agent_and_gone_with_the_sample_home(client, started):
+    from nightlight_api import agent
+    dev = _sample_id(started)
+    r = client.put(f"/api/devices/{dev}/profile", json={"text": "Runs Plex and the kids' Minecraft.\nDisk fills from backups."})
+    assert r.status_code == 200 and r.json()["by"] == "you"
+    bad = client.put(f"/api/devices/{dev}/profile", json={"text": "admin password=" + "hunter2hunter2"})
+    assert bad.status_code == 422 and notebook.profile(started, dev)["text"].startswith("Runs Plex")
+    notebook.set_profile(started, dev, "Updated by Nightlight.", "nightlight", generation(started))
+    assert notebook.profile(started, dev)["by"] == "nightlight"
+    ctx = agent.TurnContext.__new__(agent.TurnContext)
+    assert "update_profile" in {t.__name__ for t in agent.make_tools(ctx, read_only=True)}
+    demo.reset(started)
+    assert notebook.profile(started, dev) is None

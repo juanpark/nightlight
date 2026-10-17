@@ -84,3 +84,44 @@ def owner_add(uid: str, device_id: str, text: str, generation: int | None) -> di
         return add(uid, device_id, text, "you", generation)
     except ValueError as e:
         raise invalid("text", "looks_secret" if str(e) == "looks_secret" else "empty") from None
+
+
+# ------------------------------------------------------------------ the device profile
+# One living document per device (like an administrator's notes on a machine): what it is, what runs there, how it is
+# set up, quirks, past incidents and what fixed them. Nightlight rewrites it after investigating; the owner can edit
+# it. Read before every investigation.
+
+PROFILE_CHARS = 2000
+
+
+def _profile_ref(uid: str, device_id: str):
+    return db.device(uid, device_id).collection("profile").document("main")
+
+
+def profile(uid: str, device_id: str) -> dict | None:
+    p = _profile_ref(uid, device_id).get().to_dict()
+    return {"text": p["text"], "by": p.get("by"), "updatedAt": p.get("updatedAt")} if p else None
+
+
+def set_profile(uid: str, device_id: str, text: str, by: str, generation: int | None) -> dict:
+    """Replace the profile (scrubbed; something that looks like a secret is refused, not stored)."""
+    clean, hidden = scrub(text or "")
+    clean = clean.strip()[:PROFILE_CHARS]
+    if hidden:
+        raise ValueError("looks_secret")
+    if not clean:
+        raise ValueError("empty")
+
+    @firestore.transactional
+    def run(tx):
+        user = db.user(uid).get(transaction=tx).to_dict()
+        from .actions import _require_ready
+        _require_ready(user, generation)
+        snap = db.device(uid, device_id).get(transaction=tx)
+        if not snap.exists or not real.is_current(snap.to_dict(), user.get("demoGeneration")):
+            raise not_found()
+        doc = {"text": clean, "by": by, "updatedAt": _now()}
+        tx.set(_profile_ref(uid, device_id), doc)
+        return doc
+
+    return db.run_transaction(run)

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from . import __version__, actions, archive, db, expert, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
-from .errors import ApiError, api_error_handler, conflict, not_found, validation_error_handler
+from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
 from .ids import new_id
 from .redact import scrub, scrub_value
 
@@ -202,6 +202,21 @@ def add_note(device_id: str, body: NoteBody, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
         raise not_found()
     return notebook.owner_add(uid, device_id, body.text, _generation(uid))
+
+
+class ProfileBody(Strict):
+    text: str = Field(min_length=1, max_length=notebook.PROFILE_CHARS)
+
+
+@app.put("/api/devices/{device_id}/profile")
+def put_profile(device_id: str, body: ProfileBody, uid: str = Depends(current_uid)):
+    """The owner edits a device's profile (the notes Nightlight reads before it investigates)."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    try:
+        return notebook.set_profile(uid, device_id, body.text, "you", _generation(uid))
+    except ValueError as e:
+        raise invalid("text", str(e)) from None
 
 
 @app.delete("/api/devices/{device_id}/notes/{note_id}")

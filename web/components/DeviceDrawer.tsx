@@ -7,6 +7,7 @@ import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
 import HelperUpdate from "./HelperUpdate";
 import Notebook from "./Notebook";
+import DeviceProfile from "./DeviceProfile";
 import RemoveDevice from "./RemoveDevice";
 import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
@@ -134,6 +135,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, onAsk, 
       </div>
       {real && device.kind !== "watched" && <Checkups uid={uid} generation={generation} deviceId={device.id}
         actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
+      {device.kind !== "watched" && <DeviceProfile uid={uid} deviceId={device.id} />}
       {device.kind !== "watched" && <Notebook uid={uid} deviceId={device.id} />}
       {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
       {real && device.kind !== "watched" && <ExpertSessions device={device} />}

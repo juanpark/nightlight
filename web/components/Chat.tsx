@@ -32,6 +32,7 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
     start_investigation: `Asking to investigate the ${name}…`,
     run_command: `$ ${(e.args?.command as string) ?? ""}`,
     propose_command: `Preparing a command for the ${name}…`,
+    update_profile: `Updating what I know about the ${name}…`,
   } as Record<string, string>)[e.name] ?? `Working on the ${name}…`;
 }
 

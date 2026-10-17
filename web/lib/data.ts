@@ -67,6 +67,12 @@ export async function loadMessages(uid: string, sessionId: string): Promise<Past
   return snap.docs.map((d) => plain<PastMessage>(d.id, d.data()));
 }
 
+/** A device's profile (the notes Nightlight keeps about the machine), or undefined. */
+export function useProfile(uid: string | null, deviceId: string | null) {
+  return useCollection<{ id: string; text: string; by: string; updatedAt: Date | null }>(
+    uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "profile"]).find((p) => p.id === "main");
+}
+
 /** A device's notebook, newest first. */
 export function useNotes(uid: string | null, deviceId: string | null): Note[] {
   return useCollection<Note>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "notes"])
