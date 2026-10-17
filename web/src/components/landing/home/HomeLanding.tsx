@@ -5,7 +5,6 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import { Logo } from "../../brand/Logo";
-import { MascotPose } from "../../mascot/MascotPose";
 import { AuthButtons } from "../AuthButtons";
 import { display, sans } from "../fonts";
 import { Magnetic } from "../motion/Magnetic";
@@ -24,7 +23,7 @@ gsap.registerPlugin(useGSAP, ScrollTrigger);
 // large headline, the sample home's checks ticking by on the visitor's own
 // clock, the night told in four pinned beats with the real cards, then what it
 // looks after, who it is for, what leaves the house, and the wordmark as the
-// close, with the mascot sitting on it.
+// close.
 
 const WATCH = [
   {
@@ -82,7 +81,6 @@ export function HomeLanding() {
         // First screen: the headline rises line by line, then the rest.
         revealLines(q("[data-hero-title]")[0], { start: "now", delay: 0.15 });
         gsap.from(q("[data-hero-rise]"), { y: 24, autoAlpha: 0, duration: 1.1, ease: "power3.out", stagger: 0.08, delay: 0.55 });
-        gsap.from(q("[data-hero-mascot]"), { y: 60, autoAlpha: 0, duration: 1.6, ease: "expo.out", delay: 0.8 });
 
         // The hero drifts up a little slower than the page as it leaves.
         gsap.to(q("[data-hero-inner]"), {
@@ -90,27 +88,6 @@ export function HomeLanding() {
           ease: "none",
           scrollTrigger: { trigger: q("[data-hero]")[0], start: "top top", end: "bottom top", scrub: true },
         });
-
-        // The photograph opens from a band and settles as it passes.
-        gsap.fromTo(
-          q("[data-picture] > div"),
-          { clipPath: "inset(12% 8% 12% 8% round 32px)" },
-          {
-            clipPath: "inset(0% 0% 0% 0% round 0px)",
-            ease: "none",
-            scrollTrigger: { trigger: q("[data-picture]")[0], start: "top bottom", end: "top 15%", scrub: true },
-          },
-        );
-        gsap.fromTo(
-          q("[data-picture-img]"),
-          { scale: 1.25, yPercent: -6 },
-          {
-            scale: 1,
-            yPercent: 6,
-            ease: "none",
-            scrollTrigger: { trigger: q("[data-picture]")[0], start: "top bottom", end: "bottom top", scrub: true },
-          },
-        );
 
         q("[data-lines]").forEach((el) => revealLines(el));
         q("[data-block]").forEach((el) => riseIn(el.querySelectorAll("[data-part]"), el));
@@ -127,15 +104,8 @@ export function HomeLanding() {
           },
         );
 
-        // Close: the wordmark's letters rise, then the mascot sits down on it.
+        // Close: the wordmark's letters rise.
         revealChars(q("[data-wordmark]")[0], { start: "top 95%" });
-        gsap.from(q("[data-footer-mascot]"), {
-          yPercent: -40,
-          autoAlpha: 0,
-          duration: 1.2,
-          ease: "bounce.out",
-          scrollTrigger: { trigger: q("[data-wordmark]")[0], start: "top 85%", once: true },
-        });
       });
     },
     { scope: root },
@@ -203,9 +173,6 @@ export function HomeLanding() {
                 <div data-hero-rise className={s.heroLog}>
                   <NightLog />
                 </div>
-                <div className={s.heroMascot} data-hero-mascot>
-                  <MascotPose pose="peek" size={180} label="The Nightlight mascot, holding its star" />
-                </div>
               </div>
             </div>
             <button type="button" className={s.scrollCue} onClick={() => scrollToTarget("#watch-intro")} data-hero-rise>
@@ -225,24 +192,6 @@ export function HomeLanding() {
 
         <Loop />
 
-        <figure className={s.picture} data-picture>
-          <div className={s.pictureFrame}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/landing/houses-at-night.jpg"
-              alt="A row of canal houses at night, a few windows still lit, reflected in the water"
-              width={2000}
-              height={1500}
-              loading="lazy"
-              decoding="async"
-              data-picture-img
-            />
-          </div>
-          <figcaption className={s.pictureCaption}>
-            <span>Every lit window is a home with a few machines running in it.</span>
-            <span>Photo: Michelle Frechette, CC0</span>
-          </figcaption>
-        </figure>
 
         <section id="watch" className={s.watch} aria-labelledby="watch-title">
           <h2 id="watch-title" className={s.h2} data-lines>
@@ -362,9 +311,6 @@ export function HomeLanding() {
           </button>
         </div>
         <div className={s.wordmarkWrap}>
-          <div className={s.footerMascot} data-footer-mascot>
-            <MascotPose pose="sit" size={120} />
-          </div>
           <p className={s.wordmark} data-wordmark aria-label="nightlight">
             <span className={s.wmNight}>night</span>
             <span className={s.wmLight}>light</span>
@@ -372,7 +318,7 @@ export function HomeLanding() {
         </div>
         <p className={s.footerBase}>
           <span>© 2026 Nightlight</span>
-          <span>The demo home is simulated. Photograph by Michelle Frechette (CC0, WordPress Photo Directory).</span>
+          <span>The demo home is simulated.</span>
         </p>
       </footer>
     </div>

@@ -227,12 +227,6 @@
 .heroCopy { display: grid; gap: 32px; max-width: 34rem; }
 .lede { font-size: var(--size-body); line-height: 1.55; }
 .heroSide { position: relative; justify-self: end; width: min(100%, 30rem); }
-.heroMascot {
-  position: absolute;
-  right: -10px;
-  bottom: calc(100% - 22px);
-  pointer-events: none;
-}
 .scrollCue {
   position: absolute;
   left: 50%;
@@ -263,7 +257,7 @@
 
 @media (max-width: 900px) {
   .heroBody { grid-template-columns: 1fr; }
-  .heroSide { justify-self: stretch; width: 100%; margin-top: 90px; }
+  .heroSide { justify-self: stretch; width: 100%; }
   .scrollCue { display: none; }
 }
 
@@ -404,28 +398,6 @@
 @media (max-width: 959px) {
   .beat { grid-template-columns: 1fr; }
 }
-
-/* ---------- Photograph ---------- */
-.picture { margin: clamp(140px, 16vw, 240px) 0 0; }
-.pictureFrame { height: min(92svh, 62vw); overflow: hidden; }
-.pictureFrame img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: 50% 62%;
-  will-change: transform;
-}
-.pictureCaption {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 18px var(--gutter) 0;
-  color: var(--muted);
-  font-size: var(--size-s);
-}
-.pictureCaption span:first-child { color: var(--text); }
 
 /* ---------- What it watches ---------- */
 .watch { padding: clamp(140px, 16vw, 240px) var(--gutter) 0; }
@@ -646,12 +618,6 @@
 }
 .wmNight { font-weight: 800; }
 .wmLight { font-weight: 200; }
-.footerMascot {
-  position: absolute;
-  right: 6%;
-  bottom: calc(100% - 5.2vw);
-  pointer-events: none;
-}
 .footerBase {
   margin-top: 28px !important;
   display: flex;
@@ -663,7 +629,6 @@
 }
 @media (max-width: 760px) {
   .footerTop { grid-template-columns: 1fr; }
-  .footerMascot { transform: scale(0.7); transform-origin: bottom right; }
 }
 
 @media (prefers-reduced-motion: reduce) {
