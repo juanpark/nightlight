@@ -991,8 +991,12 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
         else:
             asked = actions.request(uid, "mac_folders", device_id, {}, session_id=None,
                                     turn_id=f"app_macfolders_{new_id('ask')}", origin="app", once=True)["id"]
-    db.device(uid, device_id).update({"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset})
-    return {"ok": True, "applied": applied, "macFoldersAction": asked, **({"why": why} if why else {})}
+    # Done once chosen: applied, or a strict device (its choices are made on the device). A helper too old to take
+    # the choice keeps its card until it is updated.
+    if applied or d.get("manage") == "strict":
+        db.device(uid, device_id).update({"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset})
+    return {"ok": True, "applied": applied, "done": applied or d.get("manage") == "strict",
+            "macFoldersAction": asked, **({"why": why} if why else {})}
 
 
 def set_permissions(uid: str, device_id: str, perms: dict) -> dict:

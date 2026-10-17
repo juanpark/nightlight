@@ -33,3 +33,11 @@ def test_mac_folders_are_asked_on_a_mac_with_a_new_enough_helper(client, started
     beat(client, pi["token"], {**FACTS, "manage": "app", "os": "Debian 12", "helperVersion": "0.9.22"})
     r = client.post(f"/api/devices/{pi['deviceId']}/setup", json={"preset": "watch", "macFolders": True}).json()
     assert r["macFoldersAction"] is None and r["why"] == "not_a_mac"
+
+
+def test_an_older_helper_keeps_its_setup_card_until_updated(client, started):
+    dev = enrolled(client, "Old")
+    beat(client, dev["token"], {**FACTS, "manage": None})
+    r = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()
+    assert not r["done"] and r["why"] == "update_helper"
+    assert "setupAt" not in db.device(started, dev["deviceId"]).get().to_dict()
