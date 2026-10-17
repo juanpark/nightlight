@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
   useUserDoc, useWatches } from "@/lib/data";
-import { byDevice, needsYou, verdict, type Go } from "@/lib/needsYou";
+import { byDevice, needsYou, verdict, type Go, useDismissed } from "@/lib/needsYou";
 import NeedsList from "./NeedsList";
 import FoundNearby from "./FoundNearby";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
@@ -39,8 +39,9 @@ export default function Home({ user }: { user: User }) {
   const release = useRelease();
   const expert = useExpertStatus();
   // Everything waiting for the person, derived once: tile marks, the device panel and the strip use the same items.
-  const needs = useMemo(() => needsYou({ devices, actions, trust, discoveries, release, expert, now }),
-    [devices, actions, trust, discoveries, release, expert, now]);
+  const [dismissed] = useDismissed();
+  const needs = useMemo(() => needsYou({ devices, actions, trust, discoveries, release, expert, now, dismissed }),
+    [devices, actions, trust, discoveries, release, expert, now, dismissed]);
   const marks = useMemo(() => byDevice(needs), [needs]);
   const [drawerTab, setDrawerTab] = useState<"overview" | "about" | "settings">("overview");
   const notify = useNotifySetting();
