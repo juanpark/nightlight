@@ -18,7 +18,9 @@ const empty = (x: Draft) => !x.favorite && !x.apps;
 // replaces any tap still waiting, so the server always ends on the latest choice. Kept for the page's life (by user,
 // device and kind), so closing and reopening the panel mid-save joins the same line.
 const busy: Record<string, boolean> = {};
-const waiting: Record<string, { v: boolean | string[]; n: number }> = {};
+// each waiting tap carries how to undo itself in the panel that made it (which may not be the one sending it)
+type Job = { v: boolean | string[]; n: number; undo: () => void };
+const waiting: Record<string, Job> = {};
 let tap = 0;
 
 /** The device's stars as the owner last set them here, and the toggles. Drafts belong to one device and are dropped
@@ -42,26 +44,26 @@ export function useFavorites(uid: string, d: Device) {
     const n = ++tap, id = d.id, k = `${uid}:${id}:${key}`;
     setErr("");
     setDraft((x) => ({ ...(x?.id === id ? x : {}), id, [key]: { v, n } }));
-    if (busy[k]) { waiting[k] = { v, n }; return; }
+    const undo = () => { // this tap failed and nothing newer of its kind came: put the star back and say so
+      setDraft((x) => {
+        if (x?.id !== id || x[key]?.n !== n) return x;
+        const y = { ...x };
+        delete y[key];
+        return empty(y) ? null : y;
+      });
+      setErr("Couldn't save the star. Try again.");
+    };
+    if (busy[k]) { waiting[k] = { v, n, undo }; return; }
     busy[k] = true;
-    let job: { v: boolean | string[]; n: number } | undefined = { v, n };
+    let job: Job | undefined = { v, n, undo };
     while (job) {
       let failed = false;
       try {
         await api("POST", `/api/devices/${id}/layout`, key === "favorite" ? { favorite: job.v } : { favoriteApps: job.v });
       } catch { failed = true; }
-      const next: { v: boolean | string[]; n: number } | undefined = waiting[k];
+      const next: Job | undefined = waiting[k];
       delete waiting[k];
-      if (failed && !next) {
-        const m = job.n; // undo this tap (only this kind of star) if no later tap came after it
-        setDraft((x) => {
-          if (x?.id !== id || x[key]?.n !== m) return x;
-          const y = { ...x };
-          delete y[key];
-          return empty(y) ? null : y;
-        });
-        setErr("Couldn't save the star. Try again.");
-      }
+      if (failed && !next) job.undo();
       job = next; // a newer choice supersedes this one, saved or not
     }
     busy[k] = false;
