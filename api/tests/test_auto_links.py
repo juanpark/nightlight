@@ -176,3 +176,22 @@ def test_a_failed_attempt_after_adding_a_router_is_retried(client, started, monk
     monkeypatch.setattr(links, "RETRY_SECONDS", 0)
     _report(client, mac, _net(MAC))  # nothing changed on the Mac, but the add left the lines due
     assert f"{mac['deviceId']}__{rid}" in _links(started)
+
+
+def test_the_router_is_recognised_named_and_can_be_corrected(client, started):
+    mac = enrolled(client, "Mac")
+    _report(client, mac, _net(MAC))
+    h = {"X-Device-Token": mac["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ROUTER_ITEM]}, headers=h).status_code == 200
+    rid = client.post(f"/api/discoveries/{mac['deviceId']}/{ITEM['cid']}/add",
+                      json={"name": "Device with a web page"}).json()["deviceId"]
+    d = db.device(started, rid).get().to_dict()
+    assert d["role"] == "router" and d["services"] == ["web page"] and d["ports"] == [80]
+    db.device(started, rid).update({"role": "other", "name": "Device with a web page", "guess": "Device with a web page"})
+    links.infer(started)  # an already-added router is recognised and gets a plain name
+    d = db.device(started, rid).get().to_dict()
+    assert d["role"] == "router" and d["name"] == "Router"
+    assert client.post(f"/api/devices/{rid}/layout", json={"role": "printer"}).status_code == 200
+    links.infer(started)  # what the person said wins
+    assert db.device(started, rid).get().to_dict()["role"] == "printer"
+    assert client.post(f"/api/devices/{mac['deviceId']}/layout", json={"role": "printer"}).status_code == 422

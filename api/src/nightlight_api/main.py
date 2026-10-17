@@ -38,6 +38,7 @@ class LayoutBody(Strict):
     y: int | None = Field(default=None, ge=-5000, le=5000)
     name: str | None = Field(default=None, min_length=1, max_length=40)
     tags: list[str] | None = Field(default=None, max_length=6)
+    role: Literal["router", "printer", "fileshare", "smarthome", "server", "speaker", "computer", "other"] | None = None
 
     @model_validator(mode="after")
     def short_tags(self):
@@ -163,6 +164,10 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
             if name is not None:
                 raise ApiError(422, "sample_devices_keep_their_names")
         update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags)) if v is not None}
+        if body.role is not None:
+            if d.get("kind") != "watched":
+                raise ApiError(422, "role_is_for_watched_things")
+            update.update(role=body.role, roleSetBy="user")
         if update:
             tx.update(ref, update)
         return update

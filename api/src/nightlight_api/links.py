@@ -221,6 +221,15 @@ def infer(uid: str) -> int:
                                                  "createdAt": firestore.SERVER_TIMESTAMP})
             count += not old
             changed += 1
+        # A watched thing your devices reach the internet through is your router (unless you said otherwise).
+        gateways = {(d.get("net") or {}).get("gateway") for d in devices.values()} - {None}
+        for i, d in devices.items():
+            if d.get("kind") == "watched" and (d.get("net") or {}).get("self") in gateways \
+                    and d.get("role") != "router" and d.get("roleSetBy") != "user":
+                rename = {"name": "Router"} if d.get("name") in (d.get("guess"), "Device with a web page") else {}
+                tx.update(db.device(uid, i), {"role": "router", **rename,
+                                              "purpose": "Your router: your devices reach the internet through it."})
+                changed += 1
         if state.exists and state.to_dict().get("linesDue"):
             tx.update(_net_ref(uid), {"linesDue": False})  # done: only a success clears it
         return changed

@@ -298,6 +298,21 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
 WATCH_PORTS = (8123, 32400, 25565, 445, 631, 443, 80, 22)  # a watched thing is checked on the first one it answers
 
 
+ROLES = ("router", "printer", "fileshare", "smarthome", "server", "speaker", "computer", "other")
+ROLE_FROM_GUESS = {"Printer": "printer", "File share (NAS or computer)": "fileshare", "Home Assistant": "smarthome",
+                   "Plex media server": "server", "Minecraft server": "server", "Speaker or TV": "speaker",
+                   "Raspberry Pi": "computer", "Computer (remote login)": "computer",
+                   "VMware virtual machine": "computer", "Synology": "fileshare", "QNAP": "fileshare",
+                   "Philips Hue": "smarthome", "Espressif (smart-home gadget)": "smarthome", "Sonos": "speaker"}
+
+
+def role_for(item: dict, routers: set) -> str:
+    """What a found thing most likely is, in the app's few words (the person can correct it)."""
+    if item.get("tag") and item["tag"] in routers:
+        return "router"
+    return ROLE_FROM_GUESS.get(item.get("guess")) or ROLE_FROM_GUESS.get(item.get("vendor")) or "other"
+
+
 def found_view(uid: str) -> list[dict]:
     """Everything found nearby that isn't on the map yet, once each: two devices that saw the same thing share its
     fingerprint (same address, same account key), so it becomes one row listing who saw it; a thing whose fingerprint
@@ -431,6 +446,7 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
         hsnap = db.device(uid, helper_id).get(transaction=tx)
         watched = [w.to_dict() for w in
                    db.devices(uid).where(filter=FieldFilter("watchedBy", "==", helper_id)).get(transaction=tx)]
+        helpers_now = list(db.devices(uid).where(filter=FieldFilter("realm", "==", "real")).get(transaction=tx))
         d = snap.to_dict() if snap.exists else None
         if not d or d["expiresAt"] < _now() or not hsnap.exists:
             raise not_found()
@@ -446,8 +462,13 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
             raise ApiError(422, "no_check_port")  # nothing we could check answers on it
         helper_name = hsnap.to_dict().get("name", "your device")
         tx.update(dref, {"items": [{**it, "added": it.get("cid") == cid or it.get("added")} for it in d["items"]]})
+        routers = {(h.to_dict().get("net") or {}).get("gateway") for h in helpers_now} - {None}
+        role = role_for(item, routers)
         tx.set(db.device(uid, device_id), {
-            "name": name, "kind": "watched", "purpose": f"{item.get('guess')}, watched by {helper_name}.",
+            "name": name, "kind": "watched", "role": role,
+            "purpose": ("Your router: your devices reach the internet through it" if role == "router"
+                        else str(item.get("guess"))) + f". Watched by {helper_name}.",
+            "guess": item.get("guess"), "services": item.get("services") or [], "ports": item.get("ports") or [],
             "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
             "vendor": item.get("vendor"), "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
             "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
