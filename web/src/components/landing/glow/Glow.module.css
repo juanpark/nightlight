@@ -275,9 +275,15 @@
   background: var(--line-strong);
 }
 .menu a[aria-current]::before { background: var(--star); box-shadow: 0 0 10px rgb(253 216 58 / 0.6); }
+@media (max-width: 440px) {
+  .navActions .primary { padding-inline: 14px; }
+  .navActions .primary svg { display: none; }
+}
 @media (max-width: 1100px) {
   .links { display: none; }
-  .bar { gap: 8px; padding-left: 8px; }
+  .bar { gap: 6px; padding-left: 8px; }
+  /* Both outer columns stay equal, so the logo sits exactly in the middle. */
+  .bar { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
   .navActions .secondary { display: none; }
   .menuButton { display: inline-grid; }
   .menu { display: grid; }
