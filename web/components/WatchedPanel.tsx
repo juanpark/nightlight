@@ -40,12 +40,14 @@ function availability(events: EventDoc[], d: Device, now: number): Seg[] {
   const segs: Seg[] = born > start ? [{ from: start, to: born, state: "none" }] : [];
   const state = (): Seg["state"] => watched && reachable ? reachable : "none";
   let t = born;
-  for (const e of evs.filter((x) => x.at!.getTime() > born)) {
-    segs.push({ from: t, to: e.at!.getTime(), state: state() });
-    t = e.at!.getTime();
-    if (e.kind === GONE) watched = false; else if (e.kind === BACK) watched = true; else reachable = reach(e);
+  // the last answer is a change to "not answering" just after it, in time order with the coverage events
+  const timeline = [...evs.filter((x) => x.at!.getTime() > born).map((e) => ({ t: e.at!.getTime(), kind: e.kind })),
+    ...(lastOk ? [{ t: lastOk, kind: "status_crit" }] : [])].filter((e) => e.t <= now).sort((a, b) => a.t - b.t);
+  for (const e of timeline) {
+    segs.push({ from: t, to: e.t, state: state() });
+    t = e.t;
+    if (e.kind === GONE) watched = false; else if (e.kind === BACK) watched = true; else reachable = UP.has(e.kind) ? "ok" : "crit";
   }
-  if (lastOk) { segs.push({ from: t, to: lastOk, state: state() }); t = lastOk; reachable = "crit"; }
   segs.push({ from: t, to: now, state: state() });
   // merge neighbours in the same state, so one outage is one stretch
   return segs.filter((s) => s.to > s.from).reduce<Seg[]>((out, s) => {
