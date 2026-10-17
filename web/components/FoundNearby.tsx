@@ -100,7 +100,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
     }
   }
   const found = items ?? [];
-  const named = (t: FoundThing) => t.router ? "Router" : t.name ?? t.guess;
+  const named = (t: FoundThing) => (t.router ? "Router" : t.name ?? t.guess).slice(0, 40); // the API takes 40
   const label = (t: FoundThing) => labels[key(t)] ?? named(t);
   // phones and laptops with a private Wi-Fi address and no name fold into one line: there is nothing to tell them apart
   const anon = (t: FoundThing) => !!t.privateAddress && !t.name && t.guess === "Phone or laptop";
