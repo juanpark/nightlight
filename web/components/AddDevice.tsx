@@ -149,7 +149,7 @@ export default function AddDevice({ anonymous, onSave, devices }: {
               </Step>}
           <Step n={2} art={<Term text="$ curl …" />}>
             <strong>Paste this line into it.</strong>
-            {code ? <><Copy text={line} /><span className="small muted">Your own line: it works once, for 10
+            {code ? <><Copy key={code.code} text={line} /><span className="small muted">Your own line: it works once, for 10
               minutes.</span></>
               : !err && <p className="small muted">Making your line…</p>}
             {err && <p className="small" style={{ color: "var(--crit)" }}>{err}{" "}
@@ -164,7 +164,7 @@ export default function AddDevice({ anonymous, onSave, devices }: {
       {os && before && !paired && <Waiting devices={devices} before={before} />}
       {os && code && (
         <>
-          <SendLine line={line} expiresAt={code.expiresAt} />
+          <SendLine key={code.code} line={line} expiresAt={code.expiresAt} />
           {new Date(code.expiresAt).getTime() < Date.now() &&
             <button className="linkish small" onClick={getCode}>Get a new line</button>}
         </>)}
