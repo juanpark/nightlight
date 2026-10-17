@@ -39,10 +39,9 @@ FIX = {
                   "Nothing to undo: npm downloads packages again when needed."),
     "xcode_build_data": ("Clear Xcode's build data", "Empties Xcode's DerivedData folder",
                          "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower)."),
-    "docker_prune": ("Remove Docker images nothing uses", "Runs \"docker image prune -a\": removes images older "
-                     "than a week that no container (running or stopped) uses, such as old versions left after "
-                     "updates", "Nothing to undo: containers are not touched, and an image is downloaded again if "
-                     "it is ever needed."),
+    "docker_prune": ("Remove Docker's leftover images", "Runs \"docker image prune -f\": removes only untagged "
+                     "images (leftovers from updates and rebuilds) that no container uses", "Nothing to undo: "
+                     "images with a name and all containers are not touched."),
     "apt_clean": ("Clear downloaded system updates", "Runs \"sudo apt-get clean\": removes downloaded package files",
                   "Nothing to undo: installed software is not touched."),
     "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "
@@ -932,7 +931,8 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
         return _fix_card(device, params)
     if action_type == "restart_service":
         return _unit_card(device, services, params)
-    if action_type != "restart_container" or set(params) != {"container"}:
+    if action_type != "restart_container" or set(params) - {"restart"} != {"container"} \
+            or params.get("restart", True) is not True:
         raise ValueError("not_applicable")
     name = params["container"]
     if not isinstance(name, str) or not CONTAINER_NAME.fullmatch(name):
@@ -942,9 +942,14 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     svc = services.get(_doc_id(name))
     if not svc or svc.get("kind") != "container":
         raise ValueError("no_such_container")
+    unhealthy = "(unhealthy)" in (svc.get("detail") or "")
+    if params.get("restart") and not unhealthy:
+        raise ValueError("not_unhealthy")
     if svc.get("status") == "ok":
         raise ValueError("already_running")
-    if "(unhealthy)" in (svc.get("detail") or ""):  # running but failing its health check: restart, not start
+    if unhealthy and not params.get("restart"):
+        raise ValueError("needs_restart")  # a start card would do nothing for a running container
+    if unhealthy:  # running but failing its health check: the restart the card names is the job's own parameter
         if release.newer(UNHEALTHY_RESTART_FROM, device.get("helperVersion")):
             raise ValueError("helper_too_old")
         return {"svcId": _doc_id(name), "plan": f"Restart the {name} container on the {device['name']}: it is "

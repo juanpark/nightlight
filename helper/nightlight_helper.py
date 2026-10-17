@@ -1008,7 +1008,7 @@ FIXES = {
                          and _plain_path(f"{_HOME}/Library/Developer/Xcode/DerivedData"),
                          "run": lambda: _empty_dir(["Library", "Developer", "Xcode", "DerivedData"])},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
-                     "run": lambda: _fix_cmd(["docker", "image", "prune", "-a", "-f", "--filter", "until=168h"])},
+                     "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
     "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
     "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")),
                        "run": lambda: _fix_cmd(_as_root(["journalctl", "--vacuum-size=200M"]))},
@@ -1688,8 +1688,10 @@ def run_job(job, wait=5):
     state = _container_state(name)
     if state is None:
         return False, f"There is no container named {name} here, so nothing was done.", None
-    if state == "running" and _container_health(name) == "unhealthy":
-        _run(["docker", "restart", name], timeout=90)  # running but failing its own health check
+    if params.get("restart") is True:  # the owner approved a restart of a running, unhealthy container: only that
+        if state != "running" or _container_health(name) != "unhealthy":
+            return True, f"{name} is no longer running unhealthy, so nothing was restarted.", state
+        _run(["docker", "restart", name], timeout=90)
         time.sleep(wait)
         state, health = _container_state(name), _container_health(name)
         if state == "running" and health != "unhealthy":
@@ -1697,7 +1699,7 @@ def run_job(job, wait=5):
                 f" and its health check says {health}." if health else "."), state
         return False, f"Restarted {name}, but it is {state or 'not running'}" + (
             f" and still {health}." if health else "."), state
-    if state == "running":
+    if state == "running":  # a start was approved: never more than that
         return True, f"{name} was already running; nothing needed doing.", state
     _run(["docker", "start", name], timeout=60)
     time.sleep(wait)

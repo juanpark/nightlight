@@ -825,7 +825,11 @@ def test_a_running_container_that_fails_its_health_check_is_restarted(helper, mo
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
     helper.set_allowed("restart_container", "photos", True)
-    ok, summary, st = helper.run_job({"id": "act_" + "b" * 26, "type": "restart_container",
-                                      "params": {"container": "photos"}}, wait=0)
+    start = {"id": "act_" + "a" * 26, "type": "restart_container", "params": {"container": "photos"}}
+    ok, summary, _ = helper.run_job(start, wait=0)  # a start was approved: a running container is left alone
+    assert ok and "already running" in summary and not any(c[:2] == ["docker", "restart"] for c in calls)
+    health = iter(["unhealthy", "healthy"])
+    ok, summary, st = helper.run_job({**start, "id": "act_" + "b" * 26, "params": {"container": "photos",
+                                                                                 "restart": True}}, wait=0)
     assert ok and st == "running" and ["docker", "restart", "photos"] in calls and "healthy" in summary
     assert ["docker", "start", "photos"] not in calls
