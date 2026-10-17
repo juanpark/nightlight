@@ -15,7 +15,7 @@ import re
 from . import db, links, release
 from .errors import ApiError, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
-from .redact import scrub_value
+from .redact import scrub, scrub_value
 
 CODE_TTL = timedelta(minutes=10)
 CODES_PER_HOUR = 10
@@ -263,31 +263,134 @@ WATCHED_PER_HELPER = 10
 FOUND_PORTS = (22, 80, 443, 445, 631, 8123, 25565, 32400)
 FOUND_SERVICES = ("remote login (SSH)", "web page", "secure web page", "file sharing", "printer", "Home Assistant",
                   "Minecraft", "Plex", "Chromecast / Google speaker", "AirPlay speaker or TV", "HomeKit accessory",
-                  "AirPlay speaker")
+                  "AirPlay speaker", "router", "media player", "media server")
 FOUND_VENDORS = ("Raspberry Pi", "Synology", "QNAP", "VMware virtual machine", "Philips Hue", "Sonos",
                  "Espressif (smart-home gadget)", "Google", "Amazon", "Ubiquiti", "Nintendo",
                  "private address (likely a phone or laptop)")
 PRIVATE_MAC = "private address (likely a phone or laptop)"  # the helper's word for a randomized hardware address
 FOUND_GUESSES = ("Home Assistant", "Plex media server", "Minecraft server", "Printer", "File share (NAS or computer)",
                  "Speaker or TV", "Raspberry Pi", "VMware virtual machine", "Computer (remote login)",
-                 "Device with a web page", "Unknown device", *FOUND_VENDORS)
+                 "Device with a web page", "Unknown device", "Router", "Media server", *FOUND_VENDORS)
+# Maker and model are allow-listed, never free text (a device's own words can carry a person's name): the maker is one
+# of these brands as spelled here (the helper's KNOWN_MAKERS, normalised there), the model an Apple model from the
+# helper's table or something shaped like a product code (see product_code). Same rules as nightlight_helper.py.
+MAKERS = ("Apple", "Brother", "Canon", "Epson", "HP", "Xerox", "Fuji Xerox", "Fujifilm", "Lexmark", "Samsung", "Kyocera",
+          "Ricoh", "Konica Minolta", "Sharp", "OKI", "Dell", "Pantum", "Netgear", "TP-Link", "ASUS", "Linksys", "D-Link",
+          "Ubiquiti", "AVM", "Synology", "QNAP", "Western Digital", "Seagate", "Buffalo", "Asustor", "TerraMaster",
+          "Sonos", "Bose", "Sony", "LG", "Philips", "Panasonic", "Yamaha", "Denon", "Marantz", "Onkyo", "Pioneer",
+          "Harman", "Roku", "Google", "Amazon", "Microsoft", "Nintendo", "Raspberry Pi", "Huawei", "ZTE", "Xiaomi",
+          "Tenda", "Mercusys", "Zyxel", "eero", "Arris", "Technicolor", "Sagemcom", "Cisco", "MikroTik", "Belkin",
+          "Vizio", "TCL", "Hisense", "NVIDIA", "ipTIME", "allRadio")
+APPLE_MODELS = ("MacBook Pro", "MacBook Air", "MacBook", "Mac mini", "Mac Pro", "iMac", "iPhone", "iPad", "Apple TV",
+                "HomePod", "Mac")
+SERIES_WORDS = {"docuprint", "laserjet", "officejet", "deskjet", "envy", "pixma", "imageclass", "ecotank", "workforce",
+                "nighthawk", "archer", "deco", "orbi", "diskstation", "rackstation", "fritz", "box", "mycloud",
+                "readynas", "terastation", "linkstation", "airport", "bravia", "color", "colour", "pro", "plus",
+                "mini", "ultra", "series", "wireless", "multifunction", "mfp", "lite"}
+MODEL_CHARS = r"^[A-Za-z0-9][A-Za-z0-9 /+-]{0,39}$"
+
+
+# Hardware ids in a model field: hex pairs joined by - or : ("AA-BB-CC-DD-EE-12"), or a long run of hex digits.
+HARDWARE_SHAPE = re.compile(r"(?i)(?:\b|^)[0-9a-f]{2}(?:[-:][0-9a-f]{2}){2,}|[0-9a-f]{8,}")
+
+def product_code(text: str | None) -> str | None:
+    """A model that looks like a product code ("HL-L2350DW", "DocuPrint CP115/118 w"): at most 40 characters and 5
+    words, a digit somewhere, each word of letters, digits and / + - holding a digit, or a short all-capitals code, a
+    single letter, or a known series word. Names ("Alex MacBook"), host names and sentences never pass."""
+    if not isinstance(text, str):
+        return None
+    words = text.split(" ")
+    if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
+        return None
+    for w in words:
+        if not (w.lower() in SERIES_WORDS or (len(w) == 1 and w.isalnum()) or (
+                re.fullmatch(r"[A-Z0-9][A-Z0-9/+-]*[a-z]{0,3}", w) and not HARDWARE_SHAPE.search(w)
+                and (re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6)))):
+            return None  # a word that isn't a code: a name, a host name, a hardware address
+    return text
+
+
+def product(maker: str | None, model: str | None) -> tuple[str | None, str | None]:
+    """(maker, model) as stored: a known maker, and a model only with one (an Apple model from the table, or a
+    product code); anything else is dropped."""
+    if maker not in MAKERS:
+        return None, None
+    if maker == "Apple":
+        return maker, model if model in APPLE_MODELS else None
+    if product_code(model) != model or scrub(model or "")[0] != model:
+        return maker, None  # not a product code, or holds something the scrubber hides
+    return maker, model
+
+
+def set_device_names(uid: str, on: bool) -> dict:
+    """The owner's switch for names of things nearby. Turning it off also removes every name already kept: from the
+    lists of what was found, and from watched things (one still called by its announced name goes back to its
+    guess). New lists keep no names from the moment the switch is saved."""
+    db.user(uid).set({"settings": {"deviceNames": on}}, merge=True)
+    if on:
+        return {"ok": True, "deviceNames": True}
+    # Each change is decided on the document as it is now (a transaction per document), so a list saved or a rename
+    # made meanwhile is never undone by this cleanup.
+    @firestore.transactional
+    def clear_list(tx, ref):
+        snap = ref.get(transaction=tx)
+        items = (snap.to_dict() or {}).get("items") or [] if snap.exists else []
+        if any(it.get("name") for it in items):
+            tx.update(ref, {"items": [{**it, "name": None} for it in items]})
+
+    @firestore.transactional
+    def clear_device(tx, ref):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or not (d.get("seenName") or d.get("nameFromSeen")):
+            return
+        still_announced = d.get("nameFromSeen") is True and d.get("name") == (d.get("seenName") or "")[:40]
+        tx.update(ref, {"seenName": firestore.DELETE_FIELD, "nameFromSeen": firestore.DELETE_FIELD,
+                        **({"name": (d.get("guess") or "Found device")[:40]} if still_announced else {})})
+
+    for snap in discoveries_ref(uid).get():
+        clear_list(db.client().transaction(), snap.reference)
+    for snap in db.devices(uid).where(filter=FieldFilter("kind", "==", "watched")).get():
+        clear_device(db.client().transaction(), snap.reference)
+    return {"ok": True, "deviceNames": False}
 
 
 def discoveries_ref(uid: str):
     return db.user(uid).collection("discoveries")
 
 
+def names_on(user: dict) -> bool:
+    """Whether this account shows the names things nearby announce ("Living Room"): on unless the owner turned it
+    off in Settings. Addresses never leave a device either way."""
+    return (user.get("settings") or {}).get("deviceNames", True) is not False
+
+
+def found_name(text: str | None) -> str | None:
+    """A name a thing announces, kept for the owner's own map: never one that holds an address, a hardware id or
+    something the scrubber hid."""
+    if not isinstance(text, str) or not text.strip() or not text.isprintable() or len(text) > 60:
+        return None
+    if re.search(r"\[(ip|mac|email|hidden|user)\]|\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b"
+                 r"|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
+        return None
+    return text.strip()
+
+
 def save_discoveries(token: str, items: list[dict]) -> dict:
-    """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list."""
+    """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list. Names are
+    kept only while the account shows them."""
     @firestore.transactional
     def run(tx):
         uid, device_id = token_owner(tx, token)
         dsnap = db.device(uid, device_id).get(transaction=tx)
         watched = db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)
+        names = names_on(db.user(uid).get(transaction=tx).to_dict() or {})
         name = (dsnap.to_dict() or {}).get("name", "A device")
         added = {w.to_dict().get("cid") for w in watched}  # already on the map: stays "added" across rediscovery
         tx.set(discoveries_ref(uid).document(device_id), {
-            "items": [{**it, "added": it["cid"] in added} for it in items], "by": device_id, "byName": name,
+            "items": [{**it, "name": found_name(it.get("name")) if names else None, "added": it["cid"] in added}
+                      for it in items], "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
         return {"ok": True, "items": len(items)}
@@ -303,7 +406,17 @@ ROLE_FROM_GUESS = {"Printer": "printer", "File share (NAS or computer)": "filesh
                    "Plex media server": "server", "Minecraft server": "server", "Speaker or TV": "speaker",
                    "Raspberry Pi": "computer", "Computer (remote login)": "computer",
                    "VMware virtual machine": "computer", "Synology": "fileshare", "QNAP": "fileshare",
-                   "Philips Hue": "smarthome", "Espressif (smart-home gadget)": "smarthome", "Sonos": "speaker"}
+                   "Philips Hue": "smarthome", "Espressif (smart-home gadget)": "smarthome", "Sonos": "speaker",
+                   "Router": "router", "Media server": "server"}
+GENERIC_GUESSES = ("Raspberry Pi", "VMware virtual machine", "Computer (remote login)", "Device with a web page",
+                   "Unknown device", *FOUND_VENDORS)
+# What a maker and model say a thing is, when its guess is only generic; the first that matches wins.
+ROLE_HINTS = (("router", r"(?i)\b(router|gateway|airport|archer|nighthawk|eero|orbi|deco|fritz|mesh wi-?fi)\b"),
+              ("printer", r"(?i)\b(printer|laserjet|deskjet|officejet|pixma|ecotank|workforce|imageclass|mfc|"
+                          r"dcp|hl-\w+|ecosys|bizhub)\b"),
+              ("fileshare", r"(?i)\b(synology|qnap|diskstation|my ?cloud|asustor|terramaster|readynas|nas)\b"),
+              ("speaker", r"(?i)\b(tv|bravia|sonos|roku|chromecast|apple tv|homepod|echo|soundbar|speaker)\b"),
+              ("computer", r"(?i)\b(mac mini|macbook|imac|mac pro|mac|raspberry pi|thinkpad)\b"))
 
 
 ROLE_WORDS = {"router": "Your router: your devices reach the internet through it", "printer": "A printer",
@@ -321,7 +434,21 @@ def role_for(item: dict, routers: set) -> str:
     """What a found thing most likely is, in the app's few words (the person can correct it)."""
     if item.get("tag") and item["tag"] in routers:
         return "router"
-    return ROLE_FROM_GUESS.get(item.get("guess")) or ROLE_FROM_GUESS.get(item.get("vendor")) or "other"
+    if item.get("guess") not in GENERIC_GUESSES and ROLE_FROM_GUESS.get(item.get("guess")):
+        return ROLE_FROM_GUESS[item["guess"]]  # what answers on it (a printer service) beats a name
+    services = set(item.get("services") or [])
+    if "router" in services:
+        return "router"
+    if "media player" in services:
+        return "speaker"
+    made = " ".join(x for x in (item.get("maker"), item.get("model")) if x)
+    hint = next((role for role, words in ROLE_HINTS if made and re.search(words, made)), None)
+    return hint or ROLE_FROM_GUESS.get(item.get("guess")) or ROLE_FROM_GUESS.get(item.get("vendor")) or "other"
+
+
+def own_tags(devices) -> set:
+    """Every address fingerprint that is one of your own devices (each helper's main address and all its others)."""
+    return set().union(*(links.tags_of(d) for d in devices if not d.get("archived")))
 
 
 def found_view(uid: str) -> list[dict]:
@@ -329,8 +456,7 @@ def found_view(uid: str) -> list[dict]:
     fingerprint (same address, same account key), so it becomes one row listing who saw it; a thing whose fingerprint
     is one of your own devices is left out. Untagged items (older helpers) stay one row per finder."""
     now = _now()
-    mine = {(d.get("net") or {}).get("self") for d in (s.to_dict() for s in db.devices(uid).get())
-            if not d.get("archived")} - {None}
+    mine = own_tags(s.to_dict() for s in db.devices(uid).get())
     rows: dict[str, dict] = {}
     for snap in discoveries_ref(uid).get():
         d = snap.to_dict()
@@ -341,8 +467,13 @@ def found_view(uid: str) -> list[dict]:
                 continue
             key = it.get("tag") or f"{snap.id}:{it.get('cid')}"
             row = rows.setdefault(key, {"guess": it.get("guess"), "vendor": it.get("vendor"), "tag": it.get("tag"),
-                                        "services": [], "ports": [], "seenBy": []})
+                                        "name": None, "maker": None, "model": None, "services": [], "ports": [],
+                                        "seenBy": []})
+            row["name"] = row["name"] or it.get("name")
             row["vendor"] = row["vendor"] or it.get("vendor")
+            if not row["model"] and it.get("model"):
+                row["maker"], row["model"] = it.get("maker") or row["maker"], it["model"]  # maker and model together
+            row["maker"] = row["maker"] or it.get("maker")
             row["services"] = sorted(set(row["services"]) | set(it.get("services") or []))[:8]
             row["ports"] = sorted(set(row["ports"]) | set(it.get("ports") or []))[:8]
             if row["guess"] in (None, "Unknown device", "Device with a web page") and it.get("guess"):
@@ -381,39 +512,42 @@ DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
 
 def request_discover(uid: str, device_id: str) -> dict:
     """Ask one device to look nearby. A scan still under way is that scan (asking twice doesn't queue a second); a new
-    scan gets its own identity, so a late result from an earlier one can never finish it.
+    scan gets its own identity, so a late result from an earlier one can never finish it."""
+    return _numbered_request(uid, device_id, "discover")
 
-    Scans are numbered per device; scan n is the job with identity `app_discover_<n>` (`once`: a finished one is never
-    reopened). One transaction reads the counter and that job: missing or under way, ask for scan n again (whoever
-    asked first may still be making it; asking again finds it); finished, move to n + 1. Nothing else is recorded, so
-    an interruption anywhere leaves nothing half done."""
+
+def _numbered_request(uid: str, device_id: str, kind: str) -> dict:
+    """One job of this kind under way per device, each with its own identity. Jobs are numbered per device and kind;
+    job n is the action with identity `app_<kind>_<n>` (`once`: a finished one is never reopened). One transaction
+    reads the counter and that job: missing or under way, ask for job n again (whoever asked first may still be making
+    it; asking again finds it); finished, move to n + 1. Nothing else is recorded, so an interruption anywhere leaves
+    nothing half done, and simultaneous requests agree on one job."""
     from . import actions
-    slot = db.user(uid).collection("scans").document(device_id)
+    slot = db.user(uid).collection("scans").document(device_id if kind == "discover" else f"{device_id}__{kind}")
 
     @firestore.transactional
     def which(tx):
         user = db.user(uid).get(transaction=tx).to_dict() or {}
         snap = slot.get(transaction=tx)
         n = (snap.to_dict() or {}).get("n", 0) if snap.exists else 0
-        a = db.action(uid, _scan_action_id(user, device_id, n)).get(transaction=tx) if n else None
+        a = db.action(uid, _scan_action_id(user, device_id, n, kind)).get(transaction=tx) if n else None
         if n and (not a.exists or (a.to_dict() or {}).get("status") in ("pending", "approved", "running")):
             return n
         tx.set(slot, {"n": n + 1})
         return n + 1
 
-    for _ in range(3):  # a scan finishing between choosing and asking: choose again
+    for _ in range(3):  # a job finishing between choosing and asking: choose again
         n = db.run_transaction(which)
-        a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{n}",
+        a = actions.request(uid, kind, device_id, {}, session_id=None, turn_id=f"app_{kind}_{n}",
                             origin="app", once=True)
         if a.get("status") in ("pending", "approved", "running"):
             return a
     return a
 
-
-def _scan_action_id(user: dict, device_id: str, n: int) -> str:
-    """The job identity of scan n on this device (as actions.request derives it)."""
-    return make_action_id(proposal_key(user.get("demoGeneration"), f"app_discover_{n}", device_id,
-                                       service_for({}), "discover", {}))
+def _scan_action_id(user: dict, device_id: str, n: int, kind: str = "discover") -> str:
+    """The identity of job n of this kind on this device (as actions.request derives it)."""
+    return make_action_id(proposal_key(user.get("demoGeneration"), f"app_{kind}_{n}", device_id,
+                                       service_for({}), kind, {}))
 
 
 def discover_everywhere(uid: str, every_device: bool = False) -> dict:
@@ -446,8 +580,9 @@ def discover_everywhere(uid: str, every_device: bool = False) -> dict:
     return {"asked": asked, "skipped": skipped}
 
 
-def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
-    """Put one found thing on the map, watched by the helper that found it (it checks the thing still answers)."""
+def add_found(uid: str, helper_id: str, cid: str, name: str | None) -> dict:
+    """Put one found thing on the map, watched by the helper that found it (it checks the thing still answers). With
+    no name typed, it takes the name it announced (`seenName`), else its guess."""
     dref = discoveries_ref(uid).document(helper_id)
     device_id = new_id("dev").lower()
 
@@ -472,27 +607,30 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
         if port is None:
             raise ApiError(422, "no_check_port")  # nothing we could check answers on it
         helper_name = hsnap.to_dict().get("name", "your device")
+        seen = item.get("name")
+        called = name or (seen or item.get("guess") or "Found device")[:40]
         tx.update(dref, {"items": [{**it, "added": it.get("cid") == cid or it.get("added")} for it in d["items"]]})
         routers = {(h.to_dict().get("net") or {}).get("gateway") for h in helpers_now
                    if not h.to_dict().get("archived")} - {None}
         role = role_for(item, routers)
         tx.set(db.device(uid, device_id), {
-            "name": name, "kind": "watched", "role": role,
+            "name": called, "kind": "watched", "role": role,
             "purpose": role_purpose(role, helper_name),
             "guess": item.get("guess"), "services": item.get("services") or [], "ports": item.get("ports") or [],
             "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
-            "vendor": item.get("vendor"), "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
+            "vendor": item.get("vendor"), "maker": item.get("maker"), "model": item.get("model"),
+            "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
             "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
-            "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {})})
+            "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {}),
+            **({"seenName": seen, "nameFromSeen": not name} if seen else {})})
         tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
                {"uid": uid, "deviceId": device_id})
-        event(tx, uid, device_id, "joined", "info", f"{name} joined your map, watched by {helper_name}.", who="you")
-        links.mark_due(tx, uid)  # a found thing with a fingerprint may be someone's router: lines may change
-        return {"ok": True, "deviceId": device_id}, bool(item.get("tag"))
+        event(tx, uid, device_id, "joined", "info", f"{called} joined your map, watched by {helper_name}.", who="you")
+        links.mark_due(tx, uid)  # it sits behind its finder's router, and may be the router itself: lines change
+        return {"ok": True, "deviceId": device_id}
 
-    result, fingerprinted = db.run_transaction(run)
-    if fingerprinted:
-        links.infer_quietly(uid)  # e.g. the router: the devices behind it get their lines
+    result = db.run_transaction(run)
+    links.infer_quietly(uid)  # its line to the router; if it is the router, the devices behind it get theirs
     return result
 
 
@@ -848,6 +986,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
             "helperVersion": facts.get("helperVersion"), "allowedJobs": facts.get("allowedJobs") or {},
             "updatesPending": facts.get("updatesPending"), "containerCount": len(facts.get("containers") or []),
             "manage": facts.get("manage"),
+            "macFolders": facts.get("macFolders"),
             "containersRunning": sum(1 for c in facts.get("containers") or [] if c.get("state") == "running")})
         for ref in old:
             if ref.id not in services:
@@ -878,7 +1017,8 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         watch_list = [{"cid": w.to_dict().get("cid"), "port": w.to_dict().get("checkPort")} for w in watched
                       if w.to_dict().get("checkPort")][:10]
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
-                 "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
+                 "permissions": device.get("permissions") or DEFAULT_PERMISSIONS,
+                 "deviceNames": names_on(user)}  # whether the helper sends names of things nearby
         jobs = _hand_over(tx, approved, user) if take_jobs else []
         return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, lines_due
 
@@ -956,7 +1096,120 @@ DEFAULT_PERMISSIONS = {"diagnose": True, "cleanup": False, "updates": True, "aut
                        "restart_container": [], "restart_service": []}
 
 
-def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
+MAC_FOLDERS_FROM = "0.9.22"  # helpers that can raise the Mac folder prompts when the app asks
+
+
+def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_folders: bool) -> dict:
+    """The one-time choice made when a device first connects: what Nightlight may do there (a preset, applied to
+    what the device reported), automatic updates, and on a Mac the private folders (macOS asks right away, while the
+    person is at the Mac). Runs once: a repeated or concurrent request gets the first one's result and never undoes
+    what the owner changed in Settings since. Settings changes it later."""
+    from . import actions, release
+    ref = db.device(uid, device_id)
+
+    @firestore.transactional
+    def claim(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived"):
+            raise not_found()
+        prior = d.get("setup") or {}
+        stalled = prior.get("state") == "applying" and prior.get("claimedAt") is not None \
+            and (_now() - prior["claimedAt"]).total_seconds() > SETUP_STALL_SECONDS
+        if prior and not stalled:  # already chosen (or being applied right now): that outcome stands
+            return d, None
+        # The choices are kept with the claim, so an attempt interrupted part-way is finished later with the same
+        # choices (never this request's, which may differ), and its folder job keeps one identity.
+        choice = {k: prior.get(k) for k in ("preset", "autoUpdate", "macFolders", "permsApplied")} if stalled else \
+            {"preset": preset, "autoUpdate": auto_update, "macFolders": mac_folders}
+        if d.get("manage") == "app":
+            choice["attempt"] = new_id("setup")  # this attempt's identity: only it may write or finish this setup
+            tx.update(ref, {"setup": {**choice, "state": "applying", "claimedAt": _now()}})
+        return d, choice
+
+    d, choice = db.run_transaction(claim)
+    if choice is None:
+        return {"ok": True, **(d.get("setup") or {}), "already": True}
+    preset, auto_update, mac_folders = choice["preset"], choice["autoUpdate"], choice["macFolders"]
+    out = {"preset": preset, "applied": False, "trimmed": False, "macFoldersAction": None}
+    why = None
+    if d.get("manage") == "app":
+        services = [s.to_dict() for s in db.services(uid, device_id).get()]
+        containers = sorted({s.get("name") for s in services if s.get("kind") == "container" and s.get("name")})
+        units = sorted({s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")})
+        out["trimmed"] = len(containers) > PERMISSION_TARGETS or len(units) > PERMISSION_TARGETS \
+            or len(containers) + len(units) > PERMISSION_TARGETS
+        containers, units = containers[:PERMISSION_TARGETS], units[:PERMISSION_TARGETS]
+        logs = (containers + units)[:PERMISSION_TARGETS]  # the same limits as the switches (and the helper)
+        current = d.get("permissions") or DEFAULT_PERMISSIONS
+        perms = {"watch": {**DEFAULT_PERMISSIONS, "autoUpdate": auto_update},
+                 "fix": {"diagnose": True, "cleanup": True, "updates": True, "autoUpdate": auto_update,
+                         "logs": logs, "restart_container": containers, "restart_service": units},
+                 "custom": {**DEFAULT_PERMISSIONS, **current, "autoUpdate": auto_update}}[preset]
+        if not choice.get("permsApplied"):  # an earlier attempt that already applied them: leave them
+            try:  # recorded in the same transaction as the permissions, and only while this attempt owns the setup
+                set_permissions(uid, device_id, perms, also={"setup.permsApplied": True},
+                                setup_attempt=choice.get("attempt"))
+            except ApiError as e:
+                if e.code != "setup_superseded":
+                    raise
+                return {"ok": True, **((ref.get().to_dict() or {}).get("setup") or {}), "already": True}
+        out["applied"] = True
+    else:
+        why = "strict_device" if d.get("manage") == "strict" else "update_helper"
+    if mac_folders:
+        if "mac" not in (d.get("os") or "").lower():
+            why = why or "not_a_mac"
+        elif d.get("manage") != "app" or release.newer(MAC_FOLDERS_FROM, d.get("helperVersion")):
+            why = why or "update_helper"
+        else:
+            try:  # one identity per device: a retry finds the same job
+                out["macFoldersAction"] = actions.request(uid, "mac_folders", device_id, {}, session_id=None,
+                                                          turn_id="app_macfolders_setup", origin="app",
+                                                          once=True)["id"]
+            except ValueError as e:
+                why = why or str(e)  # e.g. device_not_reporting: the rest of the choice still stands
+    done = out["applied"] or d.get("manage") == "strict"
+    # Done once chosen: applied, or a strict device (its choices are made on the device). A helper too old to take
+    # the choice keeps its card until it is updated.
+    @firestore.transactional
+    def finish(tx):  # only the attempt that owns the setup finishes it
+        cur = ((ref.get(transaction=tx).to_dict() or {}).get("setup") or {})
+        if d.get("manage") == "app" and cur.get("attempt") != choice.get("attempt"):
+            return False
+        if done:
+            tx.update(ref, {"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset,
+                            "setup": {**out, "state": "done", "attempt": choice.get("attempt"),
+                                      **({"why": why} if why else {})}})
+        else:
+            tx.update(ref, {"setup": firestore.DELETE_FIELD})
+        return True
+
+    if not db.run_transaction(finish):
+        return {"ok": True, **((ref.get().to_dict() or {}).get("setup") or {}), "already": True}
+    return {"ok": True, **out, "done": done, **({"why": why} if why else {})}
+
+
+PERMISSION_TARGETS = 20  # per list, as PermissionsBody and the helper allow
+SETUP_STALL_SECONDS = 120  # a setup still "applying" after this was interrupted: the next request finishes it
+
+
+def request_mac_folders(uid: str, device_id: str) -> dict:
+    """Ask an app-managed Mac (helper 0.9.22+) to raise macOS's folder prompts now. One request under way at a time:
+    asking again while it runs returns it; a finished one is followed by a new one (each its own identity)."""
+    from . import actions, release
+    d = db.device(uid, device_id).get().to_dict() or {}
+    if d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived"):
+        raise not_found()
+    if "mac" not in (d.get("os") or "").lower():
+        raise ValueError("not_a_mac")
+    if d.get("manage") != "app" or release.newer(MAC_FOLDERS_FROM, d.get("helperVersion")):
+        raise ValueError("update_helper")
+    a = _numbered_request(uid, device_id, "mac_folders")
+    return {"actionId": a["id"], "status": a["status"]}
+
+def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = None,
+                    setup_attempt: str | None = None) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device
     reported. The helper applies them on its next report (and still checks each action itself)."""
     ref = db.device(uid, device_id)
@@ -969,6 +1222,10 @@ def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
             raise not_found()
         if d.get("manage") != "app":
             raise ApiError(409, "strict_device" if d.get("manage") == "strict" else "update_helper")
+        if setup_attempt is not None:  # a setup attempt writes only while it still owns an unfinished setup
+            st = d.get("setup") or {}
+            if st.get("attempt") != setup_attempt or st.get("state") != "applying" or st.get("permsApplied"):
+                raise ApiError(409, "setup_superseded")
         services = {s.id: s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)}
         containers = {s.get("name") for s in services.values() if s.get("kind") == "container"}
         units = {s.get("unit") for s in services.values() if s.get("kind") == "system" and s.get("unit")}
@@ -980,7 +1237,7 @@ def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
                  "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
                  **{k: sorted(set(perms[k])) for k in
                                                          ("logs", "restart_container", "restart_service")}}
-        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP})
+        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
         words = []
         if clean["diagnose"] != before.get("diagnose"):
             words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")

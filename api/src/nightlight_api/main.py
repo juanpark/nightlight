@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from google.cloud import firestore
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from . import __version__, actions, archive, db, expert, demo, links, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
@@ -170,8 +170,8 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
             watcher = (db.device(uid, d["watchedBy"]).get(transaction=tx).to_dict() or {}).get("name") \
                 if d.get("watchedBy") else None  # a read, before this transaction's writes
             update.update(role=body.role, roleSetBy="user", purpose=real.role_purpose(body.role, watcher))
-        if update:
-            tx.update(ref, update)
+        if update:  # a name the person typed is theirs: the names switch never takes it back
+            tx.update(ref, {**update, **({"nameFromSeen": False} if name is not None and d.get("nameFromSeen") else {})})
         return update
 
     return {"ok": True, **db.run_transaction(run)}
@@ -487,18 +487,24 @@ class Net(Strict):
     """Keyed fingerprints of private addresses (HMAC-SHA256 with the account's netKey, 20 hex characters): enough to
     match two devices of one account, never the address itself."""
     self: str | None = Field(default=None, pattern=TAG)
+    selves: list[Annotated[str, Field(pattern=TAG)]] = Field(default_factory=list, max_length=8)  # one per interface
     gateway: str | None = Field(default=None, pattern=TAG)
     peers: list[Peer] = Field(default_factory=list, max_length=20)
 
 
 class Found(Strict):
-    """Only the helper's fixed words: nothing free-form can carry an address or a name off the device."""
+    """The helper's fixed words, plus an allow-listed maker and a model that is an Apple model or a product code
+    (real.product), and, while the account shows them, the name the thing announces (real.found_name). Nothing can
+    carry an address off the device."""
     cid: str = Field(pattern=r"^[0-9a-f]{12}$")
     guess: Literal[tuple(real.FOUND_GUESSES)]
     vendor: Literal[tuple(real.FOUND_VENDORS)] | None = None
     services: list[Literal[tuple(real.FOUND_SERVICES)]] = Field(default_factory=list, max_length=8)
     ports: list[Literal[tuple(real.FOUND_PORTS)]] = Field(default_factory=list, max_length=8)
     tag: str | None = Field(default=None, pattern=TAG)  # its address's keyed fingerprint (see Net), never the address
+    name: str | None = Field(default=None, min_length=1, max_length=60, pattern=r"^[^\x00-\x1f\x7f]+$")
+    maker: Literal[tuple(real.MAKERS)] | None = None
+    model: str | None = Field(default=None, pattern=real.MODEL_CHARS)
 
 
 class DiscoveriesBody(Strict):
@@ -506,7 +512,11 @@ class DiscoveriesBody(Strict):
 
 
 class AddFoundBody(Strict):
-    name: str = Field(min_length=1, max_length=40)
+    name: str | None = Field(default=None, min_length=1, max_length=40)  # none: the name it announced, else its guess
+
+
+class SettingsBody(Strict):
+    deviceNames: StrictBool
 
 
 class HeartbeatBody(Strict):
@@ -527,6 +537,7 @@ class HeartbeatBody(Strict):
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
     manage: Literal["app", "strict"] | None = None  # chosen on the device; the server can't change it
+    macFolders: Literal["allowed", "declined"] | None = None  # a Mac's answer about its private folders
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
     net: Net | None = None  # for lines on the map; helpers before 0.9.20 send none
@@ -712,6 +723,32 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+class SetupBody(Strict):
+    preset: Literal["watch", "fix", "custom"]
+    autoUpdate: bool = False
+    macFolders: bool = False
+
+
+@app.post("/api/devices/{device_id}/setup")
+def device_setup(device_id: str, body: SetupBody, uid: str = Depends(owner_uid)):
+    """The one-time setup card: what Nightlight may do on a newly connected device (asked once; Settings later)."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return real.device_setup(uid, device_id, body.preset, body.autoUpdate, body.macFolders)
+
+
+@app.post("/api/devices/{device_id}/mac-folders", status_code=202)
+def ask_mac_folders(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Ask a Mac (again) to let Nightlight measure its private folders: macOS asks on the Mac right away. A request
+    still under way is that request."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    try:
+        return real.request_mac_folders(uid, device_id)
+    except ValueError as e:
+        raise ApiError(409, str(e)) from None
+
+
 class PlaceBody(Strict):
     name: str = Field(min_length=1, max_length=40)
 
@@ -823,6 +860,8 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
     items, _ = scrub_value([i.model_dump() for i in body.items])
+    for it in items:
+        it["maker"], it["model"] = real.product(it.get("maker"), it.get("model"))
     return real.save_discoveries(token, items)
 
 
@@ -830,7 +869,14 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
 def add_found(helper_id: str, cid: str, body: AddFoundBody, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"dev_[0-9a-z]{26}", helper_id) or not re.fullmatch(r"[0-9a-f]{12}", cid):
         raise not_found()
-    return real.add_found(uid, helper_id, cid, scrub(body.name)[0])
+    return real.add_found(uid, helper_id, cid, scrub(body.name)[0] if body.name else None)
+
+
+@app.post("/api/settings")
+def account_settings(body: SettingsBody, uid: str = Depends(owner_uid)):
+    """The owner's account switches. `deviceNames: false` stops keeping the names things nearby announce and removes
+    the ones already kept."""
+    return real.set_device_names(uid, body.deviceNames)
 
 
 @app.post("/helper/jobs/claim")

@@ -27,7 +27,7 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 
 | Path | What |
 |---|---|
-| `users/{uid}` | `demoGeneration`, `demo.state` (`ready` / `resetting`), `trustDefault`, `template` (`home-pi` = sample home shown, `empty` = hidden), `lastChatAt`, `memoryEpoch`, `dismissedLinks` (ids of automatic lines the person deleted) |
+| `users/{uid}` | `demoGeneration`, `demo.state` (`ready` / `resetting`), `trustDefault`, `template` (`home-pi` = sample home shown, `empty` = hidden), `lastChatAt`, `memoryEpoch`, `dismissedLinks` (ids of automatic lines the person deleted), `settings.deviceNames` (show the names things nearby announce; missing means on) |
 | `users/{uid}/devices/{deviceId}` | name, `kind`, `purpose` (plain words), `status` (`ok`/`warn`/`crit`/`offline`), `health` (`verified`/`unknown`), `vitals`, `version`, `simulated`, `realm` (`real` for helper devices), map position `x`,`y`, `tags[]`, `findings[]` |
 | `users/{uid}/links/{from}__{to}` | `{from, to, kind, realm, demoGeneration, createdAt, source, why}`: lines between devices on the map (see `POST /api/links`). `source` is `user` (drawn by the person or by Nightlight when told), `auto` (seen by the helpers, see [Lines the helpers see](#lines-the-helpers-see)) or missing (sample home, drawn before 0.9.20); `auto` lines carry `why` in plain words ("Time Machine backs up here") |
 | `…/devices/{deviceId}/services/{svcId}` | name, status, version, `updateAvailable`, `category`, `findings[]` (plain message + evidence) |
@@ -37,7 +37,7 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 | `users/{uid}/trust/{realm}:{actionType}` | trust level per kind of job, `pinned`, `successes`, promotion `offer` |
 | `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status |
 | `users/{uid}/watches/{watchId}` | watched websites: `name`, `url`, `tags`, `status` (`unknown`/`ok`/`crit`), `httpStatus`, `latencyMs`, `lastCheckedAt`, `lastChange`, `createdAt`, `expiresAt` (30 days after adding) |
-| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, services[], ports[], tag, added}`, `by`, `byName`, `at`, `expiresAt` (24 h) |
+| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, name, maker, model, services[], ports[], tag, added}` (`name` only while the account shows names, else `null`), `by`, `byName`, `at`, `expiresAt` (24 h) |
 
 Every sample-home document carries `demoGeneration`. Show only documents whose `demoGeneration` equals the user's
 current `demoGeneration` (older ones are leftovers from before a reset), plus real devices and real events
@@ -79,7 +79,7 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `GET /api/devices/pair/{code}` | owner | | `200 {name, os, expiresAt}`: preview of a code a device shows; `404` if unknown, expired or already decided |
 | `POST /api/devices/pair/{code}` | owner | `{"approve":true}` or `{"approve":false}` | `200 {ok}`; `404`; `409 already_decided`. Previews and decisions together: at most 30 per hour (`429 quota_uid`) |
 | `POST /api/devices/{deviceId}/revoke` | token | `{}` | `200 {ok, deviceId}`: the helper's token stops working and the device goes offline. For a watched device (`kind: "watched"`) it takes it off the map instead and offers its discovery item again |
-| `POST /api/discoveries/{helperDeviceId}/{cid}/add` | token | `{"name":"Printer"}` (1-40) | `201 {ok, deviceId}`: a watched device on the map; `404` (expired list, unknown item, helper gone); `409 already_added`; `422 no_check_port`; `429 watch_capacity` (10 watched per helper) |
+| `POST /api/discoveries/{helperDeviceId}/{cid}/add` | token | `{"name"?:"Printer"}` (1-40) | `201 {ok, deviceId}`: a watched device on the map, called `name`, or without one the name it announced (cut to 40), else its guess; the announced name is kept as `seenName` (`nameFromSeen: true` while the device is still called by it); `404` (expired list, unknown item, helper gone); `409 already_added`; `422 no_check_port`; `429 watch_capacity` (10 watched per helper) |
 | `POST /api/watches` | owner | `{"name":"Blog","url":"https://…","tags":[]}` (name 1-40, url 8-300, tags ≤6) | `201 {id, url}` (checked once right away); `422 bad_url` / `unknown_host` / `private_address`; `429 too_many_watches` (10 per account) / `watch_budget` (20 adds per day, 200 active overall) |
 | `DELETE /api/watches/{watchId}` | token | | `200 {ok}`; `404` |
 
@@ -93,12 +93,21 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `POST /helper/heartbeat` | `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}], pollEverySec, watch:[{cid, port}], netKey}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
 | `POST /helper/jobs/claim` | `X-Device-Token` | `{}` | `200 {ok, jobs, pollEverySec}`: a light check for approved work between reports; `429 too_frequent` (4 s apart) |
 | `POST /helper/jobs/{actionId}/result` | `X-Device-Token` | `{"ok":true,"summary":"…","state":"running","output":null}` | `200 {ok, actionId, status}`; a repeated report changes nothing; `409 illegal_transition` before the job was handed to this device; `404` for any other device |
-| `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
+| `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports, tag?, maker?, model?, name?}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
 | `POST /api/devices/{deviceId}/discover` | owner | `{}` | `202 {actionId, status:"approved"}`: the app asks one app-managed device (helper 0.9.21+) to look nearby; the tap is the approval. The helper runs its discovery without prompting and sends everything it found (no addresses) as above; the person picks what to add under Found nearby. `409 strict_device` for a strict device (it looks only when someone runs `discover` there), `409 update_helper_first` before 0.9.21. A scan under way is reused; each new scan is its own job. An empty scan sends `items: []`, which clears that device's earlier finds |
 | `POST /api/places/{placeId}` | signed in | `{"name": 1-40}` | `200 {ok, placeId, name}`: names a place: the devices behind one router. `placeId` is that router's fingerprint (a device's `net.gateway`, 20 hex). Only a router one of the owner's devices reports (`404` otherwise), at most 20 places (`409 too_many_places`). Stored at `users/{uid}/places/{placeId}` `{name, at}` (readable by the owner) |
+| `POST /api/devices/{deviceId}/setup` | owner | `{"preset":"watch"\|"fix"\|"custom", "autoUpdate"?: bool, "macFolders"?: bool}` | `200 {ok, applied, macFoldersAction, why?}`: the one-time setup card when a real device first connects. App-managed devices get the preset applied to what they reported (`fix` = check, clean up, logs and restarts for every reported container and failed service); strict or older helpers are left as they are (`why`). `macFolders` on a Mac (helper 0.9.22+) asks the device to raise macOS's folder prompts now (`mac_folders` job, approved by the choice). Sets `setupAt`/`setupPreset` on the device; Settings changes it later |
+| `POST /api/devices/{deviceId}/mac-folders` | owner | `{}` | `202 {actionId, status}`: ask an app-managed Mac (helper 0.9.22+) again to let Nightlight measure its private folders; macOS asks on the Mac. A request under way is reused. `409 not_a_mac` / `update_helper`. The Mac reports its answer as device field `macFolders`: `"allowed"`, `"declined"` or null (never asked) |
 | `POST /api/discover` | owner | `{"everyDevice"?: bool}` | `202 {asked:[{deviceId,name}], skipped:[{deviceId,name,why}]}`: look nearby on every network the owner has a device on, once per network: devices sharing a router fingerprint count as one network, and the freshest app-managed device with helper 0.9.21+ looks for it. With `everyDevice: true` every eligible device looks (more complete: each sees mostly what it talked to lately; the list merges). Strict, silent or older devices are skipped with the reason |
-| `GET /api/found` | signed in | — | `200 {items:[{guess, vendor, services, ports, tag?, seenBy:[{deviceId,name,cid}]}]}`: Found nearby once per thing. Items with the same fingerprint (`tag`) from several devices merge into one row; anything whose fingerprint is one of the owner's own devices, or already added, is left out. Merged rows keep every service and port seen and the most specific guess; `seenBy[].canWatch` says whether that finder saw a port to check, and finders that can come first, so Add uses `seenBy[0]`'s `deviceId` and `cid` |
+| `GET /api/found` | signed in | — | `200 {items:[{guess, vendor, name, maker, model, services, ports, tag?, seenBy:[{deviceId,name,cid}]}]}`: Found nearby once per thing. Items with the same fingerprint (`tag`) from several devices merge into one row; anything whose fingerprint is one of the owner's own devices (any of a helper's addresses, `net.self` or `net.selves`), or already added, is left out. Merged rows keep every service and port seen, the most specific guess, the first announced name and the first maker and model reported (`null` when none); `seenBy[].canWatch` says whether that finder saw a port to check, and finders that can come first, so Add uses `seenBy[0]`'s `deviceId` and `cid` |
+| `POST /api/settings` | owner | `{"deviceNames": bool}` | `200 {ok, deviceNames}`: the account's switch for the names things nearby announce (on by default: it is the owner's own dashboard). Off: helpers stop sending names from their next report, new lists keep none, and the names already kept are removed (from every discovery list, and `seenName` from watched devices; one still called by its announced name goes back to its guess). Addresses never leave a device either way |
 | `POST /helper/leave` | `X-Device-Token` | `{}` | `200 {ok}`: the device revokes its own token (uninstall); `401 invalid_token` |
+
+**The Mac installer** (`GET /download/Nightlight.pkg` on the web app, with its sha256 at
+`/download/Nightlight.pkg.sha256`; `404` until a notarized package is deployed) uses the same pairing: its
+postinstall runs `pair <API> --web <WEB> --browser --install` as the person at the screen, which opens
+`<WEB>/pair?code=…` in their browser, polls, and installs the background service (managed from the app) once they
+approve. No new endpoints.
 
 Heartbeat reply fields:
 
@@ -109,6 +118,8 @@ Heartbeat reply fields:
 - `watch`: up to 10 found devices this helper should check (`cid` and a port it reported open).
 - `netKey`: the account's fingerprint key (64 hex characters), the same for all of its helpers; see
   [Lines the helpers see](#lines-the-helpers-see).
+- `deviceNames`: whether found items may carry the names things announce (the owner's switch). A helper sends
+  names only after a reply said `true` (an older server never does).
 
 Heartbeat facts (anything else is rejected):
 
@@ -125,11 +136,28 @@ Heartbeat facts (anything else is rejected):
 | `watchResults[] {cid, up, ms}` | ≤10; `cid` 12 hex characters, `ms` 0-60,000 or null |
 | `failedAgents[]` | ≤20 labels, ≤100 characters: macOS background items (not Apple's) whose last run failed |
 | `safety` | keys `passwordlessSudo`, `sshPasswordLogin`: true, false or null (unknown) |
-| `net` | optional (helper 0.9.20+): `{self, gateway, peers[] {tag, why}}`; every tag is 20 hex characters or null; ≤20 peers; `why` is `time_machine`, `network_drive` or `service:<port>` with a port from 445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000. Omitted, the stored `net` stays |
+| `net` | optional (helper 0.9.20+): `{self, selves[], gateway, peers[] {tag, why}}`; every tag is 20 hex characters or null; `selves` (helper 0.9.22+, ≤8) are all of the device's own private addresses, one per interface, `self` the main one; ≤20 peers; `why` is `time_machine`, `network_drive` or `service:<port>` with a port from 445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000. Omitted, the stored `net` stays |
 
 Discovery items use a fixed vocabulary: `guess`, `vendor`, `services` and `ports` (22, 80, 443, 445, 631, 8123,
 25565, 32400) must be one of the helper's known words or numbers; `cid` is a random 12-hex id; the optional `tag` is
-the keyed fingerprint of its address (20 hex). No addresses or free text. The server scrubs every value of every
+the keyed fingerprint of its address (20 hex). Helper 0.9.22+ adds `maker` and `model`, read from what the thing
+announces (the router's UPnP description, fetched from a few well-known places on the router only, UTF-8 without a
+DTD, one 12-second deadline for the whole look: manufacturer, modelName and modelNumber, never friendlyName; mDNS TXT
+records of printers, AirPlay and Apple devices, asked of the system's own mDNS service, `dns-sd` or avahi). The helper
+only asks and never waits for incoming traffic, so it never raises a firewall prompt. **Both are allow-listed, never
+free text**, by the same rules in the helper and the server: `maker` is one of about 70 home and office brands
+(`real.MAKERS`, `422` otherwise), written as the list spells it ("Brother Industries, Ltd." is sent as `Brother`);
+`model` comes only with a maker and is either an Apple model in plain words from a fixed table ("Macmini9,1" is sent as
+`Mac mini`) or shaped like a product code: at most 40 characters and 5 words, a digit somewhere, every word made of
+letters, digits and `/+-` and holding a digit, or a short all-capitals code, a single letter or a known series word
+(`HL-L2350DW`, `DocuPrint CP115/118 w`, `Nighthawk R7000`). Anything else, a name ("Alex MacBook"), a host name, a
+sentence, is dropped before it leaves the device and again on the server. It adds the services `router`, `media
+player` and `media server` from the UPnP device type, with the guesses `Router` and `Media server`. No addresses or
+other free text. While the account shows names (`deviceNames`), an item may carry `name` (≤60 printable
+characters): the best of the Bonjour instance name ("Living Room"; a trailing hardware id such as "(1B:BE:CF)" is
+cut), the UPnP friendlyName and the host name without `.local`. These are names, not addresses: the helper and the
+server drop one that holds an IP or hardware address, a long hex id or anything the scrubber hides. The agent sees
+them quoted, as data. The server scrubs every value of every
 helper request. Free-text values such as container names come from the device and are shown as reported.
 
 ## Real devices
@@ -146,7 +174,8 @@ Extra device fields from the helper: `os`, `arch`, `helperVersion`, `allowedJobs
 services (`category: "system"`, `kind: "system"`, `unit`, `failed: true`).
 
 **Watched devices** (added from discovery) have `kind: "watched"`, `realm: "real"`, `watchedBy` (the helper's device
-id), `cid`, `checkPort`, `vendor`, `vitals.latencyMs`. Their helper checks them each report (a TCP connect, 1 s):
+id), `cid`, `checkPort`, `vendor`, `maker`, `model`, `vitals.latencyMs`. Their `role` comes from the router fingerprint, a
+specific guess, the UPnP services, then words in the maker and model (a LaserJet is a printer, a Synology a file share). Their helper checks them each report (a TCP connect, 1 s):
 `ok`, or `crit` with a `watched_down` finding. If the helper stops reporting, they go stale by the same 5-minute rule.
 
 ### Lines the helpers see
@@ -161,7 +190,10 @@ address (10/8, 172.16/12, 192.168/16; link-local, shared and public addresses ar
 looked up at most every 30 minutes. A found device's `tag` becomes its `net.self` when it is added to the map. Equal
 tags within one account mean the same address, so the server matches them: a peer that is another device's `self`
 gives a `backup` line (Time Machine) or a `depends` line (shared folder, service), from the device that relies to the
-one it relies on; a device whose `self` is the others' `gateway` gets a `network` line from each of them. Automatic
+one it relies on; a device whose `self` is the others' `gateway` gets a `network` line from each of them. A helper
+(0.9.22+) also sends `selves`, every one of its own addresses, so a found thing on its second interface is still
+recognised as that device. A watched thing gets a `network` line to the router of the device that found it ("found on
+the same network as Mac mini"), unless it is that router. Automatic
 lines have `source: "auto"` and `why`; a line the person drew (or one between the same two devices) is never changed,
 a deleted automatic line is not drawn again, and automatic lines stay until deleted. **Privacy reasoning:** stored
 data, logs, exports and other accounts never see an address, and tags from different accounts can't be compared. A
