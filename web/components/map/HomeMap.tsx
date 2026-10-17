@@ -130,7 +130,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         onNodeDragStop={(_, n) => dropped(n.id, n.position)}
         onEdgeClick={(_, e) => setEdgeSel(e.id)}
         onPaneClick={() => setEdgeSel(null)}
-        onConnect={connect} connectionMode={ConnectionMode.Loose}
+        onConnect={connect} connectionMode={ConnectionMode.Loose} connectionRadius={60}
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
         panOnScroll zoomOnScroll={false} zoomOnPinch zoomOnDoubleClick={false}

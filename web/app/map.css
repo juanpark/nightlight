@@ -58,7 +58,10 @@
   transition: opacity .15s; }
 .dnode:hover .dhandle.react-flow__handle, .react-flow__node.selected .dhandle.react-flow__handle,
 .react-flow.connecting .dhandle.react-flow__handle { opacity: 1; }
-@media (hover: none) { .dhandle.react-flow__handle { opacity: .6; width: 14px; height: 14px; } }
+/* a bigger invisible target than the dot itself, so a finger can start a line even zoomed out */
+.dhandle.react-flow__handle::after { content: ""; position: absolute; inset: -10px; border-radius: 50%; }
+@media (hover: none) { .dhandle.react-flow__handle { opacity: .6; width: 14px; height: 14px; }
+  .dhandle.react-flow__handle::after { inset: -16px; } }
 .dtools { display: flex; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px;
   box-shadow: var(--shadow); }
 .dtools button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 8px; border: 0; }
