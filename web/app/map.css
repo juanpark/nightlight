@@ -1,6 +1,15 @@
 /* The home map (components/map). Existing tokens only; React Flow's own styles are imported with it. */
 .homeview { display: flex; flex-direction: column; gap: 8px; flex: none; } /* never squeezed: the pane scrolls instead */
 .view-switch { padding: 0; }
+/* the bar above the map (HomeBar.tsx): Map or List, then place / kind / show chips, wrapping on narrow screens */
+.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.homebar .chips { align-items: center; }
+.place-name { display: inline-flex; gap: 6px; align-items: center; }
+.place-name input { width: 180px; }
+@media (max-width: 600px) { /* one swipeable row per group */
+  .homebar .chips { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; padding-bottom: 2px; }
+  .homebar .chips > * { flex: none; }
+}
 .view-switch button { display: inline-flex; align-items: center; gap: 5px; }
 .homemap { display: flex; flex-direction: column; gap: 6px; }
 /* the canvas is sized by its wrapper: React Flow sets an inline height: 100% on itself */
