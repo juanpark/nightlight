@@ -4,7 +4,10 @@
 .view-switch button { display: inline-flex; align-items: center; gap: 5px; }
 .homemap { display: flex; flex-direction: column; gap: 6px; }
 /* the canvas is sized by its wrapper: React Flow sets an inline height: 100% on itself */
-.hm-canvas { height: min(64vh, 620px); min-height: 360px; }
+.hm-canvas { position: relative; height: min(64vh, 620px); min-height: 360px; }
+.hm-linkbar { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 6; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 4px 10px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: var(--shadow); }
 .homemap .react-flow { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
 .homemap .react-flow { --xy-edge-stroke-default: var(--offline); --xy-controls-button-background-color-default: var(--panel);
   --xy-controls-button-color-default: var(--ink); --xy-controls-button-border-color-default: var(--line);
@@ -78,9 +81,9 @@
 .everb { background: var(--bg); color: var(--muted); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line);
   opacity: .85; }
 .elabel.k-network .everb { display: none; } /* plain wires speak for themselves */
-.etools { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px;
-  box-shadow: var(--shadow); }
-.etools button { font-size: 11px; padding: 3px 7px; border: 0; display: inline-flex; align-items: center; }
+.etools { display: flex; flex-wrap: wrap; gap: 4px; }
+.etools button { font-size: 13px; padding: 0 10px; min-height: 34px; min-width: 34px; border: 0; display: inline-flex;
+  align-items: center; justify-content: center; }
 .etools button.on { background: var(--accent); color: var(--bg); }
 
 /* legend and controls */

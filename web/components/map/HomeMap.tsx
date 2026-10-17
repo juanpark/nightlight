@@ -3,9 +3,10 @@
 // how they relate. It opens fitted to whatever screen it is on. Positions and lines are layout only: saving them
 // never touches a device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 import {
   Background, BackgroundVariant, ConnectionMode, Controls, MiniMap, Position, ReactFlow, useNodesState,
-  type Connection, type NodeChange, type ReactFlowInstance,
+  type FinalConnectionState, type NodeChange, type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "@/app/map.css";
@@ -53,6 +54,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const [nodes, setNodes, onNodesChange] = useNodesState<DeviceNodeType>([]);
   const [edgeSel, setEdgeSel] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, LinkKind | null>>({}); // drawn or changed here, not yet back
+  const [held, setHeld] = useState<Record<string, { x: number; y: number }>>({}); // dropped here, save not back yet
   const flow = useRef<ReactFlowInstance<DeviceNodeType, LinkEdgeType> | null>(null);
   const fitted = useRef(0);
   // The parent's callbacks change every render; nodes get stable ones that call the latest.
@@ -61,18 +63,31 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const open = useCallback((id: string) => cb.current.onSelect(id), []);
   const ask = useCallback((q: string) => cb.current.onAsk(q), []);
 
-  // Devices from the database become nodes; a node being dragged keeps its place until it is dropped.
+  // Devices from the database become nodes. A node being dragged keeps its place, and a dropped one stays where it
+  // was dropped until the database has the new spot (or the save fails).
   const spots = useMemo(() => arrange(devices), [devices]);
+  useEffect(() => setHeld((h) => {
+    const left = Object.entries(h).filter(([id, p]) => devices.some((d) => d.id === id && (d.x !== p.x || d.y !== p.y)));
+    return left.length === Object.keys(h).length ? h : Object.fromEntries(left);
+  }), [devices]);
   useEffect(() => {
     setNodes((cur) => devices.map((d) => {
       const old = cur.find((n) => n.id === d.id);
       return {
-        id: d.id, type: "device", deletable: false, selected: d.id === selected,
-        position: old?.dragging ? old.position : spots.get(d.id)!,
+        id: d.id, type: "device", deletable: false, selected: d.id === selected, dragging: old?.dragging,
+        position: old?.dragging ? old.position : held[d.id] ?? spots.get(d.id)!,
         data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask },
       };
     }));
-  }, [devices, spots, marks, selected, uid, now, open, ask, setNodes]);
+  }, [devices, spots, held, marks, selected, uid, now, open, ask, setNodes]);
+  // A removed line's marker goes once the database no longer has it, so the same pair can be linked again.
+  useEffect(() => setDrafts((m) => {
+    const gone = Object.keys(m).filter((id) => m[id] === null && !links.some((l) => l.id === id));
+    if (!gone.length) return m;
+    const rest = { ...m };
+    gone.forEach((id) => delete rest[id]);
+    return rest;
+  }), [links]);
   // Fit the whole home on screen when it first appears and whenever devices come or go.
   useEffect(() => {
     if (devices.length !== fitted.current && flow.current) {
@@ -103,21 +118,34 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       return {
         id: l.id, source: l.from, target: l.to, sourceHandle: s, targetHandle: t, type: "link",
         selected: edgeSel === l.id, ariaLabel: `${l.from} ${LINK[kind].verb} ${l.to}`,
-        data: { kind, faded: silent.has(l.from) || silent.has(l.to), onKind: (k) => setKind(l, k), onDelete: () => remove(l) },
+        data: { kind, faded: silent.has(l.from) || silent.has(l.to) },
       };
     });
-  }, [links, devices, drafts, edgeSel, pos, setKind, remove]);
+  }, [links, devices, drafts, edgeSel, pos]);
+  // The selected line's controls sit in a bar at screen size, whatever the zoom and wherever the line is.
+  const chosen = edgeSel && drafts[edgeSel] !== null ? links.find((l) => l.id === edgeSel) : undefined;
+  const named = (id: string) => devices.find((d) => d.id === id)?.name ?? id;
 
-  function connect(c: Connection) {
+  function connect(c: { source: string | null; target: string | null }) {
     if (!c.source || !c.target || c.source === c.target) return;
     const id = `${c.source}__${c.target}`;
+    setDrafts(({ [id]: _, ...rest }) => rest);
     api("POST", "/api/links", { from: c.source, to: c.target, kind: "network" }).then(() => setEdgeSel(id))
       .catch(() => {});
   }
 
+  // A line let go anywhere over a device (not only on one of its dots) links to that device.
+  function connectEnd(e: MouseEvent | TouchEvent, s: FinalConnectionState) {
+    if (s.isValid || !s.fromNode) return;
+    const p = "changedTouches" in e ? e.changedTouches[0] : e;
+    const to = document.elementFromPoint(p.clientX, p.clientY)?.closest(".react-flow__node")?.getAttribute("data-id");
+    if (to) connect({ source: s.fromNode.id, target: to });
+  }
+
   function dropped(id: string, p: { x: number; y: number }) {
     const x = Math.max(-5000, Math.min(5000, snap(p.x))), y = Math.max(-5000, Math.min(5000, snap(p.y)));
-    api("POST", `/api/devices/${id}/layout`, { x, y }).catch(() => {});
+    setHeld((h) => ({ ...h, [id]: { x, y } }));
+    api("POST", `/api/devices/${id}/layout`, { x, y }).catch(() => setHeld(({ [id]: _, ...rest }) => rest));
   }
 
   return (
@@ -135,7 +163,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         onNodeDragStop={(_, n) => dropped(n.id, n.position)}
         onEdgeClick={(_, e) => setEdgeSel(e.id)}
         onPaneClick={() => setEdgeSel(null)}
-        onConnect={connect} connectionMode={ConnectionMode.Loose} connectionRadius={60}
+        onConnect={connect} onConnectEnd={connectEnd} connectionMode={ConnectionMode.Loose} connectionRadius={30}
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
         panOnScroll zoomOnScroll={false} zoomOnPinch zoomOnDoubleClick={false}
@@ -147,6 +175,16 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         <MiniMap className="hm-minimap" pannable zoomable style={{ width: 140, height: 90 }}
           nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />
       </ReactFlow>
+      {chosen && (
+        <div className="hm-linkbar" role="group" aria-label="This line">
+          <span className="small">{named(chosen.from)} {LINK[drafts[chosen.id] ?? chosen.kind].verb} {named(chosen.to)}</span>
+          <span className="etools">
+            {LINK_KINDS.map((k) => (
+              <button key={k} className={k === (drafts[chosen.id] ?? chosen.kind) ? "on" : ""} aria-pressed={k === (drafts[chosen.id] ?? chosen.kind)}
+                onClick={() => setKind(chosen, k)}>{LINK[k].label}</button>))}
+            <button onClick={() => remove(chosen)} aria-label="Remove this line" title="Remove this line"><Trash2 size={15} /></button>
+          </span>
+        </div>)}
       </div>
       {/* the key sits under the map, never over a device */}
       <div className="hm-legend small">
