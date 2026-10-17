@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.8"
+VERSION = "0.9.9"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -789,11 +789,15 @@ def _inspect_restarts():
     boot, before = _restart_lines()
     if boot:
         lines.append(f"Last start: {boot:%Y-%m-%d %H:%M}")
-        down = before[1] if before and before[0] == "shutdown" else None
-        clean = down is not None and down <= boot and boot - down < __import__("datetime").timedelta(minutes=15)
-        lines.append(f"Shutdown before it: {down:%Y-%m-%d %H:%M}" if down else "Shutdown before it: none recorded")
-        lines.append("The last start was clean" if clean else
-                     "The last start was NOT clean (no shutdown recorded just before it: a crash, freeze or power cut)")
+        if before is None:
+            lines.append("How it stopped before that: unknown (no earlier record)")
+        elif before[0] == "shutdown":
+            lines.append(f"Shutdown before it: {before[1]:%Y-%m-%d %H:%M}")
+            lines.append("The last start was clean")
+        else:  # the record before this start is another start: no shutdown was recorded in between
+            lines.append(f"Previous start: {before[1]:%Y-%m-%d %H:%M}, with no shutdown recorded after it")
+            lines.append("The last start was NOT clean (no shutdown recorded since the previous start: a crash, "
+                         "freeze or power cut)")
     reports = []
     for d in ("/Library/Logs/DiagnosticReports", os.path.expanduser("~/Library/Logs/DiagnosticReports")):
         try:
@@ -1226,7 +1230,7 @@ def expert_check(payload, signed, cfg, now=None, reusable=False):
         return "the command was signed for another device"
     if not isinstance(payload.get("expires"), int) or payload["expires"] < (now or time.time()):
         return "the signature has expired"
-    if not reusable and payload.get("nonce") in (cfg.get("usedNonces") or []):
+    if not reusable and payload.get("nonce") in (cfg.get("usedNonces") or {}):
         return "this signed command was already used"
     try:
         auth = _b64u(signed["authenticatorData"])
@@ -1238,80 +1242,210 @@ def expert_check(payload, signed, cfg, now=None, reusable=False):
     want = base64.urlsafe_b64encode(hashlib.sha256(_canonical(payload)).digest()).decode().rstrip("=")
     if client.get("type") != "webauthn.get" or client.get("challenge") != want:
         return "the signature is for a different command"
-    if client.get("origin") != pinned.get("origin"):
+    if client.get("origin") != pinned.get("origin") or client.get("crossOrigin") or "topOrigin" in client:
         return "the signature came from another site"
     if len(auth) < 37 or auth[:32] != hashlib.sha256(pinned.get("rpId", "").encode()).digest():
         return "the signature is for another site"
     if auth[32] & 0x05 != 0x05:  # user present (0x01) and user verified (0x04)
         return "the passkey didn't verify the person"
+    if auth[32] & 0x10 and not auth[32] & 0x08:  # "backed up" without "backup eligible" is malformed
+        return "the passkey's flags are inconsistent"
     if not _openssl_verify(pinned["pem"], auth + hashlib.sha256(client_raw).digest(), sig):
         return "the signature didn't check out"
     return None
 
 
 # Investigation sessions: with one signed, time-boxed grant, the agent may run READ-ONLY commands in a loop. "Read
-# only" is decided here, on the device: one plain command (no pipes, redirects, chaining or substitution), a program
-# from this list with only its reading sub-commands, never secret places, and file reads only under log folders.
-_RO_PROGRAMS = {
-    "ls", "df", "du", "ps", "uptime", "last", "who", "w", "uname", "sw_vers", "sysctl", "vm_stat", "pmset", "log",
-    "journalctl", "systemctl", "launchctl", "docker", "free", "lsblk", "mount", "ip", "ifconfig", "netstat", "ping",
-    "dig", "nslookup", "host", "find", "stat", "file", "wc", "cat", "head", "tail", "grep", "apt", "brew",
-    "softwareupdate", "diskutil", "top", "date", "hostinfo", "system_profiler", "lsof", "id", "groups", "tmutil",
-}
-_RO_SUBCOMMANDS = {  # programs that can also change things: only these first arguments
-    "systemctl": {"status", "list-units", "list-timers", "show", "is-active", "is-failed", "is-enabled", "--failed"},
-    "launchctl": {"list", "print"}, "docker": {"ps", "logs", "inspect", "stats", "images", "system", "info", "version"},
-    "pmset": {"-g"}, "log": {"show"}, "apt": {"list", "policy", "show"}, "ip": {"addr", "address", "route", "link"},
-    "brew": {"list", "outdated", "info", "config", "doctor", "--version"}, "softwareupdate": {"-l", "--list"},
-    "diskutil": {"list", "info", "apfs"}, "tmutil": {"status", "listbackups", "latestbackup", "destinationinfo"},
-}
-_RO_FILE_READERS = {"cat", "head", "tail", "grep"}
+# only" is decided here, on the device, by exact rules per program: which sub-commands, which options (and what
+# their values may look like), which arguments; programs come only from system folders, never from a path the
+# command names; file contents only from log folders; nothing that looks like a secret. Anything else is refused.
+
+_RO_DIRS = ("/bin", "/usr/bin", "/sbin", "/usr/sbin")
+_RO_EXTRA_DIRS = {"docker": ("/usr/local/bin", "/opt/homebrew/bin"), "brew": ("/opt/homebrew/bin", "/usr/local/bin")}
 _RO_LOG_ROOTS = ("/var/log", "/Library/Logs", "~/Library/Logs", "/private/var/log")
 _RO_SECRET_WORDS = (".ssh", "keychain", ".gnupg", ".env", "id_rsa", "id_ed25519", "credential", ".aws", "gcloud",
-                    "token", "passw", "secret", "shadow", "cookie", ".netrc", "nightlight/config")
-_RO_BAD_FLAGS = {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-w", "--write",
-                 "-o", "--output", "-f", "--follow"}
+                    "token", "passw", "secret", "shadow", "cookie", ".netrc", "nightlight", "private")
+_RO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@:/+-]{0,127}$")  # unit, container, host, interface, disk names
+_RO_INT = re.compile(r"^\d{1,6}$")
+_RO_SINCE = re.compile(r"^[0-9a-zA-Z:. -]{1,40}$")  # "1 hour ago", "2026-10-17 03:00", "today", "-1"
+
+# prog: {subs: allowed first argument (None = no sub-command), then: {sub: allowed second word},
+#        flags: options without a value, values: {option: kind}, args: kind of plain arguments, max: how many}
+# kinds: "int", "name", "text" (any single argument), "since", "choice:a|b", "log" (a log file), "path" (a folder)
+_RO_RULES = {
+    "uptime": {}, "sw_vers": {}, "id": {}, "groups": {}, "vm_stat": {}, "hostinfo": {}, "mount": {},
+    "date": {"flags": {"-u"}},
+    "uname": {"flags": {"-a", "-m", "-r", "-s", "-v"}},
+    "free": {"flags": {"-h", "-m", "-g"}},
+    "lsblk": {"flags": {"-f"}},
+    "df": {"flags": {"-h", "-k", "-H", "-i", "-l", "-P"}, "args": "path", "max": 3},
+    "du": {"flags": {"-s", "-h", "-k", "-x"}, "values": {"-d": "int"}, "args": "path", "max": 3},
+    "ps": {"flags": {"-e", "-f", "-A", "-x", "aux", "-ax"}, "values": {"-o": "name"}},
+    "last": {"flags": {"-x", "-F"}, "values": {"-n": "int"}, "args": "choice:reboot|shutdown", "max": 2},
+    "sysctl": {"flags": {"-n"}, "args": "name", "max": 6},
+    "pmset": {"subs": {"-g"}, "args": "choice:batt|custom|assertions|log|sched|ps|therm|sysload|stats|live", "max": 1},
+    "log": {"subs": {"show"}, "flags": {"--info", "--debug"},
+            "values": {"--last": "since", "--predicate": "text", "--style": "choice:syslog|compact|default",
+                       "--start": "since", "--end": "since"}},
+    "journalctl": {"flags": {"--no-pager", "-k", "--list-boots", "-r", "-q", "-x"},
+                   "values": {"-n": "int", "-p": "name", "-u": "name", "-b": "since", "--since": "since",
+                              "--until": "since"}},
+    "systemctl": {"subs": {"status", "list-units", "list-timers", "show", "is-active", "is-failed", "is-enabled"},
+                  "flags": {"--failed", "--no-pager", "--all"}, "values": {"--type": "name", "--state": "name"},
+                  "args": "name", "max": 5},
+    "launchctl": {"subs": {"list", "print"}, "args": "name", "max": 1},
+    "docker": {"subs": {"ps", "logs", "inspect", "stats", "images", "info", "version", "system"},
+               "then": {"system": {"df"}}, "flags": {"-a", "--no-stream", "--no-trunc", "-t"},
+               "values": {"--tail": "int", "--since": "since"}, "args": "name", "max": 3},
+    "ip": {"subs": {"addr", "address", "route", "link"}, "then": {"link": {"show"}, "addr": {"show"},
+                                                                  "address": {"show"}, "route": {"show"}},
+           "args": "name", "max": 2},
+    "ifconfig": {"args": "name", "max": 1},
+    "netstat": {"flags": {"-r", "-n", "-a", "-t", "-u", "-l", "-i"}},
+    "ping": {"values": {"-c": "int"}, "args": "name", "max": 1, "need": {"-c"}},
+    "dig": {"flags": {"+short"}, "args": "name", "max": 2},
+    "nslookup": {"args": "name", "max": 1}, "host": {"args": "name", "max": 1},
+    "cat": {"args": "log", "max": 3},
+    "head": {"values": {"-n": "int"}, "args": "log", "max": 3},
+    "tail": {"values": {"-n": "int"}, "args": "log", "max": 3},
+    "wc": {"flags": {"-l", "-c"}, "args": "log", "max": 3},
+    "grep": {"flags": {"-i", "-E", "-F", "-c", "-v", "-n", "-h"}, "values": {"-m": "int", "-A": "int", "-B": "int",
+                                                                              "-C": "int"},
+             "pattern": True, "args": "log", "max": 3},
+    "top": {"values": {"-l": "int", "-n": "int", "-o": "choice:cpu|mem"}, "flags": {"-b"}},
+    "brew": {"subs": {"list", "outdated", "config"}, "flags": {"--versions", "--quiet", "--cask", "--formula"}},
+    "apt": {"subs": {"list"}, "flags": {"--upgradable", "--installed"}},
+    "softwareupdate": {"subs": {"-l", "--list"}},
+    "diskutil": {"subs": {"list", "info", "apfs"}, "then": {"apfs": {"list"}}, "args": "name", "max": 1},
+    "tmutil": {"subs": {"status", "latestbackup", "destinationinfo", "listbackups"}},
+    "system_profiler": {"values": {"-detailLevel": "choice:mini|basic"}, "args": "sp", "max": 3},
+}
 
 
-def readonly_ok(command):
-    """None if `command` is a plain read-only command this device accepts in an investigation; else why not."""
+def _ro_executable(prog):
+    for d in _RO_DIRS + _RO_EXTRA_DIRS.get(prog, ()):
+        path = os.path.join(d, prog)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def _ro_value_ok(kind, v):
+    if kind == "int":
+        return bool(_RO_INT.match(v))
+    if kind == "name":
+        return bool(_RO_NAME.match(v))
+    if kind == "since":
+        return bool(_RO_SINCE.match(v))
+    if kind == "text":
+        return len(v) <= 300
+    if kind.startswith("choice:"):
+        return v in kind[7:].split("|")
+    if kind == "sp":
+        return bool(re.match(r"^SP[A-Za-z]+DataType$", v))
+    return False
+
+
+def _ro_file_ok(kind, v):
+    """A log file (contents are read) or a folder (only its size or free space is read)."""
+    if v.startswith("-") or not v:
+        return False
+    real = os.path.realpath(os.path.expanduser(v))
+    if kind == "path":
+        return os.path.isdir(real)
+    roots = [os.path.realpath(os.path.expanduser(r)) for r in _RO_LOG_ROOTS]
+    return os.path.isfile(real) and any(real.startswith(r + os.sep) for r in roots)
+
+
+def _ro_split_flags(tokens, rule):
+    """-sh -> -s -h when every letter is a known flag without a value."""
+    flags = rule.get("flags", set())
+    out = []
+    for t in tokens:
+        if len(t) > 2 and t[0] == "-" and t[1] != "-" and all(f"-{c}" in flags for c in t[1:]):
+            out.extend(f"-{c}" for c in t[1:])
+        else:
+            out.append(t)
+    return out
+
+
+def readonly_command(command):
+    """(argv with the trusted program path, None) if `command` is read-only by this device's rules; (None, why)."""
     import shlex
     if not isinstance(command, str) or not command.strip() or len(command) > 500:
-        return "empty or too long"
-    if any(c in command for c in ";|&<>`$\n\r") or "\x00" in command:
-        return "only one plain command is allowed (no pipes, redirects, chaining or substitution)"
+        return None, "empty or too long"
+    if any(c in command for c in ";|&<>`$\n\r\\") or "\x00" in command:
+        return None, "only one plain command is allowed (no pipes, redirects, chaining or substitution)"
+    if any(w in command.lower() for w in _RO_SECRET_WORDS):
+        return None, "it touches a place where secrets are kept"
     try:
         argv = shlex.split(command)
     except ValueError:
-        return "it couldn't be read as one command"
-    prog = os.path.basename(argv[0])
-    if prog not in _RO_PROGRAMS:
-        return f"{prog} isn't on this device's read-only list"
-    if prog in _RO_SUBCOMMANDS and (len(argv) < 2 or argv[1] not in _RO_SUBCOMMANDS[prog]):
-        return f"only reading {prog} sub-commands are allowed ({', '.join(sorted(_RO_SUBCOMMANDS[prog]))})"
-    if prog == "sysctl" and any("=" in a or a == "-w" for a in argv[1:]):
-        return "sysctl may only read"
-    if prog == "ping" and "-c" not in argv:
-        return "ping needs -c (a count)"
-    if prog == "top" and "-l" not in argv and "-b" not in argv:
-        return "top needs -l 1 (macOS) or -b -n 1 (Linux)"
-    low = command.lower()
-    if any(w in low for w in _RO_SECRET_WORDS):
-        return "it touches a place where secrets are kept"
-    if any(a in _RO_BAD_FLAGS for a in argv[1:]):
-        return "that option can write, run or follow things"
-    if prog in _RO_FILE_READERS:
-        paths = [a for a in argv[1:] if not a.startswith("-") and not a.lstrip("+").isdigit()]
-        if prog == "grep":
-            paths = paths[1:]  # the first plain argument is the pattern
-        roots = [os.path.realpath(os.path.expanduser(r)) for r in _RO_LOG_ROOTS]
-        for f in paths:
-            real = os.path.realpath(os.path.expanduser(f))
-            if not any(real == r or real.startswith(r + os.sep) for r in roots):
-                return f"{prog} may only read log files (under {', '.join(_RO_LOG_ROOTS)})"
-        if not paths:
-            return f"{prog} needs a log file"
-    return None
+        return None, "it couldn't be read as one command"
+    prog = argv[0]
+    rule = _RO_RULES.get(prog)
+    if "/" in prog or rule is None:
+        return None, f"{prog} isn't on this device's read-only list (programs are named without a path)"
+    exe = _ro_executable(prog)
+    if not exe:
+        return None, f"{prog} isn't installed in the system folders here"
+    rest = _ro_split_flags(argv[1:], rule)
+    if rule.get("subs") is not None:
+        if not rest or rest[0] not in rule["subs"]:
+            return None, f"only these {prog} sub-commands are allowed: {', '.join(sorted(rule['subs']))}"
+        sub, rest = rest[0], rest[1:]
+        then = (rule.get("then") or {}).get(sub)
+        if then is not None:
+            if rest and rest[0] in then:
+                rest = rest[1:]
+            elif rest and not rest[0].startswith("-") or sub == "system":
+                return None, f"only `{prog} {sub} {'/'.join(sorted(then))}` is allowed"
+    plain, seen, i = [], set(), 0
+    values = rule.get("values", {})
+    while i < len(rest):
+        t = rest[i]
+        if t in rule.get("flags", set()):
+            seen.add(t)
+        elif t in values:
+            if i + 1 >= len(rest) or not _ro_value_ok(values[t], rest[i + 1]):
+                return None, f"{t} needs a simple value"
+            seen.add(t)
+            i += 1
+        elif "=" in t and t.split("=", 1)[0] in values:
+            k, v = t.split("=", 1)
+            if not _ro_value_ok(values[k], v):
+                return None, f"{k} needs a simple value"
+            seen.add(k)
+        elif t.startswith("-") and not (rule.get("pattern") and not plain):
+            return None, f"the option {t} isn't allowed for {prog}"
+        else:
+            plain.append(t)
+        i += 1
+    for need in rule.get("need", ()):
+        if need not in seen:
+            return None, f"{prog} needs {need}"
+    if rule.get("pattern"):
+        if not plain or len(plain[0]) > 200:
+            return None, f"{prog} needs a pattern"
+        plain = plain[1:]
+    kind, most = rule.get("args"), rule.get("max", 0)
+    if len(plain) > most:
+        return None, f"too many arguments for {prog}"
+    for a in plain:
+        ok = _ro_file_ok(kind, a) if kind in ("log", "path") else _ro_value_ok(kind or "", a)
+        if not ok:
+            return None, (f"{prog} may only read log files under {', '.join(_RO_LOG_ROOTS)}" if kind == "log"
+                          else f"{a!r} isn't allowed here")
+    if kind == "log" and not plain:
+        return None, f"{prog} needs a log file"
+    if prog == "ping" and int(rest[rest.index("-c") + 1]) > 10:
+        return None, "ping at most 10 times"
+    return [exe] + argv[1:], None
+
+
+def readonly_ok(command):
+    """None if read-only by this device's rules; else why not."""
+    return readonly_command(command)[1]
 
 
 def run_readonly(params):
@@ -1324,10 +1458,10 @@ def run_readonly(params):
     why = expert_check(grant, signed, cfg, reusable=True)
     if why:
         return False, f"Not run: {why}.", None
-    why = readonly_ok(command)
+    argv, why = readonly_command(command)
     if why:
         return False, f"Not run on this device: {why}.", None
-    return _execute(command)
+    return _execute(command, argv=argv)
 
 
 def run_expert(params):
@@ -1337,17 +1471,30 @@ def run_expert(params):
     why = expert_check(payload, signed, cfg)
     if why:
         return False, f"Not run: {why}.", None
-    _update_config(lambda c: c.__setitem__("usedNonces", ((c.get("usedNonces") or []) + [payload["nonce"]])[-200:]))
+    taken = []
+
+    def consume(c):  # under the config lock: check and record in one step, so a signature runs at most once
+        used = {n: e for n, e in (c.get("usedNonces") or {}).items() if e > time.time()} \
+            if isinstance(c.get("usedNonces"), dict) else {}
+        if payload["nonce"] in used:
+            return
+        used[payload["nonce"]] = payload["expires"]
+        c["usedNonces"] = used
+        taken.append(True)
+    _update_config(consume)
+    if not taken:
+        return False, "Not run: this signed command was already used.", None
     return _execute(payload["command"], shell=True)
 
 
-def _execute(command, shell=False):
+def _execute(command, shell=False, argv=None):
     """Run it (a shell only for a command the owner signed by itself; read-only ones run without a shell), keep a
     transcript on the device, and return the scrubbed output."""
     import shlex
     try:
-        argv = ["/bin/sh", "-c", command] if shell else shlex.split(command)
-        r = subprocess.run(argv, capture_output=True, timeout=EXPERT_TIMEOUT,
+        argv = ["/bin/sh", "-c", command] if shell else (argv or shlex.split(command))
+        env = {"PATH": ":".join(_RO_DIRS), "LANG": "C", "HOME": _HOME}  # nothing inherited steers what runs
+        r = subprocess.run(argv, capture_output=True, timeout=EXPERT_TIMEOUT, env=env if not shell else None,
                            cwd=_HOME, stdin=subprocess.DEVNULL, check=False)
         out, code = (r.stdout[-EXPERT_OUTPUT:] + r.stderr[-EXPERT_OUTPUT:]).decode(errors="replace"), r.returncode
     except subprocess.TimeoutExpired:
@@ -1374,13 +1521,27 @@ def expert_setup(turn_off=False):
     st, body = _get_json(check_api(cfg["api"]) + "/helper/expert-key", cfg["token"])
     if st != 200:
         sys.exit("The owner hasn't created a passkey for expert sessions yet (in the app: the device > Expert sessions).")
-    print(f"The passkey's code is {body['fingerprint']}.")
-    if not sys.stdin.isatty() or not _ask("Does the Nightlight app show the same code?", False):
+    fp = key_fingerprint(body.get("pem", ""))  # computed here from the key itself, never taken from the cloud
+    if not fp:
+        sys.exit("That key couldn't be read; nothing was changed.")
+    print(f"The passkey's code, worked out on this device: {fp}")
+    if not sys.stdin.isatty() or not _ask("Does the app (in the browser where you created the passkey) show exactly "
+                                          "this code?", False):
         sys.exit("Nothing was changed.")
-    pinned = {k: body[k] for k in ("pem", "rpId", "origin", "fingerprint")}
+    pinned = {"pem": body["pem"], "rpId": body["rpId"], "origin": body["origin"], "fingerprint": fp}
     _update_config(lambda c: c.__setitem__("expert", pinned))
     print("Expert sessions are on: commands you sign with that passkey can run here. `nightlight expert --off` "
           "turns them off.")
+
+
+def key_fingerprint(pem):
+    """A 64-bit code from the public key's own bytes (SHA-256 of its DER form), shown as XXXX-XXXX-XXXX-XXXX."""
+    try:
+        der = base64.b64decode("".join(l for l in pem.strip().splitlines() if not l.startswith("-----")))
+    except (ValueError, TypeError):
+        return None
+    h = hashlib.sha256(der).hexdigest()[:16].upper()
+    return "-".join(h[i:i + 4] for i in range(0, 16, 4)) if der else None
 
 
 def _get_json(url, token):

@@ -154,3 +154,61 @@ def test_investigation_grant_allows_only_read_only_commands(helper):
     assert "isn't on this device's read-only list" in run("rm -rf /tmp/x")[1]
     assert "no pipes" in run("uname; rm x")[1]
     assert "secrets" in run("cat ~/.ssh/id_rsa")[1]
+
+
+def test_read_only_rules_close_the_reviewed_escapes(helper, tmp_path):  # review expert #1, #2
+    fake = tmp_path / "uname"
+    fake.write_text("#!/bin/sh\ntouch /tmp/nl_pwned\n")
+    fake.chmod(0o755)
+    for bad in ("docker system prune --force --volumes", "ip link set eth0 down", f"{fake}", "file -f/etc/hosts",
+                "cat /etc/hosts", "grep -r x /var/log", "du -sh /tmp; rm x", "tail -f /var/log/system.log",
+                "ps aux --forest=$(id)"):
+        assert helper.readonly_ok(bad) is not None, bad
+    argv, why = helper.readonly_command("uname -a")
+    assert why is None and argv[0] in ("/bin/uname", "/usr/bin/uname")  # a system program, never one named by path
+
+
+def test_fingerprint_is_worked_out_on_the_device(helper):  # review expert #3
+    pk = Passkey()
+    der = serialization.load_pem_public_key(pk.pem.encode()).public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    assert helper.key_fingerprint(pk.pem) == expert._fingerprint(der)
+    assert len(helper.key_fingerprint(pk.pem)) == 19 and helper.key_fingerprint(Passkey().pem) != expert._fingerprint(der)
+
+
+def test_a_signature_runs_once_even_after_many_others(helper):  # review expert #5
+    pk = Passkey()
+    _pinned(helper, pk)
+    helper._update_config(lambda c: c.__setitem__("usedNonces", {f"old{i}": int(time.time()) + 600 for i in range(300)}))
+    payload, signed = _signed_command(pk)
+    assert helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})[0]
+    again = helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})
+    assert not again[0] and "already used" in again[1]
+    assert payload["nonce"] in helper._load()["usedNonces"]
+
+
+def test_stricter_webauthn_checks(helper):  # review expert #6
+    pk = Passkey()
+    _pinned(helper, pk)
+    payload = {"device": "dev_x", "command": "uname", "expires": int(time.time()) + 600, "nonce": "c1"}
+    auth = hashlib.sha256(RP.encode()).digest() + bytes([0x05]) + (1).to_bytes(4, "big")
+    for client in ({"type": "webauthn.get", "challenge": expert.challenge_for(payload), "origin": ORIGIN,
+                    "crossOrigin": True},
+                   {"type": "webauthn.get", "challenge": expert.challenge_for(payload), "origin": ORIGIN,
+                    "topOrigin": "https://evil.example"}):
+        raw = json.dumps(client).encode()
+        sig = pk.key.sign(auth + hashlib.sha256(raw).digest(), ec.ECDSA(hashes.SHA256()))
+        signed = {"authenticatorData": expert.b64u(auth), "clientDataJSON": expert.b64u(raw),
+                  "signature": expert.b64u(sig)}
+        assert "another site" in helper.expert_check(payload, signed, helper._load())
+    p2, s2 = _signed_command(pk, flags=0x15)  # backed up (0x10) without backup-eligible (0x08)
+    assert "inconsistent" in helper.expert_check(p2, s2, helper._load())
+
+
+def test_the_card_signs_exactly_the_payload_it_shows(client, owner):  # review expert #4
+    uid, dev, pk = owner
+    a = actions.propose(uid, session_id="sess_test", turn_id="t9", generation=generation(uid),
+                        action_type="expert_command", device_id=dev["deviceId"], params={"command": "uname"})
+    db.action(uid, a["id"]).update({"params.challenge": "forged"})  # a server lying about the challenge changes nothing
+    signed = pk.sign(expert.challenge_for(a["params"]["payload"]))
+    assert client.post(f"/api/actions/{a['id']}/sign", json=signed).json()["status"] == "approved"

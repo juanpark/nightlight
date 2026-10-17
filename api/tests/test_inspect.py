@@ -225,3 +225,17 @@ def test_restarts_check_tells_a_crash_from_a_clean_restart(helper, monkeypatch):
     assert "NOT clean" in helper._inspect_restarts()
     monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: clean)
     assert "The last start was clean" in helper._inspect_restarts()
+
+
+def test_restarts_unknown_without_history_and_clean_after_any_shutdown(helper, monkeypatch):  # review expert #7
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: None)
+    only = "reboot   system boot  6.1.0 Sat Oct 17 03:43   still running\n"
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: only)
+    out = helper._inspect_restarts()
+    assert "unknown" in out and "NOT clean" not in out
+    long_ago = "reboot   system boot  6.1.0 Sat Oct 17 03:43\nshutdown system down  6.1.0 Fri Oct 16 22:00\n"
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: long_ago)
+    assert "The last start was clean" in helper._inspect_restarts()

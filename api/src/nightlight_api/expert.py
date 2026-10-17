@@ -48,8 +48,10 @@ def _origin(request_origin: str | None) -> str:
 
 
 def _fingerprint(der: bytes) -> str:
-    h = hashlib.sha256(der).hexdigest()[:8].upper()
-    return f"{h[:4]}-{h[4:]}"
+    """64 bits of SHA-256 over the key's DER bytes, as XXXX-XXXX-XXXX-XXXX (the device and the browser compute the
+    same code themselves; this copy is only for display)."""
+    h = hashlib.sha256(der).hexdigest()[:16].upper()
+    return "-".join(h[i:i + 4] for i in range(0, 16, 4))
 
 
 def _ref(uid: str):
@@ -186,12 +188,16 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
     credential = {"id": k["credentialId"], "rawId": k["credentialId"], "type": "public-key",
                   "response": {**{x: assertion[x] for x in ("authenticatorData", "clientDataJSON", "signature")}}}
     try:
-        verify_authentication_response(credential=credential, expected_challenge=unb64u(a["params"]["challenge"]),
-                                       expected_rp_id=k["rpId"], expected_origin=k["origin"],
-                                       credential_public_key=unb64u(k["cose"]), credential_current_sign_count=0,
-                                       require_user_verification=True)
+        v = verify_authentication_response(credential=credential,
+                                           expected_challenge=unb64u(challenge_for(a["params"]["payload"])),
+                                           expected_rp_id=k["rpId"], expected_origin=k["origin"],
+                                           credential_public_key=unb64u(k["cose"]),
+                                           credential_current_sign_count=int(k.get("signCount") or 0),
+                                           require_user_verification=True)
     except Exception:
         raise ApiError(422, "signature_not_accepted") from None
+    if v.new_sign_count:  # counterless passkeys stay at 0; a counter that goes backwards was refused above
+        _ref(uid).update({"signCount": v.new_sign_count})
     signed = {x: assertion[x] for x in ("authenticatorData", "clientDataJSON", "signature")}
     decision = {"by": "user", "decision": "approve", "with": "passkey"}
     if a["type"] == "expert_grant":  # nothing runs now: the grant lets the agent run read-only commands for a while

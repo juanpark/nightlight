@@ -138,7 +138,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, onAsk, 
       {device.kind !== "watched" && <DeviceProfile uid={uid} deviceId={device.id} />}
       {device.kind !== "watched" && <Notebook uid={uid} deviceId={device.id} />}
       {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
-      {real && device.kind !== "watched" && <ExpertSessions device={device} />}
+      {real && device.kind !== "watched" && <ExpertSessions uid={uid} device={device} />}
       {real && device.kind !== "watched" && <RemoveDevice device={device} onRemoved={onClose} />}
       <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
         <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>

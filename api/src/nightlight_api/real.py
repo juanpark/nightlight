@@ -733,17 +733,17 @@ def heartbeat(token: str, facts: dict) -> dict:
 def post_mortem(token: str, device_id: str, facts: dict) -> None:
     """A device came back after a restart: find out why, by itself (read-only checks the device allows, no card).
     The result lands in Activity and the device's notebook."""
-    offered = set((facts.get("allowedJobs") or {}).get("inspect", []))
-    what = [w for w in ("restarts", "disk") if w in offered]
-    if "restarts" not in what:
-        return  # an older helper, or looking around isn't allowed there
-    from . import actions
-    t = tokens_ref().document(_sha(token)).get().to_dict() or {}
-    uid = t.get("uid")
-    user = db.user(uid).get().to_dict() or {} if uid else {}
-    if not uid or user.get("demo", {}).get("state") != "ready":
-        return
-    try:
+    try:  # optional: nothing here may break the report that was just delivered
+        offered = set((facts.get("allowedJobs") or {}).get("inspect", []))
+        what = [w for w in ("restarts", "disk") if w in offered]
+        if "restarts" not in what:
+            return  # an older helper, or looking around isn't allowed there
+        from . import actions
+        t = tokens_ref().document(_sha(token)).get().to_dict() or {}
+        uid = t.get("uid")
+        user = db.user(uid).get().to_dict() or {} if uid else {}
+        if not uid or user.get("demo", {}).get("state") != "ready":
+            return
         actions.request_inspection(uid, session_id=None, turn_id=f"after_restart_{_now():%Y%m%d%H%M}",
                                    generation=user.get("demoGeneration"), device_id=device_id, what=what,
                                    extra={"playbook": "after_restart"})

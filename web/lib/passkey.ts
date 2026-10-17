@@ -35,9 +35,13 @@ export async function createPasskey(options: {
   }) as PublicKeyCredential | null;
   if (!cred) throw new Error("cancelled");
   const r = cred.response as AuthenticatorAttestationResponse;
+  const spki = r.getPublicKey?.(); // the key's own bytes, straight from the authenticator
   return {
-    id: cred.id, rawId: b64u(cred.rawId), type: cred.type,
-    response: { clientDataJSON: b64u(r.clientDataJSON), attestationObject: b64u(r.attestationObject) },
+    credential: {
+      id: cred.id, rawId: b64u(cred.rawId), type: cred.type,
+      response: { clientDataJSON: b64u(r.clientDataJSON), attestationObject: b64u(r.attestationObject) },
+    },
+    fingerprint: spki ? await fingerprintOf(new Uint8Array(spki)) : null,
   };
 }
 
@@ -56,10 +60,24 @@ export async function signWithPasskey(challenge: string, credentialId: string, r
   };
 }
 
-/** A short, human-checkable fingerprint of a public key (shown in the app and on the device; they must match). */
-export async function fingerprint(pem: string) {
-  const der = fromB64u(pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "").replace(/\+/g, "-").replace(/\//g, "_"));
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", der));
-  const hex = Array.from(hash.slice(0, 4)).map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-  return `${hex.slice(0, 4)}-${hex.slice(4)}`;
+/** 64 bits of SHA-256 over the key's DER bytes, as XXXX-XXXX-XXXX-XXXX: the device works out the same code from the
+ * key it receives, so a key swapped on the way can't match. */
+export async function fingerprintOf(der: Uint8Array) {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", der as BufferSource));
+  const hex = Array.from(hash.slice(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+  return hex.match(/.{4}/g)!.join("-");
+}
+
+/** The same canonical JSON as the API and the helper (sorted keys, no spaces), so the challenge is computed here
+ * from exactly what the card shows. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+
+export async function challengeFor(payload: Record<string, unknown>) {
+  return b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(payload))));
 }

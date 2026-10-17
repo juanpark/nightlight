@@ -81,3 +81,15 @@ def test_after_a_restart_nightlight_looks_by_itself_and_writes_it_down(client, s
     notes = [n.to_dict()["text"] for n in db.notes(started, dev["deviceId"]).get()]
     assert ev and "wasn't clean" in ev[0] and "99% full just before" in ev[0]
     assert notes and "Why it restarted" in notes[0]
+
+
+def test_a_failing_post_mortem_never_breaks_a_report(client, started, monkeypatch):  # review expert #8
+    dev = enrolled(client)
+    offers = {**FACTS, "allowedJobs": {"inspect": ["disk", "restarts"]}}
+    beat(client, dev["token"], offers)
+    db.device(started, dev["deviceId"]).update({"lastSeen": _now() - timedelta(hours=2), "watchState": "silent"})
+    db.client().collection("helperTokens").document(real._sha(dev["token"])).update({"lastSeen": None})
+    from nightlight_api import actions
+    monkeypatch.setattr(actions, "request_inspection", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    r = beat(client, dev["token"], {**offers, "uptimeSec": 60})
+    assert r.status_code == 200 and r.json()["ok"] is True

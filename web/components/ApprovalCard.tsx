@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { passkeysSupported, signWithPasskey } from "@/lib/passkey";
+import { challengeFor, passkeysSupported, signWithPasskey } from "@/lib/passkey";
 import type { Action, Device } from "@/lib/types";
 
 const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky", read: "Read-only" } as const;
@@ -45,8 +45,10 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
     try {
       const k = await api<{ enabled: boolean; credentialId?: string; rpId?: string }>("GET", "/api/expert");
       if (!k.enabled || !k.credentialId || !k.rpId) throw new Error("Create your passkey first (open the device > Expert sessions).");
-      const challenge = (action!.params as { challenge?: string } | undefined)?.challenge ?? "";
-      const signed = await signWithPasskey(challenge, k.credentialId, k.rpId);
+      // The challenge is computed HERE from the payload this card displays, never taken from the server as is.
+      const payload = (action!.params as { payload?: Record<string, unknown> } | undefined)?.payload;
+      if (!payload) throw new Error("This card has nothing to sign.");
+      const signed = await signWithPasskey(await challengeFor(payload), k.credentialId, k.rpId);
       await api("POST", `/api/actions/${action!.id}/sign`, signed);
     } catch (e) {
       setErr(e instanceof ApiError ? (e.code === "signature_not_accepted" ? "That passkey didn't sign it." : e.code)
@@ -55,7 +57,11 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       setBusy(false);
     }
   }
-  const command = (action.params as { command?: string } | undefined)?.command;
+  // What is shown is what gets signed: the command (or the grant) comes from the signed payload itself.
+  const payload = (action.params as { payload?: { command?: string; mode?: string; expires?: number; device?: string } }
+    | undefined)?.payload;
+  const command = payload?.command ?? (payload?.mode ? `${payload.mode} commands until ${new Date((payload.expires ?? 0) * 1000).toLocaleTimeString()}`
+    : (action.params as { command?: string } | undefined)?.command);
   const signedCard = SIGNED.has(action.type);
   return (
     <div className="card">
