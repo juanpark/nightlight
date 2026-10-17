@@ -118,3 +118,11 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .star-btn.small { min-width: 30px; min-height: 30px; border: 0; vertical-align: middle; margin: -6px 0 -6px -6px; }
 .star-btn.on { color: var(--glow); }
 .star-btn.on svg { fill: var(--glow); }
+
+/* One app on its own in the device panel. */
+.app-detail { display: flex; flex-direction: column; gap: 8px; }
+.app-detail > .linkish { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; }
+.app-detail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app-what { margin: 0; }
+.app-detail .drawer-status { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.app-link { padding: 0; color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }

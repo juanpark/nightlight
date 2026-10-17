@@ -10,3 +10,7 @@ export function appOrder(services: Service[], favorites: string[]): Service[] {
 }
 
 export const APP_CAP = 12; // an opened card shows this many; the rest are a tap away
+
+/** Whether a note, saved fix or log entry is about this app: by its id when the entry has one, else by its name. */
+export const aboutApp = (app: Service) => (x: { svcId?: string | null; service?: string | null }) =>
+  x.svcId ? x.svcId === app.id : !!x.service && x.service.toLowerCase() === app.name.toLowerCase();

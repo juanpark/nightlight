@@ -163,11 +163,12 @@ export interface Note {
   by: "nightlight" | "you";
   at: Date | null;
   service?: string | null; // a note about one container or service on the device
+  svcId?: string | null; // that app's Service.id, when known
 }
 
 /** A fix that worked on a device, as steps (`users/{uid}/devices/{id}/runbooks/{runbookId}`); never runs by itself. */
 export interface Runbook {
-  id: string; title: string; when: string; service?: string | null; uses?: number; lastUsedAt?: Date | null;
+  id: string; title: string; when: string; service?: string | null; svcId?: string | null; uses?: number; lastUsedAt?: Date | null;
   steps: { say: string; job?: { type: string; params?: Record<string, unknown> }; command?: string }[];
   createdAt?: Date | null; demoGeneration?: number;
 }

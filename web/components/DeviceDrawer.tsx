@@ -22,6 +22,7 @@ import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
 import NeedsList from "./NeedsList";
 import WatchedPanel from "./WatchedPanel";
+import AppDetail from "./AppDetail";
 import SetupCard from "./SetupCard";
 import MacFolders, { FOLDERS_FROM } from "./MacFolders";
 import { deviceIcon } from "./map/kinds";
@@ -54,10 +55,11 @@ function updateMode(d: Device) {
 }
 
 export default function DeviceDrawer({ uid, generation, device, actions, devices, needs, release, tab, onTab, onGo,
-  onFollowUp, onAsk, onClose }: {
+  onFollowUp, onAsk, onClose, app, onApp }: {
   uid: string; generation?: number; device: Device; actions: Action[]; devices: Device[]; needs: Need[];
   release: { version: string } | null; tab: Tab; onTab: (t: Tab) => void; onGo: (g: Go) => void;
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
+  app?: string | null; onApp?: (svcId: string | null) => void; // one app opened on its own
 }) {
   const services = useServices(uid, device.id);
   const fav = useFavorites(device);
@@ -70,7 +72,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   useEffect(() => {
     const top = box.current?.getBoundingClientRect().top ?? 0;
     if (top > window.innerHeight * 0.6) box.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [device.id]);
+  }, [device.id, app]);
   // Each problem is said once: the urgent one as a row under the status sentence (with its "What should I do?"),
   // the rest under Problems.
   const listed = (f: Finding) => needs.some((n) => n.id === `critical:${device.id}:${f.id ?? f.message}`);
@@ -78,6 +80,16 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const brief = !removing && !(real && device.status === "offline") && (device.status === "crit" || device.status === "warn");
   const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
   const current: Tab = tabs.includes(tab) ? tab : "overview";
+  const opened = app ? services.find((s) => s.id === app) : undefined;
+  if (opened && !watched) {
+    return (
+      <div className="panel drawer" ref={box}>
+        <Head key={device.id} device={device} fav={fav} onClose={onClose} />
+        <AppDetail key={`app:${device.id}:${opened.id}`} uid={uid} generation={generation} device={device} app={opened}
+          actions={actions} fav={fav} onBack={() => onApp?.(null)} onAsk={onAsk} />
+      </div>
+    );
+  }
   if (watched) {
     return (
       <div className="panel drawer" ref={box}>
@@ -129,7 +141,9 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
               <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
               <div style={{ flex: 1 }}>
                 <div><StarButton on={fav.isFavoriteApp(s.id)} label={`${s.name} as a favorite`} small
-                  onClick={() => fav.toggleApp(s.id)} /> <strong>{s.name}</strong> {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
+                  onClick={() => fav.toggleApp(s.id)} />{" "}
+                  {onApp ? <button className="linkish app-link" onClick={() => onApp(s.id)}><strong>{s.name}</strong></button>
+                    : <strong>{s.name}</strong>} {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
                   {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
                 {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
                 {s.detail && <div className="small muted">{s.detail}</div>}

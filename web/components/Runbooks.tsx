@@ -3,8 +3,9 @@
 // still a card the person approves; here they can rename one, say when it helps, or delete it.
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { aboutApp } from "@/lib/apps";
 import { useRunbooks } from "@/lib/data";
-import type { Device, Runbook } from "@/lib/types";
+import type { Device, Runbook, Service } from "@/lib/types";
 
 function Item({ device, rb, onAsk }: { device: Device; rb: Runbook; onAsk: (q: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -56,16 +57,17 @@ function Item({ device, rb, onAsk }: { device: Device; rb: Runbook; onAsk: (q: s
   );
 }
 
-export default function Runbooks({ uid, generation, device, onAsk }: {
-  uid: string; generation?: number; device: Device; onAsk: (q: string) => void;
+export default function Runbooks({ uid, generation, device, app, onAsk }: {
+  uid: string; generation?: number; device: Device; app?: Service; onAsk: (q: string) => void;
 }) {
-  const runbooks = useRunbooks(uid, device.id, generation);
+  const all = useRunbooks(uid, device.id, generation);
+  const runbooks = app ? all.filter(aboutApp(app)) : all; // given an app, only the fixes for it
   return (
     <section className="drawer-section">
       <h4>Fixes that worked here <span className="muted small">saved by Nightlight; each step still asks you</span></h4>
       {runbooks.length === 0
-        ? <p className="small muted">None yet. When a fix works, Nightlight saves the steps here so it can offer them
-            again next time.</p>
+        ? <p className="small muted">{app ? `None for ${app.name} yet.` : "None yet. When a fix works, Nightlight saves the "
+            + "steps here so it can offer them again next time."}</p>
         : runbooks.map((rb) => <Item key={rb.id} device={device} rb={rb} onAsk={onAsk} />)}
     </section>
   );
