@@ -30,8 +30,11 @@ function availability(events: EventDoc[], d: Device, now: number): Seg[] {
   const firstIn = changes.find((e) => e.at!.getTime() > born);
   // reachability at the window's start: the last change before it, else the opposite of the first change in it,
   // else what it is now
+  // (with no changes at all, a thing down now that answered inside the window was up until that answer)
+  const lastOk = !changes.length && d.status === "crit" && d.lastAnswerAt && d.lastAnswerAt.getTime() > born
+    ? d.lastAnswerAt.getTime() : null;
   let reachable: "ok" | "crit" | null = before ? reach(before) : firstIn ? (reach(firstIn) === "ok" ? "crit" : "ok")
-    : d.status === "ok" || d.status === "crit" ? d.status : null;
+    : lastOk ? "ok" : d.status === "ok" || d.status === "crit" ? d.status : null;
   const cover = evs.filter((e) => e.at!.getTime() <= born && (e.kind === GONE || e.kind === BACK)).at(-1);
   let watched = cover?.kind !== GONE;
   const segs: Seg[] = born > start ? [{ from: start, to: born, state: "none" }] : [];
@@ -42,6 +45,7 @@ function availability(events: EventDoc[], d: Device, now: number): Seg[] {
     t = e.at!.getTime();
     if (e.kind === GONE) watched = false; else if (e.kind === BACK) watched = true; else reachable = reach(e);
   }
+  if (lastOk) { segs.push({ from: t, to: lastOk, state: state() }); t = lastOk; reachable = "crit"; }
   segs.push({ from: t, to: now, state: state() });
   // merge neighbours in the same state, so one outage is one stretch
   return segs.filter((s) => s.to > s.from).reduce<Seg[]>((out, s) => {
@@ -51,8 +55,9 @@ function availability(events: EventDoc[], d: Device, now: number): Seg[] {
   }, []);
 }
 
-/** When it stopped answering: its latest change to "not answering", if that is the state it is in. */
+/** When it stopped answering: after its last answer, or (older data) its latest change to "not answering". */
 function downSince(events: EventDoc[], d: Device): Date | null {
+  if (d.status === "crit" && d.lastAnswerAt) return d.lastAnswerAt;
   const last = events.filter((e) => e.deviceId === d.id && e.at && (UP.has(e.kind) || DOWN.has(e.kind)))
     .sort((a, b) => b.at!.getTime() - a.at!.getTime())[0];
   return d.status === "crit" && last && DOWN.has(last.kind) ? last.at! : null;

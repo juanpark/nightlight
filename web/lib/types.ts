@@ -78,6 +78,7 @@ export interface Device {
   /** Watched things (kind "watched", added from Found nearby): what it is, who checks it and how. */
   role?: Role; roleSetBy?: "auto" | "user"; guess?: string; services?: string[]; ports?: number[];
   vendor?: string | null; checkPort?: number | null; watchedBy?: string | null; cid?: string;
+  lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
 }
 export type Role = "router" | "printer" | "fileshare" | "smarthome" | "server" | "speaker" | "computer" | "other";
 

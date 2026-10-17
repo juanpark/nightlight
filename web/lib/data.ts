@@ -48,7 +48,7 @@ const current = (gen: number | undefined) => (d: { realm?: string; demoGeneratio
   d.realm === "real" || d.demoGeneration === gen;
 
 export function useDevices(uid: string | null, gen: number | undefined): Device[] {
-  // a watched thing someone stopped watching is off the map (it has no helper to uninstall, so it isn't archived)
+  // the server archives a watched thing you stop watching; ones stopped before it did are only revoked
   return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived && !(d.kind === "watched" && d.revoked))
     .filter(current(gen));
 }
