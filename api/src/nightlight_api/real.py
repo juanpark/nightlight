@@ -1080,42 +1080,69 @@ MAC_FOLDERS_FROM = "0.9.22"  # helpers that can raise the Mac folder prompts whe
 def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_folders: bool) -> dict:
     """The one-time choice made when a device first connects: what Nightlight may do there (a preset, applied to
     what the device reported), automatic updates, and on a Mac the private folders (macOS asks right away, while the
-    person is at the Mac). Marks the device as set up, so the card is never shown again; Settings changes it later."""
+    person is at the Mac). Runs once: a repeated or concurrent request gets the first one's result and never undoes
+    what the owner changed in Settings since. Settings changes it later."""
     from . import actions, release
-    snap = db.device(uid, device_id).get()
-    d = snap.to_dict() if snap.exists else None
-    if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived"):
-        raise not_found()
-    applied, why = False, None
+    ref = db.device(uid, device_id)
+
+    @firestore.transactional
+    def claim(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived"):
+            raise not_found()
+        if d.get("setup"):  # already chosen (or being applied right now): that outcome stands
+            return d, False
+        if d.get("manage") == "app":
+            tx.update(ref, {"setup": {"preset": preset, "state": "applying"}})
+        return d, True
+
+    d, mine = db.run_transaction(claim)
+    if not mine:
+        return {"ok": True, **(d.get("setup") or {}), "already": True}
+    out = {"preset": preset, "applied": False, "trimmed": False, "macFoldersAction": None}
+    why = None
     if d.get("manage") == "app":
         services = [s.to_dict() for s in db.services(uid, device_id).get()]
         containers = sorted({s.get("name") for s in services if s.get("kind") == "container" and s.get("name")})
         units = sorted({s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")})
+        out["trimmed"] = len(containers) > PERMISSION_TARGETS or len(units) > PERMISSION_TARGETS \
+            or len(containers) + len(units) > PERMISSION_TARGETS
+        containers, units = containers[:PERMISSION_TARGETS], units[:PERMISSION_TARGETS]
+        logs = (containers + units)[:PERMISSION_TARGETS]  # the same limits as the switches (and the helper)
         current = d.get("permissions") or DEFAULT_PERMISSIONS
         perms = {"watch": {**DEFAULT_PERMISSIONS, "autoUpdate": auto_update},
                  "fix": {"diagnose": True, "cleanup": True, "updates": True, "autoUpdate": auto_update,
-                         "logs": containers + units, "restart_container": containers, "restart_service": units},
+                         "logs": logs, "restart_container": containers, "restart_service": units},
                  "custom": {**DEFAULT_PERMISSIONS, **current, "autoUpdate": auto_update}}[preset]
         set_permissions(uid, device_id, perms)
-        applied = True
+        out["applied"] = True
     else:
         why = "strict_device" if d.get("manage") == "strict" else "update_helper"
-    asked = None
     if mac_folders:
         if "mac" not in (d.get("os") or "").lower():
             why = why or "not_a_mac"
         elif d.get("manage") != "app" or release.newer(MAC_FOLDERS_FROM, d.get("helperVersion")):
             why = why or "update_helper"
         else:
-            asked = actions.request(uid, "mac_folders", device_id, {}, session_id=None,
-                                    turn_id=f"app_macfolders_{new_id('ask')}", origin="app", once=True)["id"]
+            try:  # one identity per device: a retry finds the same job
+                out["macFoldersAction"] = actions.request(uid, "mac_folders", device_id, {}, session_id=None,
+                                                          turn_id="app_macfolders_setup", origin="app",
+                                                          once=True)["id"]
+            except ValueError as e:
+                why = why or str(e)  # e.g. device_not_reporting: the rest of the choice still stands
+    done = out["applied"] or d.get("manage") == "strict"
     # Done once chosen: applied, or a strict device (its choices are made on the device). A helper too old to take
     # the choice keeps its card until it is updated.
-    if applied or d.get("manage") == "strict":
-        db.device(uid, device_id).update({"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset})
-    return {"ok": True, "applied": applied, "done": applied or d.get("manage") == "strict",
-            "macFoldersAction": asked, **({"why": why} if why else {})}
+    if done:
+        ref.update({"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset,
+                    "setup": {**out, "state": "done", **({"why": why} if why else {})}})
+    else:
+        ref.update({"setup": firestore.DELETE_FIELD})
+    return {"ok": True, **out, "done": done, **({"why": why} if why else {})}
 
+
+PERMISSION_TARGETS = 20  # per list, as PermissionsBody and the helper allow
 
 def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device

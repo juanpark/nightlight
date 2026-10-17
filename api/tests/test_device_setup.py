@@ -41,3 +41,33 @@ def test_an_older_helper_keeps_its_setup_card_until_updated(client, started):
     r = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()
     assert not r["done"] and r["why"] == "update_helper"
     assert "setupAt" not in db.device(started, dev["deviceId"]).get().to_dict()
+
+
+def test_setup_runs_once_and_never_undoes_later_settings(client, started):  # codex setup #1
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "os": "Debian 12"})
+    assert client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()["applied"]
+    assert client.post(f"/api/devices/{dev['deviceId']}/permissions",
+                       json={"diagnose": True, "cleanup": False, "logs": [], "restart_container": [],
+                             "restart_service": []}).status_code == 200
+    again = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()
+    assert again["already"] and db.device(started, dev["deviceId"]).get().to_dict()["permissions"]["cleanup"] is False
+
+
+def test_fix_keeps_to_the_switch_limits(client, started):  # codex setup #2
+    dev = enrolled(client, "Box")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "os": "Debian 12",
+                               "containers": [{"name": f"c{i:02d}", "state": "running"} for i in range(21)]})
+    r = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()
+    p = db.device(started, dev["deviceId"]).get().to_dict()["permissions"]
+    assert r["trimmed"] and len(p["restart_container"]) == 20 and len(p["logs"]) <= 20
+
+
+def test_a_sleeping_mac_still_finishes_setup_with_a_reason(client, started):  # codex setup #3
+    from datetime import datetime, timedelta, timezone
+    mac = enrolled(client, "Mac")
+    beat(client, mac["token"], {**FACTS, "manage": "app", "os": "macOS 26.1", "helperVersion": "0.9.23"})
+    db.device(started, mac["deviceId"]).update({"lastSeen": datetime.now(timezone.utc) - timedelta(hours=2)})
+    r = client.post(f"/api/devices/{mac['deviceId']}/setup", json={"preset": "watch", "macFolders": True})
+    assert r.status_code == 200 and r.json()["applied"] and r.json()["why"] == "device_not_reporting"
+    assert db.device(started, mac["deviceId"]).get().to_dict()["setupAt"]
