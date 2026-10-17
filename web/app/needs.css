@@ -16,9 +16,30 @@
   .needs-strip > button { font-size: 13px; padding: 6px 10px; }
   .needs-row .needs-text { flex-basis: calc(100% - 24px); }
   .needs-row > button { margin-left: 16px; }
+  .needs-list { gap: 12px; }
 }
 
+.drawer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* the once-only "what may Nightlight do here?" card (SetupCard.tsx) */
+.setup-card { margin: 10px 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel)); display: flex; flex-direction: column; gap: 8px; }
+.setup-presets { display: flex; flex-direction: column; gap: 6px; }
+.setup-presets label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; background: var(--panel); }
+.setup-presets label.on { border-color: var(--accent); }
+.setup-presets label > span { display: flex; flex-direction: column; gap: 2px; }
+.setup-check { display: flex; gap: 8px; align-items: flex-start; }
+.setup-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.mac-folders { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px; }
 .drawer-status { margin: 6px 0 4px; font-size: 15px; }
+/* a watched thing's panel (WatchedPanel.tsx) */
+.role-pick { display: block; margin-bottom: 6px; }
+.avail { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.avail i { display: block; height: 100%; }
+.avail i.ok { background: var(--ok); }
+.avail i.crit { background: var(--crit); }
+.avail i.none { background: var(--line); }
+.avail-scale { display: flex; justify-content: space-between; margin-top: 2px; }
 .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 10px 0 8px; }
 .tabs button { border: none; background: none; padding: 6px 12px; border-bottom: 2px solid transparent;
@@ -26,6 +47,17 @@
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent, var(--ink)); font-weight: 600; }
 .drawer-section { margin-top: 12px; }
 .drawer-section h4 { margin: 0 0 6px; }
+/* device knowledge: saved fixes and the job log (Runbooks.tsx, JobLog.tsx), notes per service (Notebook.tsx) */
+.runbook { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 4px; }
+.runbook-steps { margin: 2px 0; padding-left: 20px; }
+.runbook-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.runbook-edit { display: flex; flex-direction: column; gap: 6px; }
+.logrow { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.logrow .dot { margin-top: 5px; flex: none; }
+.logrow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.logrow-body pre { white-space: pre-wrap; word-break: break-word; }
+.note-group { margin-top: 8px; }
 
 /* Getting started (FirstRun.tsx) */
 .firstrun { padding: 12px 14px; }
@@ -41,4 +73,40 @@
 .fr-title { flex: 1; min-width: 0; }
 .firstrun-alt { margin: 8px 0 0; }
 .needs-line { padding: 4px 0 8px 16px; }
-.send-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 4px; } /* AddDevice */
+.send-line { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; margin: 2px 0 4px; } /* AddDevice */
+.send-line { margin: 10px 0 4px; }
+/* Add a device: pick the kind, then three numbered steps with a small drawing each (AddDevice.tsx) */
+.setup-pick { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.setup-pick button { flex: 1 1 180px; display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 14px; font-size: 15px; font-weight: 600; border-radius: 12px; }
+.setup-pick button.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.setup-steps { list-style: none; margin: 12px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.setup-step { display: grid; grid-template-columns: 34px 96px 1fr; gap: 12px; align-items: start; }
+.setup-n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
+  background: var(--accent); color: var(--bg); }
+.setup-art { display: grid; place-items: center; min-height: 52px; }
+.setup-text { min-width: 0; line-height: 1.5; }
+.setup-text pre { white-space: pre-wrap; word-break: break-all; }
+kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 6px; background: var(--panel); font: 600 12px/1.6 ui-monospace, monospace; text-align: center; }
+.art-keys { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.art-keys kbd { font-size: 14px; padding: 4px 8px; }
+.art-term { position: relative; width: 92px; height: 52px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--ink); overflow: hidden; }
+.art-term i { position: absolute; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.art-term i:nth-child(1) { left: 6px; } .art-term i:nth-child(2) { left: 15px; } .art-term i:nth-child(3) { left: 24px; }
+.art-term b { position: absolute; left: 8px; bottom: 9px; font: 600 11px ui-monospace, monospace; color: var(--bg); }
+@media (max-width: 600px) {
+  .setup-step { grid-template-columns: 30px 1fr; }
+  .setup-art { display: none; }
+}
+.look-nearby { margin-top: 10px; } /* FoundNearby */
+.found-row { flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.found-row.router { border-left: 3px solid var(--accent); padding-left: 8px; }
+.found-what { flex: 1 1 260px; min-width: 0; }
+.found-hint { display: block; color: var(--accent); margin-top: 2px; }
+.found-add { display: flex; gap: 6px; flex: 1 1 240px; max-width: 360px; }
+.found-add input { flex: 1; min-width: 0; }
+.found-more { margin-top: 8px; }
+.found-more ul { margin: 6px 0 0; padding-left: 18px; }
+.look-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

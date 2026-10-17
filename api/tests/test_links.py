@@ -74,3 +74,27 @@ def test_a_stale_turn_cannot_draw_lines(started):
     with pytest.raises(ApiError):
         linklib.put(started, "nvr-1", "nas-1", "backup", fence=stale)
     assert "nvr-1__nas-1" not in _links(started)
+
+
+def test_a_path_is_never_a_device_id(started):
+    # The agent passes ids from the model: a nested path must not write a link (or reach any other document).
+    import pytest
+    from nightlight_api import links as linklib
+    from nightlight_api.errors import ApiError
+    with pytest.raises(ApiError):
+        linklib.put(started, "game-1/services/minecraft", "nas-1", "backup")
+    with pytest.raises(ApiError):
+        db.device(started, "game-1/services/minecraft")
+    assert all("/" not in k for k in _links(started))
+    assert not list(db.links(started).document("game-1").collections())
+
+
+def test_an_agent_tool_given_a_name_instead_of_an_id_answers_no_such_device(started):
+    import asyncio
+    from nightlight_api import agent as agentlib, db as dbm
+    gen = dbm.user(started).get().to_dict()["demoGeneration"]
+    ctx = agentlib.TurnContext(uid=started, session_id="s", turn_id="t", attempt=1, generation=gen, ip="1.2.3.4",
+                               deep=False)
+    tools = {t.__name__: t for t in agentlib.make_tools(ctx, read_only=False)}
+    out = asyncio.run(tools["get_device"]("Raspberry Pi", None))
+    assert out["status"] == "error" and "no such device" in out["reason"]

@@ -260,6 +260,27 @@ ACTIONS = {
 }
 
 
+FIX_FOR = {"disk_over_90": "rotate_logs", "memory_high": "restart_server", "backup_overdue": "backup_world",
+           "update_available": "update_server"}  # which job answers which problem
+
+
+def fixes(device: dict, services: dict) -> list[dict]:
+    """The jobs that answer this device's current problems, with what each card would say: the agent proposes one of
+    these by calling the tool of that name (only those that apply right now are listed)."""
+    checks = [f.get("check") for f in device.get("findings") or []]
+    checks += [f.get("check") for s in services.values() for f in s.get("findings") or []]
+    out = []
+    for check in dict.fromkeys(checks):
+        job = FIX_FOR.get(check)
+        if not job:
+            continue
+        try:
+            out.append({"tool": job, "for": check, "plan": card(device, services, job, {})["plan"]})
+        except ValueError:
+            pass
+    return out
+
+
 def service_for(device: dict, action_type: str) -> str | None:
     """The service a job concerns. Depends only on the device and job, never on mutable state, so a proposal's
     identity is the same before and after the job has run."""

@@ -98,6 +98,27 @@ def _inspect(c: Ctx):
         {"what": what}
 
 
+def _discover(c: Ctx):
+    from . import real, release
+    if c.device.get("manage") != "app":
+        raise ValueError("strict_device")  # a strict device looks only when someone runs it there
+    if release.newer(real.DISCOVER_FROM, c.device.get("helperVersion")):
+        raise ValueError("update_helper_first")
+    return _card(c.device, f"Look for other devices on the {c.device['name']}'s network (read-only).",
+                 "Lists what answers nearby: a guess at what each thing is, its maker and the services it offers. "
+                 "Addresses never leave the device; nothing joins your map until you add it under Found nearby.",
+                 "Nothing to undo.", "read"), {}
+
+
+def _mac_folders(c: Ctx):
+    if c.device.get("manage") != "app" or "mac" not in (c.device.get("os") or "").lower():
+        raise ValueError("not_applicable")
+    return _card(c.device, f"Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash on the "
+                           f"{c.device['name']} (sizes only).",
+                 "macOS asks once for each folder on the Mac: click Allow there.",
+                 "Turn it off any time in the device's Settings.", "read"), {}
+
+
 def _expert_read(c: Ctx):
     from . import expert
     clean = expert.read_params(c.uid, c.device, c.params.get("command"))
@@ -167,6 +188,8 @@ REGISTRY: dict[str, Capability] = {c.name: c for c in (
     Capability("diagnose", "Look into", "device", _diagnose, reads=True, keeps_output=True),
     Capability("inspect", "Look around", "device", _inspect, reads=True, keeps_output=True,
                on_result=_playbook_result),
+    Capability("discover", "Look for devices nearby", "card", _discover, reads=True),
+    Capability("mac_folders", "Measure the Mac's private folders", "card", _mac_folders, reads=True),
     Capability("expert_read", "Investigate (read-only command)", "device", _expert_read, reads=True,
                keeps_output=True),
     Capability("expert_command", "Run a command you signed", "passkey", _expert_command, keeps_output=True),

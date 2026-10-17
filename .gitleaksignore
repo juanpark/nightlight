@@ -1,3 +1,4 @@
 # Known false positives (fingerprint per finding). Each must be a fake value in a test, never a real credential.
 # api/tests/test_memory.py:106 is a made-up "api_key=..." string that tests secret scrubbing.
 663f470e00502771ad9277f677910d43e26ac9f1:api/tests/test_memory.py:generic-api-key:106
+5ee0634be72ea8797517267692635a327de14e70:api/tests/test_knowledge.py:generic-api-key:179

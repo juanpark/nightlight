@@ -9,9 +9,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from google.cloud import firestore
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from . import __version__, actions, archive, db, expert, demo, links, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, archive, db, expert, demo, knowledge, links, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
@@ -38,6 +38,7 @@ class LayoutBody(Strict):
     y: int | None = Field(default=None, ge=-5000, le=5000)
     name: str | None = Field(default=None, min_length=1, max_length=40)
     tags: list[str] | None = Field(default=None, max_length=6)
+    role: Literal["router", "printer", "fileshare", "smarthome", "server", "speaker", "computer", "other"] | None = None
 
     @model_validator(mode="after")
     def short_tags(self):
@@ -163,8 +164,14 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
             if name is not None:
                 raise ApiError(422, "sample_devices_keep_their_names")
         update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags)) if v is not None}
-        if update:
-            tx.update(ref, update)
+        if body.role is not None:
+            if d.get("kind") != "watched":
+                raise ApiError(422, "role_is_for_watched_things")
+            watcher = (db.device(uid, d["watchedBy"]).get(transaction=tx).to_dict() or {}).get("name") \
+                if d.get("watchedBy") else None  # a read, before this transaction's writes
+            update.update(role=body.role, roleSetBy="user", purpose=real.role_purpose(body.role, watcher))
+        if update:  # a name the person typed is theirs: the names switch never takes it back
+            tx.update(ref, {**update, **({"nameFromSeen": False} if name is not None and d.get("nameFromSeen") else {})})
         return update
 
     return {"ok": True, **db.run_transaction(run)}
@@ -211,6 +218,7 @@ def device_issue(device_id: str, finding_id: str, body: IssueBody, uid: str = De
 
 class NoteBody(Strict):
     text: str = Field(min_length=1, max_length=notebook.NOTE_CHARS)
+    service: str | None = Field(default=None, min_length=1, max_length=100)  # a service on the device: id or name
 
 
 def _generation(uid: str) -> int | None:
@@ -222,7 +230,7 @@ def add_note(device_id: str, body: NoteBody, uid: str = Depends(current_uid)):
     """Write a note in a device's notebook (Nightlight reads it before it looks into that device)."""
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
         raise not_found()
-    return notebook.owner_add(uid, device_id, body.text, _generation(uid))
+    return notebook.owner_add(uid, device_id, body.text, _generation(uid), body.service)
 
 
 class ProfileBody(Strict):
@@ -246,6 +254,47 @@ def delete_note(device_id: str, note_id: str, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id) or not re.fullmatch(r"note_[0-9A-Za-z]{26}", note_id):
         raise not_found()
     return notebook.remove(uid, device_id, note_id)
+
+
+@app.get("/api/devices/{device_id}/knowledge")
+def device_knowledge(device_id: str, uid: str = Depends(current_uid)):
+    """What Nightlight knows about a device: its profile, its notes (device-wide and per service) and its runbooks."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    return knowledge.view(uid, device_id, _generation(uid))
+
+
+@app.get("/api/devices/{device_id}/log")
+def device_log(device_id: str, limit: int = 50, uid: str = Depends(current_uid)):
+    """Every job that finished on a device, newest first."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    if not 1 <= limit <= knowledge.LOG_LIMIT:
+        raise invalid("limit", "out_of_range")
+    return {"jobs": knowledge.log(uid, device_id, _generation(uid), limit=limit)}
+
+
+class RunbookBody(Strict):
+    title: str | None = Field(default=None, min_length=1, max_length=runbooks.TITLE_CHARS)
+    when: str | None = Field(default=None, min_length=1, max_length=runbooks.WHEN_CHARS)
+
+
+def _runbook_ids(device_id: str, runbook_id: str) -> None:
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id) or not re.fullmatch(r"rb_[0-9A-Za-z]{26}", runbook_id):
+        raise not_found()
+
+
+@app.post("/api/devices/{device_id}/runbooks/{runbook_id}")
+def edit_runbook(device_id: str, runbook_id: str, body: RunbookBody, uid: str = Depends(current_uid)):
+    """The owner renames a runbook or rewrites when it helps (its steps stay as Nightlight saved them)."""
+    _runbook_ids(device_id, runbook_id)
+    return runbooks.edit(uid, device_id, runbook_id, _generation(uid), body.title, body.when)
+
+
+@app.delete("/api/devices/{device_id}/runbooks/{runbook_id}")
+def delete_runbook(device_id: str, runbook_id: str, uid: str = Depends(current_uid)):
+    _runbook_ids(device_id, runbook_id)
+    return runbooks.remove(uid, device_id, runbook_id, _generation(uid))
 
 
 class PlaybookRunBody(Strict):
@@ -468,13 +517,37 @@ class WatchResult(Strict):
     ms: int | None = Field(default=None, ge=0, le=60000)
 
 
+TAG = r"^[0-9a-f]{20}$"
+
+
+class Peer(Strict):
+    tag: str = Field(pattern=TAG)
+    why: str = Field(pattern=f"^(time_machine|network_drive|service:({'|'.join(map(str, links.SERVICE_PORTS))}))$")
+
+
+class Net(Strict):
+    """Keyed fingerprints of private addresses (HMAC-SHA256 with the account's netKey, 20 hex characters): enough to
+    match two devices of one account, never the address itself."""
+    self: str | None = Field(default=None, pattern=TAG)
+    selves: list[Annotated[str, Field(pattern=TAG)]] = Field(default_factory=list, max_length=8)  # one per interface
+    gateway: str | None = Field(default=None, pattern=TAG)
+    peers: list[Peer] = Field(default_factory=list, max_length=20)
+
+
 class Found(Strict):
-    """Only the helper's fixed words: nothing free-form can carry an address or a name off the device."""
+    """The helper's fixed words, plus an allow-listed maker and a model that is an Apple model or a product code
+    (real.product), and, while the account shows them, the name the thing announces (real.found_name). Nothing can
+    carry an address off the device."""
     cid: str = Field(pattern=r"^[0-9a-f]{12}$")
     guess: Literal[tuple(real.FOUND_GUESSES)]
     vendor: Literal[tuple(real.FOUND_VENDORS)] | None = None
     services: list[Literal[tuple(real.FOUND_SERVICES)]] = Field(default_factory=list, max_length=8)
     ports: list[Literal[tuple(real.FOUND_PORTS)]] = Field(default_factory=list, max_length=8)
+    tag: str | None = Field(default=None, pattern=TAG)  # its address's keyed fingerprint (see Net), never the address
+    hw: str | None = Field(default=None, pattern=TAG)  # its hardware address's keyed fingerprint, never the address
+    name: str | None = Field(default=None, min_length=1, max_length=60, pattern=r"^[^\x00-\x1f\x7f]+$")
+    maker: Literal[tuple(real.MAKERS)] | None = None
+    model: str | None = Field(default=None, pattern=real.MODEL_CHARS)
 
 
 class DiscoveriesBody(Strict):
@@ -482,7 +555,11 @@ class DiscoveriesBody(Strict):
 
 
 class AddFoundBody(Strict):
-    name: str = Field(min_length=1, max_length=40)
+    name: str | None = Field(default=None, min_length=1, max_length=40)  # none: the name it announced, else its guess
+
+
+class SettingsBody(Strict):
+    deviceNames: StrictBool
 
 
 class HeartbeatBody(Strict):
@@ -503,8 +580,10 @@ class HeartbeatBody(Strict):
         Field(default_factory=dict)
     watchResults: list[WatchResult] = Field(default_factory=list, max_length=10)
     manage: Literal["app", "strict"] | None = None  # chosen on the device; the server can't change it
+    macFolders: Literal["allowed", "declined"] | None = None  # a Mac's answer about its private folders
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
+    net: Net | None = None  # for lines on the map; helpers before 0.9.20 send none
 
     @model_validator(mode="after")
     def short_units(self):
@@ -687,6 +766,96 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+class SetupBody(Strict):
+    preset: Literal["watch", "fix", "custom"]
+    autoUpdate: bool = False
+    macFolders: bool = False
+
+
+@app.post("/api/devices/{device_id}/setup")
+def device_setup(device_id: str, body: SetupBody, uid: str = Depends(owner_uid)):
+    """The one-time setup card: what Nightlight may do on a newly connected device (asked once; Settings later)."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return real.device_setup(uid, device_id, body.preset, body.autoUpdate, body.macFolders)
+
+
+@app.post("/api/devices/{device_id}/mac-folders", status_code=202)
+def ask_mac_folders(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Ask a Mac (again) to let Nightlight measure its private folders: macOS asks on the Mac right away. A request
+    still under way is that request."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    try:
+        return real.request_mac_folders(uid, device_id)
+    except ValueError as e:
+        raise ApiError(409, str(e)) from None
+
+
+class PlaceBody(Strict):
+    name: str = Field(min_length=1, max_length=40)
+
+
+@app.post("/api/places/{place_id}")
+def name_place(place_id: str, body: PlaceBody, uid: str = Depends(current_uid)):
+    """Name a place: the devices behind one router (`place_id` is that router's fingerprint, as devices report it in
+    net.gateway). Names are the owner's own words, scrubbed like every other label."""
+    if not re.fullmatch(r"[0-9a-f]{20}", place_id):
+        raise not_found()
+    name = scrub(body.name.strip())[0]
+    if not name or len(name) > 40:
+        raise ApiError(422, "bad_name")
+    places = db.user(uid).collection("places")
+
+    @firestore.transactional
+    def run(tx):
+        # Only a router one of your own devices reports can be named, and at most MAX_PLACES of them.
+        mine = {(d.to_dict().get("net") or {}).get("gateway") for d in db.devices(uid).get(transaction=tx)
+                if not d.to_dict().get("archived")}
+        if place_id not in mine:
+            raise not_found()
+        existing = places.document(place_id).get(transaction=tx)
+        if not existing.exists and len(list(places.limit(MAX_PLACES).get(transaction=tx))) >= MAX_PLACES:
+            raise ApiError(409, "too_many_places")
+        tx.set(places.document(place_id), {"name": name, "at": firestore.SERVER_TIMESTAMP})
+
+    db.run_transaction(run)
+    return {"ok": True, "placeId": place_id, "name": name}
+
+
+MAX_PLACES = 20
+
+
+class DiscoverBody(Strict):
+    everyDevice: bool = False
+
+
+@app.post("/api/discover", status_code=202)
+def discover_everywhere(body: DiscoverBody, uid: str = Depends(owner_uid)):
+    """Look nearby on every network the owner has a device on: one device per router, or every device that can
+    (`everyDevice`: more complete, since each sees mostly what it talked to lately). The tap is the approval."""
+    return real.discover_everywhere(uid, body.everyDevice)
+
+
+@app.get("/api/found")
+def found(uid: str = Depends(current_uid)):
+    """Found nearby, once per thing: merged across the devices that saw it, without your own devices."""
+    return {"items": real.found_view(uid)}
+
+
+@app.post("/api/devices/{device_id}/discover", status_code=202)
+def discover_from_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Look for devices nearby from one of the owner's devices (the tap is the approval). The helper sends what it
+    finds, without addresses, to Found nearby; strict devices only look when someone runs it there."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    try:
+        a = real.request_discover(uid, device_id)
+    except ValueError as e:
+        raise (not_found() if str(e) == "not_applicable" else ApiError(409, str(e))) from None
+    return {"actionId": a["id"], "status": a["status"]}
+
+
 class SignBody(Strict):
     authenticatorData: str = Field(max_length=2000, pattern=r"^[A-Za-z0-9_-]+$")
     clientDataJSON: str = Field(max_length=4000, pattern=r"^[A-Za-z0-9_-]+$")
@@ -734,6 +903,8 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
     items, _ = scrub_value([i.model_dump() for i in body.items])
+    for it in items:
+        it["maker"], it["model"] = real.product(it.get("maker"), it.get("model"))
     return real.save_discoveries(token, items)
 
 
@@ -741,7 +912,14 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
 def add_found(helper_id: str, cid: str, body: AddFoundBody, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"dev_[0-9a-z]{26}", helper_id) or not re.fullmatch(r"[0-9a-f]{12}", cid):
         raise not_found()
-    return real.add_found(uid, helper_id, cid, scrub(body.name)[0])
+    return real.add_found(uid, helper_id, cid, scrub(body.name)[0] if body.name else None)
+
+
+@app.post("/api/settings")
+def account_settings(body: SettingsBody, uid: str = Depends(owner_uid)):
+    """The owner's account switches. `deviceNames: false` stops keeping the names things nearby announce and removes
+    the ones already kept."""
+    return real.set_device_names(uid, body.deviceNames)
 
 
 @app.post("/helper/jobs/claim")

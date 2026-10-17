@@ -20,6 +20,9 @@ def helper(tmp_path, monkeypatch):
     monkeypatch.setenv("NIGHTLIGHT_HOME", str(tmp_path / "cfg"))
     mod = importlib.util.module_from_spec(SPEC)
     SPEC.loader.exec_module(mod)
+    # Never ask the real network (or this machine's mDNS service) who is there.
+    monkeypatch.setattr(mod, "_mdns_records", lambda seconds=None: [])
+    monkeypatch.setattr(mod, "_router_about", lambda budget: (None, {}))
     return mod
 
 
@@ -680,3 +683,132 @@ def test_saying_yes_at_install_really_opens_the_private_folders(helper, monkeypa
     helper.install()
     assert helper._load()["macPrivateFolders"] is True
     assert {p for _n, p in places} <= {os.path.abspath(p) for p in opened}
+
+
+KEY = "0f" * 32
+
+
+def test_fingerprints_only_for_private_addresses(helper):
+    tag = helper.net_tag(KEY, "192.168.1.20")
+    assert len(tag) == 20 and "192" not in tag and tag == helper.net_tag(KEY, "192.168.1.20")
+    assert helper.net_tag("1e" * 32, "192.168.1.20") != tag  # another account's key: unrelated fingerprints
+    assert helper.net_tag(KEY, "10.0.0.1") and helper.net_tag(KEY, "172.31.255.1")
+    for other in ("8.8.8.8", "172.32.0.1", "169.254.1.1", "100.64.0.1", "127.0.0.1", "::1", "nas.local", None,
+                  3232235796):
+        assert helper.net_tag(KEY, other) is None, other
+    assert helper.net_tag("not-a-key", "192.168.1.20") is None
+
+
+def test_reports_carry_fingerprints_never_addresses(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "_own_ip", lambda: "192.168.1.5")
+    monkeypatch.setattr(helper, "_gateway", lambda: "192.168.1.1")
+    monkeypatch.setattr(helper, "_relied_on", lambda: [("192.168.1.10", "time_machine"), ("8.8.8.8", "service:445"),
+                                                       ("192.168.1.11", "service:5432"), ("192.168.1.5", "service:445")])
+    assert helper._net() is None  # no key yet: nothing to send
+    helper._update_config(lambda c: c.__setitem__("netKey", KEY))
+    net = helper._net()
+    assert net["self"] == helper.net_tag(KEY, "192.168.1.5") and net["gateway"] == helper.net_tag(KEY, "192.168.1.1")
+    assert net["peers"] == [{"tag": helper.net_tag(KEY, "192.168.1.10"), "why": "time_machine"},
+                            {"tag": helper.net_tag(KEY, "192.168.1.11"), "why": "service:5432"}]  # public, self: out
+    body = json.dumps(net)
+    assert "192.168" not in body and "8.8.8.8" not in body
+    monkeypatch.setattr(helper, "_relied_on", lambda: 1 / 0)
+    helper._SLOW.clear()
+    assert helper._net() is None  # a failing probe costs the fingerprints, never the report
+
+
+def test_the_key_from_the_server_is_kept(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper, "facts", lambda: {})
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: (200, {"ok": True, "netKey": KEY}))
+    assert helper.once() == 200 and helper._load()["netKey"] == KEY
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: (200, {"ok": True, "netKey": "../x"}))
+    assert helper.once() == 200 and helper._load()["netKey"] == KEY  # a malformed one is ignored
+
+
+def test_found_things_carry_a_fingerprint_once_the_key_is_known(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.1": "24:a4:3c:11:22:33"})
+    monkeypatch.setattr(helper, "_mdns", lambda: {})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.1": [80]})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True)
+    assert sent[0]["items"][0]["tag"] == helper.net_tag(KEY, "192.168.1.1") and "192.168" not in json.dumps(sent)
+
+
+def test_where_shared_folders_and_backups_live(helper):
+    assert helper._mount_host("//juan@NAS._smb._tcp.local/share") == "NAS.local"
+    assert helper._mount_host("//GUEST:@192.168.1.10:445/x") == "192.168.1.10"
+    assert helper._mount_host("nas:/export") == "nas"
+    assert helper._mount_host("/dev/disk3s1") is None
+    assert helper._hex_v4("0101A8C0") in ("192.168.1.1", "1.1.168.192")  # /proc/net: this machine's byte order
+
+
+def test_looking_for_peers_has_one_overall_deadline(helper, monkeypatch):  # codex auto_links #2
+    # 120 mounted shares whose names never resolve must not hold up the report: names are deduplicated and capped,
+    # and every lookup shares one budget.
+    import time as _t
+    monkeypatch.setattr(helper, "_connections", lambda timeout=5: [])
+    monkeypatch.setattr(helper, "_time_machine_hosts", lambda timeout=5: [])
+    monkeypatch.setattr(helper, "_drive_hosts", lambda timeout=5: [f"nas{i}.local" for i in range(120)])
+    looked = []
+
+    def slow(host, timeout=3):
+        looked.append(host)
+        _t.sleep(min(timeout, 0.3))
+        return None
+    monkeypatch.setattr(helper, "_resolve", slow)
+    t = _t.monotonic()
+    assert helper._relied_on(budget=1.0) == []
+    assert _t.monotonic() - t < 1.5 and 0 < len(looked) <= helper.NET_HOSTS  # it did look, and stopped in time
+
+
+def test_looking_nearby_from_the_app_needs_an_app_managed_device(helper, monkeypatch):
+    # The owner's tap in the app is the consent on a device they let the app manage; a strict device refuses, and
+    # either way no address is sent and nothing is asked at a terminal.
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.20": "b8:27:eb:11:22:33"})
+    monkeypatch.setattr(helper, "_mdns", lambda: {"192.168.1.20": {"Home Assistant"}})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.20": [8123]})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("a job never asks at a terminal"))
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "strict"})
+    ok, words, _ = helper.run_job({"type": "discover", "params": {}})
+    assert not ok and not sent
+    helper._update_config(lambda c: c.__setitem__("manage", "app"))
+    ok, words, _ = helper.run_job({"type": "discover", "params": {}})
+    assert ok and "Found 1" in words and len(sent) == 1 and "192.168" not in json.dumps(sent)
+
+
+def test_an_empty_look_from_the_app_clears_the_old_list(helper, monkeypatch):  # codex discover #2
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "app"})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {})
+    monkeypatch.setattr(helper, "_mdns", lambda: {})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    ok, words, _ = helper.run_job({"type": "discover", "params": {}})
+    assert ok and sent == [{"items": []}] and "nothing new" in words
+    sent.clear()
+    helper.discover()  # at a terminal, finding nothing sends nothing (as before)
+    assert sent == []
+
+
+def test_the_app_can_raise_the_mac_folder_prompts_while_the_owner_is_there(helper, monkeypatch):
+    # The owner chose it in the app's setup card: an app-managed Mac records the yes first, then measures once so
+    # macOS asks now. A strict Mac or another system refuses and changes nothing.
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "strict"})
+    order = []
+    monkeypatch.setattr(helper, "_du", lambda path: order.append(helper._load().get("macPrivateFolders")))
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
+    assert not ok and "Mac" in words and "macPrivateFolders" not in helper._load()
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
+    assert not ok and "strict" in words and "macPrivateFolders" not in helper._load() and not order
+    helper._update_config(lambda c: c.__setitem__("manage", "app"))
+    ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
+    assert ok and "click Allow" in words and helper._load()["macPrivateFolders"] is True
+    assert order and all(seen is True for seen in order)  # recorded before any folder was opened

@@ -1,21 +1,28 @@
 "use client";
 // One device, with progressive disclosure: a status sentence and what needs the person first, then three tabs
-// (Overview: how it is and what runs there; About: what Nightlight knows about it; Settings: what it may do).
+// (Overview: how it is and what runs there; Knowledge: what Nightlight knows about it, fixes that worked there and
+// what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
-import { statusSentence, type Go, type Need } from "@/lib/needsYou";
+import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
 import HelperUpdate from "./HelperUpdate";
 import Notebook from "./Notebook";
+import Runbooks from "./Runbooks";
+import JobLog from "./JobLog";
 import DeviceProfile from "./DeviceProfile";
 import RemoveDevice from "./RemoveDevice";
 import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
 import NeedsList from "./NeedsList";
+import WatchedPanel from "./WatchedPanel";
+import SetupCard from "./SetupCard";
+import MacFolders, { FOLDERS_FROM } from "./MacFolders";
+import { deviceIcon } from "./map/kinds";
 
 type Tab = "overview" | "about" | "settings";
 
@@ -51,8 +58,6 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
 }) {
   const services = useServices(uid, device.id);
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(device.name);
   const [allServices, setAllServices] = useState(false);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
@@ -63,12 +68,6 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
     const top = box.current?.getBoundingClientRect().top ?? 0;
     if (top > window.innerHeight * 0.6) box.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [device.id]);
-  async function rename() {
-    if (name.trim() && name.trim() !== device.name) {
-      await api("POST", `/api/devices/${device.id}/layout`, { name: name.trim() }).catch(() => {});
-    }
-    setEditing(false);
-  }
   // Each problem is said once: the urgent one as a row under the status sentence (with its "What should I do?"),
   // the rest under Problems.
   const listed = (f: Finding) => needs.some((n) => n.id === `critical:${device.id}:${f.id ?? f.message}`);
@@ -76,23 +75,20 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const brief = !removing && !(real && device.status === "offline") && (device.status === "crit" || device.status === "warn");
   const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
   const current: Tab = tabs.includes(tab) ? tab : "overview";
+  if (watched) {
+    return (
+      <div className="panel drawer" ref={box}>
+        <Head key={device.id} device={device} onClose={onClose} />
+        <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
+        <WatchedPanel key={`watched:${device.id}`} uid={uid} generation={generation} device={device} devices={devices} onAsk={onAsk} onGo={onGo}
+          onClose={onClose} />
+      </div>
+    );
+  }
   return (
     <div className="panel drawer" ref={box}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span className={`dot ${device.status}`} />
-        {editing
-          ? <form onSubmit={(e) => { e.preventDefault(); rename(); }} style={{ display: "flex", gap: 6 }}>
-              <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus />
-              <button className="primary">Save</button>
-              <button type="button" onClick={() => setEditing(false)}>Cancel</button>
-            </form>
-          : <strong style={{ fontSize: 18 }}>{device.name}</strong>}
-        {real && !editing && <button className="linkish small" onClick={() => { setName(device.name); setEditing(true); }}>
-          Rename</button>}
-        <span className={`pill ${real ? "live" : ""}`}>{real ? "Live" : "Sample"}</span>
-        <span style={{ flex: 1 }} />
-        <button onClick={onClose}>Close</button>
-      </div>
+      <Head key={device.id} device={device} onClose={onClose} />
+      <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
       <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
         : statusSentence(device, Date.now(), removing)}</p>
       <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}
@@ -104,7 +100,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         <div className="tabs" role="tablist">
           {tabs.map((t) => (
             <button key={t} role="tab" aria-selected={current === t} className={current === t ? "on" : ""}
-              onClick={() => onTab(t)}>{t === "overview" ? "Overview" : t === "about" ? "About" : "Settings"}</button>
+              onClick={() => onTab(t)}>{t === "overview" ? "Overview" : t === "about" ? "Knowledge" : "Settings"}</button>
           ))}
         </div>
       )}
@@ -147,11 +143,15 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         {real && <DeviceHistory uid={uid} deviceId={device.id} />}
         {!real && <DeviceProfile uid={uid} deviceId={device.id} />}
         {!real && <Notebook uid={uid} deviceId={device.id} />}
+        {!real && <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />}
+        {!real && <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />}
       </>}
 
       {current === "about" && <>
         <DeviceProfile uid={uid} deviceId={device.id} />
         <Notebook uid={uid} deviceId={device.id} />
+        <Runbooks key={`rb:${device.id}`} uid={uid} generation={generation} device={device} onAsk={onAsk} />
+        <JobLog key={`log:${device.id}`} deviceId={device.id} actions={actions} />
         <Tags device={device} />
         <section className="drawer-section">
           <h4>Details</h4>
@@ -171,6 +171,11 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 
       {current === "settings" && <>
         <Permissions key={device.id} device={device} services={services} />
+        {device.manage === "app" && /mac/i.test(device.os ?? "") && !newer(FOLDERS_FROM, device.helperVersion) && (
+          <section className="drawer-section">
+            <h4>Personal folders</h4>
+            <MacFolders key={device.id} device={device} actions={actions} />
+          </section>)}
         <section className="drawer-section">
           <h4>Updates</h4>
           <HelperUpdate device={device} actions={actions} latest={release?.version}
@@ -186,6 +191,37 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 }
 
 type Finding = NonNullable<Device["findings"]>[number];
+
+/** Name (renamable on real devices), what kind of thing it is, Live or Sample, Close. */
+function Head({ device, onClose }: { device: Device; onClose: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(device.name);
+  const real = device.realm === "real";
+  const Icon = deviceIcon(device);
+  async function rename() {
+    if (name.trim() && name.trim() !== device.name) {
+      await api("POST", `/api/devices/${device.id}/layout`, { name: name.trim() }).catch(() => {});
+    }
+    setEditing(false);
+  }
+  return (
+    <div className="drawer-head">
+      <span className={`dicon ${device.status}`}><Icon size={18} strokeWidth={1.8} /></span>
+      {editing
+        ? <form onSubmit={(e) => { e.preventDefault(); rename(); }} style={{ display: "flex", gap: 6 }}>
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus />
+            <button className="primary">Save</button>
+            <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+          </form>
+        : <strong style={{ fontSize: 18 }}>{device.name}</strong>}
+      {real && !editing && <button className="linkish small" onClick={() => { setName(device.name); setEditing(true); }}>
+        Rename</button>}
+      <span className={`pill ${real ? "live" : ""}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Sample"}</span>
+      <span style={{ flex: 1 }} />
+      <button onClick={onClose}>Close</button>
+    </div>
+  );
+}
 
 /** Leave a problem alone for good or for a week, or bring it back (real devices; the server keeps the state). */
 function IssueActions({ device, finding: f }: { device: Device; finding: Finding }) {

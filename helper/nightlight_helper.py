@@ -5,9 +5,13 @@ Every report carries: OS name, CPU architecture, CPU / memory / disk percentages
 image name and tag without any registry address or path, state, status text), the names of failed system services
 (and, on a Mac, of your own failing background items), how many software updates are waiting, two yes/no safety
 facts (administrator commands without a password; SSH password logins), what you allowed here, and up/down results
-for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
-variables or passwords. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
-scrubbed here first. It talks only HTTPS to the address you joined with.
+for things you chose to have it watch. It never sends its host name, IP or hardware addresses, files, environment
+variables or passwords. To draw lines between your devices it sends keyed fingerprints of local network addresses
+(its own, its router's, and those it backs up to or relies on), never the addresses themselves. Things it finds nearby
+are sent as a guess of what they are and their maker and model (only a known brand, and a model that is a known Apple
+model or looks like a product code), never their addresses; the names they announce ("Living Room") are sent only
+while your account shows names (on by default, a switch in Settings). Log lines leave only for a container or
+service you allowed with `allow logs NAME`, and are scrubbed here first. It talks only HTTPS to the address you joined with.
 
 By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
 container, restarting a failed system service, and reading why something is down. Even then a change runs only
@@ -16,6 +20,7 @@ after you approve its card in the app; Nightlight sends a job name and target, n
 Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # join with a one-time code from the app
   nightlight_helper.py pair <API_URL> [--web URL]              # or: show a code to approve in the app / by phone
+  nightlight_helper.py pair <API_URL> --web URL --browser --install  # the Mac installer: approve in the browser
   nightlight_helper.py install | uninstall | status            # run in the background (systemd / launchd)
   nightlight_helper.py settings                                # app-managed or strict; strict: what's allowed
   nightlight_helper.py once                                    # send one report
@@ -47,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.19"
+VERSION = "0.9.24"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -173,9 +178,9 @@ def _failed_units(timeout=20):
 _SLOW = {}  # slow checks are re-run at most hourly
 
 
-def _hourly(key, fn):
+def _hourly(key, fn, every=3600):
     hit = _SLOW.get(key)
-    if hit and time.time() - hit[0] < 3600:
+    if hit and time.time() - hit[0] < every:
         return hit[1]
     value = fn()
     _SLOW[key] = (time.time(), value)
@@ -244,13 +249,30 @@ def _ssh_password_login():
 
 def facts():
     cpu, mem, up = _cpu_mem_uptime()
-    return {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
-            "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
-            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
-            "watchResults": _watch_results(), "failedAgents": _failed_agents(),
-            "manage": _manage(),
-            "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
-                       "sshPasswordLogin": _ssh_password_login()}}
+    out = {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
+           "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
+           "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
+           "watchResults": _watch_results(), "failedAgents": _failed_agents(),
+           "manage": _manage(),
+           "macFolders": _mac_folders_state(),
+           "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
+                      "sshPasswordLogin": _ssh_password_login()}}
+    net = _net()
+    if net:
+        out["net"] = net
+    return out
+
+
+def _mac_folders_state():
+    """On a Mac: whether the private folders may be measured ("allowed"), were declined here ("declined"), or were
+    never asked (None). Elsewhere None. macOS's own answer per folder stays with macOS."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        v = _load().get("macPrivateFolders")
+    except (OSError, ValueError):
+        return None
+    return "allowed" if v is True else "declined" if v is False else None
 
 
 def _allowed():
@@ -1618,6 +1640,24 @@ def run_job(job, wait=5):
         ok, summary = remove_from_app()
         _RESTART.append("exit")  # nothing to restart into: the loop ends after reporting
         return ok, summary, None
+    if kind == "discover":
+        # Asked from the app: the owner's tap is the consent, on a device they let the app manage. A strict device
+        # only looks when someone runs `discover` here.
+        if _manage() != "app":
+            return False, "This device only looks for devices nearby when someone runs it there.", None
+        ok, n = discover(yes=True, quiet=True)
+        if not ok:
+            return False, "Looked nearby but couldn't send the list.", None
+        return True, (f"Found {n} thing(s) nearby; they're under Found nearby to add." if n
+                      else "Looked nearby: nothing new to suggest."), None
+    if kind == "mac_folders":
+        # Chosen by the owner in the app's setup card while they're at the Mac: the same yes as at install.
+        if sys.platform != "darwin":
+            return False, "Only a Mac has private folders to allow; nothing was done.", None
+        if _manage() != "app":
+            return False, "This Mac is set to strict: run `nightlight settings` on it to allow its folders.", None
+        _allow_mac_private()
+        return True, "macOS asked about your folders; click Allow on the Mac.", None
     if kind == "update_helper":
         return self_update(params.get("version") if isinstance(params, dict) else None)
     if kind == "fix":
@@ -1770,6 +1810,12 @@ def once():
         if isinstance(watch, list) and watch != cfg.get("watch"):
             wl = [w for w in watch if isinstance(w, dict)][:10]
             _update_config(lambda c: c.__setitem__("watch", wl))  # only this field; addresses stay local
+        key = body.get("netKey")
+        if isinstance(key, str) and NET_KEY_RE.fullmatch(key) and key != cfg.get("netKey"):
+            _update_config(lambda c: c.__setitem__("netKey", key))  # for fingerprints from the next report on
+        names = body.get("deviceNames") is True  # the owner's switch; an older server never says yes
+        if names != (cfg.get("deviceNames") is True):
+            _update_config(lambda c: c.__setitem__("deviceNames", names))
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -1957,43 +2003,93 @@ def default_name():
     return (_os_name().split(" ")[0] or "Linux") + " computer"
 
 
-def pair(api, web=None, name=None):
-    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone."""
+PAIR_WAIT = 600
+BROWSER_WAIT = 900  # the Mac installer's path: signing in first can take a while (the server's code may end sooner)
+
+
+def _open_browser(url):
+    """Open the default browser on `url`. False if there is no way to."""
+    tool = "open" if sys.platform == "darwin" else shutil.which("xdg-open")
+    if not tool:
+        return False
+    try:
+        return subprocess.run([tool, url], capture_output=True, timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _notify(text):
+    """A Mac notification for someone who isn't at a terminal (the installer's path). Best effort."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.run(["osascript", "-e", "on run argv", "-e", 'display notification (item 1 of argv) with title '
+                        '"Nightlight"', "-e", "end run", text], capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def pair(api, web=None, name=None, browser=False, then_install=False):
+    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone. With `browser`
+    (the Mac installer: nobody at a terminal) the approval page opens by itself, and `then_install` sets up the
+    background service right after the approval, managed from the app."""
     api = check_api(api)
+    if browser and not web:
+        sys.exit("--browser needs --web (the Nightlight web address).")
+    again = "Open the Nightlight installer again for a new code." if browser else "Run pair again for a new one."
+
+    def give_up(text):
+        if browser:
+            _notify(text)
+        sys.exit("  " + text)
+
     status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
     if status != 201:
-        sys.exit(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
+        give_up(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
     code, interval = body["code"], max(int(body.get("interval", 3)), 2)
     print(f"\n  Your code:  {code}\n")
     if web:
         link = f"{web.rstrip('/')}/pair?code={code}"
         print(f"  Open Nightlight > Add a device > Enter code, or scan this with your phone:\n  {link}\n")
-        if shutil.which("qrencode"):
+        if browser:
+            if not _open_browser(link):
+                _notify(f"Open {link} to add this Mac.")
+        elif shutil.which("qrencode"):
             subprocess.run(["qrencode", "-t", "ANSIUTF8", link], check=False)
-    print("  Waiting for you to approve it (10 minutes)...")
-    deadline = time.time() + 600
+    wait = BROWSER_WAIT if browser else PAIR_WAIT
+    print(f"  Waiting for you to approve it ({wait // 60} minutes)...")
+    deadline = time.time() + wait
     while time.time() < deadline:
         time.sleep(interval)
         st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
         if st == 200 and res.get("token"):
             _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
             print("  Approved. This device is now on your Nightlight map.")
+            if then_install:
+                try:
+                    install(manage="app")
+                except (SystemExit, OSError, subprocess.SubprocessError) as e:
+                    print(f"  Install failed: {e}")
+                    give_up("Approved, but the background service didn't start. Open the Nightlight installer again.")
+                if browser:
+                    _notify("This Mac is now on your Nightlight map.")
             return
         if st == 401:
-            sys.exit("  The code was declined or has expired. Run pair again for a new one.")
-    sys.exit("  The code expired. Run pair again for a new one.")
+            give_up("The code was declined or has expired. " + again)
+    give_up("The code expired. " + again)
 
 
 # ------------------------------------------------------------------ discovery (owner-run, reviewed here first)
-# What's nearby on this network. Addresses (IP, MAC) and names stay on this device; only a guess of what each thing is
-# ("Home Assistant", "Printer"), its maker and which known services answer are sent, and only the ones you pick.
+# What's nearby on this network. Addresses (IP, MAC) stay on this device; only a guess of what each thing is
+# ("Home Assistant", "Printer"), its maker and model, which known services answer and, while the account shows names,
+# the name it announces are sent, and only the ones you pick.
 
 PORTS = {22: "remote login (SSH)", 80: "web page", 443: "secure web page", 445: "file sharing", 631: "printer",
          8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
 MDNS = {"_home-assistant._tcp": "Home Assistant", "_plexmediasvr._tcp": "Plex", "_smb._tcp": "file sharing",
         "_ipp._tcp": "printer", "_printer._tcp": "printer", "_googlecast._tcp": "Chromecast / Google speaker",
         "_airplay._tcp": "AirPlay speaker or TV", "_hap._tcp": "HomeKit accessory", "_ssh._tcp": "remote login (SSH)",
-        "_raop._tcp": "AirPlay speaker"}
+        "_raop._tcp": "AirPlay speaker", "_companion-link._tcp": "Apple device"}
 # A small, public table of makers by the first half of the hardware address (IEEE registry), common in homes.
 VENDORS = {"b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi", "28cdc1": "Raspberry Pi",
            "d83add": "Raspberry Pi", "2ccf67": "Raspberry Pi", "001132": "Synology", "245ebe": "QNAP",
@@ -2028,14 +2124,11 @@ def _neighbours():
 
 
 def _mdns():
-    """IP -> set of service kinds announced on the network (avahi on Linux; skipped elsewhere)."""
+    """IP -> set of service kinds announced on the network (asked of the system's mDNS service)."""
     out = {}
-    if not shutil.which("avahi-browse"):
-        return out
-    for line in _run(["avahi-browse", "-aprtk"], timeout=6).splitlines():
-        f = line.split(";")
-        if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS:
-            out.setdefault(f[7], set()).add(MDNS[f[4]])
+    for ip, kind, *_rest in _hourly("mdns", _mdns_records, every=60):
+        if kind in MDNS:
+            out.setdefault(ip, set()).add(MDNS[kind])
     return out
 
 
@@ -2072,11 +2165,11 @@ def _vendor(mac):
 def _guess(vendor, services, ports):
     """A plain-words guess of what something is, from what answers on it and who made it."""
     for service, name in (("Home Assistant", "Home Assistant"), ("Plex", "Plex media server"),
-                          ("Minecraft", "Minecraft server"), ("printer", "Printer"),
-                          ("file sharing", "File share (NAS or computer)")):
+                          ("Minecraft", "Minecraft server"), ("printer", "Printer"), ("router", "Router"),
+                          ("file sharing", "File share (NAS or computer)"), ("media server", "Media server")):
         if service in services:
             return name
-    if any("speaker" in x or "Chromecast" in x or "TV" in x for x in services):
+    if any("speaker" in x or "Chromecast" in x or "TV" in x or x == "media player" for x in services):
         return "Speaker or TV"
     if vendor in ("Raspberry Pi", "VMware virtual machine"):
         return vendor
@@ -2087,30 +2180,411 @@ def _guess(vendor, services, ports):
     return vendor or "Unknown device"
 
 
-def discover(yes=False):
+# Who made it and which model, as the things themselves announce it. Only outgoing questions, never a socket that
+# waits for others to call in (an unattended helper must never raise a firewall prompt): mDNS records come from the
+# system's own service (`dns-sd` on a Mac, avahi on Linux), and the router's UPnP description file is fetched from a
+# few well-known places on the router only. What they announce is free text a person may have typed ("Alex MacBook"),
+# so nothing of it leaves as written: the maker must be one of the brands below (sent as the table spells it), and the
+# model must be an Apple model from the table below or look like a product code ("HL-L2350DW", "DocuPrint CP115/118
+# w"). Anything else is dropped here, and the server checks the same rules again. Names (Bonjour instance names, a
+# UPnP friendlyName, host names) are a separate field, sent only while the owner shows names (`_seen_name`).
+
+IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models, start to finish
+MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
+DESCRIPTION_BYTES = 64 * 1024
+MDNS_ASK = ("_ipp._tcp", "_printer._tcp", "_airplay._tcp", "_raop._tcp", "_device-info._tcp", "_googlecast._tcp",
+            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp", "_companion-link._tcp")
+# Where routers commonly keep their UPnP description (miniupnpd, Netgear, TP-Link, AVM, Broadcom/Realtek kits).
+UPNP_PLACES = ((1900, "/rootDesc.xml"), (5000, "/rootDesc.xml"), (49152, "/description.xml"), (2189, "/gatedesc.xml"),
+               (52869, "/picsdesc.xml"), (80, "/rootDesc.xml"), (49000, "/igddesc.xml"))
+UPNP_KIND = (("InternetGatewayDevice", "router"), ("MediaRenderer", "media player"),
+             ("MediaServer", "media server"), ("Printer", "printer"))
+APPLE_MODELS = (("MacBookPro", "MacBook Pro"), ("MacBookAir", "MacBook Air"), ("MacBook", "MacBook"),
+                ("Macmini", "Mac mini"), ("MacPro", "Mac Pro"), ("iMac", "iMac"), ("iPhone", "iPhone"),
+                ("iPad", "iPad"), ("AppleTV", "Apple TV"), ("AudioAccessory", "HomePod"), ("Mac", "Mac"))
+# Makers common in homes and small offices: how they announce themselves (lower case, punctuation as spaces; a longer
+# announcement that starts with one of these counts, "brother industries ltd") -> how Nightlight writes them. The
+# server keeps the same list (real.MAKERS).
+KNOWN_MAKERS = {
+    "apple": "Apple", "brother": "Brother", "canon": "Canon", "epson": "Epson", "seiko epson": "Epson", "hp": "HP",
+    "hewlett packard": "HP", "xerox": "Xerox", "fuji xerox": "Fuji Xerox", "fujifilm": "Fujifilm", "lexmark": "Lexmark",
+    "samsung": "Samsung", "kyocera": "Kyocera", "ricoh": "Ricoh", "konica minolta": "Konica Minolta", "sharp": "Sharp",
+    "oki": "OKI", "dell": "Dell", "pantum": "Pantum", "netgear": "Netgear", "tp link": "TP-Link", "asus": "ASUS",
+    "asustek": "ASUS", "linksys": "Linksys", "d link": "D-Link", "ubiquiti": "Ubiquiti", "avm": "AVM",
+    "synology": "Synology", "qnap": "QNAP", "western digital": "Western Digital", "wd": "Western Digital",
+    "seagate": "Seagate", "buffalo": "Buffalo", "asustor": "Asustor", "terramaster": "TerraMaster", "sonos": "Sonos",
+    "bose": "Bose", "sony": "Sony", "lg": "LG", "philips": "Philips", "signify": "Philips", "panasonic": "Panasonic",
+    "yamaha": "Yamaha", "denon": "Denon", "marantz": "Marantz", "onkyo": "Onkyo", "pioneer": "Pioneer",
+    "harman": "Harman", "roku": "Roku", "google": "Google", "amazon": "Amazon", "microsoft": "Microsoft",
+    "nintendo": "Nintendo", "raspberry pi": "Raspberry Pi", "huawei": "Huawei", "zte": "ZTE", "xiaomi": "Xiaomi",
+    "tenda": "Tenda", "mercusys": "Mercusys", "zyxel": "Zyxel", "eero": "eero", "arris": "Arris",
+    "technicolor": "Technicolor", "sagemcom": "Sagemcom", "cisco": "Cisco", "mikrotik": "MikroTik", "belkin": "Belkin",
+    "vizio": "Vizio", "tcl": "TCL", "hisense": "Hisense", "nvidia": "NVIDIA", "iptime": "ipTIME", "allradio": "allRadio"}
+# Words allowed in a model besides codes ("LaserJet Pro M404dn"): series names, never anything that is also a name.
+SERIES_WORDS = {"docuprint", "laserjet", "officejet", "deskjet", "envy", "pixma", "imageclass", "ecotank", "workforce",
+                "nighthawk", "archer", "deco", "orbi", "diskstation", "rackstation", "fritz", "box", "mycloud",
+                "readynas", "terastation", "linkstation", "airport", "bravia", "color", "colour", "pro", "plus",
+                "mini", "ultra", "series", "wireless", "multifunction", "mfp", "lite"}
+
+
+def _maker(text):
+    """The table's spelling of a known maker, or None for anything else."""
+    if not isinstance(text, str):
+        return None
+    words = " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+    return next((name for key, name in sorted(KNOWN_MAKERS.items(), key=lambda kv: -len(kv[0]))
+                 if words == key or words.startswith(key + " ")), None)
+
+
+# Hardware ids in a model field: hex pairs joined by - or : ("AA-BB-CC-DD-EE-12"), or a long run of hex digits.
+HARDWARE_SHAPE = re.compile(r"(?i)(?:\b|^)[0-9a-f]{2}(?:[-:][0-9a-f]{2}){2,}|[0-9a-f]{8,}")
+
+def _product_code(text):
+    """A model kept only when it looks like a product code: at most 40 characters and 5 words, with a digit somewhere;
+    each word made of letters, digits and / + - only, and either holding a digit, or a short all-capitals code, a single
+    letter, or a known series word. "Alex MacBook", host names and sentences never pass."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"(?i)\s+series$", "", " ".join(text.split()))
+    if scrub(text)[0] != text:
+        return None  # holds something the scrubber hides (an address, a key)
+    words = text.split(" ")
+    if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
+        return None
+    for w in words:
+        if not (w.lower() in SERIES_WORDS or (len(w) == 1 and w.isalnum()) or (
+                re.fullmatch(r"[A-Z0-9][A-Z0-9/+-]*[a-z]{0,3}", w) and not HARDWARE_SHAPE.search(w)
+                and (re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6)))):
+            return None  # a word that isn't a code: a name, a host name, a hardware address
+    return text
+
+
+def _apple_model(code):
+    """ "Macmini9,1" -> "Mac mini"; an Apple model code we don't know -> None."""
+    if not isinstance(code, str):
+        return None
+    return next((words for prefix, words in APPLE_MODELS if re.fullmatch(prefix + r"\d+,\d+", code)), None)
+
+
+def _txt_about(kind, txt):
+    """{maker, model} as announced in one mDNS TXT record of a printer, an AirPlay speaker or TV, or an Apple device
+    (raw: `_keep` decides what may leave)."""
+    if kind in ("_ipp._tcp", "_printer._tcp"):
+        maker, model, ty = txt.get("usb_MFG"), txt.get("usb_MDL"), txt.get("ty") or ""
+        if not model and ty:  # "Brother HL-L2350DW series"
+            maker = maker or ty
+            model = ty
+        return {"maker": maker, "model": model}
+    if kind in ("_airplay._tcp", "_raop._tcp", "_device-info._tcp"):
+        code = txt.get("model") or txt.get("am")
+        if _apple_model(code):
+            return {"maker": "Apple", "model": _apple_model(code)}
+        if kind != "_device-info._tcp" and code and not re.fullmatch(r"[A-Za-z]+\d+,\d+", code):
+            return {"maker": txt.get("manufacturer"), "model": code}  # another maker's AirPlay speaker or TV
+    if kind == "_companion-link._tcp":  # iPhones, iPads, Macs and Apple TVs: only Apple announces this
+        return {"maker": "Apple", "model": _apple_model(txt.get("rpMd"))}
+    return {}
+
+
+def _unescape(text):
+    """DNS-SD escapes: "\\032" (a decimal byte) and "\\x" (a literal character)."""
+    return re.sub(r"\\(\d{3}|.)", lambda m: chr(int(m.group(1))) if m.group(1).isdigit() else m.group(1), text)
+
+
+def _txt(field):
+    """A TXT record as printed, '"ty=Brother HL" "txtvers=1"', as a dict."""
+    out = {}
+    for entry in re.findall(r'"((?:[^"\\]|\\.)*)"', field):
+        key, eq, value = _unescape(entry).partition("=")
+        if eq:
+            out.setdefault(key, value)
+    return out
+
+
+def _watch(cmds, seconds):
+    """Run listing commands that never end by themselves side by side for `seconds`, then stop them. Returns what
+    each printed by then (at most 256 KB each)."""
+    import select
+    procs = []
+    for cmd in cmds:
+        try:
+            procs.append(subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL))
+        except OSError:
+            pass
+    got = {p.stdout: [] for p in procs}
+    reading = list(got)
+    deadline = time.monotonic() + seconds
+    try:
+        while reading:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            for f in select.select(reading, [], [], left)[0]:
+                chunk = os.read(f.fileno(), 65536)
+                got[f].append(chunk)
+                if not chunk or sum(map(len, got[f])) > 256 * 1024:
+                    reading.remove(f)
+    except (OSError, ValueError):
+        pass
+    finally:
+        for p in procs:
+            try:
+                p.kill()
+                p.wait(timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            p.stdout.close()
+    return [b"".join(got[p.stdout]).decode("utf-8", "replace") for p in procs]
+
+
+def _dns_sd_zone(text, kind):
+    """[(host, kind, txt, instance name)] from `dns-sd -Z <kind>` output (zone-file lines: PTR, then SRV and TXT per
+    instance)."""
+    hosts, txts = {}, {}
+    for line in text.splitlines():
+        m = re.match(r"^(\S+)\s+(SRV|TXT)\s+(.*)$", line)
+        if not m:
+            continue
+        if m.group(2) == "SRV":
+            parts = m.group(3).split()
+            if len(parts) >= 4:
+                hosts[m.group(1)] = parts[3].rstrip(".")
+        else:
+            txts[m.group(1)] = _txt(m.group(3))
+    return [(host, kind, txts.get(owner, {}), _unescape(owner[:-len(kind) - 1] if owner.endswith("." + kind) else ""))
+            for owner, host in hosts.items()]
+
+
+def _mdns_records(seconds=MDNS_SECONDS):
+    """[(address, kind, txt, {"instance", "host"})] for services announced nearby, from the system's mDNS service (asked, not listened
+    for). Takes at most twice `seconds`: on Linux avahi resolves the addresses itself; on a Mac the listings run for
+    `seconds` and the host names are looked up in the time left."""
+    out = []
+    if shutil.which("avahi-browse"):
+        for line in _run(["avahi-browse", "-aprtk"], timeout=max(1.0, 2 * seconds)).splitlines():
+            f = line.split(";")
+            if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS_ASK and _private_v4(f[7]):
+                out.append((f[7], f[4], _txt(f[9]) if len(f) > 9 else {},
+                            {"instance": _unescape(f[3]), "host": f[6]}))
+        return out
+    if sys.platform != "darwin" or not shutil.which("dns-sd"):
+        return out
+    deadline = time.monotonic() + 2 * seconds
+    found = []
+    for kind, text in zip(MDNS_ASK, _watch([["dns-sd", "-Z", k, "local"] for k in MDNS_ASK], seconds)):
+        found += _dns_sd_zone(text, kind)
+    addresses = {}
+    for host in list(dict.fromkeys(f[0] for f in found))[:20]:
+        left = deadline - time.monotonic()
+        if left <= 0.2:
+            break
+        addresses[host] = _resolve(host, min(1.0, left))
+    return [(addresses[h], k, t, {"instance": i, "host": h}) for h, k, t, i in found
+            if _private_v4(addresses.get(h))]
+
+
+def _upnp_about(data):
+    """{maker, model, kind} as a UPnP description file announces them (raw: `_keep` decides what may leave). Only
+    UTF-8 (or ASCII) files are read, and one with a DOCTYPE or ENTITY is refused (entities can make a few bytes expand
+    without end): the check runs on the decoded text, so another encoding can't hide them. The friendlyName is a name
+    someone gave it: it leaves only while the owner shows names (see `_seen_name`)."""
+    import xml.etree.ElementTree as ET
+    if not data or len(data) > DESCRIPTION_BYTES or data[:2] in (b"\xfe\xff", b"\xff\xfe") or b"\0" in data:
+        return {}
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return {}
+    declared = re.match(r"\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']*)", text)
+    if (declared and declared.group(1).lower() not in ("utf-8", "us-ascii", "ascii")) \
+            or re.search(r"<!\s*(DOCTYPE|ENTITY)", text, re.I):
+        return {}
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except (ET.ParseError, ValueError):
+        return {}
+    device = next((e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "device"), None)
+    if device is None:
+        return {}
+    got = {}
+    for child in device:
+        key = child.tag.rsplit("}", 1)[-1]
+        if key in ("manufacturer", "modelName", "modelNumber", "deviceType", "friendlyName") \
+                and (child.text or "").strip():
+            got[key] = child.text.strip()[:100]
+    name, number = got.get("modelName", ""), got.get("modelNumber", "")
+    models = [" ".join(x for x in (name, number if number not in name else "") if x), name, number]
+    kind = next((w for t, w in UPNP_KIND if ":" + t + ":" in got.get("deviceType", "")), None)
+    return {"maker": got.get("manufacturer"), "model": next((m for m in models if _product_code(m)), None),
+            "kind": kind, "name": got.get("friendlyName")}
+
+
+def _fetch(host, port, path, deadline):
+    """The body of a plain HTTP GET, or b"" (an error, not 200, too big, or the deadline passed). Connecting,
+    sending and every read are held to the one deadline; the connection is closed when it passes."""
+    import socket as _s
+    left = deadline - time.monotonic()
+    if left <= 0.05:
+        return b""
+    data = b""
+    try:
+        with _s.create_connection((host, port), timeout=left) as sock:
+            sock.sendall(("GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n" % (path, host, port)).encode())
+            while len(data) <= DESCRIPTION_BYTES + 4096:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return b""  # out of time: what came so far is not used
+                sock.settimeout(left)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            else:
+                return b""  # too big to be a description
+    except (OSError, ValueError):
+        return b""
+    head, _sep, body = data.partition(b"\r\n\r\n")
+    return body if re.match(rb"HTTP/1\.[01] 200 ", head) else b""
+
+
+def _router_about(deadline):
+    """(router address, {maker, model, kind}) from its UPnP description, tried at a few well-known places on the
+    router only (plain outgoing requests, at most 1 s each); (None, {}) when there's no answer by `deadline`."""
+    gateway = _gateway(timeout=max(0.1, min(5.0, deadline - time.monotonic())))
+    if not _private_v4(gateway):
+        return None, {}
+    for port, path in UPNP_PLACES:
+        if deadline - time.monotonic() <= 0.2:
+            break
+        about = _upnp_about(_fetch(gateway, port, path, min(deadline, time.monotonic() + 1.0)))
+        if about.get("maker") or about.get("model"):
+            return gateway, about
+    return gateway, {}
+
+
+def _keep(mine, about):
+    """Keep the first maker and model that may leave the device: a known maker (as the table spells it) and a model
+    from the Apple table or shaped like a product code. An unknown maker means neither is kept."""
+    maker = _maker(about.get("maker"))
+    if not maker:
+        return
+    model = about.get("model") if isinstance(about.get("model"), str) else ""
+    if maker == "Apple":
+        model = model if model in {w for _p, w in APPLE_MODELS} else None  # only ever from the table
+    else:
+        for prefix in (about.get("maker") or "", maker):  # "FUJI XEROX DocuPrint CP115" made by FUJI XEROX
+            if prefix and model.lower().startswith(prefix.lower() + " "):
+                model = model[len(prefix) + 1:]
+        model = _product_code(model)
+    if model and not mine.get("model"):
+        mine["model"], mine["maker"] = model, maker
+    elif not mine.get("maker"):
+        mine["maker"] = maker
+
+
+def _seen_name(text):
+    """A name a thing announces ("Living Room", "Juans-MacBook-Pro"), as the owner would recognise it, or None. Sent
+    only while the owner shows names (on by default; a switch in Settings). Never anything holding an address or a
+    hardware id: a trailing "(1B:BE:CF)" is cut, and a name still holding one is dropped."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"\s*\((?:[0-9A-Fa-f]{2}[:-]){2,5}[0-9A-Fa-f]{2}\)$", "", " ".join(text.split()))
+    text = re.sub(r"(?i)\.local\.?$", "", text)
+    if not text or not text.isprintable() or scrub(text)[0] != text \
+            or re.search(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
+        return None
+    return text[:60].strip() or None
+
+
+def _name_from(mine, text, rank):
+    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2)."""
+    name = _seen_name(text)
+    if name and rank < mine.get("_rank", 9):
+        mine["name"], mine["_rank"] = name, rank
+
+
+def _identify(budget=IDENTIFY_BUDGET):
+    """{address: {"services": set, "maker", "model"}} for things that say who made them. One deadline covers it all,
+    from the mDNS listings to the last byte of the router's description; what doesn't fit is left out, and nothing
+    here can fail the look."""
+    deadline = time.monotonic() + budget
+    out = {}
+    try:
+        for ip, kind, txt, *label in _hourly("mdns", lambda: _mdns_records(min(MDNS_SECONDS, budget / 3)),
+                                             every=60):
+            mine = out.setdefault(ip, {"services": set()})
+            if kind in MDNS:
+                mine["services"].add(MDNS[kind])
+            _keep(mine, _txt_about(kind, txt))
+            label = label[0] if label and isinstance(label[0], dict) else {}
+            _name_from(mine, label.get("instance"), 0)
+            _name_from(mine, label.get("host"), 2)
+        router, about = _router_about(deadline)
+        if about:
+            mine = out.setdefault(router, {"services": set()})
+            if about.get("kind"):
+                mine["services"].add(about["kind"])
+            _keep(mine, about)
+            _name_from(mine, about.get("name"), 1)
+    except Exception:  # makers and models are a nicety: they never cost the look
+        pass
+    for mine in out.values():
+        mine.pop("_rank", None)
+    return out
+
+
+def discover(yes=False, quiet=False):
+    """Look for other things on this network and send what is picked (all of them with `yes`), without addresses.
+    Returns (sent, how many). `quiet`: run as a job from the app, nothing printed."""
+    say = (lambda *_a, **_k: None) if quiet else print
     cfg = _load()
+    about = _identify()  # first: whatever answers is then in the neighbour table too
     neigh, mdns = _neighbours(), _mdns()
-    ips = set(neigh) | set(mdns)
+    ips = set(neigh) | set(mdns) | {ip for ip in about if _private_v4(ip)}
     ports = _open_ports(ips)
-    known = {v.get("ip"): k for k, v in (cfg.get("found") or {}).items()}  # same thing, same id as last time
-    items, local = [], {}
+    ips = _one_per_machine(ips, neigh, lambda ip: len(ports.get(ip, [])) + len(mdns.get(ip, ())) + len(about.get(ip) or {}))
+    found = cfg.get("found") or {}
+    known = {v.get("ip"): k for k, v in found.items()}  # same thing, same id as last time
+    known_hw = {v["hw"]: k for k, v in found.items() if v.get("hw")}  # ... even at a new address
+    items, local, elsewhere = [], {}, set()
     for ip in sorted(ips):
         vendor = _vendor(neigh.get(ip))
-        services = sorted(mdns.get(ip, set()) | {PORTS[p] for p in ports.get(ip, [])})
-        if not services and not vendor:
+        told = about.get(ip) or {}
+        services = sorted(mdns.get(ip, set()) | told.get("services", set()) | {PORTS[p] for p in ports.get(ip, [])})
+        if not services and not vendor and not told.get("model"):
             continue  # nothing to say about it
-        cid = known.get(ip) or secrets_hex(6)
+        hw = hw_tag(cfg.get("netKey"), neigh.get(ip))  # the same thing after its address changes
+        at_ip = known.get(ip)
+        if at_ip and hw and found[at_ip].get("hw") not in (None, hw):
+            elsewhere.add(at_ip)  # another machine has that address now: the old thing isn't here
+            at_ip = None
+        cid = (hw and known_hw.get(hw)) or at_ip or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
-        local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
+        for k in ("maker", "model") + (("name",) if cfg.get("deviceNames") is True else ()):
+            if told.get(k):
+                items[-1][k] = told[k]
+        tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
+        if tag:
+            items[-1]["tag"] = tag
+        if hw:
+            items[-1]["hw"] = hw
+        before = found.get(cid) or {}
+        seen = set(ports.get(ip, [])) | (set(before.get("ports") or []) if hw and before.get("hw") == hw else set())
+        local[cid] = {"ip": ip, "ports": sorted(seen), **({"hw": hw} if hw else {})}  # a watch follows it when it moves
     if not items:
-        print("Didn't find anything to suggest on this network.")
-        return
-    print(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
+        say("Didn't find anything to suggest on this network.")
+        if not quiet:
+            return True, 0  # at a terminal nothing is sent unless picked
+        items = []  # asked from the app: an empty list replaces what an earlier look found
+    say(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
     for n, it in enumerate(items, 1):
-        print(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
+        made = " ".join(x for x in (it.get("maker"), it.get("model")) if x) or it["vendor"]
+        say(f"  {n}. {it['guess']}" + (f" - {made}" if made else "")
               + (f" ({', '.join(it['services'])})" if it["services"] else ""))
-    if yes:
+    if yes or quiet:
         chosen = items
     else:
         try:
@@ -2122,15 +2596,17 @@ def discover(yes=False):
         else:
             nums = {int(x) for x in re.findall(r"\d+", ans)}
             chosen = [it for n, it in enumerate(items, 1) if n in nums]
-    if not chosen:
-        print("Nothing sent.")
-        return
+    if not chosen and not quiet:
+        say("Nothing sent.")
+        return True, 0
     picked = {it["cid"]: local[it["cid"]] for it in chosen}
-    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **picked}))
+    moved = {cid: {**found[cid], "ip": None} for cid in elsewhere - set(local)}  # its watch says "not reachable"
+    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **moved, **picked}))
     st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
                      {"X-Device-Token": cfg["token"]})
-    print(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
-          else f"Couldn't send ({st or 'network error'}).")
+    say(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
+        else f"Couldn't send ({st or 'network error'}).")
+    return st == 200, len(chosen[:30])
 
 
 def secrets_hex(n):
@@ -2150,6 +2626,9 @@ def _watch_results():
         port = w.get("port")
         if not target or type(port) is not int or port not in PORTS or port not in target.get("ports", []):
             continue  # only a port this device saw open on that thing, from the fixed list
+        if not target.get("ip"):
+            out.append({"cid": w["cid"], "up": False, "ms": None})  # not at its old address any more
+            continue
         t = time.time()
         try:
             with _s.create_connection((target["ip"], port), timeout=1):
@@ -2159,11 +2638,250 @@ def _watch_results():
     return out
 
 
+# ------------------------------------------------------------------ lines on the map, without addresses
+# Which of your devices rely on each other, told without any address leaving this one. Each private IPv4 address
+# (10/8, 172.16/12, 192.168/16) is replaced by a keyed fingerprint: HMAC-SHA256 with your account's own key (sent only
+# to your account's helpers), first 20 hex characters. Your devices give the same address the same fingerprint, so the
+# app can match "this Mac backs up to that NAS" without learning either address. Link-local (169.254/16), shared or
+# public addresses are left out: they say nothing stable about your own network.
+
+NET_PORTS = (445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000)  # services others rely on; never SSH (22)
+NET_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+NET_EVERY = 1800  # what this device relies on is looked up at most every 30 minutes
+_PRIVATE = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+
+
+def _private_v4(ip):
+    import ipaddress
+    try:
+        a = ipaddress.IPv4Address(ip if isinstance(ip, str) else "")
+    except ValueError:
+        return False
+    return any(a in ipaddress.IPv4Network(n) for n in _PRIVATE)
+
+
+def net_tag(key, ip):
+    """The keyed fingerprint of a private IPv4 address, or None for anything else."""
+    import hashlib
+    import hmac
+    if not _private_v4(ip) or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+        return None
+    return hmac.new(bytes.fromhex(key), ip.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def hw_tag(key, mac):
+    """The keyed fingerprint of a hardware (MAC) address, or None. It stays the same when the router hands the thing
+    a new IP address; a phone's private Wi-Fi address is usually fixed per network. Never the address itself."""
+    import hashlib
+    import hmac
+    if not isinstance(mac, str) or not re.fullmatch(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", mac) or int(mac[:2], 16) & 1 \
+            or mac == "00:00:00:00:00:00" or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+        return None
+    return hmac.new(bytes.fromhex(key), b"hw:" + mac.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def _one_per_machine(ips, neigh, score):
+    """One address per hardware address: the neighbour table can still hold a thing's old addresses after the router
+    gave it a new one. Keeps the address that says the most (then the lowest, so it is stable)."""
+    best = {}
+    for ip in sorted(ips):
+        mac = neigh.get(ip)
+        if not mac:
+            best[ip] = ip
+        elif mac not in best or score(ip) > score(best[mac]):
+            best[mac] = ip
+    return set(best.values())
+
+
+def _own_ip():
+    """This device's address on the local network: the one it would use to reach the internet (a UDP "connect" only
+    picks the route; no packet is sent)."""
+    import socket as _s
+    s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+SELVES = 8  # own addresses reported at most (Wi-Fi, cable, Docker bridges, VPNs...)
+
+
+def _own_ips(timeout=3):
+    """Every private IPv4 address of this device, on every interface, the main one first: `ip` or /proc/net/fib_trie
+    on Linux, `ifconfig` on a Mac. Found nearby leaves out what is really one of your own devices."""
+    found = []
+    if sys.platform == "darwin":
+        found = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)", _run(["ifconfig"], timeout=timeout))
+    else:
+        found = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)/", _run(["ip", "-4", "-o", "addr"], timeout=timeout)
+                           if shutil.which("ip") else "")
+        if not found:
+            try:
+                with open("/proc/net/fib_trie") as f:
+                    lines = f.read().splitlines()
+                found = [lines[i - 1].split()[-1] for i, ln in enumerate(lines)
+                         if i and ln.strip() == "/32 host LOCAL" and lines[i - 1].split()]
+            except OSError:
+                pass
+    main = _own_ip()
+    return [ip for ip in dict.fromkeys([main] + found) if _private_v4(ip)][:SELVES]
+
+
+def _hex_v4(h):
+    """An IPv4 address as /proc/net prints it (hex, in this machine's byte order)."""
+    import socket as _s
+    import struct
+    return _s.inet_ntoa(struct.pack("=I", int(h, 16)))
+
+
+def _gateway(timeout=5):
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 4 and parts[1] == "00000000" and int(parts[3], 16) & 2:  # default route, via a gateway
+                    return _hex_v4(parts[2])
+        return None
+    except (OSError, ValueError):
+        pass
+    if sys.platform == "darwin":
+        m = re.search(r"gateway:\s*([\d.]+)", _run(["route", "-n", "get", "default"], timeout=timeout))
+        return m.group(1) if m else None
+    return None
+
+
+def _resolve(host, timeout=3):
+    """A host name to an IPv4 address, here on the device; None if it doesn't resolve in time."""
+    import socket as _s
+    import threading
+    if _private_v4(host):
+        return host
+    got = []
+    t = threading.Thread(target=lambda: got.append(_s.gethostbyname(host)), daemon=True)  # no timeout of its own
+    t.start()
+    t.join(timeout)
+    return got[0] if got else None
+
+
+def _mount_host(source):
+    """The server's name in a network mount source: //user@nas.local/share, nas:/export, afp_x@nas._afpovertcp..."""
+    if source.startswith("//"):
+        host = source[2:].split("/", 1)[0].rsplit("@", 1)[-1]
+    elif ":" in source:
+        host = source.split(":", 1)[0]
+    else:
+        return None
+    host = urllib.parse.unquote(host).split(":")[0]
+    return re.sub(r"\._[a-z-]+\._tcp(\.local)?\.?$", ".local", host).rstrip(".") or None
+
+
+def _time_machine_hosts(timeout=5):
+    if sys.platform != "darwin" or not shutil.which("tmutil"):
+        return []
+    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=timeout), re.M)
+    return [h for h in (_mount_host("//" + u.split("://", 1)[-1]) for u in urls) if h]
+
+
+def _drive_hosts(timeout=5):
+    if sys.platform == "darwin":
+        lines = [m.group(1) for m in (re.match(r"^(\S+) on .+ \((smbfs|afpfs|nfs|webdav)\b", ln)
+                                      for ln in _run(["mount"], timeout=timeout).splitlines()) if m]
+    else:
+        try:
+            with open("/proc/mounts") as f:
+                lines = [p[0] for p in (ln.split() for ln in f)
+                         if len(p) > 2 and p[2] in ("nfs", "nfs4", "cifs", "smb3")]
+        except OSError:
+            lines = []
+    return [h for h in map(_mount_host, lines) if h]
+
+
+def _connections(timeout=5):
+    """(remote address, port) of established TCP connections from here to a known service port."""
+    out = []
+    try:
+        with open("/proc/net/tcp") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) > 3 and parts[3] == "01":  # ESTABLISHED
+                    ip, port = parts[2].split(":")
+                    out.append((_hex_v4(ip), int(port, 16)))
+    except (OSError, ValueError):
+        for line in _run(["netstat", "-an", "-p", "tcp"], timeout=timeout).splitlines():
+            parts = line.split()  # tcp4  0  0  192.168.1.5.51234  192.168.1.10.5432  ESTABLISHED
+            if len(parts) >= 6 and parts[0] == "tcp4" and parts[5] == "ESTABLISHED" and "." in parts[4]:
+                ip, port = parts[4].rsplit(".", 1)
+                if port.isdigit():
+                    out.append((ip, int(port)))
+    return [(ip, port) for ip, port in out if port in NET_PORTS]
+
+
+NET_BUDGET = 10  # seconds for the whole look (commands and name lookups); a report never waits longer for it
+NET_HOSTS = 8  # names looked up per kind: duplicates go first, then the list is cut
+
+
+def _relied_on(budget=NET_BUDGET):
+    """[(address, why)]: where this device backs up to, whose shared folders it mounts, which services it uses. One
+    deadline covers everything; what didn't fit in it is simply left out of this report."""
+    deadline = time.monotonic() + budget
+
+    def resolved(hosts, why):
+        out = []
+        for host in list(dict.fromkeys(hosts))[:NET_HOSTS]:
+            left = deadline - time.monotonic()
+            if left <= 0.2:
+                break
+            ip = _resolve(host, min(3, left))
+            if ip:
+                out.append((ip, why))
+        return out
+
+    def left():  # what a command may still take: the shared deadline, never more than 5 s
+        return max(0.5, min(5.0, deadline - time.monotonic()))
+
+    found = []
+    for step in (lambda: [(ip, "service:%d" % port) for ip, port in _connections(left())],
+                 lambda: resolved(_time_machine_hosts(left()), "time_machine"),
+                 lambda: resolved(_drive_hosts(left()), "network_drive")):
+        if deadline - time.monotonic() <= 0.5:
+            break
+        try:
+            found += [(ip, why) for ip, why in step() if ip]
+        except Exception:  # one probe failing never hides the others
+            pass
+    return found
+
+
+def _net():
+    """What the app needs to draw lines between your devices, as fingerprints; None before the key arrived."""
+    try:
+        key = _load().get("netKey")
+        if not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+            return None
+        me = net_tag(key, _own_ip())
+        selves = [t for t in dict.fromkeys(net_tag(key, ip) for ip in _hourly("selves", _own_ips, every=300)) if t]
+        peers, seen = [], set()
+        for ip, why in _hourly("net", _relied_on, every=NET_EVERY):
+            tag = net_tag(key, ip)
+            if tag and tag != me and tag not in selves and (tag, why) not in seen and len(peers) < 20:
+                seen.add((tag, why))
+                peers.append({"tag": tag, "why": why})
+        return {"self": me, "selves": selves[:SELVES], "gateway": net_tag(key, _gateway()), "peers": peers}
+    except Exception:  # never let this cost a report
+        return None
+
+
 # ------------------------------------------------------------------ running in the background
 
 APP_DIR = (os.path.expanduser("~/Library/Application Support/Nightlight") if sys.platform == "darwin"
            else os.path.expanduser("~/.local/share/nightlight"))
 UNIT = "/etc/systemd/system/nightlight-helper.service"
+PKG_DIR = "/Library/Application Support/Nightlight"  # Nightlight.pkg's own Python and helper, shared by every user
+PKG_ID = "com.nightlight.installer"
 PLIST = os.path.expanduser("~/Library/LaunchAgents/com.nightlight.helper.plist")
 LABEL = "com.nightlight.helper"
 
@@ -2222,8 +2940,9 @@ def _unit_is_mine():
     return f"# nightlight-owner={os.getuid()}" in text or legacy
 
 
-def install(every=60):
-    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first."""
+def install(every=60, manage=None):
+    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first.
+    `manage` ("app" or "strict") answers the permissions question without a terminal (the Mac installer)."""
     try:
         _load()
     except (OSError, ValueError):
@@ -2231,14 +2950,18 @@ def install(every=60):
     cfg = _load()
     if cfg.get("manage") not in ("app", "strict"):
         interactive = sys.stdin.isatty()
-        app = interactive and _ask("Let the Nightlight app manage what it may do on this device? You'll switch things "
-                                   "on and off in the app; every restart still asks you first. (n = strict: changes "
-                                   "only on this device)", True)
+        app = manage == "app" if manage else interactive and _ask(
+            "Let the Nightlight app manage what it may do on this device? You'll switch things on and off in the app; "
+            "every restart still asks you first. (n = strict: changes only on this device)", True)
         _update_config(lambda c: c.setdefault("manage", "app" if app else "strict"))
         print("Managed from the app." if app else "Strict: change permissions here with `nightlight settings`.")
     # The one moment someone is at this Mac's terminal: settle macOS's folder prompts now, not in a later visit.
+    # Without a terminal (the Mac installer) nothing is recorded: still not asked, so it can be offered later, and
+    # until then the private folders are never read.
     if sys.platform == "darwin" and sys.stdin.isatty() and "macPrivateFolders" not in _load():
         _ask_mac_private(True)
+    # The Python running this install also runs the service: from the Mac installer that is its own bundled Python,
+    # which signed updates leave in place (they replace only the helper file and restart with this same Python).
     script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
     _link_command(script, py)
     every = max(int(every), 30)
@@ -2330,6 +3053,21 @@ def uninstall():
         except OSError:
             pass
     print("Uninstalled. Nothing of Nightlight is left running on this device.")
+    _pkg_leftovers()
+
+
+def _pkg_leftovers():
+    """Nightlight.pkg's shared folder needs an administrator to remove: removed when run as root, otherwise say how."""
+    if sys.platform != "darwin" or not os.path.isdir(PKG_DIR) or os.path.islink(PKG_DIR):
+        return
+    if os.geteuid() == 0:
+        shutil.rmtree(PKG_DIR)
+        subprocess.run(["pkgutil", "--forget", PKG_ID], capture_output=True, check=False)
+        print(f"Removed the Mac installer's files ({PKG_DIR}).")
+        return
+    print(f"The Mac installer's files are still in {PKG_DIR} (its own Python; nothing runs from it now). If nobody "
+          f"else on this Mac uses Nightlight, remove them with:\n  sudo rm -rf '{PKG_DIR}' && sudo pkgutil --forget "
+          f"{PKG_ID}")
 
 
 def _sudo_ok():
@@ -2457,14 +3195,18 @@ def _ask_mac_private(default_yes):
     own Allow prompts right away, so nobody has to come back to the terminal for this later."""
     if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
             "ask you to allow each one now; click Allow.", default_yes):
-        # The yes is recorded first: the privacy guard reads it, so only then can the folders be opened, which is
-        # what raises macOS's prompts now, while you're here to answer them.
-        _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
-        _inspect_until[0] = time.time() + 120
-        for _label, path in _mac_private_places():
-            _du(path)
+        _allow_mac_private()
     else:
         _update_config(lambda c: c.__setitem__("macPrivateFolders", False))  # a recorded no: not asked again
+
+
+def _allow_mac_private():
+    """Record the yes, then measure the private folders once so macOS raises its Allow prompts now. The yes comes
+    first: the privacy guard reads it, so only then can the folders be opened, while someone is there to answer."""
+    _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
+    _inspect_until[0] = time.time() + 120
+    for _label, path in _mac_private_places():
+        _du(path)
 
 
 def settings():
@@ -2519,6 +3261,8 @@ def main():
     pa.add_argument("api")
     pa.add_argument("--web", default=None)
     pa.add_argument("--name", default=None)
+    pa.add_argument("--browser", action="store_true", help="open the approval page in the browser (Mac installer)")
+    pa.add_argument("--install", action="store_true", help="install the background service once approved")
     ins = sub.add_parser("install")
     ins.add_argument("--every", type=int, default=60)
     sub.add_parser("uninstall")
@@ -2543,7 +3287,7 @@ def main():
     if a.cmd == "enrol":
         enrol(a.api, a.code, (a.name or default_name())[:40])
     elif a.cmd == "pair":
-        pair(a.api, a.web, a.name)
+        pair(a.api, a.web, a.name, a.browser, a.install)
     elif a.cmd == "install":
         install(a.every)
     elif a.cmd == "uninstall":

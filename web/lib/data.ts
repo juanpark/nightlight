@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, PlaceDoc, Runbook, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -48,7 +48,14 @@ const current = (gen: number | undefined) => (d: { realm?: string; demoGeneratio
   d.realm === "real" || d.demoGeneration === gen;
 
 export function useDevices(uid: string | null, gen: number | undefined): Device[] {
-  return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived).filter(current(gen));
+  // the server archives a watched thing you stop watching; ones stopped before it did are only revoked
+  return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived && !(d.kind === "watched" && d.revoked))
+    .filter(current(gen));
+}
+
+/** Names the person gave their places (one per router; unnamed ones are "Place 1", "Place 2"…). */
+export function usePlaces(uid: string | null): PlaceDoc[] {
+  return useCollection<PlaceDoc>(uid, ["places"]);
 }
 
 /** Lines between devices on the map (the sample home's go away with it). */
@@ -97,6 +104,13 @@ export function useExpertStatus(tick = 0): { enabled: boolean } | null {
 export function useProfile(uid: string | null, deviceId: string | null) {
   return useCollection<{ id: string; text: string; by: string; updatedAt: Date | null }>(
     uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "profile"]).find((p) => p.id === "main");
+}
+
+/** A device's saved fixes, most used first (a sample device's only from the current sample home). */
+export function useRunbooks(uid: string | null, deviceId: string | null, gen: number | undefined): Runbook[] {
+  return useCollection<Runbook>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "runbooks"])
+    .filter((r) => r.demoGeneration == null || r.demoGeneration === gen)
+    .sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0));
 }
 
 /** A device's notebook, newest first. */

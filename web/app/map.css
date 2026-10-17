@@ -1,6 +1,15 @@
 /* The home map (components/map). Existing tokens only; React Flow's own styles are imported with it. */
 .homeview { display: flex; flex-direction: column; gap: 8px; flex: none; } /* never squeezed: the pane scrolls instead */
 .view-switch { padding: 0; }
+/* the bar above the map (HomeBar.tsx): Map or List, then place / kind / show chips, wrapping on narrow screens */
+.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.homebar .chips { align-items: center; }
+.place-name { display: inline-flex; gap: 6px; align-items: center; }
+.place-name input { width: 180px; }
+@media (max-width: 600px) { /* one swipeable row per group */
+  .homebar .chips { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; padding-bottom: 2px; }
+  .homebar .chips > * { flex: none; }
+}
 .view-switch button { display: inline-flex; align-items: center; gap: 5px; }
 .homemap { display: flex; flex-direction: column; gap: 6px; }
 /* the canvas is sized by its wrapper: React Flow sets an inline height: 100% on itself */
@@ -11,7 +20,8 @@
 .homemap .react-flow { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
 .homemap .react-flow { --xy-edge-stroke-default: var(--offline); --xy-controls-button-background-color-default: var(--panel);
   --xy-controls-button-color-default: var(--ink); --xy-controls-button-border-color-default: var(--line);
-  --xy-minimap-background-color-default: var(--panel); --xy-attribution-background-color-default: transparent; }
+  --xy-minimap-background-color-default: var(--panel); --xy-attribution-background-color-default: transparent;
+  --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--bg) 65%, transparent); }
 .homemap .react-flow__attribution { opacity: .5; }
 /* React Flow places its panels with classes "top" and "right", which the page's header and chat pane also use */
 .homemap .react-flow__panel.top, .homemap .react-flow__panel.right { position: absolute; padding: 0; border: 0;
@@ -50,9 +60,17 @@
 .gauge.none .g-arc { stroke: none; }
 .dsilent { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; border-radius: 8px;
   background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--offline) 12%, transparent) 6px 12px); }
-.dapps { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
+.dapps { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
   padding-top: 6px; }
 .dapps .dot { width: 7px; height: 7px; }
+/* a watched thing: whether it answers, and who checks it */
+.dnode.watched { gap: 4px; }
+.dnode.watched.router { border-width: 2px; border-color: var(--accent); }
+.dnode.watched.router.crit { border-color: var(--crit); }
+.dwatch { font-size: 13px; padding-left: 40px; color: var(--ink); }
+.dwatch.crit { color: var(--crit); font-weight: 600; }
+.dwatch.offline { color: var(--muted); }
+.dby { font-size: 11px; color: var(--muted); padding-left: 40px; }
 .dapps .more { font-size: 10px; }
 .dapps-text { margin-left: auto; white-space: nowrap; }
 .dapps-text b { color: var(--warn); font-weight: 600; }
@@ -81,6 +99,10 @@
 .everb { background: var(--bg); color: var(--muted); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line);
   opacity: .85; }
 .elabel.k-network .everb { display: none; } /* plain wires speak for themselves */
+/* drawn by Nightlight: a dot before the verb; on a plain wire, the dot alone */
+.everb.auto { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; }
+.everb.auto::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.elabel.k-network .everb.auto { display: inline-flex; font-size: 0; gap: 0; padding: 3px; }
 .etools { display: flex; flex-wrap: wrap; gap: 4px; }
 .etools button { font-size: 13px; padding: 0 10px; min-height: 34px; min-width: 34px; border: 0; display: inline-flex;
   align-items: center; justify-content: center; }

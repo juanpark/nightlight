@@ -13,6 +13,17 @@ add_device:
     like WXYZ-1234, and you type it in the app ("Use a code it shows instead") to approve it.
     Nightlight never logs in to your devices: the helper on the device dials out to Nightlight, nothing dials in.
 
+found_nearby:
+  title: Find other devices nearby (and the lines on the map)
+  text: |
+    Under "Found nearby", choose "Look for devices nearby": one of your devices on each network (managed from the
+    app, helper 0.9.21 or newer) looks around and lists what answers, each thing once, with a guess at what each thing is, its maker, model, the
+    name it announces (unless you turned names off in Settings) and services. No address leaves the device. Add what you want to watch; adding your router lets the map draw "connected through"
+    lines to it. A device set to strict only looks when someone runs `nightlight discover` on it.
+    Lines between your devices are drawn three ways: by you (drag from one device to another), by me when you tell
+    me how two devices relate, and automatically from what the helpers see (Time Machine, shared folders, services
+    in use, the router), matched by fingerprints so no address is ever sent.
+
 remove_device:
   title: Remove a device
   text: |
@@ -96,8 +107,15 @@ what_leaves_the_device:
   title: What leaves the device
   text: |
     Health numbers, container and service names and states, the number of updates waiting, and results of checks you
-    allowed (folder sizes, program names, update names; recent log lines only for apps you allowed). Never files,
-    host names or addresses. Anything that looks like a password, key or address is hidden on the device before it is
+    allowed (folder sizes, program names, update names; recent log lines only for apps you allowed). Never files or
+    addresses. To draw lines between your devices by itself (this Mac backs up to that NAS), it sends scrambled
+    fingerprints of local addresses, made with a key only your account's devices get: your devices can be matched to
+    each other, but the addresses never leave them. For things it finds nearby it sends what they seem to be and,
+    when they announce it, their maker and model ("Brother HL-L2350DW"): only a maker from a fixed list of known
+    brands, and a model only when it is an Apple model from a fixed list or looks like a product code. It also sends
+    the names they announce ("Living Room", "Juans-MacBook-Pro"), because this is your own dashboard: that is on by
+    default, and the switch for names of things nearby in Settings turns it off (names already kept are removed
+    too). Addresses never leave the device either way. Anything that looks like a password, key or address is hidden on the device before it is
     sent, and again in the cloud; that hiding is careful but can't catch every possible secret, which is why the
     helper collects as little as it can in the first place.
 
@@ -148,3 +166,16 @@ investigate_mode:
     Tick "Investigate deeply" under the chat to let a stronger model dig in step by step: it forms hypotheses, runs
     checks (and read-only commands, if expert sessions are on), reads the results and tries again, then tells you what
     it checked, what it found, the likely cause and what to do. It is slower (up to a few minutes) and costs a few cents.
+
+device_knowledge:
+  title: What Nightlight keeps per device (notes, runbooks, job log)
+  text: |
+    Each device has its own folder, like an administrator keeps for a machine. The profile ("About this device") says
+    what it is and how it is set up. The notebook holds short dated notes from you and from Nightlight, for the device
+    as a whole or for one service on it (the Minecraft server, a container). Runbooks are fixes that worked there
+    before, kept as steps ("Clear old Docker images"): Nightlight saves one after a fix worked and offers it the next
+    time the same problem shows up. A runbook never runs by itself: using it puts its steps up as cards you approve
+    (an expert command still needs your passkey). The log lists every job that ran on the device, newest first: what
+    it was, who started it, whether it worked and what it reported. Nightlight reads all of this before it looks into
+    a device. Runbooks can be renamed or deleted and notes deleted from the device's page; passwords, keys and
+    addresses are never kept.

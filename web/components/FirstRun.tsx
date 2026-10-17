@@ -35,7 +35,9 @@ export default function FirstRun({ uid, anonymous, devices, discoveries, expert,
   const real = devices.filter((d) => d.realm === "real" && d.kind !== "watched");
   const first = real[0];
   const reported = real.find((d) => d.lastSeen);
-  const chose = real.some((d) => d.manage !== "app" || chosePreset(d.id) || !samePerms(normal(d.permissions), DEFAULTS));
+  // chose: the first-connection card saved a choice (setupAt), or older signs of one (a preset picked, changed switches)
+  const chose = real.some((d) => d.setupAt || d.manage !== "app" || chosePreset(d.id)
+    || !samePerms(normal(d.permissions), DEFAULTS));
   const expertOn = real.some((d) => (d.allowedJobs?.expert ?? []).includes("on"));
   const steps: { title: string; state: State; optional?: boolean; cta?: { label: string; run: () => void };
     note?: string }[] = [

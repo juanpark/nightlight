@@ -21,23 +21,32 @@ export default function Notebook({ uid, deviceId }: { uid: string; deviceId: str
         : "Couldn't save the note. Try again.");
     }
   }
-  const shown = open ? notes : notes.slice(0, 3);
+  // device-wide notes first, then the notes about each app or service on it
+  const general = notes.filter((n) => !n.service);
+  const services = [...new Set(notes.filter((n) => n.service).map((n) => n.service!))].sort();
+  const shown = open ? general : general.slice(0, 3);
+  const row = (n: (typeof notes)[number]) => (
+    <div key={n.id} className="note small">
+      <span className={`pill ${n.by === "you" ? "" : "live"}`}>{n.by === "you" ? "You" : "Nightlight"}</span>
+      <span style={{ flex: 1 }}>{n.text}</span>
+      <span className="muted">{n.at ? n.at.toLocaleDateString() : ""}</span>
+      <button className="linkish" aria-label="Remove note"
+        onClick={() => api("DELETE", `/api/devices/${deviceId}/notes/${n.id}`).catch(() => {})}>×</button>
+    </div>
+  );
   return (
     <section className="notebook">
       <h4>Notebook <span className="muted small">what Nightlight and you noted about this device</span></h4>
       {notes.length === 0 && <p className="small muted">Nothing yet. Nightlight adds what it learns here when it looks
         into a problem; you can add things too (where it is, who uses it, quirks).</p>}
-      {shown.map((n) => (
-        <div key={n.id} className="note small">
-          <span className={`pill ${n.by === "you" ? "" : "live"}`}>{n.by === "you" ? "You" : "Nightlight"}</span>
-          <span style={{ flex: 1 }}>{n.text}</span>
-          <span className="muted">{n.at ? n.at.toLocaleDateString() : ""}</span>
-          <button className="linkish" aria-label="Remove note"
-            onClick={() => api("DELETE", `/api/devices/${deviceId}/notes/${n.id}`).catch(() => {})}>×</button>
-        </div>
-      ))}
-      {notes.length > 3 && <button className="linkish small" onClick={() => setOpen(!open)}>
-        {open ? "Show fewer" : `Show all ${notes.length}`}</button>}
+      {shown.map(row)}
+      {general.length > 3 && <button className="linkish small" onClick={() => setOpen(!open)}>
+        {open ? "Show fewer" : `Show all ${general.length}`}</button>}
+      {services.map((s) => (
+        <div key={s} className="note-group">
+          <div className="small muted"><strong>{s}</strong></div>
+          {notes.filter((n) => n.service === s).map(row)}
+        </div>))}
       <form className="note-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
         <input value={text} onChange={(e) => setText(e.target.value)} maxLength={300}
           placeholder="Add a note (e.g. in the hallway cupboard; the kids' game server)" />

@@ -51,7 +51,8 @@ export interface Device {
   purpose?: string;
   status: Status;
   health?: "verified" | "unknown";
-  vitals?: { cpu?: number | null; mem?: number | null; diskPct?: number | null; uptime?: number | null };
+  vitals?: { cpu?: number | null; mem?: number | null; diskPct?: number | null; uptime?: number | null;
+    latencyMs?: number | null }; // latencyMs: watched things
   findings?: Finding[];
   x?: number;
   y?: number;
@@ -74,12 +75,22 @@ export interface Device {
   containersRunning?: number;
   createdAt?: Date | null;
   tags?: string[];
+  /** Watched things (kind "watched", added from Found nearby): what it is, who checks it and how. */
+  role?: Role; roleSetBy?: "auto" | "user"; guess?: string; services?: string[]; ports?: number[];
+  vendor?: string | null; checkPort?: number | null; watchedBy?: string | null; cid?: string;
+  lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
+  net?: { self?: string | null; gateway?: string | null } | null; // keyed fingerprints, never addresses
+  setupAt?: Date | null; setupPreset?: "watch" | "fix" | "custom"; // the owner's first choice of what it may do
+  macFolders?: "allowed" | "declined" | null; // a Mac's personal folders (null: never asked); helper 0.9.23+
 }
+/** A place's name (`users/{uid}/places/{placeId}`, placeId = a router's fingerprint, `net.gateway`). */
+export interface PlaceDoc { id: string; name: string }
+export type Role = "router" | "printer" | "fileshare" | "smarthome" | "server" | "speaker" | "computer" | "other";
 
 /** How two devices relate, drawn as a line on the map: connected through, backs up to, relies on, powered by. */
 export type LinkKind = "network" | "backup" | "depends" | "power";
 export interface Link { id: string; from: string; to: string; kind: LinkKind; realm?: "sim" | "real";
-  demoGeneration?: number; createdAt?: Date }
+  demoGeneration?: number; createdAt?: Date; source?: "user" | "auto"; why?: string }
 
 export interface Action {
   id: string;
@@ -144,6 +155,20 @@ export interface Note {
   text: string;
   by: "nightlight" | "you";
   at: Date | null;
+  service?: string | null; // a note about one container or service on the device
+}
+
+/** A fix that worked on a device, as steps (`users/{uid}/devices/{id}/runbooks/{runbookId}`); never runs by itself. */
+export interface Runbook {
+  id: string; title: string; when: string; service?: string | null; uses?: number; lastUsedAt?: Date | null;
+  steps: { say: string; job?: { type: string; params?: Record<string, unknown> }; command?: string }[];
+  createdAt?: Date | null; demoGeneration?: number;
+}
+
+/** One finished job on a device (`GET /api/devices/{id}/log`). */
+export interface LogJob {
+  at: string; kind: string; title: string; ok: boolean; summary?: string; by: "you" | "nightlight" | "device";
+  actionId: string; service?: string | null; output?: string | null; command?: string | null;
 }
 
 export interface HistoryPoint {
@@ -190,5 +215,9 @@ export type StreamEvent =
 
 export interface FoundItem { cid: string; guess: string; vendor?: string | null; services: string[]; ports: number[];
   added?: boolean }
+/** One thing found nearby, merged across the devices that saw it (`GET /api/found`). */
+export interface FoundThing { guess: string; vendor?: string | null; services: string[]; ports: number[];
+  tag?: string | null; seenBy: { deviceId: string; name: string; cid: string; canWatch?: boolean }[];
+  router?: boolean; privateAddress?: boolean }
 export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
   expiresAt?: Date | null }

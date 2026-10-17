@@ -1,28 +1,24 @@
 # Benchmarks
 
-Measured 2026-10-16 11:07 UTC with `scripts/bench.py`: 6 runs of the demo story against the real model (`gemini-3.5-flash-lite`, thinking level LOW, output cap 1024 tokens) on Google Agent Platform. Devices are the simulated sample home; Firestore was the local emulator, so network time to Firestore is not included. Prices: $0.3 / $2.5 per million input / output tokens (Agent Platform list price read 2026-10-16; thinking tokens bill as output).
+Measured 2026-10-17 08:14 UTC with `scripts/bench.py`: 10 runs of the demo story against the real model (`gemini-3.5-flash-lite`, thinking level LOW, output cap 1024 tokens) on Google Agent Platform. Devices are the simulated sample home; Firestore was the local emulator, so network time to Firestore is not included. Prices: $0.3 / $2.5 per million input / output tokens (Agent Platform list price read 2026-10-16; thinking tokens bill as output).
 
-Completed runs: 6 of 6. Failures: 0.
+Completed runs: 9 of 10. Failures: 1.
 
 | Step | Median time to first words | Median full answer | 95th pct full answer | Model calls | Tool calls | Median cost |
 |---|---|---|---|---|---|---|
-| question | 5152 ms | 5154 ms | 5641 ms | 3 | 2 | $0.0029 |
-| after approval | 2054 ms | 2056 ms | 2693 ms | 1 | 0 | $0.0006 |
+| question | 6729 ms | 6730 ms | 8585 ms | 3 | 2 | $0.0062 |
+| after approval | 2687 ms | 2688 ms | 4573 ms | 1 | 0 | $0.0002 |
 
-Whole story (question + approval + follow-up): about **$0.0036** per run. Approve itself (one Firestore transaction): median 20 ms.
+Whole story (question + approval + follow-up): about **$0.0068** per run. Approve itself (one Firestore transaction): median 102 ms.
 
 Worst case per model call under the enforced limits (16,000 input tokens, 1,024 output+thinking tokens): $0.00736; the $35 model budget covers 4,755 calls at the full worst-case reservation. Lower actual usage is refunded, which permits more calls, subject to the per-user, per-visitor and daily limits.
 
 ## History
 
-Minimal thinking was faster, but once real devices, memory and more tools were added it proposed the fix card in
-only 1–2 of 6 live runs (it asked in words instead), so the default moved to low thinking (6 of 6).
-
 | Date (UTC) | Setup | Question, median full answer | After approval | Story cost |
 |---|---|---|---|---|
 | 2026-10-15 18:39 | gemini-3.8-flash (low thinking); fleet listed by tool; follow-up with tools | 16.4 s (3 model calls) | 14.0 s (3 calls) | $0.0045 |
-| 2026-10-15 19:26 | gemini-3.5-flash-lite (minimal thinking); fleet summary in the instruction; one-call follow-up | 3.8 s | 1.6 s | $0.0012 |
-| 2026-10-16 11:07 UTC | gemini-3.5-flash-lite (low thinking); fleet summary in the instruction; one-call follow-up | 5.2 s | 2.1 s | $0.0036 |
+| 2026-10-17 08:14 UTC | gemini-3.5-flash-lite (low thinking); fleet summary in the instruction; one-call follow-up | 6.7 s | 2.7 s | $0.0068 |
 
 ## Raw runs
 
@@ -32,166 +28,267 @@ only 1–2 of 6 live runs (it asked in words instead), so the default moved to l
   {
    "run": 0,
    "step": "question",
-   "wallMs": 5680.942333070561,
+   "wallMs": 8623.55608299913,
    "modelCalls": 3,
    "toolCalls": 2,
-   "tokensIn": 6575,
-   "tokensOut": 89,
-   "tokensThinking": 254,
-   "costUsd": 0.00283,
-   "latencyMs": 5641,
-   "firstTextMs": 5639
+   "tokensIn": 16236,
+   "tokensOut": 107,
+   "tokensThinking": 432,
+   "costUsd": 0.006218,
+   "latencyMs": 8585,
+   "firstTextMs": 8583
   },
   {
    "run": 0,
    "step": "after approval",
-   "wallMs": 1642.322292085737,
-   "approveMs": 23.474792018532753,
-   "modelCalls": 1,
-   "toolCalls": 0,
-   "tokensIn": 229,
-   "tokensOut": 32,
-   "tokensThinking": 0,
-   "costUsd": 0.000149,
-   "latencyMs": 1607,
-   "firstTextMs": 1605
-  },
-  {
-   "run": 1,
-   "step": "question",
-   "wallMs": 4330.238958122209,
-   "modelCalls": 3,
-   "toolCalls": 2,
-   "tokensIn": 6469,
-   "tokensOut": 102,
-   "tokensThinking": 209,
-   "costUsd": 0.002718,
-   "latencyMs": 4294,
-   "firstTextMs": 4292
-  },
-  {
-   "run": 1,
-   "step": "after approval",
-   "wallMs": 2424.4652087800205,
-   "approveMs": 18.65383400581777,
+   "wallMs": 2537.42158300156,
+   "approveMs": 71.58520899974974,
    "modelCalls": 1,
    "toolCalls": 0,
    "tokensIn": 242,
    "tokensOut": 34,
-   "tokensThinking": 318,
-   "costUsd": 0.000953,
-   "latencyMs": 2395,
-   "firstTextMs": 2393
+   "tokensThinking": 0,
+   "costUsd": 0.000158,
+   "latencyMs": 2495,
+   "firstTextMs": 2489
+  },
+  {
+   "run": 1,
+   "step": "question",
+   "wallMs": 6691.116417001467,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16240,
+   "tokensOut": 124,
+   "tokensThinking": 419,
+   "costUsd": 0.006229,
+   "latencyMs": 6626,
+   "firstTextMs": 6618
+  },
+  {
+   "run": 1,
+   "step": "after approval",
+   "wallMs": 4619.638166997902,
+   "approveMs": 156.78429199761013,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 258,
+   "tokensOut": 33,
+   "tokensThinking": 356,
+   "costUsd": 0.00105,
+   "latencyMs": 4573,
+   "firstTextMs": 4565
   },
   {
    "run": 2,
    "step": "question",
-   "wallMs": 5119.360541924834,
+   "wallMs": 7988.5924170012,
    "modelCalls": 3,
    "toolCalls": 2,
-   "tokensIn": 6594,
-   "tokensOut": 88,
-   "tokensThinking": 328,
-   "costUsd": 0.003018,
-   "latencyMs": 5087,
-   "firstTextMs": 5084
+   "tokensIn": 16253,
+   "tokensOut": 106,
+   "tokensThinking": 425,
+   "costUsd": 0.006203,
+   "latencyMs": 7940,
+   "firstTextMs": 7938
   },
   {
    "run": 2,
    "step": "after approval",
-   "wallMs": 2717.7024998236448,
-   "approveMs": 24.11833289079368,
+   "wallMs": 2461.772624999867,
+   "approveMs": 52.62129200127674,
    "modelCalls": 1,
    "toolCalls": 0,
-   "tokensIn": 228,
+   "tokensIn": 240,
+   "tokensOut": 34,
+   "tokensThinking": 0,
+   "costUsd": 0.000157,
+   "latencyMs": 2443,
+   "firstTextMs": 2440
+  },
+  {
+   "run": 3,
+   "step": "question",
+   "wallMs": 5642.5575419998495,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16128,
+   "tokensOut": 119,
+   "tokensThinking": 358,
+   "costUsd": 0.006031,
+   "latencyMs": 5613,
+   "firstTextMs": 5612
+  },
+  {
+   "run": 3,
+   "step": "after approval",
+   "wallMs": 2086.5909999993164,
+   "approveMs": 56.91091600237996,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 253,
+   "tokensOut": 41,
+   "tokensThinking": 0,
+   "costUsd": 0.000178,
+   "latencyMs": 2063,
+   "firstTextMs": 2058
+  },
+  {
+   "run": 4,
+   "step": "question",
+   "wallMs": 6763.312208997377,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16461,
+   "tokensOut": 129,
+   "tokensThinking": 587,
+   "costUsd": 0.006728,
+   "latencyMs": 6730,
+   "firstTextMs": 6729
+  },
+  {
+   "run": 4,
+   "step": "after approval",
+   "wallMs": 3043.5581669989915,
+   "approveMs": 60.542582999914885,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 263,
+   "tokensOut": 42,
+   "tokensThinking": 357,
+   "costUsd": 0.001076,
+   "latencyMs": 3005,
+   "firstTextMs": 3002
+  },
+  {
+   "run": 6,
+   "step": "question",
+   "wallMs": 6931.212667001091,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16283,
+   "tokensOut": 115,
+   "tokensThinking": 417,
+   "costUsd": 0.006215,
+   "latencyMs": 6866,
+   "firstTextMs": 6863
+  },
+  {
+   "run": 6,
+   "step": "after approval",
+   "wallMs": 3229.674750000413,
+   "approveMs": 118.4653749987774,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 249,
+   "tokensOut": 35,
+   "tokensThinking": 338,
+   "costUsd": 0.001007,
+   "latencyMs": 3201,
+   "firstTextMs": 3200
+  },
+  {
+   "run": 7,
+   "step": "question",
+   "wallMs": 6119.296041997586,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16344,
+   "tokensOut": 129,
+   "tokensThinking": 494,
+   "costUsd": 0.006461,
+   "latencyMs": 5989,
+   "firstTextMs": 5983
+  },
+  {
+   "run": 7,
+   "step": "after approval",
+   "wallMs": 2561.172499998065,
+   "approveMs": 101.62554199996521,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 263,
+   "tokensOut": 38,
+   "tokensThinking": 0,
+   "costUsd": 0.000174,
+   "latencyMs": 2530,
+   "firstTextMs": 2525
+  },
+  {
+   "run": 8,
+   "step": "question",
+   "wallMs": 7926.778958997602,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16180,
+   "tokensOut": 125,
+   "tokensThinking": 354,
+   "costUsd": 0.006051,
+   "latencyMs": 7868,
+   "firstTextMs": 7861
+  },
+  {
+   "run": 8,
+   "step": "after approval",
+   "wallMs": 2732.1521250014484,
+   "approveMs": 164.47108400097932,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 259,
+   "tokensOut": 38,
+   "tokensThinking": 0,
+   "costUsd": 0.000173,
+   "latencyMs": 2688,
+   "firstTextMs": 2687
+  },
+  {
+   "run": 9,
+   "step": "question",
+   "wallMs": 6250.379167002393,
+   "modelCalls": 3,
+   "toolCalls": 2,
+   "tokensIn": 16225,
+   "tokensOut": 112,
+   "tokensThinking": 377,
+   "costUsd": 0.00609,
+   "latencyMs": 6122,
+   "firstTextMs": 6120
+  },
+  {
+   "run": 9,
+   "step": "after approval",
+   "wallMs": 3766.6031249973457,
+   "approveMs": 138.20695799950045,
+   "modelCalls": 1,
+   "toolCalls": 0,
+   "tokensIn": 246,
    "tokensOut": 39,
-   "tokensThinking": 403,
-   "costUsd": 0.001173,
-   "latencyMs": 2693,
-   "firstTextMs": 2692
-  },
-  {
-   "run": 3,
-   "step": "question",
-   "wallMs": 5253.137458115816,
-   "modelCalls": 3,
-   "toolCalls": 2,
-   "tokensIn": 6894,
-   "tokensOut": 84,
-   "tokensThinking": 411,
-   "costUsd": 0.003306,
-   "latencyMs": 5222,
-   "firstTextMs": 5220
-  },
-  {
-   "run": 3,
-   "step": "after approval",
-   "wallMs": 2696.8815410509706,
-   "approveMs": 20.70320793427527,
-   "modelCalls": 1,
-   "toolCalls": 0,
-   "tokensIn": 224,
-   "tokensOut": 31,
-   "tokensThinking": 399,
-   "costUsd": 0.001142,
-   "latencyMs": 2672,
-   "firstTextMs": 2670
-  },
-  {
-   "run": 4,
-   "step": "question",
-   "wallMs": 5618.798334151506,
-   "modelCalls": 4,
-   "toolCalls": 3,
-   "tokensIn": 9766,
-   "tokensOut": 109,
-   "tokensThinking": 329,
-   "costUsd": 0.004025,
-   "latencyMs": 5586,
-   "firstTextMs": 5584
-  },
-  {
-   "run": 4,
-   "step": "after approval",
-   "wallMs": 1604.1992080863565,
-   "approveMs": 19.48079210706055,
-   "modelCalls": 1,
-   "toolCalls": 0,
-   "tokensIn": 229,
-   "tokensOut": 38,
-   "tokensThinking": 0,
-   "costUsd": 0.000164,
-   "latencyMs": 1573,
-   "firstTextMs": 1571
-  },
-  {
-   "run": 5,
-   "step": "question",
-   "wallMs": 3332.1462080348283,
-   "modelCalls": 2,
-   "toolCalls": 1,
-   "tokensIn": 3991,
-   "tokensOut": 78,
-   "tokensThinking": 227,
-   "costUsd": 0.00196,
-   "latencyMs": 3303,
-   "firstTextMs": 3301
-  },
-  {
-   "run": 5,
-   "step": "after approval",
-   "wallMs": 1735.699708107859,
-   "approveMs": 15.498458873480558,
-   "modelCalls": 1,
-   "toolCalls": 0,
-   "tokensIn": 228,
-   "tokensOut": 38,
-   "tokensThinking": 0,
-   "costUsd": 0.000163,
-   "latencyMs": 1717,
-   "firstTextMs": 1715
+   "tokensThinking": 378,
+   "costUsd": 0.001116,
+   "latencyMs": 3723,
+   "firstTextMs": 3718
   }
  ],
- "failures": []
+ "failures": [
+  {
+   "run": 5,
+   "step": "question",
+   "status": 200,
+   "last": {
+    "type": "done",
+    "turnId": "turn_41e89702-a4f0-4e99-bb99-26067b291bc2",
+    "metrics": {
+     "modelCalls": 2,
+     "toolCalls": 1,
+     "tokensIn": 10623,
+     "tokensOut": 86,
+     "tokensThinking": 415,
+     "costUsd": 0.004439,
+     "latencyMs": 5197,
+     "firstTextMs": 5193
+    }
+   }
+  }
+ ]
 }
 ```

@@ -1,6 +1,7 @@
 """Firestore client and document paths. Every user path hangs off users/{uid}."""
 
 import random
+import re
 import time
 from functools import lru_cache
 
@@ -24,7 +25,15 @@ def devices(uid: str):
     return user(uid).collection("devices")
 
 
+DEVICE_ID = re.compile(r"[a-z0-9_-]{2,40}")  # sample ids (pi-1) and helper ids (dev_<ulid>), as the API routes accept
+
+
 def device(uid: str, device_id: str):
+    """A device's document. Every caller, the agent's tools included, gets here, so an id that isn't one (a path
+    like "game-1/services/x", or anything else a model might pass) can never address another document."""
+    if not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id):
+        from .errors import not_found
+        raise not_found()
     return devices(uid).document(device_id)
 
 

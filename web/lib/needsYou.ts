@@ -3,15 +3,15 @@
 // in the strip above the map. Nothing is stored: an item disappears when its reason does.
 import { useCallback, useEffect, useState } from "react";
 import { applied, normal } from "./permissions";
-import type { Action, Device, Discovery, TrustDoc } from "./types";
+import type { Action, Device, FoundThing, TrustDoc } from "./types";
 
 export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing" | "uninstallLine" | "expertHalf"
-  | "permsWaiting" | "found" | "offer";
+  | "permsWaiting" | "found" | "offer" | "setup";
 export type Priority = 1 | 2 | 3; // 1 act now (red), 2 decide (orange), 3 finish setting up (grey)
 export type Go =
   | { to: "card"; actionId: string }
   | { to: "drawer"; deviceId: string; tab?: "overview" | "about" | "settings" }
-  | { to: "panel"; panel: "found" }
+  | { to: "panel"; panel: "found" | "add" }
   | { to: "chat"; ask: string }
   | { to: "offer"; actionType: string; offerId: string }
   | { to: "line"; line: "uninstall" }; // shown in place, with Copy and Done
@@ -22,7 +22,7 @@ export interface Need {
 }
 
 export interface NeedsInput {
-  devices: Device[]; actions: Action[]; trust: TrustDoc[]; discoveries: Discovery[];
+  devices: Device[]; actions: Action[]; trust: TrustDoc[]; found: FoundThing[]; // found: what can go on the map
   release?: { version: string } | null; expert?: { enabled: boolean } | null; now: number;
   dismissed?: string[]; // items the person marked done (only the ones that can't clear themselves)
 }
@@ -61,6 +61,18 @@ export function newer(a?: string, b?: string): boolean {
 export function ago(ms: number): string {
   const m = Math.round(ms / 60000);
   return m < 90 ? `${Math.max(1, m)} min` : m < 2880 ? `${Math.round(m / 60)} hours` : `${Math.round(m / 1440)} days`;
+}
+
+/** A clock time today, or how long ago for anything older. */
+export const when = (at: Date, now: number) => now - at.getTime() < 20 * 3600000
+  ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : `${ago(now - at.getTime())} ago`;
+
+/** How a watched thing is doing, in a few words: "answers in 12 ms", "not answering since 19:40". */
+export function answering(d: Device, now: number): string {
+  if (d.status === "crit") return d.lastAnswerAt ? `not answering since ${when(d.lastAnswerAt, now)}` : "not answering";
+  if (d.status === "offline") return "not checked lately";
+  const ms = d.vitals?.latencyMs;
+  return ms != null ? `answers in ${Math.max(1, Math.round(ms))} ms` : "answers";
 }
 
 export function needsYou(i: NeedsInput): Need[] {
@@ -106,6 +118,12 @@ export function needsYou(i: NeedsInput): Need[] {
         cta: { label: "Update", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: i.now });
     }
     const sent = d.permissionsAt?.getTime();
+    // once, when it first connects: what may Nightlight do there (the card is in the device's panel)
+    if (real && d.kind !== "watched" && !d.setupAt && !d.revoked) {
+      out.push({ id: `setup:${d.id}`, kind: "setup", priority: 2, deviceId: d.id,
+        title: `Choose what Nightlight may do on your ${d.name}`, detail: "Once; you can change it later",
+        cta: { label: "Choose", go: { to: "drawer", deviceId: d.id } }, at: d.createdAt?.getTime() ?? i.now });
+    }
     if (real && d.manage === "app" && sent && i.now - sent > PERMS_GRACE
         && !applied(normal(d.permissions), d.allowedJobs ?? {}, (d.containerCount ?? 0) === 0)) {
       out.push({ id: `perms:${d.id}`, kind: "permsWaiting", priority: 3, deviceId: d.id,
@@ -130,8 +148,7 @@ export function needsYou(i: NeedsInput): Need[] {
       title: `Finish removing it: paste the uninstall line on the device`, detail: a.result.summary,
       cta: { label: "Show line", go: { to: "line", line: "uninstall" } }, at });
   }
-  const found = i.discoveries.filter((x) => (x.expiresAt?.getTime() ?? 0) > i.now)
-    .reduce((n, x) => n + x.items.filter((it) => !it.added).length, 0);
+  const found = i.found.length;
   if (found > 0) {
     out.push({ id: "found", kind: "found", priority: 3, title: `${found} thing${found === 1 ? "" : "s"} found nearby you can add`,
       cta: { label: "Review", go: { to: "panel", panel: "found" } }, at: i.now });
