@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.28"
+VERSION = "0.9.29"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -468,6 +468,8 @@ def _run_both(cmd, timeout=15, cap=256 * 1024):
 EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was stopped forcibly (often out of memory, "
                 "or someone stopped it)", 143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
                 127: "couldn't find its program"}
+HEALTH_MEANING = {"unhealthy": "is running, but failing its health check", "starting": "is running, but its health "
+                  "check hasn't passed yet", "healthy": "is running and passing its health check"}
 
 
 def _look_container(name, logs):
@@ -480,8 +482,17 @@ def _look_container(name, logs):
     code = st.get("ExitCode")
     status = st.get("Status", "unknown")
     meaning = EXIT_MEANING.get(code, f"exited with code {code}") if status != "running" else "is running"
+    health = st.get("Health") if isinstance(st.get("Health"), dict) else {}
+    if status == "running" and health.get("Status") in HEALTH_MEANING:
+        meaning = HEALTH_MEANING[health["Status"]]
     lines = [f"status: {status}", f"exit code: {code} ({meaning})", f"out of memory: {'yes' if st.get('OOMKilled') else 'no'}",
              f"restarts: {restarts}", f"started: {st.get('StartedAt', '')[:19]}", f"stopped: {st.get('FinishedAt', '')[:19]}"]
+    if health.get("Status"):
+        lines.append(f"health check: {health['Status']}, failed {health.get('FailingStreak', 0)} times in a row")
+        last = (health.get("Log") or [{}])[-1] if isinstance(health.get("Log"), list) else {}
+        # what the check printed is log text: only with the logs permission
+        if logs and isinstance(last, dict) and str(last.get("Output") or "").strip():
+            lines.append(f"last health check said: {_one_line(str(last['Output']).strip(), 200)}")
     if st.get("Error"):
         lines.append(f"error: {st['Error'][:200]}")
     summary = f"{name} {meaning}" + (", out of memory" if st.get("OOMKilled") else "")
@@ -637,9 +648,86 @@ def _disk_places():
         if _mac_private_ok():
             places = _mac_private_places() + places
     else:
-        places = [("System logs", "/var/log"), ("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
+        places = [("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
                   ("Downloads", f"{h}/Downloads"), ("Temporary files", "/tmp"), ("npm cache", f"{h}/.npm")]
-    return places
+    return places  # /var/log is measured on its own (_logs), so one big log is named, not just "System logs"
+
+
+_LOGS = "/var/log"
+LOG_NAMES = 300  # at most this many names are looked at in /var/log, and in each big folder inside it
+BIG_LOG_MB = 100  # a log entry this big gets a line of its own
+
+
+def _size(mb):
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
+
+
+def _scan(folder):
+    """(name, is a folder, MB on disk) for what is right inside `folder`, or None when it can't be read. The folder
+    is pinned and no link is followed (a link counts 0); MB is None for a folder (measure it with `du`). Blocks really
+    used, so a sparse file (lastlog) doesn't look huge. Bounded: stops after LOG_NAMES names, or when the inspect
+    job's time is nearly up, without listing the rest."""
+    fd = _pin(folder)
+    if fd is None:
+        return None
+    out = []
+    try:
+        with os.scandir(fd) as names:
+            for entry in names:
+                if len(out) >= LOG_NAMES or _left(5) < 1:
+                    break
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    out.append((entry.name, True, None))
+                else:
+                    out.append((entry.name, False, round(st.st_blocks * 512 / 1024 ** 2)
+                                if stat.S_ISREG(st.st_mode) else 0))
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return out
+
+
+def _biggest_file(folder):
+    """(name, MB) of the biggest file right inside `folder` (pinned, no link followed), or None."""
+    files = [(mb, n) for n, is_dir, mb in _scan(folder) or [] if not is_dir and mb]
+    return max(files)[::-1] if files else None
+
+
+def _logs():
+    """What /var/log holds, the journal apart: (MB of everything else or None, MB of the journal or None, the biggest
+    few entries as (path, MB)). A big folder is named by its biggest file when that file is most of it, so the owner
+    sees the one log that grew (say an app's debug log), not just "System logs". Bounded: LOG_NAMES names per folder
+    and the inspect job's time budget."""
+    entries = _scan(_LOGS)
+    if entries is None:
+        return None, None, []
+    journal, total, rows = None, 0, []
+    for name, is_dir, mb in entries:
+        if _left(5) < 1:
+            break
+        if is_dir:
+            mb = _du(f"{_LOGS}/{name}")
+        if mb is None:
+            continue
+        if name == "journal":
+            journal = mb
+        else:
+            total += mb
+            rows.append((mb, name, is_dir))
+    big = []
+    for mb, name, is_dir in sorted(rows, reverse=True)[:5]:
+        if mb < BIG_LOG_MB or _left(5) < 1:
+            break
+        inside = _biggest_file(f"{_LOGS}/{name}") if is_dir else None
+        if inside and inside[1] * 2 >= mb:
+            name, mb = f"{name}/{inside[0]}", inside[1]
+        big.append((f"/var/log/{name}", mb))  # as the owner knows it (tests point _LOGS elsewhere)
+    return total, journal, big
 
 
 def _inspect_disk():
@@ -648,12 +736,19 @@ def _inspect_disk():
         mb = _du(path)
         if mb is not None and mb >= 50:
             rows.append((mb, label))
+    others, journal, big = (None, None, []) if sys.platform == "darwin" else _logs()
+    if others is not None and others >= 50:
+        rows.append((others, "System logs (not counting the journal)"))
     rows.sort(reverse=True)
-    lines = [f"{label}: {mb / 1024:.1f} GB" if mb >= 1024 else f"{label}: {mb} MB" for mb, label in rows[:12]]
-    if shutil.which("journalctl") and _left(10) >= 1:
+    lines = [f"{label}: {_size(mb)}" for mb, label in rows[:12]]
+    if journal is not None:
+        lines.append(f"System journal: {_size(journal)}")
+    elif shutil.which("journalctl") and _left(10) >= 1:
         j = _run(["journalctl", "--disk-usage"], timeout=_left(10)).strip()
         if j:
             lines.append("System journal: " + j.split("take up", 1)[-1].split("in the file system")[0].strip())
+    for path, mb in big:  # one line each, so a playbook (or the agent) can name the very log that grew
+        lines.append(f"Big log: {_one_line(path, 160).replace(': ', ' ')}: {_size(mb)}")
     if sys.platform == "darwin" and not _mac_private_ok():
         lines.append("Not checked (macOS privacy): Downloads, Desktop, Documents, Movies, Trash. Allow once at the Mac "
                      "with `nightlight settings`.")
@@ -986,16 +1081,47 @@ def _empty_dir(parts):
     return False, f"{len(errors)} item(s) couldn't be removed; first: {_why(err, path)}{more}"
 
 
+_SUDO_REFUSED = re.compile(r"^sudo: .*(a password is required|no new privileges|not in the sudoers|"
+                           r"is not allowed to)", re.I | re.M)
+
+
 def _fix_cmd(cmd, timeout=300):
+    """Runs a clean-up command. On failure, a reason only when it is known for sure (sudo refused), else "";
+    never the command's raw error text."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
-        return False, "it couldn't run"
-    if r.returncode != 0 and "password" in (r.stderr or "").lower():
-        return False, "this device needs a password for it (sudo)"
-    full = scrub(r.stderr or r.stdout or "")[0]  # scrub the whole text first, then pick the last line
-    said = _one_line((full.strip().splitlines() or [""])[-1], 140)
-    return r.returncode == 0, "" if r.returncode == 0 else f"it reported an error: {said or 'no details'}"
+        return False, ""
+    if r.returncode == 0:
+        return True, ""
+    if cmd[:1] == ["sudo"] and _SUDO_REFUSED.search(r.stderr or ""):  # sudo itself said no, before running anything
+        return False, "it needs administrator rights the helper doesn't have"
+    return False, ""  # the command's own error text stays on the device
+
+
+_ROOT_OK = {}  # the answer to "can the helper act as administrator?", and when it was asked
+
+
+def _can_be_root():
+    """True when the helper runs as root, or sudo works here without a password. Never under NoNewPrivileges (how
+    the installed Linux service runs): sudo can't work there, so clean-ups that need root are not offered at all.
+    `sudo -n` never prompts; it is asked at most once an hour."""
+    if os.geteuid() == 0:
+        return True
+    try:
+        with open("/proc/self/status") as f:
+            if any(ln.split() == ["NoNewPrivs:", "1"] for ln in f):
+                return False
+    except OSError:
+        pass
+    if time.time() - _ROOT_OK.get("at", 0) > 3600:
+        try:
+            ok = bool(shutil.which("sudo")) and subprocess.run(
+                ["sudo", "-n", "true"], capture_output=True, timeout=5, check=False).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        _ROOT_OK.update(ok=ok, at=time.time())
+    return _ROOT_OK["ok"]
 
 
 FIXES = {
@@ -1009,8 +1135,10 @@ FIXES = {
                          "run": lambda: _empty_dir(["Library", "Developer", "Xcode", "DerivedData"])},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
                      "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
-    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
-    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")),
+    # These two need root: offered only when the helper can really use it (see _can_be_root)
+    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")) and _can_be_root(),
+                  "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
+    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")) and _can_be_root(),
                        "run": lambda: _fix_cmd(_as_root(["journalctl", "--vacuum-size=200M"]))},
 }
 
@@ -1043,7 +1171,8 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    text = (f"Done.{freed}" if ok else f"It didn't work: {_one_line(str(why), 300)}.{freed}").strip()
+    reason = f": {_one_line(str(why), 300)}" if why else ""
+    text = (f"Done.{freed}" if ok else f"Couldn't run that clean-up on this device{reason}.{freed}").strip()
     return ok, scrub(text)[0], None  # scrubbed again at the boundary
 
 

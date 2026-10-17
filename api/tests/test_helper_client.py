@@ -359,6 +359,26 @@ def test_look_into_needs_local_permission_and_reads_only(helper, monkeypatch):
     assert helper.run_job(job)[0] is False
 
 
+def test_look_into_says_when_a_running_container_fails_its_health_check(helper, monkeypatch):
+    state = {"Status": "running", "ExitCode": 0, "StartedAt": "x", "FinishedAt": "y",
+             "Health": {"Status": "unhealthy", "FailingStreak": 4,
+                        "Log": [{"Output": "curl: (7) Failed to connect\npassword=hunter2"}]}}
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: json.dumps(state) + " 0\n")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    monkeypatch.setattr(helper, "_run_both", lambda cmd, timeout=15: "")
+    helper.set_allowed("diagnose", "grafana", True)
+    ok, summary, out = helper.look_into("grafana")
+    assert ok and summary == "grafana is running, but failing its health check"
+    assert "exit code: 0 (is running, but failing its health check)" in out
+    assert "health check: unhealthy, failed 4 times in a row" in out
+    assert "Failed to connect" not in out  # what the check printed is log text: it needs the logs permission
+    helper.set_allowed("logs", "grafana", True)
+    out = helper.look_into("grafana")[2]
+    assert "last health check said: curl: (7) Failed to connect" in out and "hunter2" not in out
+    del state["Health"]
+    assert helper.look_into("grafana")[1] == "grafana is running"  # no health check: as before
+
+
 def test_a_logs_permission_never_starts_a_container(helper, monkeypatch):  # review 10 #1
     helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
     helper.set_allowed("logs", "grafana", True)

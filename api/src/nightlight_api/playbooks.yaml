@@ -59,7 +59,7 @@
       fix: npm_cache
     - id: docker_images
       match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[MG]B)'
-      min_gb: 1
+      min_gb: 0.3
       say: Docker images take up to {size} that no container uses. The clean-up removes only untagged leftovers; check
         the rest with "docker image ls" before removing anything you built yourself.
       fix: docker_prune
@@ -67,12 +67,22 @@
       match: '^Package cache \(apt\): (?P<size>[\d.]+ [MG]B)'
       min_gb: 0.3
       say: Downloaded system updates take {size}.
+      advice: Or run "sudo apt-get clean" yourself in a terminal on the device.
       fix: apt_clean
     - id: journal
       match: '^System journal: (?P<size>[\d.]+\s*[MG])'
       min_gb: 0.5
       say: The system log takes {size}.
+      advice: Or run "sudo journalctl --vacuum-size=200M" yourself in a terminal on the device.
       fix: journal_vacuum
+    # One log (a file or a folder under /var/log, never the journal: it has its own line) that grew big. No card:
+    # there is no safe recipe for deleting an app's log, so the owner rotates it through the app that writes it.
+    - id: big_log
+      match: '^Big log: (?P<path>/var/log/(?P<app>[^/.:]+)[^:]*): (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 1
+      say: One log takes {size} on its own, {path}. Going by its name, "{app}" writes it.
+      advice: Have "{app}" keep less (most programs have a log level or log rotation setting; a debug log can usually
+        be switched off). In Investigate mode, Nightlight can write the exact command to shrink it for you to sign.
     - id: app_caches
       match: '^App caches: (?P<size>[\d.]+ [MG]B)'
       min_gb: 2

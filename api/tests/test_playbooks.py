@@ -199,3 +199,131 @@ def test_a_failing_item_is_named_with_its_reason(helper, monkeypatch, tmp_path):
     finally:
         os.chmod(trash / "locked", 0o700)
     assert not ok and "~/.Trash/locked/f" in why and "permission" in why
+
+
+# ------------------------------------------------------------------ from a QA run on a real Debian VM
+
+def test_one_big_log_is_named_and_the_journal_is_apart(helper, monkeypatch, tmp_path):
+    logs = tmp_path / "log"
+    (logs / "home-backup").mkdir(parents=True)
+    (logs / "home-backup" / "backup-debug.log").write_bytes(b"x" * 3 * 1024 * 1024)
+    (logs / "home-backup" / "small.log").write_bytes(b"x")
+    (logs / "journal").mkdir()
+    (logs / "journal" / "system.journal").write_bytes(b"x" * 2 * 1024 * 1024)
+    (logs / "syslog").write_bytes(b"x" * 1024)
+    (logs / "elsewhere").symlink_to(tmp_path)  # never followed
+    monkeypatch.setattr(helper, "_LOGS", str(logs))
+    monkeypatch.setattr(helper, "BIG_LOG_MB", 1)
+    monkeypatch.setattr(helper, "_disk_places", lambda: [])
+    monkeypatch.setattr(helper.sys, "platform", "linux")
+    monkeypatch.setattr(helper, "_run", lambda *a, **k: pytest.fail("the journal is measured on disk"))
+    helper._inspect_until[0] = __import__("time").time() + 30
+    out = helper._inspect_disk()
+    assert "Big log: /var/log/home-backup/backup-debug.log: 3 MB" in out
+    assert "System journal: 2 MB" in out and "/var/log/journal" not in out  # the journal is never a "big log"
+    assert "System logs" not in out  # 3 MB: under the 50 MB line
+    assert "elsewhere" not in out
+
+
+def test_the_log_scan_stops_when_the_time_is_up(helper, monkeypatch, tmp_path):
+    logs = tmp_path / "log"
+    logs.mkdir()
+    for i in range(20):
+        (logs / f"app{i}.log").write_bytes(b"x")
+    monkeypatch.setattr(helper, "_LOGS", str(logs))
+    now, until = [1000.0], [1100.0]
+    looked = []
+
+    def slow_left(cap):  # a synthetic clock: every look costs 10 seconds
+        looked.append(cap)
+        now[0] += 10
+        return max(0.0, min(cap, until[0] - now[0]))
+    monkeypatch.setattr(helper, "_left", slow_left)
+    got = helper._scan(str(logs))
+    assert 0 < len(got) < 20 and len(looked) < 15  # stopped near the deadline, the rest never listed
+    monkeypatch.setattr(helper, "LOG_NAMES", 3)
+    until[0] = now[0] + 10_000
+    assert len(helper._scan(str(logs))) == 3  # and never more than the cap
+    until[0] = now[0]
+    assert helper._logs() == (0, None, [])  # out of time: nothing measured, nothing blamed
+
+
+def test_a_big_log_is_explained_without_a_card():
+    book = playbooks.library()["disk_full"]
+    out = ("Biggest known places (sizes):\nSystem logs (not counting the journal): 14.2 GB\nSystem journal: 120 MB\n"
+           "Big log: /var/log/home-backup/backup-debug.log: 14.0 GB\nBig log: /var/log/syslog.1: 300 MB")
+    got = playbooks.evaluate(book, out, {"allowedJobs": {"fix": ["docker_prune"]}})
+    assert [f["cause"] for f in got["found"]] == ["big_log"]  # the small journal and the 300 MB log aren't blamed
+    f = got["found"][0]
+    assert "/var/log/home-backup/backup-debug.log" in f["say"] and '"home-backup" writes it' in f["say"]
+    assert "fix" not in f and "Investigate" in f["advice"]
+    assert "card" not in playbooks.summary(got)
+
+
+def test_small_docker_leftovers_count():
+    book = playbooks.library()["disk_full"]
+    out = "TYPE  TOTAL  ACTIVE  SIZE  RECLAIMABLE\nImages          5        2         2.1GB     712MB (33%)"
+    assert [f["cause"] for f in playbooks.evaluate(book, out, {})["found"]] == ["docker_images"]
+
+
+def test_a_root_clean_up_the_device_cannot_run_is_said_plainly():
+    book = playbooks.library()["disk_full"]
+    got = playbooks.evaluate(book, "System journal: 2.0G", {"allowedJobs": {"fix": ["docker_prune"]}})
+    f = got["found"][0]
+    assert not f["fixAllowed"] and f["fixUnavailable"] and "sudo journalctl" in f["advice"]
+    said = playbooks.summary(got)
+    assert "isn't available on this device" in said and "administrator" not in said  # no reason the server can't know
+    off = playbooks.evaluate(book, "System journal: 2.0G", {"permissions": {"cleanup": False}})
+    assert "fixUnavailable" not in off["found"][0] and "isn't switched on" in playbooks.summary(off)
+
+
+def test_root_clean_ups_are_offered_only_when_root_works(helper, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/usr/bin/" + n)
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 1000)
+    asked = []
+
+    def sudo(cmd, **k):
+        asked.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1, b"", b"sudo: a password is required")
+    monkeypatch.setattr(helper.subprocess, "run", sudo)
+    fixes = helper._available_fixes()
+    assert "apt_clean" not in fixes and "journal_vacuum" not in fixes and "docker_prune" in fixes
+    assert asked in ([], [["sudo", "-n", "true"]])  # asked once (never under NoNewPrivileges), and never prompts
+    helper._ROOT_OK.clear()
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    assert {"apt_clean", "journal_vacuum"} <= set(helper._available_fixes())
+    helper._save_config({"token": "x", "manage": "app", "remote": {"cleanup": True}})
+    assert "journal_vacuum" in helper._allowed()["fix"]
+
+
+def test_a_failed_clean_up_says_why_in_plain_words(helper, monkeypatch):
+    import subprocess
+
+    def fails(err):
+        return lambda cmd, **k: subprocess.CompletedProcess(cmd, 1, "", err)
+    monkeypatch.setattr(helper.subprocess, "run", fails('sudo: The "no new privileges" flag is set, which prevents '
+                                                        "sudo from running as root."))
+    ok, why = helper._fix_cmd(["sudo", "-n", "journalctl", "--vacuum-size=200M"])
+    assert not ok and why == "it needs administrator rights the helper doesn't have"
+    # sudo let it run, but the command itself failed (apt's lock): no claim about rights, no raw text
+    monkeypatch.setattr(helper.subprocess, "run", fails("E: Could not get lock /var/lib/dpkg/lock-frontend. "
+                                                        "Permission denied, are you root?"))
+    assert helper._fix_cmd(["sudo", "-n", "apt-get", "clean"]) == (False, "")
+    monkeypatch.setattr(helper.subprocess, "run", fails("npm ERR! EACCES: permission denied token=abc123"))
+    assert helper._fix_cmd(["npm", "cache", "clean", "--force"]) == (False, "")
+
+    def absent(cmd, **k):
+        raise FileNotFoundError(cmd[0])
+    monkeypatch.setattr(helper.subprocess, "run", absent)
+    assert helper._fix_cmd(["npm", "cache", "clean", "--force"]) == (False, "")
+    monkeypatch.setitem(helper.FIXES, "npm_cache", {"when": lambda: True, "run": lambda: (False, "")})
+    helper._save_config({"token": "x", "manage": "strict", "allow": {"fix": ["all"]}})
+    ok, summary, _ = helper.run_fix("npm_cache")
+    assert not ok and summary.startswith("Couldn't run that clean-up on this device.") and "rights" not in summary
+    monkeypatch.setitem(helper.FIXES, "journal_vacuum", {"when": lambda: True, "run": lambda: (
+        False, "it needs administrator rights the helper doesn't have")})
+    helper._save_config({"token": "x", "manage": "strict", "allow": {"fix": ["all"]}})
+    ok, summary, _ = helper.run_fix("journal_vacuum")
+    assert not ok and summary.startswith(
+        "Couldn't run that clean-up on this device: it needs administrator rights the helper doesn't have.")
