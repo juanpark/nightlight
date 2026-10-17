@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
-import { presented, useActions, useDevices, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
+import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
   useUserDoc, useWatches } from "@/lib/data";
 import { byDevice, needsYou, verdict, type Go, useDismissed } from "@/lib/needsYou";
 import NeedsList from "./NeedsList";
@@ -12,7 +12,7 @@ import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
 import WatchedRow from "./WatchedRow";
 import AwayBanner from "./AwayBanner";
-import Board from "./Board";
+import HomeView from "./map/HomeView";
 import DeviceDrawer from "./DeviceDrawer";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
@@ -31,6 +31,7 @@ export default function Home({ user }: { user: User }) {
   const gen = me?.demoGeneration;
   const now = useNow();
   const rawDevices = useDevices(uid, gen);
+  const links = useLinks(uid, gen);
   const devices = useMemo(() => rawDevices.map((d) => presented(d, now)), [rawDevices, now]);
   const actions = useActions(uid, gen);
   const events = useEvents(uid, gen);
@@ -71,8 +72,8 @@ export default function Home({ user }: { user: User }) {
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const allTags = useMemo(() => [...new Set([...devices, ...watches].flatMap((d) => d.tags ?? []))].sort(),
     [devices, watches]);
-  const visible = tagFilter.length === 0 ? devices : devices.filter((d) => tagFilter.some((t) =>
-    t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t)));
+  const visible = useMemo(() => tagFilter.length === 0 ? devices : devices.filter((d) => tagFilter.some((t) =>
+    t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t))), [devices, tagFilter]);
   // Watched websites are never samples: under a filter they show only when they carry one of its tags.
   const visibleWatches = tagFilter.length === 0 ? watches
     : watches.filter((w) => tagFilter.some((t) => (w.tags ?? []).includes(t)));
@@ -154,8 +155,8 @@ export default function Home({ user }: { user: User }) {
               ))}
             </div>
           )}
-          <Board devices={visible} selected={selected} onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }}
-            marks={marks}
+          <HomeView uid={uid} devices={visible} links={links} marks={marks} selected={selected} now={now}
+            onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
           <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => askChat(q)} />
           {selected && devices.find((d) => d.id === selected) && (
