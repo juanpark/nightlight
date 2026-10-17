@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { newer, type Go } from "@/lib/needsYou";
-import type { Found } from "@/lib/found";
+import { madeBy, type Found } from "@/lib/found";
 import type { Device, Discovery, FoundThing } from "@/lib/types";
 
 const LOOKS = "0.9.21"; // first helper that looks nearby when the app asks
@@ -110,12 +110,11 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
   // what can go on the map first (the server puts the router at the top); the rest folds into one line
   const watchable = rest.filter((t) => t.seenBy[0]?.canWatch !== false);
   const unwatchable = rest.filter((t) => t.seenBy[0]?.canWatch === false);
-  const made = (t: FoundThing) => t.model ? [t.maker, t.model].filter(Boolean).join(" ") : t.vendor;
   const what = (t: FoundThing) => <>
     <strong>{t.name ?? t.guess}</strong>
     {t.name && <span className="muted"> · {t.guess}</span>}
     {t.privateAddress && t.services.length > 0 ? <span className="muted small"> · uses a private Wi-Fi address</span>
-      : made(t) && <span className="muted"> · {made(t)}</span>}
+      : madeBy(t) && <span className="muted"> · {madeBy(t)}</span>}
     {t.services.length > 0 && <span className="muted small"> ({t.services.join(", ")})</span>}
     <span className="muted small"> · seen by the {names(t.seenBy.map((b) => b.name))}</span>
   </>;

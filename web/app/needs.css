@@ -110,3 +110,4 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .found-more { margin-top: 8px; }
 .found-more ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 .look-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.drawer-section .details > div { overflow-wrap: anywhere; }
