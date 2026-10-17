@@ -61,8 +61,10 @@ export function GlowNav({ links, menuLinks }: { links: NavLink[]; menuLinks: Nav
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(paint);
     };
+    // The page's root grows with its content (body is pinned to the viewport's height
+    // by globals.css, so it never resizes).
     const sized = new ResizeObserver(measure);
-    sized.observe(document.body);
+    sized.observe(line.current?.closest<HTMLElement>("[data-landing]") ?? document.documentElement);
     measure();
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", measure);

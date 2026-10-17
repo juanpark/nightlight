@@ -4,8 +4,10 @@
    the wire, anything that needs you). Two status colours sit outside the
    three and are kept for status only, each always paired with a word:
    green for "fine", amber for "needs a look". The 3D scene reads its colours
-   from these same tokens. */
-.page {
+   from these same tokens. They are set on the html element too (where :has is
+   supported) so the page's edges, overscroll and first paint share the navy. */
+.page,
+:global(html):has(.page) {
   --night: #0b1430;
   --surface: #111c3d;
   --surface-2: #18254b;
@@ -34,7 +36,8 @@
   --scene-ground: #1b233c;
   --gutter: clamp(16px, 3.4vw, 48px);
   --col: 30rem;
-
+}
+.page {
   position: relative;
   min-height: 100svh;
   background: var(--night);
@@ -48,7 +51,7 @@
 
 :global(html):has(.page),
 :global(html):has(.page) :global(body) {
-  background: #0b1430; /* --night; the html element sits outside .page */
+  background: var(--night);
 }
 
 .page ::selection { background: rgb(var(--star-rgb) / 0.85); color: var(--star-ink); }
@@ -784,7 +787,10 @@
   color: var(--text);
 }
 
-/* ---------- Narrow screens: no rail; each step carries its own words ---------- */
+/* ---------- Layouts ----------
+   Phone layout: upright phones, and phones on their side (short and wide).
+   Keep these queries in step with PHONE_QUERY and SIDEWAYS_QUERY in layout.ts,
+   which the scene and the callout line read. */
 @media (max-width: 1080px) {
   .watchGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .watchBlock:nth-child(3) { border-left: 0; }
@@ -792,6 +798,12 @@
   .privacyCols { grid-template-columns: 1fr 1fr; }
   .privacyNote { grid-column: 1 / -1; }
 }
+
+/* Phones: no rail, each step carries its own words; the big panels drop the live
+   blur (re-blurring a moving 3D scene behind each of them is the heaviest thing
+   on the page) and turn more opaque instead, while the nav, menu and small tags
+   keep their glass; and the reveal's words, which sit straight on the moving
+   street, get a soft wash of night behind them. */
 @media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
   .hero { padding-top: 104px; }
   .sample { right: auto; left: 50%; translate: -50% 0; bottom: 80px; }
@@ -837,24 +849,6 @@
   .watchGrid, .privacyCols { grid-template-columns: 1fr; }
   .watchBlock + .watchBlock { border-left: 0; border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
   .footer > p { margin-left: 0; }
-}
-
-/* Phones on their side: the hero, and the reveal's words, fit a short screen. */
-@media (max-height: 520px) and (orientation: landscape) {
-  .hero { gap: 14px; padding-top: 84px; padding-bottom: 24px; min-height: auto; }
-  .h1 { font-size: clamp(2rem, 10svh, 3.25rem); }
-  .lede { font-size: 1rem; max-width: 40rem; }
-  .cue { display: none; }
-  .sample { position: static; translate: none; }
-  .beyondPin { padding-top: 84px; }
-  .beyondPin .h2 { font-size: clamp(1.75rem, 9svh, 2.5rem); margin-bottom: 14px; }
-  .beyondText { max-width: 26rem; font-size: 0.9375rem; }
-}
-
-/* Phones: the big panels drop the live blur (re-blurring a moving 3D scene behind
-   each of them is the heaviest thing on the page) and turn more opaque instead.
-   The nav, menu and small tags keep their glass. */
-@media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
   .cardSlot > :first-child,
   .watchGrid,
   .whoList,
@@ -871,18 +865,6 @@
   .whoRow:hover { background: rgb(var(--surface-2-rgb) / 0.9); }
   .footer { background: rgb(var(--night-rgb) / 0.92); }
   .secondary { background: rgb(var(--surface-2-rgb) / 0.92); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
-  .tag[data-tone="live"]::before { animation: none; }
-  .navDot, .menu, .menuIcon span { transition: none; }
-}
-
-/* On phones the reveal's words sit straight on the moving street, so they get
-   a soft wash of night behind them: from above when upright (the street is
-   below the words), from the left on a phone on its side (it is to the right). */
-@media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
   .beyondPin {
     margin-inline: calc(-1 * var(--gutter));
     padding-inline: var(--gutter);
@@ -891,10 +873,27 @@
   }
   .hint { color: var(--text); }
 }
+
+/* Phones on their side: the hero and the reveal's words fit a short screen, and
+   the reveal's wash comes from the left, since the street is to the right. */
 @media (max-height: 520px) and (orientation: landscape) {
+  .hero { gap: 14px; padding-top: 84px; padding-bottom: 24px; min-height: auto; }
+  .h1 { font-size: clamp(2rem, 10svh, 3.25rem); }
+  .lede { font-size: 1rem; max-width: 40rem; }
+  .cue { display: none; }
+  .sample { position: static; translate: none; }
+  .beyondPin .h2 { font-size: clamp(1.75rem, 9svh, 2.5rem); margin-bottom: 14px; }
+  .beyondText { max-width: 26rem; font-size: 0.9375rem; }
   .beyondPin {
+    padding-top: 84px;
     padding-bottom: 0;
     min-height: 100svh;
     background: linear-gradient(90deg, rgb(var(--night-rgb) / 0.9) 0, rgb(var(--night-rgb) / 0.7) 42%, rgb(var(--night-rgb) / 0) 62%);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
+  .tag[data-tone="live"]::before { animation: none; }
+  .navDot, .menu, .menuIcon span { transition: none; }
 }

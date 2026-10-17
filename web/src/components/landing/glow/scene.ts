@@ -5,6 +5,7 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { PHONE_QUERY, SIDEWAYS_QUERY } from "./layout";
 
 // The glow hero's 3D world: a clay dollhouse at night, cut open at the front,
 // with the six machines of the sample home in their rooms. A small warm light
@@ -41,24 +42,34 @@ export type Probe = {
   checked: number; // machines the light has reached
 };
 
-// Night clay: greys with a little of the page's navy in them, so the colour
-// comes from the light (cool moon outside, star-yellow lamps inside) rather
-// than from the paint.
-const CLAY = {
-  ground: 0x18203a,
-  wall: 0x575e78,
-  floor: 0x676b80,
-  thing: 0x71758a,
-  soft: 0x878a9c,
-};
-const COOL_PANE = new THREE.Color(0x2a3a6a);
-const OFF = new THREE.Color(0x1e2a50);
+// Night clay: neutral greys, tinted at runtime with the page's own navy, so the
+// colour comes from the light (cool moon outside, star-yellow lamps inside)
+// rather than from the paint.
+const CLAY_GREYS = { wall: 0x5e5f66, floor: 0x6d6d72, thing: 0x77777c, soft: 0x8b8a8f };
+const CLAY_TINT = 0.14; // how much of the navy goes into each grey
 
 export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) {
-  // The colours come from the page's own tokens (Glow.module.css), so the
-  // scene and the page can never drift apart.
+  // The page's colours come from its own tokens (Glow.module.css): the ground,
+  // the navies, the light and the status colours. What stays here is what the
+  // page has no token for: the clay's neutral greys (tinted with the token navy),
+  // the moonlight's two light colours, and the dark of the log slabs.
   const css = getComputedStyle(canvas);
   const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  const NIGHT = new THREE.Color(token("--night", "#0b1430"));
+  const SURFACE = new THREE.Color(token("--surface", "#111c3d"));
+  const SURFACE_2 = new THREE.Color(token("--surface-2", "#18254b"));
+  const LINE_STRONG = new THREE.Color(token("--line-strong", "#33457a"));
+  const tint = (grey: number) => new THREE.Color(grey).lerp(LINE_STRONG, CLAY_TINT).getHex();
+  const CLAY = {
+    ground: SURFACE.clone().lerp(NIGHT, 0.4).getHex(),
+    wall: tint(CLAY_GREYS.wall),
+    floor: tint(CLAY_GREYS.floor),
+    thing: tint(CLAY_GREYS.thing),
+    soft: tint(CLAY_GREYS.soft),
+  };
+  const COOL_PANE = SURFACE_2.clone().lerp(LINE_STRONG, 0.4); // moonlit glass
+  const PANE = SURFACE.getHex(); // the glass itself, unlit
+  const OFF = SURFACE_2.clone(); // a status light before the nightlight reaches it
   const BG = new THREE.Color(token("--scene-ground", "#1b233c"));
   const WARM = new THREE.Color(token("--star", "#fdd83a"));
   const OK = new THREE.Color(token("--ok", "#8fd6a8"));
@@ -95,7 +106,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environment = envTex;
   scene.environmentIntensity = 0.16;
-  scene.add(new THREE.HemisphereLight(0x5f6d9e, 0x070b18, 0.55));
+  scene.add(new THREE.HemisphereLight(0x5f6d9e, NIGHT.clone().multiplyScalar(0.6), 0.55));
   const moon = new THREE.DirectionalLight(0xaebcea, 1.9);
   moon.position.set(-12, 24, 16);
   moon.castShadow = true;
@@ -186,7 +197,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   box(0.8, 2.2, 0.8, 3.6, 7.6, -1.9, mats.wall, 0.05); // chimney
 
   // Windows on the back wall: moonlit panes.
-  const paneMat = new THREE.MeshStandardMaterial({ color: 0x111a36, emissive: COOL_PANE.clone(), emissiveIntensity: 0.6, roughness: 0.3 });
+  const paneMat = new THREE.MeshStandardMaterial({ color: PANE, emissive: COOL_PANE.clone(), emissiveIntensity: 0.6, roughness: 0.3 });
   for (const [x, y, w] of [
     [-4.3, 0.9, 1.6], [-1, 1.1, 0.9], [3.2, 0.9, 2.2], [-3.6, 3.9, 1.8], [3.4, 3.9, 1.8],
   ] as const) {
@@ -253,7 +264,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     l.position.set(...led);
     scene.add(l);
     // A small table lamp: its shade glows when the room is checked.
-    const shade = new THREE.MeshStandardMaterial({ color: 0x474b5e, emissive: WARM.clone(), emissiveIntensity: 0, roughness: 0.8 });
+    const shade = new THREE.MeshStandardMaterial({ color: tint(0x4a4a52), emissive: WARM.clone(), emissiveIntensity: 0, roughness: 0.8 });
     cyl(0.03, 0.03, 0.55, lamp[0], lamp[1], lamp[2], mats.wall, 8);
     const sh = cyl(0.14, 0.26, 0.3, lamp[0], lamp[1] + 0.5, lamp[2], shade, 20);
     sh.castShadow = false;
@@ -378,7 +389,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const RAD = 6;
   const cableGeo = new THREE.TubeGeometry(wire, SEG, 0.028, RAD, false);
   geos.push(cableGeo);
-  const cable = new THREE.Mesh(cableGeo, clay(0x1a2444));
+  const cable = new THREE.Mesh(cableGeo, clay(SURFACE_2.getHex()));
   cable.castShadow = true;
   scene.add(cable);
   const tubeGeo = new THREE.TubeGeometry(wire, SEG, 0.034, RAD, false);
@@ -452,7 +463,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     return m;
   }
   function pane(g: THREE.Group, w: number, h: number, x: number, y: number, z: number, at: number, list: Place["panes"]) {
-    const mat = new THREE.MeshStandardMaterial({ color: 0x111a36, emissive: COOL_PANE.clone(), emissiveIntensity: 0.5, roughness: 0.3 });
+    const mat = new THREE.MeshStandardMaterial({ color: PANE, emissive: COOL_PANE.clone(), emissiveIntensity: 0.5, roughness: 0.3 });
     placeBox(g, w, h, 0.05, x, y, z, mat, 0.015);
     list.push({ mat, at });
   }
@@ -669,7 +680,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const dotUniforms = {
     uR: { value: 12 },
     uAmp: { value: 0.25 },
-    uBase: { value: new THREE.Color(0x283152) },
+    uBase: { value: SURFACE_2.clone().lerp(LINE_STRONG, 0.35) },
     uWarm: { value: WARM.clone() },
   };
   const field = new THREE.Mesh(
@@ -746,23 +757,28 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const camHead = new THREE.Vector3(); // the light, smoothed, for the camera to follow
   const piColor = new THREE.Color();
   let last = -1;
-  let slow = 0; // a running average of frame time, for stepping quality down
+  let slow = 0; // a running average of frame time as a share of the planned interval, for stepping quality down
   let settle = 0; // frames to ignore after a step down
   const sm = (a: number, b: number, x: number) => {
     const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
   };
 
-  function draw(v: View, time: number) {
-    const sideways = H < 520 && W > H; // a phone on its side
-    const narrow = W < 820 || sideways; // phones, upright or on their side
+  const phoneMq = window.matchMedia(PHONE_QUERY);
+  const sidewaysMq = window.matchMedia(SIDEWAYS_QUERY);
+
+  // `interval` is how often the page means to draw (1/60 s, or 1/30 s while the
+  // scene is at rest), so the quality check only counts frames that run late.
+  function draw(v: View, time: number, interval = 1 / 60) {
+    const sideways = sidewaysMq.matches; // a phone on its side
+    const narrow = phoneMq.matches; // phones, upright or on their side
     const dt = last < 0 ? 0 : Math.min(0.1, time - last);
     last = time;
     if (dt > 0 && settle-- <= 0) {
-      slow += (dt - slow) * 0.05;
-      if (slow > 1 / 40) {
+      slow += (dt / interval - slow) * 0.05; // frame time, as a share of the planned interval
+      if (slow > 1.5) {
         lower();
-        slow = 1 / 60;
+        slow = 1;
         settle = 90;
       }
     }

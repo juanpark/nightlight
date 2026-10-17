@@ -11,6 +11,7 @@ import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, t
 import { display, sans } from "../fonts";
 import { revealLines, riseIn } from "../motion/reveal";
 import { GlowNav } from "./GlowNav";
+import { PHONE_QUERY } from "./layout";
 import type { Probe, View } from "./scene";
 import s from "./Glow.module.css";
 
@@ -150,7 +151,7 @@ export function GlowLanding() {
     const el = canvas.current;
     if (!el) return;
     const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let api: { draw: (v: View, t: number) => Probe; point: (x: number | null, y?: number) => void; dispose: () => void } | undefined;
+    let api: { draw: (v: View, t: number, interval?: number) => Probe; point: (x: number | null, y?: number) => void; dispose: () => void } | undefined;
     // Pointing at a building on the street names it: hover with a mouse, tap on touch.
     const aim = (e: PointerEvent) => {
       if ((e.type === "pointermove") !== (e.pointerType === "mouse")) return;
@@ -178,9 +179,34 @@ export function GlowLanding() {
       });
     };
     measureCards();
+    // Measured again whenever anything could move them: a card or the page changing
+    // size (fonts arriving, headings splitting into lines), the window, or a
+    // ScrollTrigger refresh.
     const sized = new ResizeObserver(measureCards);
     cards.current.forEach((el) => el && sized.observe(el));
+    if (root.current) sized.observe(root.current);
     window.addEventListener("resize", measureCards);
+    ScrollTrigger.addEventListener("refresh", measureCards);
+    document.fonts?.ready.then(() => live && measureCards());
+    // A card still sliding into place is not where its offsets say, so its line
+    // waits until it has settled (and is measured once more then).
+    const sliding = new Set<number>();
+    const slideStart = (e: TransitionEvent) => {
+      const k = cards.current.indexOf(e.target as HTMLDivElement);
+      if (k >= 0 && e.propertyName === "translate") sliding.add(k);
+    };
+    const slideEnd = (e: TransitionEvent) => {
+      const k = cards.current.indexOf(e.target as HTMLDivElement);
+      if (k < 0 || e.propertyName !== "translate") return;
+      sliding.delete(k);
+      measureCards();
+    };
+    cards.current.forEach((el) => {
+      el?.addEventListener("transitionrun", slideStart);
+      el?.addEventListener("transitionend", slideEnd);
+      el?.addEventListener("transitioncancel", slideEnd);
+    });
+    const phone = window.matchMedia(PHONE_QUERY);
     // The line's parts, found once; and what was last written, so unchanged values are not rewritten.
     const path = link.current?.querySelector("path");
     const [dotA, dotB] = Array.from(link.current?.querySelectorAll("circle") ?? []);
@@ -233,7 +259,7 @@ export function GlowLanding() {
       if (!svg || !path) return;
       // The card's place on screen, from the kept offsets and the scroll: no layout read.
       const top = box ? box.top - window.scrollY : 0;
-      const off = !box || window.innerWidth < 820 || (window.innerHeight < 520 && window.innerWidth > window.innerHeight) || box.left < spot.x + 60 || top + box.height < 0 || top > window.innerHeight;
+      const off = !box || phone.matches || sliding.has(i - 1) || box.left < spot.x + 60 || top + box.height < 0 || top > window.innerHeight;
       const opacity = off ? "0" : String(+(still * (i === 1 ? sm(0.8, 1, b) : 1)).toFixed(3));
       if (opacity !== lastLine) {
         lastLine = opacity;
@@ -258,9 +284,10 @@ export function GlowLanding() {
     let drawn = -1;
     const frame = (time: number) => {
       if (!api) return;
-      if (time - busy.current > 1 && time - drawn < 1 / 31) return;
+      const resting = time - busy.current > 1;
+      if (resting && time - drawn < 1 / 31) return;
       drawn = time;
-      pin(api.draw({ ...view.current, done: Math.max(view.current.done, fixed.current.done) }, time));
+      pin(api.draw({ ...view.current, done: Math.max(view.current.done, fixed.current.done) }, time, resting ? 1 / 30 : 1 / 60));
     };
     import("./scene")
       .then(({ createScene }) => {
@@ -274,6 +301,12 @@ export function GlowLanding() {
       live = false;
       sized.disconnect();
       window.removeEventListener("resize", measureCards);
+      ScrollTrigger.removeEventListener("refresh", measureCards);
+      cards.current.forEach((el) => {
+        el?.removeEventListener("transitionrun", slideStart);
+        el?.removeEventListener("transitionend", slideEnd);
+        el?.removeEventListener("transitioncancel", slideEnd);
+      });
       window.removeEventListener("pointermove", aim);
       window.removeEventListener("pointerdown", aim);
       document.documentElement.removeEventListener("mouseleave", away);
@@ -310,6 +343,7 @@ export function GlowLanding() {
             end: "max",
             onRefresh: measure,
             onUpdate: (self) => {
+              busy.current = gsap.ticker.time; // a still view changing is still a change
               const i = Math.round(beat(self.scroll()));
               shown.current = i;
               at.current = i;
@@ -407,8 +441,10 @@ export function GlowLanding() {
     { scope: root },
   );
 
-  // Approve → a short run → done, and the Pi's light turns green.
+  // Approve → a short run → done, and the Pi's light turns green. The scene draws at
+  // full rate while that plays out.
   useEffect(() => {
+    busy.current = gsap.ticker.time + 1;
     if (approval === "running") {
       const t = setTimeout(() => setApproval("done"), 1600);
       return () => clearTimeout(t);
