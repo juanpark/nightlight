@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.27"
+VERSION = "0.9.28"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2524,7 +2524,8 @@ def _seen_name(text):
 
 
 def _name_from(mine, text, rank):
-    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2)."""
+    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2), then
+    a HomeKit bridge's name (3)."""
     name = _seen_name(text)
     if name and rank < mine.get("_rank", 9):
         mine["name"], mine["_rank"] = name, rank
@@ -2544,7 +2545,8 @@ def _identify(budget=IDENTIFY_BUDGET):
                 mine["services"].add(MDNS[kind])
             _keep(mine, _txt_about(kind, txt))
             label = label[0] if label and isinstance(label[0], dict) else {}
-            _name_from(mine, label.get("instance"), 0)
+            # A HomeKit bridge's instance names one of its plugins ("homebridge-dyson…"), not the machine itself.
+            _name_from(mine, label.get("instance"), 3 if kind == "_hap._tcp" else 0)
             _name_from(mine, label.get("host"), 2)
         router, about = _router_about(deadline)
         if about:
