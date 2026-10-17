@@ -833,3 +833,12 @@ def test_a_running_container_that_fails_its_health_check_is_restarted(helper, mo
                                                                                  "restart": True}}, wait=0)
     assert ok and st == "running" and ["docker", "restart", "photos"] in calls and "healthy" in summary
     assert ["docker", "start", "photos"] not in calls
+
+
+def test_an_approved_restart_of_a_container_that_has_since_stopped_reports_failure(helper, monkeypatch):
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: "exited" if cmd[:2] == ["docker", "inspect"] else "")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    helper.set_allowed("restart_container", "photos", True)
+    ok, summary, st = helper.run_job({"id": "act_" + "c" * 26, "type": "restart_container",
+                                      "params": {"container": "photos", "restart": True}}, wait=0)
+    assert not ok and st == "exited" and "stopped" in summary

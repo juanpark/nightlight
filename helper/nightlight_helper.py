@@ -1689,8 +1689,11 @@ def run_job(job, wait=5):
     if state is None:
         return False, f"There is no container named {name} here, so nothing was done.", None
     if params.get("restart") is True:  # the owner approved a restart of a running, unhealthy container: only that
-        if state != "running" or _container_health(name) != "unhealthy":
-            return True, f"{name} is no longer running unhealthy, so nothing was restarted.", state
+        if state != "running":
+            return False, f"{name} has stopped since the card was approved ({state or 'gone'}), so nothing was " \
+                          "restarted. Ask Nightlight to start it.", state
+        if _container_health(name) != "unhealthy":
+            return True, f"{name} is healthy again, so nothing needed restarting.", state
         _run(["docker", "restart", name], timeout=90)
         time.sleep(wait)
         state, health = _container_state(name), _container_health(name)

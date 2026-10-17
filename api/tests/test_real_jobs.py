@@ -330,3 +330,15 @@ def test_a_running_but_unhealthy_container_is_flagged_and_can_be_restarted(clien
     assert card["status"] == "pending" and "docker restart photos" in card["dryRun"]
     with pytest.raises(ValueError, match="not_unhealthy"):  # and a restart only for an unhealthy one
         actions.propose(started, turn_id="t_r", **{**restart, "params": {"container": "web", "restart": True}})
+
+
+def test_only_a_running_result_marks_a_service_recovered(client, started):  # Codex real/passkey rev2 #1
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    _again(dev["token"])
+    beat(client, dev["token"], ALLOW)
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "It is exited.", "state": "exited"},
+                headers={"X-Device-Token": dev["token"]})
+    assert db.services(started, dev["deviceId"]).document("pi-grafana-1").get().to_dict()["status"] == "warn"

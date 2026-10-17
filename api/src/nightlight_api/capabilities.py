@@ -169,8 +169,9 @@ def _helper_updated(tx, uid: str, a: dict, device: dict, current: bool) -> list:
 
 def _service_recovered(tx, uid: str, a: dict, device: dict, current: bool) -> list:
     from . import db
-    if not a["result"]["ok"] or not a.get("svcId"):
-        return []
+    state = (a["result"].get("after") or {}).get("state")
+    if not a["result"]["ok"] or not a.get("svcId") or state not in ("running", "active"):
+        return []  # only a result that says it is running again counts as recovered
     # recovered: no new restart card until the device reports it failed again
     return [(db.services(uid, device["id"]).document(a["svcId"]),
              {"status": "ok", "detail": (a["result"].get("after") or {}).get("state"), "failed": False}, True)]
