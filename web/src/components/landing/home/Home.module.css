@@ -1,19 +1,27 @@
-/* "/" — night editorial. One ground, one ink, star yellow for the action and
-   the privacy field. Surfaces step up in tone; no lines, no shadows at rest. */
+/* "/" — night editorial in three colours: navy, star yellow and cream. The
+   ground and every surface are steps of navy, the ink is cream, and yellow is
+   the light: the action, the privacy field and anything that needs you.
+   Nothing on this page is drawn from outside those three. */
 .page {
-  --ground: #0d1018;
-  --surface: #151a25;
-  --surface-2: #1d2331;
-  --surface-3: #262d3e;
-  --line: #2a3144;
-  --line-strong: #3a4258;
-  --text: #eef0f3;
-  --muted: #a7aebd;
+  --ground: #0b1430;
+  --surface: #111c3d;
+  --surface-2: #18254b;
+  --surface-3: #213060;
+  --line: #22305c;
+  --line-strong: #33457a;
+  --text: #f4efe4;
+  --muted: #aab3cf;
+  --dim: #4f5f92;
   --star: #fdd83a;
   --star-hover: #ffe46e;
-  --star-ink: #1a1500;
-  --ok: #8fd6a8;
-  --warn: #f5b84a;
+  --star-ink: #15224a;
+  --navy: #2c4290;
+  --navy-hover: #344ca0;
+  --cream: #f4efe4;
+  /* Status stays in the palette: calm is pale cream-navy, needs-you is the
+     star. Every status also carries a word. */
+  --ok: #c9d1ea;
+  --warn: var(--star);
   --logo-light: #fdd83a;
   --gutter: clamp(16px, 2.6vw, 40px);
   --col: 34rem;
@@ -44,7 +52,7 @@
 .page ul, .page ol { padding: 0; list-style: none; }
 :where(.page button) { font: inherit; color: var(--text); padding: 0; border: 0; border-radius: 0; background: none; }
 :global(html):has(.page),
-:global(body):has(.page) { background: #0d1018; }
+:global(body):has(.page) { background: #0b1430; }
 
 .skip {
   position: absolute;
@@ -58,37 +66,137 @@
 }
 .skip:focus { top: 12px; }
 
+/* ---------- Torch: the hero's hand-held light ---------- */
+/* A white disc in difference mode: under it the night turns to day and the
+   type turns dark. Leaving the hero it shrinks into the logo's yellow dot. */
+.torch {
+  --r: clamp(90px, 9vw, 150px);
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: hidden;
+  pointer-events: none;
+}
+.torchInvert { mix-blend-mode: difference; }
+.torchDisc {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(var(--r) * 2);
+  height: calc(var(--r) * 2);
+  margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1);
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.torchDot { background: var(--logo-light); }
+/* Screened over the inverted type, it turns black ink to navy and leaves the
+   lit ground cream. */
+.torchTint { mix-blend-mode: screen; }
+.torchTint .torchDisc { background: var(--star-ink); }
+
 /* ---------- Buttons (AuthButtons reads these names) ---------- */
 .actions { display: grid; gap: 12px; }
 .actionsSmall { display: grid; }
 .actionRow { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+/* Primary: a pill carrying its own light, the arrow sitting in a round chip at
+   the end. Secondary: an outline that fills faintly on hover. Both 56px tall
+   (38px in the nav), so they line up as a pair. */
 .primary,
 .secondary {
+  --h: 56px;
+  --chip: 40px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  height: var(--h);
   font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   border: 0;
   border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 0.35s var(--ease-out), transform 0.5s var(--ease-spring);
+  transition:
+    background-color 0.4s var(--ease-out),
+    color 0.4s var(--ease-out),
+    box-shadow 0.4s var(--ease-out),
+    transform 0.3s var(--ease-out);
 }
 .actions .primary,
-.actions .secondary { font-size: 1.0625rem; padding: 17px 26px; }
+.actions .secondary { font-size: 1.0625rem; }
 .actionsSmall .primary,
-.actionsSmall .secondary { font-size: 0.9375rem; padding: 10px 18px; gap: 8px; }
-.primary { background: var(--star); color: var(--star-ink); }
-.primary:hover { background: var(--star-hover); transform: scale(1.04); }
-.primary svg { transition: transform 0.5s var(--ease-spring); }
-.primary:hover svg { transform: translateX(4px); }
-.secondary { background: var(--surface-2); color: var(--text); }
-.secondary:hover { background: var(--surface-3); transform: scale(1.04); }
+.actionsSmall .secondary { --h: 40px; --chip: 30px; font-size: 0.9375rem; gap: 10px; }
+.primary { padding: 0 calc((var(--h) - var(--chip)) / 2) 0 calc(var(--h) * 0.46); }
+.secondary { padding: 0 calc(var(--h) * 0.46) 0 calc(var(--h) * 0.4); }
 .primary:active,
 .secondary:active { transform: scale(0.97); }
 .primary:disabled,
-.secondary:disabled { cursor: progress; opacity: 0.75; transform: none; }
-.error { margin: 0; font-size: var(--size-s); color: #ffb4a8; max-width: 30rem; }
+.secondary:disabled { cursor: progress; opacity: 0.7; transform: none; }
+
+/* The chip: the arrow on a disc of the opposite colour. */
+.primary svg {
+  box-sizing: content-box;
+  flex: none;
+  padding: calc((var(--chip) - 1em) / 2);
+  width: 1em !important;
+  height: 1em !important;
+  border-radius: 50%;
+  transition: transform 0.6s var(--ease-out), background-color 0.4s;
+}
+.primary:hover svg { transform: rotate(-45deg); }
+
+/* Yellow primary (nav): navy chip, the yellow warms on hover. */
+.primary { background: var(--star); color: var(--star-ink); }
+.primary svg { background: var(--star-ink); color: var(--star); }
+.primary:hover { background: var(--star-hover); }
+
+/* The hero's own action: navy with a lit chip. On hover the light spills
+   out of the chip and floods the button, and the label turns navy. */
+.primaryNavy {
+  background: var(--navy);
+  color: var(--cream);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.09), inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+.primaryNavy svg { background: var(--star); color: var(--star-ink); }
+.primaryNavy::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: calc((var(--h) - var(--chip)) / 2);
+  top: 50%;
+  width: var(--chip);
+  height: var(--chip);
+  margin-top: calc(var(--chip) / -2);
+  border-radius: 50%;
+  background: var(--star);
+  transform: scale(0);
+  transition: transform 0.7s var(--ease-out);
+}
+.primaryNavy:hover { background: var(--navy); color: var(--star-ink); }
+.primaryNavy:hover::before { transform: scale(14); }
+.primaryNavy:hover svg { background: var(--star-ink); color: var(--star); }
+.primaryNavy:disabled::before { transform: scale(0); }
+
+/* Secondary: an outline, with the Google mark in cream so it stays in the
+   palette. */
+.secondary {
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px rgb(170 179 207 / 0.55);
+}
+.secondary::before {
+  content: "";
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath fill='%23F4EFE4' d='M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z'/%3E%3Cpath fill='%23F4EFE4' d='M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z'/%3E%3Cpath fill='%23F4EFE4' d='M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z'/%3E%3Cpath fill='%23F4EFE4' d='M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z'/%3E%3C/svg%3E");
+}
+.secondary:hover { background: var(--surface-2); box-shadow: inset 0 0 0 1.5px rgb(244 239 228 / 0.85); }
+.error { margin: 0; font-size: var(--size-s); color: var(--star); max-width: 30rem; }
 .actionsSmall .error {
   position: absolute;
   right: var(--gutter);
@@ -124,77 +232,9 @@
 .navLinks a { transition: color 0.3s; }
 .navLinks a:hover { color: var(--text); }
 .navEnd { display: flex; align-items: center; gap: 10px; }
-.menuButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px 10px 18px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: var(--size-s);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-.menuButton:hover { background: var(--surface-3); }
-.menuIcon { position: relative; width: 18px; height: 10px; }
-.menuIcon i {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: currentColor;
-  transition: transform 0.6s var(--ease-io), top 0.6s var(--ease-io);
-}
-.menuIcon i:first-child { top: 0; }
-.menuIcon i:last-child { top: 8px; }
-.menuButton[data-open] .menuIcon i:first-child { top: 4px; transform: rotate(45deg); }
-.menuButton[data-open] .menuIcon i:last-child { top: 4px; transform: rotate(-45deg); }
-
 @media (max-width: 860px) {
   .navLinks { display: none; }
 }
-@media (max-width: 520px) {
-  .navDemo { display: none; }
-}
-
-/* ---------- Menu ---------- */
-.menu {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  visibility: hidden;
-  display: grid;
-  grid-template-rows: 1fr auto;
-  padding: 120px var(--gutter) 40px;
-  background: var(--surface);
-  clip-path: inset(0 0 100% 0);
-}
-.menuLinks { display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-.menuLinks a {
-  font-family: var(--font-display), system-ui, sans-serif;
-  font-size: clamp(2.6rem, 7vw, 6.4rem);
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  line-height: 1.02;
-  display: inline-block;
-  transition: color 0.3s;
-}
-.menuLinks a:hover,
-.menuLinks a:focus-visible { color: var(--star); outline: none; }
-.menuMask { display: block; overflow: hidden; padding-bottom: 0.06em; }
-.menuMask > * { display: inline-block; }
-.menuFoot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-}
-.menuNote { color: var(--muted); font-size: var(--size-s); max-width: 26rem; }
 
 /* ---------- Hero ---------- */
 .hero {
@@ -227,38 +267,63 @@
 .heroCopy { display: grid; gap: 32px; max-width: 34rem; }
 .lede { font-size: var(--size-body); line-height: 1.55; }
 .heroSide { position: relative; justify-self: end; width: min(100%, 30rem); }
+/* Scroll cue: a light sliding down a thin track, the nightlight leading the
+   way down the page. */
 .scrollCue {
   position: absolute;
   left: 50%;
-  bottom: -14px;
+  bottom: -6px;
   translate: -50% 0;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 12px;
+  padding: 8px 14px 4px;
   border: 0;
   background: none;
   color: var(--muted);
-  font-size: var(--size-s);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
+  transition: color 0.3s;
 }
 .scrollCue:hover { color: var(--text); }
+.scrollTrack {
+  position: relative;
+  width: 2px;
+  height: 56px;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, var(--surface-3), rgb(33 48 96 / 0));
+  overflow: visible;
+}
 .scrollDot {
-  width: 7px;
-  height: 7px;
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
   border-radius: 50%;
   background: var(--star);
-  animation: cue 1.8s var(--ease-io) infinite;
+  box-shadow: 0 0 10px 2px rgb(253 216 58 / 0.45);
+  animation: cue 2.2s var(--ease-io) infinite;
+}
+.scrollCue:hover .scrollDot { animation-duration: 1.2s; }
+/* Between the copy and the log there is only room for it on wide screens. */
+@media (max-width: 1180px) {
+  .scrollCue { display: none; }
 }
 @keyframes cue {
-  0%, 100% { transform: translateY(-4px); opacity: 1; }
-  50% { transform: translateY(6px); opacity: 0.4; }
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  18% { transform: translateY(4px) scale(1); opacity: 1; }
+  70% { transform: translateY(44px) scale(1); opacity: 1; }
+  100% { transform: translateY(52px) scale(0.4); opacity: 0; }
 }
 
 @media (max-width: 900px) {
   .heroBody { grid-template-columns: 1fr; }
   .heroSide { justify-self: stretch; width: 100%; }
-  .scrollCue { display: none; }
 }
 
 /* ---------- Night log (a fragment of the app) ---------- */
@@ -320,9 +385,9 @@
   letter-spacing: -0.04em;
   line-height: 1.08;
 }
-.marqueeRow[data-dim] .marqueeItem { color: #6a7390; }
+.marqueeRow[data-dim] .marqueeItem { color: var(--dim); }
 .marqueeStar { width: 0.42em; height: 0.42em; fill: var(--star); flex: none; }
-.marqueeRow[data-dim] .marqueeStar { fill: #6a7390; }
+.marqueeRow[data-dim] .marqueeStar { fill: var(--dim); }
 .statement {
   margin: clamp(80px, 10vw, 140px) var(--gutter) 0 !important;
   max-width: 24em;
@@ -496,7 +561,7 @@
 /* ---------- Privacy: the one yellow field ---------- */
 .privacy { padding-top: clamp(140px, 16vw, 240px); }
 .field {
-  --muted: #3d3410;
+  --muted: #2b3a6b;
   padding: clamp(80px, 10vw, 150px) var(--gutter);
   background: var(--star);
   color: var(--star-ink);

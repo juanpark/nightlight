@@ -41,8 +41,3 @@ export function scrollToTarget(target: string | HTMLElement | number) {
   if (typeof target === "number") window.scrollTo({ top: target });
   else (typeof target === "string" ? document.querySelector(target) : target)?.scrollIntoView();
 }
-
-export function stopScroll(stop: boolean) {
-  if (stop) lenis?.stop();
-  else lenis?.start();
-}

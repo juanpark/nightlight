@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
@@ -13,8 +13,8 @@ import { Roll } from "../motion/Roll";
 import { scrollToTarget, useSmoothScroll } from "../motion/smooth";
 import { Loop } from "./Loop";
 import { Marquee } from "./Marquee";
-import { LINKS, Menu } from "./Menu";
 import { NightLog } from "./NightLog";
+import { Torch } from "./Torch";
 import s from "./Home.module.css";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
@@ -61,16 +61,17 @@ const SENT = [
   "How many updates are waiting",
   "Two safety checks",
 ];
+const LINKS = [
+  { href: "#loop", label: "How a night goes" },
+  { href: "#watch", label: "What it looks after" },
+  { href: "#who", label: "Who it’s for" },
+  { href: "#privacy", label: "Privacy" },
+];
+
 const NEVER = ["Host names or addresses", "Your files", "Passwords or keys", "Environment variables"];
 
 export function HomeLanding() {
   const root = useRef<HTMLDivElement>(null);
-  const [menu, setMenu] = useState(false);
-  const menuButton = useRef<HTMLButtonElement>(null);
-  const closeMenu = useCallback(() => {
-    setMenu(false);
-    menuButton.current?.focus({ preventScroll: true });
-  }, []);
   useSmoothScroll();
 
   useGSAP(
@@ -132,24 +133,9 @@ export function HomeLanding() {
           <span className={s.navDemo}>
             <AuthButtons size="small" demoOnly styles={s} />
           </span>
-          <button
-            ref={menuButton}
-            type="button"
-            className={s.menuButton}
-            aria-expanded={menu}
-            aria-controls="menu"
-            onClick={() => setMenu((m) => !m)}
-            data-open={menu || undefined}
-          >
-            <Roll text={menu ? "Close" : "Menu"} />
-            <span className={s.menuIcon} aria-hidden="true">
-              <i />
-              <i />
-            </span>
-          </button>
         </div>
       </header>
-      <Menu open={menu} onClose={closeMenu} />
+      <Torch />
 
       <main id="main">
         <section id="top" className={s.hero} data-hero aria-labelledby="hero-title">
@@ -166,7 +152,7 @@ export function HomeLanding() {
                   plain words, and never fixes anything without your yes.
                 </p>
                 <div data-hero-rise>
-                  <AuthButtons styles={s} magnetic />
+                  <AuthButtons styles={{ ...s, primary: `${s.primary} ${s.primaryNavy}` }} magnetic />
                 </div>
               </div>
               <div className={s.heroSide}>
@@ -177,7 +163,9 @@ export function HomeLanding() {
             </div>
             <button type="button" className={s.scrollCue} onClick={() => scrollToTarget("#watch-intro")} data-hero-rise>
               <Roll text="Scroll" />
-              <span className={s.scrollDot} aria-hidden="true" />
+              <span className={s.scrollTrack} aria-hidden="true">
+                <span className={s.scrollDot} />
+              </span>
             </button>
           </div>
         </section>

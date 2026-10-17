@@ -55,10 +55,10 @@ const BASE: View = {
 };
 const KEYS: Partial<View>[] = [
   BASE,
-  { tx: 0, ty: 6.4, tz: -1, zoom: 1.65, az: 26, el: 28, ox: -0.1, oy: 0.2, follow: 0.25, rings: 1 },
-  { tx: 0.2, ty: 6.6, tz: -1.4, zoom: 2.05, az: 20, el: 24, ox: -0.12, oy: 0.2, follow: 0, rings: 1 },
-  { tx: 0.2, ty: 6.7, tz: -1.4, zoom: 2.4, az: 14, el: 21, ox: -0.13, oy: 0.2, follow: 0, rings: 1 },
-  { tx: 0, ty: 5.6, tz: 0, zoom: 0.9, az: 28, el: 20, ox: -0.12, oy: 0.18, follow: 0, rings: 0, lit: 1, orb: 1 },
+  { tx: 0, ty: 6.4, tz: -1, zoom: 2.05, az: 26, el: 28, ox: -0.1, oy: 0.2, follow: 0.25, rings: 1 },
+  { tx: 0.2, ty: 6.6, tz: -1.4, zoom: 2.55, az: 20, el: 24, ox: -0.12, oy: 0.2, follow: 0, rings: 1 },
+  { tx: 0.2, ty: 6.7, tz: -1.4, zoom: 3, az: 14, el: 21, ox: -0.13, oy: 0.2, follow: 0, rings: 1 },
+  { tx: 0, ty: 5.6, tz: 0, zoom: 1.1, az: 28, el: 20, ox: -0.12, oy: 0.18, follow: 0, rings: 0, lit: 1, orb: 1 },
 ];
 // The still view for each beat (reduced motion).
 const STILL: View[] = KEYS.map((_, i) => ({
@@ -154,7 +154,7 @@ export function GlowLanding() {
         const tl = gsap.timeline({ paused: true, defaults: { ease } });
         // 0 → 1: the camera follows the light along the wire, then settles on the Pi.
         tl.to(v, { trail: 1, duration: 1, ease: "power1.inOut" }, 0)
-          .to(v, { tx: 0, ty: 4, zoom: 1.35, az: 30, ox: -0.08, oy: 0.2, follow: 0.6, rings: 0, duration: 0.45 }, 0)
+          .to(v, { tx: 0, ty: 4, zoom: 1.7, az: 30, ox: -0.08, oy: 0.2, follow: 0.6, rings: 0, duration: 0.45 }, 0)
           .to(v, { ...KEYS[1], duration: 0.55 }, 0.45)
           .to(v, { ...KEYS[2], duration: 1 }, 1)
           .to(v, { ...KEYS[3], duration: 1 }, 2)
