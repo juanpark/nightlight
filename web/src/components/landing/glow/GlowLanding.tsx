@@ -93,16 +93,18 @@ const LINKS = [
 // the attic, 3 up over the Pi's old logs, 4 back out to the whole house, 5 high
 // above it, 6 down on the front path, and 7 pulled back to the whole street as
 // the shop, the office and the server room are wired in.
+// On wide screens the house opens on the right of the hero's words; through the four
+// steps it sits centred in the open space between the steps rail and the card (ox -0.02).
 const BASE: View = {
-  tx: 0, ty: 12.6, tz: 0, zoom: 0.84, az: 30, el: 22, ox: 0, oy: 0, lift: -0.04,
+  tx: 0, ty: 7.4, tz: 0, zoom: 0.96, az: 30, el: 22, ox: 0.2, oy: 0, lift: -0.04,
   follow: 0, trail: 0, rings: 0, done: 0, lit: 0, orb: 0, logs: 0, mark: 0, town: 0, fit: 0,
 };
 const KEYS: Partial<View>[] = [
   BASE,
-  { tx: 0.6, ty: 6.6, tz: -1.4, zoom: 2.1, az: 26, el: 28, ox: -0.1, oy: 0.2, lift: 0, follow: 0.25, rings: 1 },
-  { tx: 0.8, ty: 6.75, tz: -1.5, zoom: 3.1, az: -24, el: 9, ox: -0.1, oy: 0.2, follow: 0, rings: 0.5 },
-  { tx: 1.1, ty: 6.5, tz: -1.5, zoom: 3, az: 46, el: 42, ox: -0.1, oy: 0.22, rings: 0 },
-  { tx: 0, ty: 5.4, tz: 0, zoom: 1.12, az: 28, el: 20, ox: -0.12, oy: 0.18, lit: 1, orb: 1 },
+  { tx: 0.6, ty: 6.6, tz: -1.4, zoom: 2.1, az: 26, el: 28, ox: -0.02, oy: 0.2, lift: 0, follow: 0.25, rings: 1 },
+  { tx: 0.8, ty: 6.75, tz: -1.5, zoom: 3.1, az: -24, el: 9, ox: -0.02, oy: 0.2, follow: 0, rings: 0.5 },
+  { tx: 1.1, ty: 6.5, tz: -1.5, zoom: 3, az: 46, el: 42, ox: -0.02, oy: 0.22, rings: 0 },
+  { tx: 0, ty: 5.4, tz: 0, zoom: 1.12, az: 28, el: 20, ox: -0.02, oy: 0.18, lit: 1, orb: 1 },
   { tx: 0, ty: 0.5, tz: 0, zoom: 0.6, az: 42, el: 48, ox: 0.2, oy: -0.15, lift: 0.08 },
   { tx: -0.5, ty: 3.4, tz: 1.5, zoom: 0.92, az: 6, el: 5, ox: 0, oy: 0.02, lift: -0.25 },
   { tx: 0, ty: 3, tz: 0, zoom: 0.44, az: 12, el: 26, ox: 0, oy: 0.19, lift: -0.12, fit: 26 },
@@ -470,19 +472,25 @@ export function GlowLanding() {
 
       <main id="glow-main" className={s.main}>
         <section ref={hero} className={s.hero} aria-labelledby="glow-title">
-          <h1 id="glow-title" className={s.h1} data-rise>
-            You sleep.
-            <br />
-            It keeps watch.
+          {/* The buttons live in the nav; the hero is words, then the way on. */}
+          <h1 id="glow-title" className={s.h1}>
+            <span className={s.h1Sleep} data-rise>
+              You sleep.
+            </span>{" "}
+            <span className={s.h1Watch} data-rise>
+              It keeps watch.
+            </span>
           </h1>
           <p className={s.lede} data-rise>
             Nightlight looks after the computers in your home or small office. It tells you what’s wrong in plain
             words, and never fixes anything without your yes.
           </p>
-          <div data-rise>
-            <AuthButtons styles={s} />
-          </div>
           <a href="#intro" className={s.cue} data-rise>
+            <span className={s.cueIcon} aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 2.5v11M3.5 9 8 13.5 12.5 9" />
+              </svg>
+            </span>
             Scroll to watch one night
           </a>
           <p className={s.sample}>

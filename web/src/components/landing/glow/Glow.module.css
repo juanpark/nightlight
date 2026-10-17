@@ -371,51 +371,76 @@
 
 /* ---------- Hero ---------- */
 .main { position: relative; z-index: 1; }
+/* Every line of the hero shares one left edge, lined up with the text inside the
+   nav capsule; on wide screens the house fills the right half, and the way on waits
+   at the bottom. Sizes follow the screen's height too, so short laptops fit. */
 .hero {
+  --hero-inset: max(var(--gutter), calc((100% - 1180px) / 2));
+  --h1-size: clamp(2.75rem, min(6.6vw, 11.5svh), 6rem);
   position: relative;
   min-height: 100svh;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  justify-items: center;
-  gap: 22px;
-  padding: clamp(112px, 17vh, 160px) var(--gutter) 40px;
-  text-align: center;
+  justify-items: start;
+  padding: clamp(104px, 15svh, 152px) calc(var(--hero-inset) + 24px) 40px;
 }
 .h1 {
   margin: 0;
-  max-width: 15ch;
   font-family: var(--font-display), system-ui, sans-serif;
-  font-size: clamp(2.5rem, 6.4vw, 5.6rem);
+  font-size: var(--h1-size);
   font-weight: 700;
   line-height: 0.98;
   letter-spacing: -0.035em;
-  text-wrap: balance;
 }
+.h1Sleep,
+.h1Watch { display: block; white-space: nowrap; }
 .lede {
-  margin: 0;
-  max-width: 34rem;
-  font-size: clamp(1.0625rem, 1.4vw, 1.25rem);
+  margin: clamp(16px, 2.8svh, 32px) 0 0;
+  max-width: 30rem;
+  font-size: clamp(1rem, 1.25vw, 1.125rem);
+  line-height: 1.55;
   color: var(--muted);
   text-wrap: pretty;
 }
+/* Mid widths: the house comes closer on the right, so the lede wraps sooner. */
+@media (max-width: 1100px) {
+  .lede { max-width: 26rem; }
+}
 .cue {
   position: absolute;
-  bottom: 36px;
-  left: 50%;
-  translate: -50% 0;
+  bottom: 28px;
+  left: calc(var(--hero-inset) + 24px);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding-right: 6px;
   font-size: 0.75rem;
+  font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   text-decoration: none;
-  /* The top padding only grows the tap area to 44px; the underline stays where it was. */
-  padding: 19px 4px 6px;
-  border-bottom: 1px solid var(--line-strong);
   color: var(--text);
   white-space: nowrap;
 }
+.cueIcon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgb(var(--night-rgb) / 0.4);
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+.cueIcon svg { transition: translate 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+.cue:hover .cueIcon { border-color: var(--star); color: var(--star); }
+.cue:hover .cueIcon svg { translate: 0 2px; }
 .sample {
   position: absolute;
-  right: var(--gutter);
+  /* The pill's padding hangs outside the text edge, so the words line up. */
+  right: calc(var(--hero-inset) + 12px);
   bottom: 36px;
   margin: 0;
   display: inline-flex;
@@ -423,6 +448,10 @@
   gap: 8px;
   font-size: 0.8125rem;
   color: var(--muted);
+  /* It sits over the house, so it carries a little night behind it. */
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgb(var(--night-rgb) / 0.72);
 }
 .sampleDot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; }
 
@@ -805,8 +834,10 @@
    keep their glass; and the reveal's words, which sit straight on the moving
    street, get a soft wash of night behind them. */
 @media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
-  .hero { padding-top: 104px; }
-  .sample { right: auto; left: 50%; translate: -50% 0; bottom: 80px; }
+  .hero { --h1-size: clamp(2.75rem, 13vw, 4.25rem); row-gap: 20px; padding: 112px var(--gutter) 40px; }
+  .lede { margin: 0; font-size: 1.0625rem; }
+  .cue { left: var(--gutter); }
+  .sample { right: auto; left: calc(var(--gutter) - 12px); bottom: 88px; }
   .railWrap { display: none; }
   .step {
     grid-template-columns: 1fr;
@@ -877,11 +908,10 @@
 /* Phones on their side: the hero and the reveal's words fit a short screen, and
    the reveal's wash comes from the left, since the street is to the right. */
 @media (max-height: 520px) and (orientation: landscape) {
-  .hero { gap: 14px; padding-top: 84px; padding-bottom: 24px; min-height: auto; }
-  .h1 { font-size: clamp(2rem, 10svh, 3.25rem); }
+  .hero { --h1-size: clamp(2rem, 10svh, 3.25rem); row-gap: 14px; padding-top: 84px; padding-bottom: 24px; min-height: auto; }
   .lede { font-size: 1rem; max-width: 40rem; }
   .cue { display: none; }
-  .sample { position: static; translate: none; }
+  .sample { position: static; }
   .beyondPin .h2 { font-size: clamp(1.75rem, 9svh, 2.5rem); margin-bottom: 14px; }
   .beyondText { max-width: 26rem; font-size: 0.9375rem; }
   .beyondPin {
