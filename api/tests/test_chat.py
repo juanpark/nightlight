@@ -400,3 +400,14 @@ def test_a_promised_card_needs_its_device_positively_named(client, started):  # 
         FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), claim, "Waiting for you.")
         ev = events(ask(client, new_session(client), "Clean up"))
         assert ("rotate_logs" in [e["name"] for e in ev if e["type"] == "tool_call"]) is made, claim
+
+
+def test_a_waiting_trust_offer_is_in_the_home_summary(client, started):
+    from nightlight_api import trust as trustlib
+    from conftest import generation
+    g = generation(started)
+    assert "Trust offers" not in agentlib.fleet_summary(started, g)
+    doc = {**trustlib.new_doc("rotate_logs", g), "offer": {"offerId": "offer_x", "demoGeneration": g, "text": "x"}}
+    db.trust_doc(started, "sim", "rotate_logs").set(doc)
+    assert "Trust offers waiting for their answer in the Trust panel: Clean up old log files" in \
+        agentlib.fleet_summary(started, g)
