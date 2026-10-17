@@ -16,7 +16,16 @@ CFG=$(curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token)" -H 
 val() { python3 -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])" "$CFG" "$1"; }
 ./scripts/secret_scan.sh
 mkdir -p web/public && cp helper/nightlight_helper.py web/public/nightlight_helper.py  # served for /install.sh (not committed)
-gcloud run deploy nightlight-web --source web --project "$PROJECT" --region "$REGION" \
+# Every revision gets a known name, so production can be pointed at exactly this build: once a preview has pinned
+# the traffic split, a plain deploy no longer moves it (it did not, Oct 17 14:40–17:30 KST), and "latest" could be
+# someone's preview.
+SUFFIX=${PREVIEW:-prod}-$(git rev-parse --short HEAD)-$(date +%H%M%S)
+gcloud run deploy nightlight-web --source web --project "$PROJECT" --region "$REGION" --revision-suffix "$SUFFIX" \
   --allow-unauthenticated --min-instances 0 --max-instances 3 --cpu 1 --memory 512Mi \
   ${PREVIEW:+--tag "$PREVIEW" --no-traffic} \
   --set-env-vars "^@^API_URL=${API_URL}@FIREBASE_API_KEY=$(val apiKey)@FIREBASE_AUTH_DOMAIN=$(val authDomain)@FIREBASE_PROJECT_ID=$(val projectId)@FIREBASE_APP_ID=$(val appId)"
+if [ -z "$PREVIEW" ]; then
+  gcloud run services update-traffic nightlight-web --project "$PROJECT" --region "$REGION" \
+    --to-revisions "nightlight-web-${SUFFIX}=100"
+  echo "Production now serves nightlight-web-${SUFFIX}"
+fi
