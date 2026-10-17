@@ -8,6 +8,7 @@ import { Info, LayoutGrid, MessageCircle, Star } from "lucide-react";
 import { ago, answering, type Need } from "@/lib/needsYou";
 import { APP_CAP, appOrder } from "@/lib/apps";
 import { useServices } from "@/lib/data";
+import { named } from "@/lib/follow";
 import type { Device } from "@/lib/types";
 import NeedsMark from "../NeedsMark";
 import { appIcon, deviceIcon, roleOf } from "./kinds";
@@ -16,6 +17,7 @@ export type DeviceNodeData = {
   device: Device; uid: string; needs?: Need[]; now: number; by?: string; // by: the device that watches it
   favorites?: boolean; // the Favorites filter is on: starred apps stand out
   focused?: boolean; // opened in place: every app as a chip
+  lit?: "working" | "done"; litApps?: string[]; // the chat's answer is working on it / worked on it, and the apps it named
   onOpen: (id: string) => void; onAsk: (q: string) => void;
   onFocus: (id: string) => void; onApp: (id: string, svcId: string) => void;
   onSize: (id: string, h: number) => void; // an opened card says how tall it grew, so its neighbours make room
@@ -73,7 +75,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   // A thing a helper watches (a router, a printer…): Nightlight only knows whether it answers, so no gauges.
   if (d.kind === "watched") {
     return (
-      <div className={`dnode watched ${d.status} ${roleOf(d) === "router" ? "router" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""}`}
+      <div className={`dnode watched ${d.status} ${roleOf(d) === "router" ? "router" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${data.lit ? `lit-${data.lit}` : ""}`}
         onDoubleClick={() => data.onOpen(d.id)}>
         {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
         {tools}
@@ -90,7 +92,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   }
   const shown = focused ? appOrder(services, d.favoriteApps ?? []) : [];
   return (
-    <div ref={box} className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${focused ? "focused" : ""}`}
+    <div ref={box} className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${focused ? "focused" : ""} ${data.lit ? `lit-${data.lit}` : ""}`}
       onDoubleClick={() => data.onOpen(d.id)}>
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
       {tools}
@@ -113,7 +115,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
             const Icon = appIcon(s);
             const fav = (d.favoriteApps ?? []).includes(s.id);
             return (
-              <button key={s.id} className={`dchip ${s.status ?? "ok"} ${fav && data.favorites ? "hl" : ""} nodrag`}
+              <button key={s.id} className={`dchip ${s.status ?? "ok"} ${fav && data.favorites ? "hl" : ""} ${named(s, data.litApps) ? "lit-app" : ""} nodrag`}
                 title={`${s.name}: ${s.status ?? "ok"}`}
                 onClick={(e) => { e.stopPropagation(); data.onApp(d.id, s.id); }}>
                 <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span>
@@ -128,7 +130,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
         <div className={`dfavs ${data.favorites ? "hl" : ""}`}>
           {favs.map((s) => {
             const Icon = appIcon(s);
-            return <span key={s.id} className={`dchip ${s.status ?? "ok"}`} title={`${s.name}: ${s.status ?? "ok"}`}>
+            return <span key={s.id} className={`dchip ${s.status ?? "ok"} ${named(s, data.litApps) ? "lit-app" : ""}`} title={`${s.name}: ${s.status ?? "ok"}`}>
               <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span></span>;
           })}
         </div>)}

@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, savedSession } from "@/lib/session";
 import { ApiError, stream } from "@/lib/api";
+import { followBegin, followEnd, followStep, followText } from "@/lib/follow";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
 import TurnView, { afterLine } from "./chat/TurnView";
@@ -82,7 +83,10 @@ const Chat = forwardRef<ChatHandle, {
       const ctl = new AbortController();
       watching.current.add(ctl);
       setTurns((cur) => [...cur, { kind: "agent", key: k, mode: turnMode, blocks: [], busy: true, after }]);
+      const followed = followBegin(); // the map lights up what this answer's steps touch
       const onEvent = (e: StreamEvent) => {
+        if (e.type === "tool_call") followStep(followed, e.args);
+        else if (e.type === "text") followText(followed, e.delta);
         // A device that answers later promises a follow-up turn: open it once its action points to it.
         if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
         else update(k, (t) => apply(t, e, devicesRef.current));
@@ -108,6 +112,7 @@ const Chat = forwardRef<ChatHandle, {
         }
       } finally {
         watching.current.delete(ctl);
+        followEnd(followed);
       }
     }, []);
 
