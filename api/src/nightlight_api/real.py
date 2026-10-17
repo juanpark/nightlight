@@ -531,7 +531,8 @@ def remove_watched(uid: str, device_id: str) -> dict:
             raise not_found()
         dref = discoveries_ref(uid).document(d.get("watchedBy", "_"))
         disc = dref.get(transaction=tx)
-        tx.update(ref, {"revoked": True, "status": "offline", "health": "unknown", "watchedBy": None})
+        tx.update(ref, {"revoked": True, "status": "offline", "health": "unknown", "watchedBy": None,
+                        "archived": True, "archivedAt": firestore.SERVER_TIMESTAMP})  # off the map, for everyone
         tx.delete(db.client().collection("realDevices").document(f"{uid}__{device_id}"))
         if disc.exists:
             items = disc.to_dict().get("items") or []
@@ -863,7 +864,8 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
             if wd.get("watchState") == "silent":
                 event(tx, uid, w.id, "back", "info", f"{wd.get('name')} is being checked again.")
             tx.update(w.reference, {"watchState": None, "status": "ok" if up else "crit", "health": "verified",
-                                    "lastSeen": _now(),
+                                    "lastSeen": _now(),  # the last check, answered or not
+                                    **({"lastAnswerAt": _now()} if up else {}),
                                     "vitals": {"latencyMs": r.get("ms")},
                                     "findings": [] if up else [{"id": "f_watch_down", "check": "watched_down",
                                                                 "severity": "crit", "message": what + ".",

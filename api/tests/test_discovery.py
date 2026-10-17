@@ -258,3 +258,21 @@ def test_looking_from_every_device_asks_each_of_them(client, started):
     beat(client, b["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21", "net": {**home, "self": "b" * 20}})
     r = client.post("/api/discover", json={"everyDevice": True}).json()
     assert sorted(x["name"] for x in r["asked"]) == ["Mac", "Pi"]
+
+
+def test_stop_watching_takes_it_off_the_map_and_last_answer_is_kept(client, started):
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], FACTS)
+    h = {"X-Device-Token": dev["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ITEM]}, headers=h).status_code == 200
+    wid = client.post(f"/api/discoveries/{dev['deviceId']}/{ITEM['cid']}/add", json={"name": "HA"}).json()["deviceId"]
+    _again(dev["token"])
+    beat(client, dev["token"], {**FACTS, "watchResults": [{"cid": ITEM["cid"], "up": True, "ms": 4}]})
+    answered = db.device(started, wid).get().to_dict()["lastAnswerAt"]
+    _again(dev["token"])
+    beat(client, dev["token"], {**FACTS, "watchResults": [{"cid": ITEM["cid"], "up": False, "ms": None}]})
+    w = db.device(started, wid).get().to_dict()
+    assert w["lastAnswerAt"] == answered and w["lastSeen"] > answered  # a failed check isn't an answer
+    assert client.post(f"/api/devices/{wid}/revoke", json={}).status_code == 200
+    assert db.device(started, wid).get().to_dict()["archived"] is True
+    assert wid not in agentlib.fleet_summary(started, generation(started))
