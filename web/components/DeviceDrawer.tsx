@@ -129,7 +129,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
             <div key={s.id} className="svc">
               <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
               <div style={{ flex: 1 }}>
-                <div><strong>{s.name}</strong> {s.version && <span className="small muted">v{s.version}</span>}
+                <div><strong>{s.name}</strong> {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
                   {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
                 {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
                 {s.detail && <div className="small muted">{s.detail}</div>}
