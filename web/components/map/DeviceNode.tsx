@@ -107,7 +107,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
             <Gauge label="Mem" value={d.vitals?.mem} />
             <Gauge label="CPU" value={d.vitals?.cpu} />
           </div>)}
-      {focused && !compact && (
+      {focused && ( // an opened card shows its apps at any zoom
         <div className="dappgrid" role="group" aria-label={`Apps on ${d.name}`}>
           {shown.slice(0, APP_CAP).map((s) => {
             const Icon = appIcon(s);

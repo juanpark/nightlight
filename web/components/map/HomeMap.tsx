@@ -52,7 +52,7 @@ function sides(a: { x: number; y: number }, b: { x: number; y: number }): [Posit
 const FOCUS_ZOOM = 1.3, UNFOCUS_ZOOM = 1.2; // zoomed in this far, the card in the middle opens; a bit less, it closes
 
 /** An opened card grows downward: the cards below it, in its column, move down together to make room. Display only;
- * it is never saved (a drag closes the opened card first). */
+ * it is never saved (a drag saves the card's real spot plus how far it was dragged). */
 function makeRoom(spots: Map<string, { x: number; y: number }>, id: string, h: number) {
   const f = spots.get(id);
   if (!f || h <= NODE_H) return spots;
@@ -102,13 +102,26 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const focusOn = useCallback((id: string) => {
     if (phone.current) setSheet(id); else { setFocusH(0); setFocus({ id, by: "tap" }); }
   }, []);
+  useEffect(() => {
+    if (!focus) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setFocus(null); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [focus]);
   const sized = useCallback((id: string, h: number) => setFocusH((x) => (x === h ? x : h)), []);
 
   // Devices from the database become nodes. A node being dragged keeps its place, and a dropped one stays where it
-  // was dropped until the database has the new spot (or the save fails).
-  const base = useMemo(() => arrange(devices), [devices]);
+  // was dropped until the database has the new spot (or the save fails). base is where each one really is (what gets
+  // saved); spots is where it shows, moved down while a card above it is open.
+  const base = useMemo(() => {
+    const b = arrange(devices);
+    for (const [id, p] of Object.entries(held)) if (b.has(id)) b.set(id, { x: p.x, y: p.y });
+    return b;
+  }, [devices, held]);
   const focusId = focus && devices.some((d) => d.id === focus.id) ? focus.id : null;
   const spots = useMemo(() => focusId ? makeRoom(base, focusId, focusH) : base, [base, focusId, focusH]);
+  // how far a card was shown away from its real spot when its drag began; the drop saves the real spot plus the drag
+  const shift = useRef<Record<string, { dx: number; dy: number }>>({});
   useEffect(() => setHeld((h) => {
     const left = Object.entries(h).filter(([id, p]) => devices.some((d) => d.id === id && (d.x !== p.x || d.y !== p.y)));
     return left.length === Object.keys(h).length ? h : Object.fromEntries(left);
@@ -118,13 +131,13 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const old = cur.find((n) => n.id === d.id);
       return {
         id: d.id, type: "device", deletable: false, selected: d.id === selected, dragging: old?.dragging,
-        position: old?.dragging ? old.position : (held[d.id] && { x: held[d.id].x, y: held[d.id].y }) ?? spots.get(d.id)!,
+        position: old?.dragging ? old.position : spots.get(d.id)!,
         data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask, favorites,
           focused: d.id === focusId, onFocus: focusOn, onApp: app, onSize: sized,
           by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
-  }, [devices, spots, held, marks, selected, uid, now, open, ask, favorites, focusId, focusOn, app, sized, setNodes]);
+  }, [devices, spots, marks, selected, uid, now, open, ask, favorites, focusId, focusOn, app, sized, setNodes]);
   // A removed line's marker goes once the database no longer has that line (gone, or written again since).
   const hidden = useCallback((l: Link) => removed[l.id] === stamp(l), [removed]);
   useEffect(() => setRemoved((m) => {
@@ -228,10 +241,9 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
 
   return (
     <div className="homemap" aria-label="Map of your home" onKeyDown={(e) => {
-      // Enter on a focused device opens it, as a click does (Tab moves between devices); Esc closes an opened card
+      // Enter on a focused device opens it, as a click does (Tab moves between devices)
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);
-      if (e.key === "Escape") setFocus(null);
     }}>
       <div className="hm-canvas" ref={box}>
       <ReactFlow<DeviceNodeType, LinkEdgeType>
@@ -239,8 +251,15 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         onNodesChange={(ch: NodeChange<DeviceNodeType>[]) => onNodesChange(ch.filter((c) => c.type !== "remove"))}
         onInit={(i) => { flow.current = i; }}
         onNodeClick={(_, n) => { setEdgeSel(null); open(n.id); }}
-        onNodeDragStart={() => setFocus(null)}
-        onNodeDragStop={(_, n) => dropped(n.id, n.position)}
+        onNodeDragStart={(_, n) => {
+          const b = base.get(n.id), v = spots.get(n.id);
+          shift.current[n.id] = b && v ? { dx: v.x - b.x, dy: v.y - b.y } : { dx: 0, dy: 0 };
+        }}
+        onNodeDragStop={(_, n) => {
+          const o = shift.current[n.id] ?? { dx: 0, dy: 0 };
+          delete shift.current[n.id];
+          dropped(n.id, { x: n.position.x - o.dx, y: n.position.y - o.dy });
+        }}
         onMoveEnd={(_, v) => moved(v)}
         onEdgeClick={(_, e) => setEdgeSel(e.id)}
         onPaneClick={() => { setEdgeSel(null); setFocus(null); }}

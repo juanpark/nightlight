@@ -15,7 +15,7 @@ const same = (a: string[], b: string[]) => new Set(a).size === new Set(b).size &
 const empty = (x: Draft) => !x.favorite && !x.apps;
 
 /** The device's stars as the owner last set them here, and the toggles. Drafts belong to one device and are dropped
- * once its doc agrees; a failed save undoes only itself, and only when no later tap of the same kind came after it. */
+ * once its doc agrees; saves go in order, and a failed one undoes only itself when no later tap of its kind came. */
 export function useFavorites(d: Device) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [err, setErr] = useState("");
@@ -32,21 +32,37 @@ export function useFavorites(d: Device) {
   const favorite = mine?.favorite?.v ?? !!d.favorite;
   const apps = mine?.apps?.v ?? d.favoriteApps ?? [];
 
+  // Saves of one kind of star on one device go one at a time, newest last: a tap while one is on its way waits and
+  // replaces any tap still waiting, so the server always ends on the latest choice.
+  const busy = useRef<Record<string, boolean>>({});
+  const waiting = useRef<Record<string, { v: boolean | string[]; n: number }>>({});
   async function save(key: "favorite" | "apps", v: boolean | string[]) {
-    const n = ++seq.current, id = d.id;
+    const n = ++seq.current, id = d.id, k = `${id}:${key}`;
     setErr("");
     setDraft((x) => ({ ...(x?.id === id ? x : {}), id, [key]: { v, n } }));
-    try {
-      await api("POST", `/api/devices/${id}/layout`, key === "favorite" ? { favorite: v } : { favoriteApps: v });
-    } catch {
-      setDraft((x) => {
-        if (x?.id !== id || x[key]?.n !== n) return x;
-        const y = { ...x };
-        delete y[key];
-        return empty(y) ? null : y;
-      });
-      setErr("Couldn't save the star. Try again.");
+    if (busy.current[k]) { waiting.current[k] = { v, n }; return; }
+    busy.current[k] = true;
+    let job: { v: boolean | string[]; n: number } | undefined = { v, n };
+    while (job) {
+      let failed = false;
+      try {
+        await api("POST", `/api/devices/${id}/layout`, key === "favorite" ? { favorite: job.v } : { favoriteApps: job.v });
+      } catch { failed = true; }
+      const next: { v: boolean | string[]; n: number } | undefined = waiting.current[k];
+      delete waiting.current[k];
+      if (failed && !next) {
+        const m = job.n; // undo this tap (only this kind of star) if no later tap came after it
+        setDraft((x) => {
+          if (x?.id !== id || x[key]?.n !== m) return x;
+          const y = { ...x };
+          delete y[key];
+          return empty(y) ? null : y;
+        });
+        setErr("Couldn't save the star. Try again.");
+      }
+      job = next; // a newer choice supersedes this one, saved or not
     }
+    busy.current[k] = false;
   }
   return {
     favorite, apps, err,
