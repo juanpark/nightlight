@@ -304,9 +304,10 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);
     }}>
-      {/* any hand on the map (a card, the paper, the minimap, the zoom buttons, a pinch, a wheel) keeps the chat's
-          camera still until it has been off for a few seconds */}
-      <div className="hm-canvas" ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}>
+      {/* any hand on the map (a card, the paper, the minimap, the zoom buttons, a pinch, a wheel, a key) keeps the
+          chat's camera still until it has been off for a few seconds */}
+      <div className="hm-canvas" ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}
+        onKeyDownCapture={() => { lastHands.current = Date.now(); }}>
       <ReactFlow<DeviceNodeType, LinkEdgeType>
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         onNodesChange={(ch: NodeChange<DeviceNodeType>[]) => onNodesChange(ch.filter((c) => c.type !== "remove"))}

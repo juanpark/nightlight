@@ -64,7 +64,8 @@ const Chat = forwardRef<ChatHandle, {
       if (nearBottom.current) log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
     }, [turns]);
     // Answers belong to this account and home: a new one (or leaving) makes the map forget what older answers lit.
-    useEffect(() => { followReset(); return () => followReset(); }, [uid, generation]);
+    const life = useRef(0); // which account-and-home this chat is for; work begun for an earlier one is dropped
+    useEffect(() => { life.current++; followReset(); return () => { life.current++; followReset(); }; }, [uid, generation]);
     // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
     useEffect(() => {
       setTurns([]);
@@ -134,6 +135,7 @@ const Chat = forwardRef<ChatHandle, {
       setText("");
       nearBottom.current = true;
       setTurns((cur) => [...cur, { kind: "user", key: key(), text: q }]);
+      const mine = life.current;
       let sid: string;
       try {
         sid = await chatSession(uid, generation);
@@ -145,6 +147,7 @@ const Chat = forwardRef<ChatHandle, {
         sendingRef.current = false;
         setSending(false);
       }
+      if (mine !== life.current) return; // signed out or moved to another home while the chat was being created
       await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID(), mode }, mode);
     }, [busy, run, uid, generation, mode]);
 
