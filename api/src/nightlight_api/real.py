@@ -512,39 +512,42 @@ DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
 
 def request_discover(uid: str, device_id: str) -> dict:
     """Ask one device to look nearby. A scan still under way is that scan (asking twice doesn't queue a second); a new
-    scan gets its own identity, so a late result from an earlier one can never finish it.
+    scan gets its own identity, so a late result from an earlier one can never finish it."""
+    return _numbered_request(uid, device_id, "discover")
 
-    Scans are numbered per device; scan n is the job with identity `app_discover_<n>` (`once`: a finished one is never
-    reopened). One transaction reads the counter and that job: missing or under way, ask for scan n again (whoever
-    asked first may still be making it; asking again finds it); finished, move to n + 1. Nothing else is recorded, so
-    an interruption anywhere leaves nothing half done."""
+
+def _numbered_request(uid: str, device_id: str, kind: str) -> dict:
+    """One job of this kind under way per device, each with its own identity. Jobs are numbered per device and kind;
+    job n is the action with identity `app_<kind>_<n>` (`once`: a finished one is never reopened). One transaction
+    reads the counter and that job: missing or under way, ask for job n again (whoever asked first may still be making
+    it; asking again finds it); finished, move to n + 1. Nothing else is recorded, so an interruption anywhere leaves
+    nothing half done, and simultaneous requests agree on one job."""
     from . import actions
-    slot = db.user(uid).collection("scans").document(device_id)
+    slot = db.user(uid).collection("scans").document(device_id if kind == "discover" else f"{device_id}__{kind}")
 
     @firestore.transactional
     def which(tx):
         user = db.user(uid).get(transaction=tx).to_dict() or {}
         snap = slot.get(transaction=tx)
         n = (snap.to_dict() or {}).get("n", 0) if snap.exists else 0
-        a = db.action(uid, _scan_action_id(user, device_id, n)).get(transaction=tx) if n else None
+        a = db.action(uid, _scan_action_id(user, device_id, n, kind)).get(transaction=tx) if n else None
         if n and (not a.exists or (a.to_dict() or {}).get("status") in ("pending", "approved", "running")):
             return n
         tx.set(slot, {"n": n + 1})
         return n + 1
 
-    for _ in range(3):  # a scan finishing between choosing and asking: choose again
+    for _ in range(3):  # a job finishing between choosing and asking: choose again
         n = db.run_transaction(which)
-        a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{n}",
+        a = actions.request(uid, kind, device_id, {}, session_id=None, turn_id=f"app_{kind}_{n}",
                             origin="app", once=True)
         if a.get("status") in ("pending", "approved", "running"):
             return a
     return a
 
-
-def _scan_action_id(user: dict, device_id: str, n: int) -> str:
-    """The job identity of scan n on this device (as actions.request derives it)."""
-    return make_action_id(proposal_key(user.get("demoGeneration"), f"app_discover_{n}", device_id,
-                                       service_for({}), "discover", {}))
+def _scan_action_id(user: dict, device_id: str, n: int, kind: str = "discover") -> str:
+    """The identity of job n of this kind on this device (as actions.request derives it)."""
+    return make_action_id(proposal_key(user.get("demoGeneration"), f"app_{kind}_{n}", device_id,
+                                       service_for({}), kind, {}))
 
 
 def discover_everywhere(uid: str, every_device: bool = False) -> dict:
@@ -1117,7 +1120,7 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
             return d, None
         # The choices are kept with the claim, so an attempt interrupted part-way is finished later with the same
         # choices (never this request's, which may differ), and its folder job keeps one identity.
-        choice = {k: prior[k] for k in ("preset", "autoUpdate", "macFolders")} if stalled else \
+        choice = {k: prior.get(k) for k in ("preset", "autoUpdate", "macFolders", "permsApplied")} if stalled else \
             {"preset": preset, "autoUpdate": auto_update, "macFolders": mac_folders}
         if d.get("manage") == "app":
             tx.update(ref, {"setup": {**choice, "state": "applying", "claimedAt": _now()}})
@@ -1142,7 +1145,10 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
                  "fix": {"diagnose": True, "cleanup": True, "updates": True, "autoUpdate": auto_update,
                          "logs": logs, "restart_container": containers, "restart_service": units},
                  "custom": {**DEFAULT_PERMISSIONS, **current, "autoUpdate": auto_update}}[preset]
-        set_permissions(uid, device_id, perms)
+        if choice.get("permsApplied"):
+            pass  # an earlier attempt already applied them (and the owner may have changed them since): leave them
+        else:  # recorded in the same transaction as the permissions, so a resumed setup never applies them twice
+            set_permissions(uid, device_id, perms, also={"setup.permsApplied": True})
         out["applied"] = True
     else:
         why = "strict_device" if d.get("manage") == "strict" else "update_helper"
@@ -1184,16 +1190,10 @@ def request_mac_folders(uid: str, device_id: str) -> dict:
         raise ValueError("not_a_mac")
     if d.get("manage") != "app" or release.newer(MAC_FOLDERS_FROM, d.get("helperVersion")):
         raise ValueError("update_helper")
-    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
-        filter=FieldFilter("type", "==", "mac_folders"))
-    for snap in q.get():
-        if snap.to_dict().get("status") in ("pending", "approved", "running"):
-            return {"actionId": snap.id, "status": snap.to_dict()["status"]}
-    a = actions.request(uid, "mac_folders", device_id, {}, session_id=None,
-                        turn_id=f"app_macfolders_{new_id('ask')}", origin="app", once=True)
+    a = _numbered_request(uid, device_id, "mac_folders")
     return {"actionId": a["id"], "status": a["status"]}
 
-def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
+def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = None) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device
     reported. The helper applies them on its next report (and still checks each action itself)."""
     ref = db.device(uid, device_id)
@@ -1217,7 +1217,7 @@ def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
                  "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
                  **{k: sorted(set(perms[k])) for k in
                                                          ("logs", "restart_container", "restart_service")}}
-        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP})
+        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
         words = []
         if clean["diagnose"] != before.get("diagnose"):
             words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")

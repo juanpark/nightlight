@@ -97,3 +97,29 @@ def test_an_interrupted_setup_is_finished_later_with_its_own_choices(client, sta
     r = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "watch"}).json()
     d = db.device(started, dev["deviceId"]).get().to_dict()
     assert r["done"] and d["setupPreset"] == "fix" and d["permissions"]["cleanup"] and d["permissions"]["autoUpdate"]
+
+
+def test_resuming_setup_never_undoes_settings_changed_meanwhile(client, started):  # codex release rev2 #1
+    from datetime import datetime, timedelta, timezone
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "os": "Debian 12"})
+    ref = db.device(started, dev["deviceId"])
+    # an attempt that applied Fix (recorded with the permissions), then stopped before finishing
+    ref.update({"setup": {"preset": "fix", "autoUpdate": False, "macFolders": False, "state": "applying",
+                          "permsApplied": True,
+                          "claimedAt": datetime.now(timezone.utc) - timedelta(minutes=5)}})
+    assert client.post(f"/api/devices/{dev['deviceId']}/permissions",
+                       json={"diagnose": True, "cleanup": False, "logs": [], "restart_container": [],
+                             "restart_service": []}).status_code == 200  # the owner restricts it meanwhile
+    r = client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()
+    assert r["done"] and ref.get().to_dict()["permissions"]["cleanup"] is False
+
+
+def test_asking_for_mac_folders_four_times_at_once_makes_one_request(client, started):  # codex release rev2 #2
+    from concurrent.futures import ThreadPoolExecutor
+    from nightlight_api import real
+    mac = enrolled(client, "Mac")
+    beat(client, mac["token"], {**FACTS, "manage": "app", "os": "macOS 26.1", "helperVersion": "0.9.23"})
+    with ThreadPoolExecutor(4) as pool:
+        ids = list(pool.map(lambda _: real.request_mac_folders(started, mac["deviceId"])["actionId"], range(4)))
+    assert len(set(ids)) == 1
