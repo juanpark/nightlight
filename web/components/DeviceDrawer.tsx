@@ -4,8 +4,10 @@
 // what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
+import { Star } from "lucide-react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
+import { useFavorites } from "@/lib/favorites";
 import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
@@ -58,6 +60,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
 }) {
   const services = useServices(uid, device.id);
+  const fav = useFavorites(device);
   const [allServices, setAllServices] = useState(false);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
@@ -78,7 +81,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   if (watched) {
     return (
       <div className="panel drawer" ref={box}>
-        <Head key={device.id} device={device} onClose={onClose} />
+        <Head key={device.id} device={device} fav={fav} onClose={onClose} />
         <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
         <WatchedPanel key={`watched:${device.id}`} uid={uid} generation={generation} device={device} devices={devices} onAsk={onAsk} onGo={onGo}
           onClose={onClose} />
@@ -87,7 +90,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   }
   return (
     <div className="panel drawer" ref={box}>
-      <Head key={device.id} device={device} onClose={onClose} />
+      <Head key={device.id} device={device} fav={fav} onClose={onClose} />
       <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
       <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
         : statusSentence(device, Date.now(), removing)}</p>
@@ -125,7 +128,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
             <div key={s.id} className="svc">
               <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
               <div style={{ flex: 1 }}>
-                <div><strong>{s.name}</strong> {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
+                <div><StarButton on={fav.isFavoriteApp(s.id)} label={`${s.name} as a favorite`} small
+                  onClick={() => fav.toggleApp(s.id)} /> <strong>{s.name}</strong> {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
                   {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
                 {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
                 {s.detail && <div className="small muted">{s.detail}</div>}
@@ -193,7 +197,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 type Finding = NonNullable<Device["findings"]>[number];
 
 /** Name (renamable on real devices), what kind of thing it is, Live or Sample, Close. */
-function Head({ device, onClose }: { device: Device; onClose: () => void }) {
+function Head({ device, fav, onClose }: { device: Device; fav: Favorites; onClose: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
   const real = device.realm === "real";
@@ -218,7 +222,9 @@ function Head({ device, onClose }: { device: Device; onClose: () => void }) {
         Rename</button>}
       <span className={`pill ${real ? "live" : ""}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Sample"}</span>
       <span style={{ flex: 1 }} />
+      <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />
       <button onClick={onClose}>Close</button>
+      {fav.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
     </div>
   );
 }
@@ -284,5 +290,17 @@ function Tags({ device }: { device: Device }) {
             placeholder="Add a tag (e.g. Parents)" style={{ padding: "3px 8px" }} />
         </form>)}
     </section>
+  );
+}
+
+type Favorites = ReturnType<typeof useFavorites>;
+
+/** A star that says what it does: "Star …" / "Unstar …" for screen readers, filled when on. */
+function StarButton({ on, label, small, onClick }: { on: boolean; label: string; small?: boolean; onClick: () => void }) {
+  return (
+    <button className={`star-btn ${on ? "on" : ""} ${small ? "small" : ""}`} aria-pressed={on}
+      aria-label={`${on ? "Unstar" : "Star"} ${label}`} title={on ? "Starred: tap to unstar" : "Star it"} onClick={onClick}>
+      <Star size={small ? 14 : 16} />
+    </button>
   );
 }

@@ -118,3 +118,18 @@
   .hm-canvas { height: min(calc(100dvh - 320px), 440px); min-height: 340px; }
   .hm-minimap { display: none; }
 }
+
+/* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
+.dnode .dstar { color: var(--glow); fill: var(--glow); flex: none; }
+.dfavs { display: flex; gap: 4px; margin-top: 6px; min-width: 0; }
+.dchip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; max-width: 100%;
+  font-size: 12px; line-height: 1; padding: 4px 6px; border-radius: 999px; background: var(--bg);
+  border: 1px solid var(--line); color: var(--ink); }
+.dchip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dchip svg { flex: none; }
+.dchip.ok svg { color: var(--ok); }
+.dchip.warn { border-color: var(--warn); }
+.dchip.warn svg { color: var(--warn); }
+.dchip.crit { border-color: var(--crit); }
+.dchip.crit svg { color: var(--crit); }
+.dfavs.hl .dchip { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }

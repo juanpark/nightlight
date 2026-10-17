@@ -1,5 +1,5 @@
 // What the home view can be narrowed to: a place (devices behind one router), kinds of things, only what needs the
-// person, tags. Pure functions; the bar (components/map/HomeBar.tsx) holds the choices.
+// person, favourites, tags. Pure functions; the bar (components/map/HomeBar.tsx) holds the choices.
 import type { Need } from "./needsYou";
 import type { Device, PlaceDoc, Watch } from "./types";
 
@@ -40,9 +40,11 @@ export function placesOf(devices: Device[], names: PlaceDoc[]): Place[] {
   });
 }
 
-export type Filter = { place: string | null; kinds: Category[]; needsMe: boolean; tags: string[] };
-export const NO_FILTER: Filter = { place: null, kinds: [], needsMe: false, tags: [] };
-export const filtering = (f: Filter) => !!f.place || f.kinds.length > 0 || f.needsMe || f.tags.length > 0;
+export type Filter = { place: string | null; kinds: Category[]; needsMe: boolean; favorites: boolean; tags: string[] };
+export const NO_FILTER: Filter = { place: null, kinds: [], needsMe: false, favorites: false, tags: [] };
+export const filtering = (f: Filter) => !!f.place || f.kinds.length > 0 || f.needsMe || f.favorites || f.tags.length > 0;
+/** A starred device, or one holding a starred app. */
+export const starred = (d: Device) => !!d.favorite || (d.favoriteApps?.length ?? 0) > 0;
 
 const tagged = (tags: string[], d: { realm?: string; tags?: string[] }) => tags.length === 0
   || tags.some((t) => t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t));
@@ -52,9 +54,11 @@ export function applyFilter(f: Filter, devices: Device[], marks?: Map<string, Ne
   return devices.filter((d) => (!f.place || placeOf(d, devices) === f.place)
     && (f.kinds.length === 0 || f.kinds.includes(categoryOf(d)))
     && (!f.needsMe || (marks?.get(d.id)?.length ?? 0) > 0 || d.status !== "ok")
+    && (!f.favorites || starred(d))
     && tagged(f.tags, d));
 }
 
-/** Watched websites have no place or kind: tags and "only what needs me" apply. */
+/** Watched websites have no place, kind or star: tags and "only what needs me" apply, and none is a favourite. */
 export const applyToWatches = (f: Filter, watches: Watch[]): Watch[] =>
-  watches.filter((w) => tagged(f.tags, { realm: "real", tags: w.tags }) && (!f.needsMe || w.status === "crit"));
+  watches.filter((w) => tagged(f.tags, { realm: "real", tags: w.tags }) && (!f.needsMe || w.status === "crit")
+    && !f.favorites);

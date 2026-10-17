@@ -33,7 +33,7 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
         : view === "list" || devices.length === 0
           ? <Board devices={shown} selected={selected} onSelect={onSelect} marks={marks} settingUp={settingUp} />
           : <HomeMap uid={uid} devices={shown} links={links} marks={marks} selected={selected} onSelect={onSelect}
-              onAsk={onAsk} now={now} />}
+              onAsk={onAsk} now={now} favorites={filter.favorites} />}
       <WatchedRow watches={filtering(filter) ? shownWatches : watches} now={now} onAsk={onAsk} />
     </div>
   );

@@ -27,6 +27,9 @@ export interface Service {
   lastBackupDaysAgo?: number;
   detail?: string | null;
   findings?: Finding[];
+  /** What it is, in a line, and which icon it gets (a key from a fixed set; see components/map/kinds.ts). */
+  about?: { icon?: string; oneLiner?: string; source?: "catalog" | "agent" } | null;
+  ports?: number[];
   /** For a failed system service (kind "system"): the exact unit name, e.g. "nginx.service". */
   unit?: string;
 }
@@ -79,6 +82,8 @@ export interface Device {
   role?: Role; roleSetBy?: "auto" | "user"; guess?: string; services?: string[]; ports?: number[];
   vendor?: string | null; maker?: string | null; model?: string | null; seenName?: string | null;
   nameFromSeen?: boolean;
+  /** Starred by the owner: the device itself, and its apps by Service.id (at most 20). */
+  favorite?: boolean; favoriteApps?: string[];
   checkPort?: number | null; watchedBy?: string | null; cid?: string;
   lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
   net?: { self?: string | null; selves?: string[]; gateway?: string | null; hw?: string } | null; // keyed fingerprints, never addresses

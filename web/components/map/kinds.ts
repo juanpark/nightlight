@@ -1,7 +1,8 @@
 // The map's visual vocabulary: an icon per kind of device, a line style per kind of relationship.
-import { Cctv, CircleHelp, Cpu, Gamepad2, Globe, HardDrive, House, Laptop, Monitor, Printer, Router, Server, Speaker,
-  type LucideIcon } from "lucide-react";
-import type { Device, LinkKind, Role } from "@/lib/types";
+import { Activity, AppWindow, Archive, Cctv, CircleHelp, Cloud, Container, Cpu, Database, Download, Film, Folder,
+  Gamepad2, GitBranch, Globe, HardDrive, House, Image, KeyRound, Laptop, Lock, Monitor, Network, Pickaxe, Printer, Radio,
+  RefreshCw, Router, Server, Shield, Signpost, Speaker, Terminal, Workflow, type LucideIcon } from "lucide-react";
+import type { Device, LinkKind, Role, Service } from "@/lib/types";
 
 export const DEVICE_ICON: Record<string, LucideIcon> = {
   pi: Cpu, mac: Monitor, nas: HardDrive, gameserver: Gamepad2, camera: Cctv, router: Router, computer: Laptop,
@@ -36,3 +37,17 @@ export const LINK_KINDS = Object.keys(LINK) as LinkKind[];
 
 export const GRID = 20; // graph-paper square; nodes snap to it
 export const NODE_W = 200, NODE_H = 132;
+
+/** An app's icon: the key Nightlight gave it (Service.about.icon), else one for its category, else a plain window. */
+const APP_ICON: Record<string, LucideIcon> = {
+  plex: Film, jellyfin: Film, pihole: Shield, adguard: Shield, homeassistant: House, homebridge: House, mqtt: Radio,
+  nodered: Workflow, tailscale: Network, wireguard: KeyRound, vpn: KeyRound, nextcloud: Cloud, syncthing: RefreshCw,
+  minecraft: Pickaxe, docker: Container, database: Database, web: Globe, dns: Signpost, backup: Archive,
+  download: Download, monitoring: Activity, photos: Image, files: Folder, git: GitBranch, passwords: Lock, ssh: Terminal,
+  generic: AppWindow,
+};
+const CATEGORY_ICON: Record<string, LucideIcon> = {
+  home: House, files: Folder, system: Cpu, network: Network, games: Gamepad2, containers: Container, media: Film,
+};
+export const appIcon = (s: Service): LucideIcon =>
+  APP_ICON[s.about?.icon ?? ""] ?? CATEGORY_ICON[s.category ?? ""] ?? AppWindow;

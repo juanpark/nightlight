@@ -1,18 +1,19 @@
 "use client";
 // One device on the map, read at a glance: its icon ringed in its status colour, three small gauges (disk, memory,
-// CPU), a dot per app it runs, and a mark when something needs the person. Zoomed out, only the icon and name stay.
+// CPU), up to three starred apps by name, a dot per app it runs, and a mark when something needs the person. Zoomed out, only the icon and name stay.
 // Hover or select it for quick actions; drag from an edge dot to another device to draw a relationship.
 import { memo } from "react";
 import { Handle, NodeToolbar, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
-import { Info, MessageCircle } from "lucide-react";
+import { Info, MessageCircle, Star } from "lucide-react";
 import { ago, answering, type Need } from "@/lib/needsYou";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
 import NeedsMark from "../NeedsMark";
-import { deviceIcon, roleOf } from "./kinds";
+import { appIcon, deviceIcon, roleOf } from "./kinds";
 
 export type DeviceNodeData = {
   device: Device; uid: string; needs?: Need[]; now: number; by?: string; // by: the device that watches it
+  favorites?: boolean; // the Favorites filter is on: starred apps stand out
   onOpen: (id: string) => void; onAsk: (q: string) => void;
 };
 export type DeviceNodeType = Node<DeviceNodeData, "device">;
@@ -46,6 +47,8 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   const sample = d.realm !== "real";
   const silent = d.realm === "real" && d.status === "offline";
   const bad = services.filter((s) => (s.status ?? "ok") !== "ok").length;
+  // the apps the owner starred, in the order they starred them
+  const favs = (d.favoriteApps ?? []).map((id) => services.find((s) => s.id === id)).filter((s) => !!s).slice(0, 3);
   const tools = (
     <NodeToolbar position={Position.Top} className="dtools">
       <button onClick={() => data.onAsk(`How is my ${d.name} doing?`)}><MessageCircle size={14} /> Ask</button>
@@ -62,6 +65,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
         <div className="dhead">
           <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} strokeWidth={1.8} /></span>
           <strong className="dname" title={d.purpose ?? d.name}>{d.name}</strong>
+          {d.favorite && <Star className="dstar" size={13} aria-label="Favorite" />}
           <NeedsMark needs={needs} />
         </div>
         {!compact && <div className={`dwatch ${d.status}`}>{answering(d, now)}</div>}
@@ -77,6 +81,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
       <div className="dhead">
         <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} strokeWidth={1.8} /></span>
         <strong className="dname" title={d.purpose ?? d.name}>{d.name}</strong>
+        {d.favorite && <Star className="dstar" size={13} aria-label="Favorite" />}
         <NeedsMark needs={needs} />
       </div>
       {!compact && (silent
@@ -86,6 +91,14 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
             <Gauge label="Mem" value={d.vitals?.mem} />
             <Gauge label="CPU" value={d.vitals?.cpu} />
           </div>)}
+      {!compact && favs.length > 0 && (
+        <div className={`dfavs ${data.favorites ? "hl" : ""}`}>
+          {favs.map((s) => {
+            const Icon = appIcon(s);
+            return <span key={s.id} className={`dchip ${s.status ?? "ok"}`} title={`${s.name}: ${s.status ?? "ok"}`}>
+              <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span></span>;
+          })}
+        </div>)}
       {!compact && services.length > 0 && (
         <div className="dapps" title={services.map((s) => `${s.name}: ${s.status ?? "ok"}`).join("\n")}>
           {services.slice(0, 5).map((s) => <span key={s.id} className={`dot ${s.status ?? "ok"}`} />)}

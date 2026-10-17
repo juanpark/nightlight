@@ -48,9 +48,9 @@ function sides(a: { x: number; y: number }, b: { x: number; y: number }): [Posit
   return dy >= 0 ? [Position.Bottom, Position.Top] : [Position.Top, Position.Bottom];
 }
 
-export default function HomeMap({ uid, devices, links, marks, selected, onSelect, onAsk, now }: {
+export default function HomeMap({ uid, devices, links, marks, selected, onSelect, onAsk, now, favorites }: {
   uid: string; devices: Device[]; links: Link[]; marks?: Map<string, Need[]>; selected: string | null;
-  onSelect: (id: string) => void; onAsk: (q: string) => void; now: number;
+  onSelect: (id: string) => void; onAsk: (q: string) => void; now: number; favorites?: boolean;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<DeviceNodeType>([]);
   const [edgeSel, setEdgeSel] = useState<string | null>(null);
@@ -81,11 +81,11 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       return {
         id: d.id, type: "device", deletable: false, selected: d.id === selected, dragging: old?.dragging,
         position: old?.dragging ? old.position : (held[d.id] && { x: held[d.id].x, y: held[d.id].y }) ?? spots.get(d.id)!,
-        data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask,
+        data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask, favorites,
           by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
-  }, [devices, spots, held, marks, selected, uid, now, open, ask, setNodes]);
+  }, [devices, spots, held, marks, selected, uid, now, open, ask, favorites, setNodes]);
   // A removed line's marker goes once the database no longer has that line (gone, or written again since).
   const hidden = useCallback((l: Link) => removed[l.id] === stamp(l), [removed]);
   useEffect(() => setRemoved((m) => {
