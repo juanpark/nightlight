@@ -1,9 +1,10 @@
 /* The layered chat: work log, system lines, mode switch (UX spec 2026-10-17 §4). Existing tokens only. */
 .turn-wrap, .turn { display: flex; flex-direction: column; gap: 6px; }
-/* earlier turns fade, but a card still waiting for an answer keeps full strength */
-.bubble.past, .turn.past > :not(.card):not(:has(.card)) { opacity: .75; }
+/* earlier turns step back to the secondary ink (never opacity: that makes off-token shades and fails contrast);
+   a card still waiting for an answer keeps full strength */
+.bubble.past, .turn.past > .bubble, .turn.past > .wl-note { color: var(--muted); }
 .turn-mode { align-self: flex-start; font-size: 11px; }
-.bubble.agent.thinking { color: var(--muted); display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 8px; }
+.turn-mascot.thinking { color: var(--muted); display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .bubble.agent { line-height: 1.55; } /* long answers */
 
 /* An empty chat: what it is for, and questions about what is on the map to start with (centred, not at the bottom). */
@@ -20,15 +21,14 @@
 .wl-head { all: unset; cursor: pointer; display: flex; gap: 6px; align-items: center; padding: 6px 10px; color: var(--muted);
   width: 100%; box-sizing: border-box; }
 .wl-head:focus-visible { outline: 2px solid var(--accent); border-radius: 10px; }
-.wl-chev { width: 10px; }
+.wl-chev { flex: none; }
 .wl-body { display: flex; flex-direction: column; gap: 3px; padding: 0 10px 8px; border-top: 1px solid var(--line);
   padding-top: 6px; }
 .wl-note { margin: 2px 0; color: var(--muted); white-space: pre-wrap; }
 .wl-step { line-height: 1.45; }
 .wl-step > summary { cursor: pointer; list-style: none; }
 .wl-step > summary::-webkit-details-marker { display: none; }
-.wl-step > summary::after { content: " ›"; color: var(--muted); }
-.wl-step[open] > summary::after { content: " ⌄"; }
+.wl-more { margin-left: 4px; color: var(--muted); vertical-align: -0.05em; }
 .wl-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; transform: translateY(-1px);
   background: var(--ok); }
 .wl-dot.running { background: var(--muted); animation: pulse 1s infinite alternate; }
@@ -42,9 +42,19 @@
 
 .chat-system { align-self: center; text-align: center; font-size: 12px; color: var(--muted); max-width: 92%;
   border-top: 1px dashed var(--line); padding-top: 4px; }
-.chat-system.stopped::before { content: "◌ "; }
-.chat-system.job::before { content: "✓ "; color: var(--ok); }
-.chat-system.mode::before { content: "⇄ "; }
+.chat-system > svg { vertical-align: -0.2em; margin-right: 2px; }
+
+/* Above a follow-up: how the job went (word + icon + colour), what it was, and what the device said. */
+.job-line { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 3px 10px; align-items: start;
+  padding: 10px 2px 2px; border-top: 1px dashed var(--line); font-size: 13px; line-height: 1.45; }
+.job-line > svg { grid-row: 1 / span 2; margin-top: 1px; }
+.job-line p { margin: 0; grid-column: 2; }
+.job-head { color: var(--ink); }
+.job-head b { font-weight: 650; margin-right: 4px; }
+.job-result { color: var(--muted); }
+.job-line.done > svg, .job-line.done b { color: var(--ok); }
+.job-line.failed > svg, .job-line.failed b { color: var(--warn); }
+.job-line.working > svg, .job-line.working b { color: var(--muted); }
 
 .mode-switch { display: flex; align-items: center; gap: 0; flex-wrap: wrap; padding: 0 10px 6px; }
 .mode-switch button { font-size: 12px; padding: 4px 10px; border-radius: 0; }
@@ -52,10 +62,38 @@
 .mode-switch button:nth-child(2) { border-radius: 0 8px 8px 0; margin-left: -1px; }
 .mode-switch button.on, .mode-switch button.on:hover { background: var(--select); color: var(--ink); border-color: var(--accent); font-weight: 650; position: relative; z-index: 1; }
 .mode-hint { flex-basis: 100%; padding-top: 3px; }
+.mode-switch { padding-top: 8px; }
 
 /* Permission presets reuse the segmented control; the switches sit folded under them. */
 .presets { padding: 0 0 6px; }
 .presets button .small { opacity: .8; }
 .perm-switches > summary { cursor: pointer; margin: 4px 0; }
 
-.thinking-mascot { align-self: flex-start; padding: 2px 4px; }
+.turn-mascot { align-self: flex-start; padding: 2px 4px; }
+
+/* A settled card folds to one line: how it went, then what it was. */
+.card.folded { padding: 0; background: transparent; }
+.card.folded > summary { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none;
+  font-size: 13px; line-height: 1.45; border-radius: var(--radius); }
+.card.folded > summary::-webkit-details-marker { display: none; }
+.card.folded > summary:hover { background: var(--panel-2); }
+.card.folded > summary > svg { flex: none; margin-top: 1px; }
+.card.folded > summary .caret { margin-top: 4px; color: var(--muted); }
+.card.folded .fold-text { flex: 1; min-width: 0; color: var(--ink); }
+.card.folded .fold-text b { font-weight: 650; margin-right: 4px; }
+.card.folded.done > summary > svg, .card.folded.done .fold-text b { color: var(--ok); }
+.card.folded.failed > summary > svg, .card.folded.failed .fold-text b { color: var(--warn); }
+.card.folded.quiet > summary > svg, .card.folded.quiet .fold-text b { color: var(--muted); }
+.card.folded[open] { background: var(--panel); }
+.card.folded[open] > summary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+.card.folded[open] > :not(summary) { margin: 10px 16px; }
+.card.folded[open] > dl { margin-bottom: 14px; }
+
+/* Back to the newest message, offered only after scrolling up while something arrived. */
+.to-latest { position: sticky; bottom: 8px; align-self: center; z-index: 2; display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 99px; font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow);
+  background: var(--panel); border-color: var(--line-strong); }
+
+/* The question box: one line to start, growing with what is typed. */
+.chat-input { align-items: flex-end; }
+.chat-input textarea { flex: 1; resize: none; min-height: 40px; max-height: 132px; line-height: 1.45; overflow-y: auto; }

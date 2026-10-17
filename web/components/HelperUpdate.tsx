@@ -5,6 +5,7 @@ import { useState } from "react";
 import { newer } from "@/lib/needsYou";
 import { api, ApiError } from "@/lib/api";
 import type { Action, Device } from "@/lib/types";
+import { ArrowText } from "@/src/components/icons";
 
 export default function HelperUpdate({ device, actions, origin, latest }: {
   device: Device; actions: Action[]; origin: string; latest?: string;
@@ -28,7 +29,7 @@ export default function HelperUpdate({ device, actions, origin, latest }: {
   return (
     <div className="update-bar small">
       <span className="pill live">Update available</span>
-      <span>Helper {device.helperVersion ?? "?"} → {latest}</span>
+      <span><ArrowText text={`Helper ${device.helperVersion ?? "?"} → ${latest}`} /></span>
       {old
         ? <span className="muted">This version can&apos;t update itself yet. Once, on the device:
             <code className="perm-cmd">curl -fsSL {origin}/install.sh | sh</code></span>

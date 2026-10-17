@@ -23,10 +23,12 @@ import FirstRun from "./FirstRun";
 import "@/app/mobile.css";
 import "@/app/shell.css";
 import MemoryPanel from "./MemoryPanel";
-import { Activity as ActivityIcon, FlaskConical, Globe, House, LogOut, Menu, MessageCircle, Moon, NotebookPen, Plus,
-  Radar, ShieldCheck, Sun, X, type LucideIcon } from "lucide-react";
+import { Activity as ActivityIcon, DemoTools as FlaskConical, Globe, House, SignOutIcon as LogOut, Menu,
+  Chat as MessageCircle, Moon, Memory as NotebookPen, HideChat as PanelRightClose, Plus, FoundNearby as Radar,
+  Trust as ShieldCheck, Sun, Close as X, type IconType as LucideIcon } from "@/src/components/icons";
 import { Logo } from "@/src/components/brand/Logo";
 import { Mascot } from "@/src/components/mascot/Mascot";
+import { MascotHead } from "@/src/components/mascot/MascotHead";
 import { display, sans } from "@/src/components/landing/fonts";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
@@ -91,7 +93,19 @@ export default function Home({ user }: { user: User }) {
   // Phones show one pane at a time (Home or Chat, switched by the tab bar) and fold the header into a menu.
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
-  const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
+  // Wide screens can fold the chat into a slim rail; asking for it from anywhere unfolds it.
+  const [folded, setFolded] = useFolded();
+  const [chatBusy, setChatBusy] = useState(false);
+  const waiting = actions.filter((a) => a.status === "pending").length;
+  const headMood = chatBusy ? "busy" : waiting ? "waiting" : "idle"; // an answer being written outranks a card that can wait
+  const foldBtn = useRef<HTMLButtonElement>(null);
+  const railBtn = useRef<HTMLButtonElement>(null);
+  const fold = (f: boolean) => {
+    setFolded(f);
+    requestAnimationFrame(() => (f ? railBtn : foldBtn).current?.focus()); // focus stays on the control that moved
+  };
+  const showChat = () => { setPane("chat"); setFolded(false); };
+  const askChat = (q: string) => { showChat(); chat.current?.ask(q); };
   const open = (p: Panel) => { setMenu(false); setPane("home"); setPanel(p); };
   const [theme, flipTheme] = useTheme();
   function go(g: Go) {
@@ -108,13 +122,13 @@ export default function Home({ user }: { user: User }) {
   const item = (p: Panel, label: string, Icon: LucideIcon, count?: number) => (
     <button className={`side-item ${panel === p ? "on" : ""}`} aria-current={panel === p ? "page" : undefined}
       onClick={() => open(p)}>
-      <Icon size={18} strokeWidth={1.75} aria-hidden /> <span>{label}</span>
+      <Icon size={18} aria-hidden /> <span>{label}</span>
       {!!count && <span className="side-count">{count}</span>}
     </button>
   );
 
   return (
-    <div className={`shell ${display.variable} ${sans.variable}`} data-theme={theme}>
+    <div className={`shell ${display.variable} ${sans.variable}`} data-theme={theme} data-chat={folded ? "folded" : undefined}>
       <header className="top">
         <Logo height={22} className="top-logo" />
         <span className="spacer" />
@@ -142,7 +156,7 @@ export default function Home({ user }: { user: User }) {
         <div className="side-foot">
           {item("demo", "Demo tools", FlaskConical)}
           <button className="side-item" onClick={flipTheme} aria-label={`Switch to ${theme === "night" ? "day" : "night"} theme`}>
-            {theme === "night" ? <Sun size={18} strokeWidth={1.75} /> : <Moon size={18} strokeWidth={1.75} />}
+            {theme === "night" ? <Sun size={18} /> : <Moon size={18} />}
             <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
           <div className="side-account">
             {user.isAnonymous
@@ -150,7 +164,7 @@ export default function Home({ user }: { user: User }) {
                   title="Keep this home by linking a Google account">Save with Google</button>
               : <span className="small muted side-email">{user.email}</span>}
             <button className="side-item" onClick={async () => signOut((await firebase()).auth)}>
-              <LogOut size={18} strokeWidth={1.75} /> <span>Sign out</span></button>
+              <LogOut size={18} /> <span>Sign out</span></button>
           </div>
         </div>
       </aside>
@@ -172,7 +186,7 @@ export default function Home({ user }: { user: User }) {
               <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Check-up now</button>
               {needs.length > 0 && <div className="needs-body">
                 <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
-                  onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
+                  onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />
               </div>}
             </div>
             {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
@@ -196,29 +210,51 @@ export default function Home({ user }: { user: User }) {
         {panel === "none" && selected && devices.find((d) => d.id === selected) && (
           <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
             needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
-            onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
+            onGo={go} onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }}
             onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} hidden={pane === "chat"} />
         )}
         <aside className="right" aria-label="Ask Nightlight">
+          <button ref={railBtn} className="chat-rail" onClick={() => fold(false)} title="Show the chat"
+            aria-label={`Show the chat${waiting ? `, ${waiting} ${waiting === 1 ? "card" : "cards"} to approve` : ""}`}>
+            <MascotHead size={34} mood={headMood} />
+            <span className="rail-label">Chat</span>
+            {waiting > 0 && <span className="rail-count"><b>{waiting}</b> to approve</span>}
+          </button>
           <div className="chat-head">
-            <MessageCircle size={18} strokeWidth={1.75} aria-hidden />
+            <MascotHead size={28} mood={headMood} />
             <h2>Ask Nightlight</h2>
+            <button ref={foldBtn} className="chat-fold" onClick={() => fold(true)} title="Hide the chat"
+              aria-label="Hide the chat"><PanelRightClose size={18} aria-hidden /></button>
           </div>
-          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
+          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me}
+            onBusy={setChatBusy} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
         <button className={pane === "home" ? "on" : ""} aria-current={pane === "home" ? "page" : undefined}
           onClick={() => setPane("home")}>
-          <House size={18} strokeWidth={1.75} aria-hidden /> Home
+          <House size={18} aria-hidden /> Home
           {needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
         <button className={pane === "chat" ? "on" : ""} aria-current={pane === "chat" ? "page" : undefined}
-          onClick={() => setPane("chat")}><MessageCircle size={18} strokeWidth={1.75} aria-hidden /> Chat</button>
+          onClick={() => setPane("chat")}><MessageCircle size={18} aria-hidden /> Chat</button>
       </nav>
       {resetting && <div className="overlay"><div className="modal resetting" role="status">
         <Mascot size={56} mood="thinking" /> <span>Resetting the demo…</span></div></div>}
     </div>
   );
+}
+
+// Whether the chat is folded on a wide screen, remembered in this browser.
+function useFolded(): [boolean, (f: boolean) => void] {
+  const [folded, setFolded] = useState(false);
+  useEffect(() => {
+    try { setFolded(localStorage.getItem("nl_chat") === "folded"); } catch { /* open */ }
+  }, []);
+  const set = (f: boolean) => {
+    setFolded(f);
+    try { localStorage.setItem("nl_chat", f ? "folded" : "open"); } catch { /* this visit */ }
+  };
+  return [folded, set];
 }
 
 // Night or day: follows the system until the person picks one, then remembers it in this browser.

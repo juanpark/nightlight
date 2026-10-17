@@ -4,7 +4,7 @@
 // what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
-import { Star, X } from "lucide-react";
+import { Star, Close as X } from "@/src/components/icons";
 import { api } from "@/lib/api";
 import { useServicesState } from "@/lib/data";
 import { useFavorites } from "@/lib/favorites";
@@ -238,7 +238,7 @@ function AppGrid({ apps, fav, onApp }: { apps: Service[]; fav: Favorites; onApp:
           <button key={s.id} className={`app-chip ${s.status ?? "ok"}`} onClick={() => onApp(s.id)}
             aria-label={`${s.name}: ${(s.status ?? "ok") === "ok" ? "running fine" : "needs a look"}`}>
             <Icon size={15} aria-hidden /><span className="app-chip-name">{s.name}</span>
-            {fav.isFavoriteApp(s.id) && <Star className="dstar" size={12} aria-hidden />}
+            {fav.isFavoriteApp(s.id) && <Star className="dstar" size={12} weight="fill" aria-hidden />}
             <span className={`dot ${s.status ?? "ok"}`} aria-hidden />
           </button>);
       })}
@@ -262,7 +262,7 @@ function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClo
   }
   return (
     <div className="drawer-head">
-      <span className={`dicon ${device.status}`}><Icon size={18} strokeWidth={1.8} /></span>
+      <span className={`dicon ${device.status}`}><Icon size={18} /></span>
       {editing
         ? <form onSubmit={(e) => { e.preventDefault(); rename(); }} style={{ display: "flex", gap: 6 }}>
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus />
@@ -352,7 +352,7 @@ function StarButton({ on, label, small, onClick }: { on: boolean; label: string;
   return (
     <button className={`star-btn ${on ? "on" : ""} ${small ? "small" : ""}`} aria-pressed={on}
       aria-label={`${on ? "Unstar" : "Star"} ${label}`} title={on ? "Starred: tap to unstar" : "Star it"} onClick={onClick}>
-      <Star size={small ? 14 : 16} />
+      <Star size={small ? 14 : 16} weight={on ? "fill" : undefined} />
     </button>
   );
 }

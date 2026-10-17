@@ -1,21 +1,39 @@
 "use client";
 
 import { useId } from "react";
+import type { Status } from "@/lib/types";
 import styles from "./Mascot.module.css";
 import { BODY, EYES, FACE, SHINE, STAR, STRING } from "./shapes";
+
+// Smiling eyes for mood="done": crescent moons curving up, each sitting on an open eye and tilted with the face.
+const MOON = "M-8 3C-6-6 6-6 8 3C7.6 4.6 6 4.8 5.4 3.6C3-1.6-3-1.6-5.4 3.6C-6 4.8-7.6 4.6-8 3Z";
+const JOY = ["translate(113.4 145) rotate(-10)", "translate(54 156) rotate(-10)"];
+// Sad eyelids for mood="trouble": face-coloured, covering the top of each eye and sloping down to its outer corner.
+const LIDS = ["M103 130H125V148.5L103 139.5Z", "M44 141H64V149L44 157.5Z"];
+
+export type Mood = "idle" | "thinking" | "working" | "waiting" | "done" | "trouble";
 
 type Props = {
   size?: number;
   label?: string; // omit to mark it decorative
-  mood?: "idle" | "thinking";
+  mood?: Mood;
+  health?: Status; // the home's worst device state; colours the star (always shown with a word nearby)
   className?: string;
 };
 
 
 // Idle: slow breath, wandering eyes, the star balloon drifting on its string.
-// Thinking: eyes held up on the star, a slow pondering tilt, a brighter
-// pulsing star and a chat bubble with typing dots. Still under reduced motion.
-export function Mascot({ size = 160, label, mood = "idle", className }: Props) {
+// Thinking: eyes up, mulling between the star and the sky, a pondering tilt,
+// a pulsing star and a chat bubble with typing dots.
+// Working: on patrol, waddling in place with the star bouncing, eyes scanning the room.
+// Waiting: facing you with wide eyes and a double nod, the star held out.
+// Done: two happy hops with squinted eyes and popping sparkles, then idle.
+// Trouble: slumped low with droopy, sad eyelids and heavy sighs, the star hanging down.
+// The star's colour is the home's health: yellow all good, orange needs a look
+// (a slow swell), red-coral a problem (a quick double throb), pale and unlit
+// when offline. Moods never change it.
+// Under reduced motion each mood still holds its pose, just without moving.
+export function Mascot({ size = 160, label, mood = "idle", health = "ok", className }: Props) {
   const id = useId().replace(/:/g, "");
   const halo = `nl-halo-${id}`;
   const pool = `nl-pool-${id}`;
@@ -27,6 +45,7 @@ export function Mascot({ size = 160, label, mood = "idle", className }: Props) {
       height={(size * 243) / 193}
       className={`${styles.root} ${className ?? ""}`}
       data-mood={mood}
+      data-health={health}
       role={label ? "img" : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
@@ -64,10 +83,12 @@ export function Mascot({ size = 160, label, mood = "idle", className }: Props) {
             <path d={STRING} fill="var(--mascot-string)" />
             <g className={styles.bob}>
               <circle className={styles.halo} cx="144.8" cy="46" r="62" fill={`url(#${halo})`} />
-              <path d={STAR} fill="var(--mascot-star)" />
-              {SHINE.map((d) => (
-                <path key={d} d={d} fill="var(--mascot-shine)" />
-              ))}
+              <g className={styles.beat}>
+                <path d={STAR} fill="var(--mascot-star)" />
+                {SHINE.map((d) => (
+                  <path key={d} d={d} fill="var(--mascot-shine)" />
+                ))}
+              </g>
               <g className={styles.sparkles} stroke="var(--mascot-star)" strokeWidth="2.2" strokeLinecap="round">
                 <line x1="92" y1="8" x2="97" y2="14" />
                 <line x1="194" y1="30" x2="188" y2="34" />
@@ -90,6 +111,12 @@ export function Mascot({ size = 160, label, mood = "idle", className }: Props) {
             {EYES.map((d) => (
               <path key={d} className={styles.eye} d={d} fill="var(--mascot-eye)" />
             ))}
+            <g className={styles.lids} fill="var(--mascot-face)">
+              {LIDS.map((d) => <path key={d} d={d} />)}
+            </g>
+          </g>
+          <g className={styles.joy}>
+            {JOY.map((at) => <g key={at} transform={at}><path d={MOON} fill="var(--mascot-eye)" /></g>)}
           </g>
         </g>
       </g>

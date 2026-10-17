@@ -2,7 +2,7 @@
 // The bar above the map: Map or List, then what to show: a place (one per router), kinds of things, only what needs
 // you, favourites, tags. Groups combine; within a group any choice matches. A chosen place can be renamed.
 import { useState } from "react";
-import { List, Map as MapIcon, Star } from "lucide-react";
+import { ListView as List, MapView as MapIcon, Star } from "@/src/components/icons";
 import { api } from "@/lib/api";
 import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, NO_FILTER, starred, type Category, type Filter, type Place } from "@/lib/homeFilter";
 import type { Device, Watch } from "@/lib/types";
@@ -67,7 +67,7 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
           onClick={() => onFilter({ ...filter, needsMe: !filter.needsMe })}>Only what needs me</button>
         {(filter.favorites || devices.some(starred)) && (
           <button className={filter.favorites ? "on" : ""} aria-pressed={filter.favorites}
-            onClick={() => onFilter({ ...filter, favorites: !filter.favorites })}><Star size={13} /> Favorites</button>)}
+            onClick={() => onFilter({ ...filter, favorites: !filter.favorites })}><Star size={13} weight={filter.favorites ? "fill" : undefined} /> Favorites</button>)}
         {tags.map((t) => (
           <button key={t} className={filter.tags.includes(t) ? "on" : ""} aria-pressed={filter.tags.includes(t)}
             onClick={() => onFilter({ ...filter, tags: toggle(filter.tags, t) })}>{t}</button>))}

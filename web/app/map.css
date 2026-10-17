@@ -29,7 +29,8 @@
   --xy-controls-button-color-default: var(--ink); --xy-controls-button-border-color-default: var(--line);
   --xy-minimap-background-color-default: var(--panel); --xy-attribution-background-color-default: transparent;
   --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--bg) 65%, transparent); }
-.homemap .react-flow__attribution { opacity: .5; }
+.homemap .react-flow__attribution { opacity: .5; background: transparent; }
+.homemap .react-flow__attribution a { color: var(--muted); }
 /* React Flow places its panels with classes "top" and "right", which the page's header and chat pane also use */
 .homemap .react-flow__panel.top, .homemap .react-flow__panel.right { position: absolute; padding: 0; border: 0;
   background: transparent; gap: 0; min-height: 0; flex-wrap: nowrap; }

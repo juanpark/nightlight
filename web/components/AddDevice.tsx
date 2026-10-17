@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Cpu, Laptop } from "lucide-react";
+import { Cpu, Computer as Laptop } from "@/src/components/icons";
 import { api, ApiError } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import type { Device } from "@/lib/types";
@@ -131,9 +131,9 @@ export default function AddDevice({ anonymous, onSave, devices }: {
         the moment it connects.</p>
       <div className="setup-pick" role="radiogroup" aria-label="Which kind of device?">
         <button role="radio" aria-checked={mac} className={mac ? "on" : ""} onClick={() => pick("mac")}>
-          <Laptop size={22} strokeWidth={1.6} /> A Mac</button>
+          <Laptop size={22} /> A Mac</button>
         <button role="radio" aria-checked={os === "linux"} className={os === "linux" ? "on" : ""} onClick={() => pick("linux")}>
-          <Cpu size={22} strokeWidth={1.6} /> Linux or Raspberry Pi</button>
+          <Cpu size={22} /> Linux or Raspberry Pi</button>
       </div>
 
       {os && (

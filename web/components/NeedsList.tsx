@@ -7,6 +7,7 @@ import type { Action, Device } from "@/lib/types";
 import { useDismissed } from "@/lib/needsYou";
 import ApprovalCard from "./ApprovalCard";
 import { Copy } from "./AddDevice";
+import { ArrowText } from "@/src/components/icons";
 
 const TONE = { 1: "crit", 2: "warn", 3: "offline" } as const;
 
@@ -28,7 +29,7 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
             <span className={`dot ${TONE[n.priority]}`} />
             <span className="needs-text">
               {showDevice && name(n.deviceId) && <span className="muted">{name(n.deviceId)}: </span>}
-              {n.title}{n.detail && <span className="muted small"> · {n.detail}</span>}
+              <ArrowText text={n.title} />{n.detail && <span className="muted small"> · <ArrowText text={n.detail} /></span>}
             </span>
             {n.cta.go.to === "offer"
               ? <>

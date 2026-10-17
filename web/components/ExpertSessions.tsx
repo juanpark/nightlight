@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { createPasskey, passkeyProblem, passkeysSupported, useAppHost } from "@/lib/passkey";
 import type { Device } from "@/lib/types";
+import { Caret } from "@/src/components/icons";
 
 const localKey = (uid: string) => `nl_passkey_fp_${uid}`;
 const NO_CODE = "?"; // made in this browser, but the browser didn't hand over the key's bytes to work out its code
@@ -61,8 +62,8 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
 
   return (
     <section className="expert small">
-      <button className="linkish" onClick={() => setOpen(!open)}>
-        Expert sessions {on ? "(on)" : "(off)"} {open ? "▾" : "▸"}</button>
+      <button className="linkish" onClick={() => setOpen(!open)} aria-expanded={open}>
+        Expert sessions {on ? "(on)" : "(off)"} <Caret className="caret" size={11} aria-hidden /></button>
       {open && (
         <div className="expert-body">
           <p className="muted">Let Nightlight investigate with real commands, the way a system administrator would.

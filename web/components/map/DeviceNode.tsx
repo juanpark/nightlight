@@ -4,7 +4,7 @@
 // Hover or select it for quick actions; drag from an edge dot to another device to draw a relationship.
 import { memo, useLayoutEffect, useRef } from "react";
 import { Handle, NodeToolbar, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
-import { Info, LayoutGrid, MessageCircle, Star } from "lucide-react";
+import { Info, Grid as LayoutGrid, Chat as MessageCircle, Star } from "@/src/components/icons";
 import { ago, answering, type Need } from "@/lib/needsYou";
 import { APP_CAP, appOrder } from "@/lib/apps";
 import { useServices } from "@/lib/data";
@@ -80,9 +80,9 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
         {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
         {tools}
         <div className="dhead">
-          <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} strokeWidth={1.8} /></span>
+          <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} /></span>
           <strong className="dname" title={d.purpose ?? d.name}>{d.name}</strong>
-          {d.favorite && <Star className="dstar" size={13} aria-label="Favorite" />}
+          {d.favorite && <Star className="dstar" size={13} weight="fill" aria-label="Favorite" />}
           <NeedsMark needs={needs} />
         </div>
         {!compact && <div className={`dwatch ${d.status}`}>{answering(d, now)}</div>}
@@ -97,9 +97,9 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
       {tools}
       <div className="dhead">
-        <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} strokeWidth={1.8} /></span>
+        <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} /></span>
         <strong className="dname" title={d.purpose ?? d.name}>{d.name}</strong>
-        {d.favorite && <Star className="dstar" size={13} aria-label="Favorite" />}
+        {d.favorite && <Star className="dstar" size={13} weight="fill" aria-label="Favorite" />}
         <NeedsMark needs={needs} />
       </div>
       {!compact && (silent
@@ -118,8 +118,8 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
               <button key={s.id} className={`dchip ${s.status ?? "ok"} ${fav && data.favorites ? "hl" : ""} ${named(s, data.litApps) ? "lit-app" : ""} nodrag`}
                 title={`${s.name}: ${s.status ?? "ok"}`}
                 onClick={(e) => { e.stopPropagation(); data.onApp(d.id, s.id); }}>
-                <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span>
-                {fav && <Star className="dstar" size={10} aria-label="Favorite" />}
+                <Icon size={12} aria-hidden /><span>{s.name}</span>
+                {fav && <Star className="dstar" size={10} weight="fill" aria-label="Favorite" />}
               </button>);
           })}
           {shown.length > APP_CAP && (
@@ -131,7 +131,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
           {favs.map((s) => {
             const Icon = appIcon(s);
             return <span key={s.id} className={`dchip ${s.status ?? "ok"} ${named(s, data.litApps) ? "lit-app" : ""}`} title={`${s.name}: ${s.status ?? "ok"}`}>
-              <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span></span>;
+              <Icon size={12} aria-hidden /><span>{s.name}</span></span>;
           })}
         </div>)}
       {!focused && !compact && services.length > 0 && (

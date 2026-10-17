@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { challengeFor, passkeyProblem, passkeysSupported, signWithPasskey, useAppHost } from "@/lib/passkey";
 import { useNow } from "@/lib/data";
 import type { Action, Device } from "@/lib/types";
+import { ArrowText, Caret, Declined, Done, NotDone, OutOfDate, type IconType } from "@/src/components/icons";
 
 const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky", read: "Read-only" } as const;
 const SIGNED = new Set(["expert_command", "expert_grant"]); // approved only with the owner's passkey
@@ -12,8 +13,15 @@ const STATUS: Record<Action["status"], string> = {
   done: "Done", failed: "Didn't work", denied: "Declined", stale: "Out of date",
 };
 
-export default function ApprovalCard({ action, device, onFollowUp }: {
+// A settled card in the conversation folds to its outcome; the details stay one tap away.
+const SETTLED: Partial<Record<Action["status"], { Icon: IconType; tone: string }>> = {
+  done: { Icon: Done, tone: "done" }, failed: { Icon: NotDone, tone: "failed" },
+  denied: { Icon: Declined, tone: "quiet" }, stale: { Icon: OutOfDate, tone: "quiet" },
+};
+
+export default function ApprovalCard({ action, device, onFollowUp, fold }: {
   action: Action | undefined; device?: Device; onFollowUp: (turnId: string) => void;
+  fold?: boolean; // in the chat: once decided and finished, show one line
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -99,21 +107,41 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
     : payload?.mode ? `${payload.mode} commands until ${until}`
     : (action.params as { command?: string } | undefined)?.command;
   const signedCard = SIGNED.has(action.type);
-  return (
-    <div className="card">
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <strong style={{ flex: 1 }}>{action.plan}</strong>
-        <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
-      </div>
+  const settled = fold ? SETTLED[action.status] : undefined;
+  const head = (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <strong style={{ flex: 1 }}><ArrowText text={action.plan} /></strong>
+      <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
+    </div>
+  );
+  const facts = (
       <dl>
         {command && <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>}
-        <dt>What happens</dt><dd>{action.dryRun}</dd>
+        <dt>What happens</dt><dd><ArrowText text={action.dryRun} /></dd>
         <dt>Touches</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (live device)" : " (sample)"}
           {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit)" }}> (signed for a different device!)</strong> : null}</dd>
-        <dt>Undo</dt><dd>{action.rollback}</dd>
+        <dt>Undo</dt><dd><ArrowText text={action.rollback} /></dd>
         <dt>Status</dt><dd>{STATUS[action.status]}{action.decision?.by === "auto" ? " (handled on its own, as you allowed)" : ""}</dd>
-        {action.result && <><dt>Result</dt><dd>{action.result.summary}</dd></>}
+        {action.result && <><dt>Result</dt><dd><ArrowText text={action.result.summary} /></dd></>}
       </dl>
+  );
+  if (settled) {
+    const { Icon, tone } = settled;
+    return (
+      <details className={`card folded ${tone}`}>
+        <summary>
+          <Icon size={18} weight="fill" aria-hidden />
+          <span className="fold-text"><b>{STATUS[action.status]}</b> <ArrowText text={action.plan.trim().replace(/\.$/, "")} /></span>
+          <Caret className="caret" size={12} aria-hidden /><span className="sr-only">Details</span>
+        </summary>
+        {facts}
+      </details>
+    );
+  }
+  return (
+    <div className="card">
+      {head}
+      {facts}
       {action.status === "pending" && (
         <div className="actions">
           {signedCard

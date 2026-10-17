@@ -6,6 +6,7 @@ import type { Go } from "@/lib/needsYou";
 import type { Device, Discovery } from "@/lib/types";
 import { DEFAULTS, normal, samePerms } from "@/lib/permissions";
 import { chosePreset } from "./Permissions";
+import { Check } from "@/src/components/icons";
 
 type State = "todo" | "doing" | "done";
 
@@ -67,7 +68,7 @@ export default function FirstRun({ uid, anonymous, devices, discoveries, expert,
       <ol className="firstrun-steps">
         {steps.map((s, i) => (
           <li key={i} className={s.state}>
-            <span className={`fr-mark ${s.state}`}>{s.state === "done" ? "✓" : i + 1}</span>
+            <span className={`fr-mark ${s.state}`}>{s.state === "done" ? <Check size={12} aria-label="Done" /> : i + 1}</span>
             <span className="fr-title">{s.title}{s.optional && <span className="muted small"> · optional</span>}
               {s.note && <span className="muted small"> · {s.note}</span>}</span>
             {s.state !== "done" && s.cta && <button className="small" onClick={s.cta.run}>{s.cta.label}</button>}

@@ -3,7 +3,7 @@
 // how they relate. It opens fitted to whatever screen it is on. Positions and lines are layout only: saving them
 // never touches a device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash as Trash2 } from "@/src/components/icons";
 import {
   Background, BackgroundVariant, ConnectionMode, Controls, MiniMap, Position, ReactFlow, useNodesState,
   type FinalConnectionState, type NodeChange, type ReactFlowInstance,
