@@ -132,13 +132,15 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
               <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span></span>;
           })}
         </div>)}
-      {!compact && services.length > 0 && (
-        <div className="dapps" title={services.map((s) => `${s.name}: ${s.status ?? "ok"}`).join("\n")}>
+      {!focused && !compact && services.length > 0 && (
+        <button className="dapps nodrag" title={`See all ${services.length}: ${services.map((s) => s.name).join(", ")}`}
+          aria-label={`See the ${services.length} app${services.length === 1 ? "" : "s"} on ${d.name}`}
+          onClick={(e) => { e.stopPropagation(); data.onFocus(d.id); }}>
           {services.slice(0, 5).map((s) => <span key={s.id} className={`dot ${s.status ?? "ok"}`} />)}
           {services.length > 5 && <span className="more">+{services.length - 5}</span>}
           <span className="dapps-text">{services.length} app{services.length === 1 ? "" : "s"}
             {bad > 0 && <b> · {bad} need{bad === 1 ? "s" : ""} a look</b>}</span>
-        </div>)}
+        </button>)}
     </div>
   );
 }
