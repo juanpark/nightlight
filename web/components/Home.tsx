@@ -50,6 +50,7 @@ export default function Home({ user }: { user: User }) {
   const notify = useNotifySetting();
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
+  const [app, setApp] = useState<string | null>(null); // one app on the selected device, opened on its own
   const [panel, setPanel] = useState<Panel>("none");
   const chat = useRef<ChatHandle>(null);
   const starting = useRef(false);
@@ -77,7 +78,7 @@ export default function Home({ user }: { user: User }) {
   const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
   const toggle = (p: Panel) => { setMenu(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
   function go(g: Go) {
-    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
+    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); setApp(g.app ?? null); }
     else if (g.to === "panel") setPanel(g.panel);
     else if (g.to === "chat") askChat(g.ask);
   }
@@ -140,13 +141,14 @@ export default function Home({ user }: { user: User }) {
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
-            onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
+            onSelect={(id) => { setSelected(id); setDrawerTab("overview"); setApp(null); }}
+            onApp={(id, svcId) => { setSelected(id); setDrawerTab("overview"); setApp(svcId); }} onAsk={askChat}
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
               needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
               onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
-              onAsk={(q) => askChat(q)} onClose={() => setSelected(null)} />
+              onAsk={(q) => askChat(q)} onClose={() => { setSelected(null); setApp(null); }} app={app} onApp={setApp} />
           )}
         </section>
         <aside className="right">
