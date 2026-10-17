@@ -11,7 +11,6 @@ import FoundNearby from "./FoundNearby";
 import { addable, useFound } from "@/lib/found";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
-import WatchedRow from "./WatchedRow";
 import AwayBanner from "./AwayBanner";
 import HomeView from "./map/HomeView";
 import DeviceDrawer from "./DeviceDrawer";
@@ -71,14 +70,6 @@ export default function Home({ user }: { user: User }) {
     finally { setSwitching(false); }
   }
 
-  const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const allTags = useMemo(() => [...new Set([...devices, ...watches].flatMap((d) => d.tags ?? []))].sort(),
-    [devices, watches]);
-  const visible = useMemo(() => tagFilter.length === 0 ? devices : devices.filter((d) => tagFilter.some((t) =>
-    t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t))), [devices, tagFilter]);
-  // Watched websites are never samples: under a filter they show only when they carry one of its tags.
-  const visibleWatches = tagFilter.length === 0 ? watches
-    : watches.filter((w) => tagFilter.some((t) => (w.tags ?? []).includes(t)));
   const resetting = me?.demo?.state === "resetting";
   // Phones show one pane at a time (Home or Chat, switched by the tab bar) and fold the header into a menu.
   const [pane, setPane] = useState<"home" | "chat">("home");
@@ -148,19 +139,9 @@ export default function Home({ user }: { user: User }) {
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
-          {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
-            <div className="chips" aria-label="Show only">
-              <button className={tagFilter.length === 0 ? "on" : ""} onClick={() => setTagFilter([])}>All</button>
-              {[...allTags, ...(devices.some((d) => d.realm !== "real") ? ["Sample"] : [])].map((t) => (
-                <button key={t} className={tagFilter.includes(t) ? "on" : ""} onClick={() =>
-                  setTagFilter((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t])}>{t}</button>
-              ))}
-            </div>
-          )}
-          <HomeView uid={uid} devices={visible} links={links} marks={marks} selected={selected} now={now}
+          <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
             onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
-          <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => askChat(q)} />
           {selected && devices.find((d) => d.id === selected) && (
             <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
               needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
