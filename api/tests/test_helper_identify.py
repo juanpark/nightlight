@@ -379,3 +379,24 @@ def test_a_watched_thing_that_moves_is_watched_at_its_new_address(helper, monkey
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: probed.append(addr) or Conn())
     results = {r["cid"]: r["up"] for r in helper._watch_results()}
     assert results == {"aaaaaaaaaaaa": True, "bbbbbbbbbbbb": False} and probed == [("192.168.1.25", 445)]
+
+
+def test_an_iphone_is_named_by_its_host_and_an_airplay_door_is_seen(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY,
+                         "deviceNames": True})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.22": "62:d5:18:fa:db:35",
+                                                        "192.168.1.87": "90:dd:5d:ee:40:6e"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.87": [7000]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [
+        ("192.168.1.22", "_apple-mobdev2._tcp", {"identifier": "BB4CF939"},
+         {"instance": "62:d5:18:fa:db:35@fe80::60d5:18ff:fefa:db35-supportsRP-24", "host": "Juans-iPhone.local."})])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: (None, {}))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    items = {i.get("name") or i["guess"]: i for i in sent[0]["items"]}
+    assert items["Juans-iPhone"]["maker"] == "Apple" and items["Juans-iPhone"]["services"] == ["Apple device"]
+    tv = next(i for i in sent[0]["items"] if i["ports"] == [7000])
+    assert (tv["services"], tv["guess"]) == (["AirPlay receiver"], "Speaker or TV")
+    text = json.dumps(sent)
+    assert "62:d5" not in text and "fe80" not in text and "BB4CF939" not in text and "192.168" not in text

@@ -132,3 +132,28 @@ def test_a_watched_thing_sits_behind_its_finders_router(client, started):
     printer = db.device(started, pid).get().to_dict()
     assert (printer["role"], printer["maker"], printer["model"]) == ("printer", "Brother", "HL-L2350DW")
     assert "Printer (Brother HL-L2350DW)" in agentlib.fleet_summary(started, generation(started))
+
+
+def test_one_of_your_own_devices_cant_be_added_as_a_found_thing(client, started):
+    # Its file sharing seen on its other address (Wi-Fi, a VPN) before that address was known as its own.
+    mac, pi = enrolled(client, "Mac mini"), enrolled(client, "Pi")
+    second = "6" * 20
+    _send(client, pi, [{**PRINTER, "guess": "File share (NAS or computer)", "services": ["file sharing"],
+                        "ports": [445], "tag": second}])
+    _report(client, mac, {**FACTS, "net": {"self": MAC, "selves": [MAC, second], "gateway": ROUTER, "peers": []}})
+    r = client.post(f"/api/discoveries/{pi['deviceId']}/{PRINTER['cid']}/add", json={})
+    assert r.status_code == 409 and r.json()["code"] == "your_own_device" and r.json()["name"] == "Mac mini"
+
+
+def test_an_apple_tv_is_watched_on_airplay_and_a_mac_on_its_usual_door(client, started):
+    pi = enrolled(client, "Pi")
+    tv = {**PRINTER, "cid": "c0c0c0c0c0c3", "guess": "Speaker or TV", "services": ["AirPlay receiver"],
+          "ports": [7000], "maker": "Apple", "model": "Apple TV", "tag": "8" * 20}
+    box = {**PRINTER, "cid": "c0c0c0c0c0c4", "guess": "Computer (remote login)", "services": ["AirPlay receiver"],
+           "ports": [22, 445, 7000], "maker": None, "model": None, "tag": "9" * 20}
+    _send(client, pi, [tv, box])
+    assert all(r["seenBy"][0]["canWatch"] for r in client.get("/api/found").json()["items"])
+    tid = client.post(f"/api/discoveries/{pi['deviceId']}/{tv['cid']}/add", json={}).json()["deviceId"]
+    bid = client.post(f"/api/discoveries/{pi['deviceId']}/{box['cid']}/add", json={}).json()["deviceId"]
+    assert db.device(started, tid).get().to_dict()["checkPort"] == 7000
+    assert db.device(started, bid).get().to_dict()["checkPort"] == 445
