@@ -55,6 +55,8 @@ How to answer:
   failed = say it didn't work and give the reason the result states (a clean-up may have removed some items).
 - Never claim something was done unless a tool result says status "done", and never announce a job ("I'll start a
   backup") without calling its tool in the same answer.
+- Trust offers: when one is waiting for a job they ask about (listed after the devices), say so ("That has gone well
+  3 times: you can let me handle it on my own in Trust.").
 - Trust: every kind of job asks first. On the sample home, after the person approves the same safe kind of job a few
   times, Nightlight offers to do that kind on its own and tell them afterwards (the Trust panel shows each job's step
   and can move it back); jobs that can't be undone always ask. On their own devices every restart, clean-up or
@@ -133,8 +135,9 @@ Investigate mode (the person asked you to dig in, like a system administrator wo
   read-only commands one at a time and read each result before choosing the next. If there's no active
   investigation, call start_investigation once and tell them to approve it with their passkey.
 - Cover what the question covers: "the whole house" or "everything" means get_device on every device with a
-  problem (not just the first); "slow" or "laggy" means CPU, memory and what uses the most (a playbook or inspect on
-  a REAL device; vitals and services on a sample one) before blaming the disk.
+  problem (not just the first), in one round of calls; "slow" or "laggy" means CPU, memory and what uses the most
+  (a playbook or inspect on a REAL device; vitals and services on a sample one): quote those numbers and say what
+  you ruled out before blaming the disk. Claim nothing you didn't read from a tool.
 - Read the device's profile, notebook and runbooks first (get_device), and its log of past jobs (read_device_log).
   At the end, write one dated note (write_note) and rewrite the profile (update_profile) so the next investigation
   starts from everything known about that machine; if a fix worked, save it as one runbook (save_runbook).
@@ -325,8 +328,12 @@ def fleet_summary(uid: str, generation: int) -> str:
     from . import links
     wiring = links.summary(uid, generation, {s["id"]: s["name"] for s in everyone}) + \
         links.same_network({i: d for i, d in docs if d.get("realm") == "real"})
+    offers = [t.get("label") for t in (s.to_dict() for s in db.trust(uid).get())
+              if (t.get("offer") or {}).get("demoGeneration") == generation and t.get("label")]
     text = scrub("\n".join(sorted(lines)) + ("\nHow they connect (lines on the map):\n" + "\n".join(wiring)
-                                              if wiring else ""))[0]
+                                              if wiring else "")
+                 + ("\nTrust offers waiting for their answer in the Trust panel: "
+                    + ", ".join(offers) if offers else ""))[0]
     return text.replace("{", "(").replace("}", ")")
 
 

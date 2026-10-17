@@ -228,7 +228,7 @@ HOME_PI = {
              "summary": "Restarted Immich; it reconnected to its database."},
             {"deviceId": "pi-1", "svcId": "teslamate", "daysAgo": 10, "type": "clear_images", "ok": True,
              "by": "auto", "plan": "Remove unused Docker images on the Raspberry Pi.",
-             "summary": "Removed unused Docker images; 0.9 GB freed."},
+             "summary": "Removed unused Docker images; 1.3 GB freed. (Updates have left 0.9 GB more since.)"},
             {"deviceId": "pi-1", "svcId": "teslamate", "daysAgo": 14, "type": "rotate_logs", "ok": True,
              "by": "auto", "plan": "Clean up old log files on the Raspberry Pi.",
              "summary": "Cleaned up old TeslaMate log files; 1.8 GB freed."},
