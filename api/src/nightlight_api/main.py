@@ -705,10 +705,15 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+class DiscoverBody(Strict):
+    everyDevice: bool = False
+
+
 @app.post("/api/discover", status_code=202)
-def discover_everywhere(body: Empty, uid: str = Depends(owner_uid)):
-    """Look nearby on every network the owner has a device on, one device per router (the tap is the approval)."""
-    return real.discover_everywhere(uid)
+def discover_everywhere(body: DiscoverBody, uid: str = Depends(owner_uid)):
+    """Look nearby on every network the owner has a device on: one device per router, or every device that can
+    (`everyDevice`: more complete, since each sees mostly what it talked to lately). The tap is the approval."""
+    return real.discover_everywhere(uid, body.everyDevice)
 
 
 @app.get("/api/found")

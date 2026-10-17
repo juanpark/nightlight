@@ -249,3 +249,12 @@ def test_found_things_are_named_plainly_and_the_router_comes_first(client, start
     rows = client.get("/api/found").json()["items"]
     assert rows[0]["guess"] == "Your router (internet connection)" and rows[0]["router"]
     assert rows[1]["guess"] == "Phone or laptop" and rows[1]["vendor"] is None and rows[1]["privateAddress"]
+
+
+def test_looking_from_every_device_asks_each_of_them(client, started):
+    a, b = enrolled(client, "Mac"), enrolled(client, "Pi")
+    home = {"self": "a" * 20, "gateway": "d" * 20, "peers": []}
+    beat(client, a["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21", "net": home})
+    beat(client, b["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21", "net": {**home, "self": "b" * 20}})
+    r = client.post("/api/discover", json={"everyDevice": True}).json()
+    assert sorted(x["name"] for x in r["asked"]) == ["Mac", "Pi"]

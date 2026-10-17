@@ -390,9 +390,10 @@ def _scan_action_id(user: dict, device_id: str, n: int) -> str:
                                        service_for({}), "discover", {}))
 
 
-def discover_everywhere(uid: str) -> dict:
+def discover_everywhere(uid: str, every_device: bool = False) -> dict:
     """Look nearby on every network you have a device on: one device per router (the freshest app-managed one with a
-    new enough helper), so a home is scanned once, not once per device. Says which devices couldn't and why."""
+    new enough helper), so a home is scanned once, not once per device. Each device mostly sees what it has talked to
+    lately, so `every_device` asks all of them (the list merges what they saw). Says which devices couldn't and why."""
     from . import release
     asked, skipped, best = [], [], {}
     for snap in db.devices(uid).get():
@@ -406,7 +407,7 @@ def discover_everywhere(uid: str) -> dict:
         if why:
             skipped.append({"deviceId": d["id"], "name": d.get("name"), "why": why})
             continue
-        network = (d.get("net") or {}).get("gateway") or d["id"]  # unknown router: a network of its own
+        network = d["id"] if every_device else (d.get("net") or {}).get("gateway") or d["id"]  # unknown: its own
         seen = d.get("lastSeen")
         if network not in best or (seen and (best[network].get("lastSeen") is None or seen > best[network]["lastSeen"])):
             best[network] = d
