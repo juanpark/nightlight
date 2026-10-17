@@ -15,11 +15,11 @@ export function Copy({ text }: { text: string }) {
   );
 }
 
-/** The message for whoever set the device up: what this is, the line, three steps, and when the line runs out. */
+/** The message for someone who can set the device up: what this is, the line, three steps, when the line runs out. */
 function setupMessage(owner: string | null, line: string, minutes: number) {
   return [
-    `${owner ?? "Someone you know"} uses Nightlight to keep an eye on their home devices and asked you to set it up on `
-      + "one of them. It takes about a minute.",
+    `${owner ?? "Someone you know"} uses Nightlight to keep an eye on their home devices and is asking you to set it up `
+      + "on one of them now. It takes about a minute.",
     "",
     "1. On that device, open Terminal (or connect to it over SSH).",
     "2. Paste this line:",
@@ -54,8 +54,9 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
   }
   return (
     <div className="send-line">
-      <button onClick={send}>Send to whoever set up this device</button>
+      <button onClick={send}>Ask someone to set it up</button>
       {note && <span className="small muted">{note}</span>}
+      <span className="small muted send-hint">Someone who can open a terminal on that device, like whoever looks after it.</span>
     </div>
   );
 }
