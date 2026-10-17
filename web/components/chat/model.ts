@@ -10,7 +10,7 @@ export type StepStatus = "running" | "done" | "failed" | "stopped";
 export type Block =
   | { kind: "text"; text: string }
   | { kind: "step"; name: string; label: string; command?: string; status: StepStatus; summary?: string;
-      details?: string; startedAt: number; ms?: number }
+      details?: string; startedAt: number; ms?: number; callId?: string }
   | { kind: "card"; actionId: string }
   // "Let me check the Raspberry Pi." said just before a step: read as the first line of the work log, not as an answer
   | { kind: "lead"; text: string };
@@ -67,10 +67,13 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
       return { ...t, blocks };
     case "tool_call":
       blocks.push({ kind: "step", name: e.name, label: label(e.name, e.args, devices),
-        command: command(e.name, e.args), status: "running", startedAt: Date.now() });
+        command: command(e.name, e.args), status: "running", startedAt: Date.now(), callId: e.callId });
       return { ...t, blocks };
     case "tool_result": {
-      const i = blocks.findIndex((b) => b.kind === "step" && b.name === e.name && b.status === "running");
+      // a result names the step it answers (two parallel checks of one kind each keep their own); older servers send
+      // no id, so the first running step of that name gets it
+      const i = blocks.findIndex((b) => b.kind === "step" && b.status === "running"
+        && (e.callId && b.callId ? b.callId === e.callId : b.name === e.name));
       if (i < 0) return t;
       const s = blocks[i] as Extract<Block, { kind: "step" }>;
       blocks[i] = { ...s, status: failed(e.ok, e.summary) ? "failed" : "done", summary: e.summary ?? "done",
@@ -98,8 +101,7 @@ export function stop(t: AgentTurn): AgentTurn {
 function pastStep(s: PastStep, devices: Device[]): Block {
   return { kind: "step", name: s.name, label: label(s.name, s.args, devices), command: command(s.name, s.args),
     status: s.unfinished ? "stopped" : failed(s.ok, s.summary) ? "failed" : "done", summary: s.summary,
-    details: s.details, startedAt: 0,
-    ms: s.ms };
+    details: s.details, startedAt: 0, ms: s.ms, callId: s.callId };
 }
 
 /** Stored messages as turns. Steps go back where they happened in the text when the message says where (offsets

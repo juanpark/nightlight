@@ -285,7 +285,7 @@ older than 0.9.13 (`docs/adr/0003-job-channel.md`).
 
 **Chat history.** Messages live at `users/{uid}/sessions/{sid}/messages/{msgId}`
 `{role, text, seq, turnId, mode, toolCalls?, actionIds?, error?, createdAt, expiresAt}`. Each tool call is
-`{name, args, textOffset, summary?, details?, ok?, ms?, actionId?, unfinished?}`: `textOffset` is the length of
+`{name, args, textOffset, summary?, details?, ok?, ms?, actionId?, unfinished?, callId?}`: `textOffset` is the length of
 `text` in UTF-16 code units (as JavaScript counts) when the step began; `actionId` is the card the step put up (shown
 right after it); `unfinished: true` (with `ok: false`) marks a step that never answered because the turn ended
 (splitting `text` there rebuilds the live order of words and steps), `ok` is false when the tool reported
@@ -436,8 +436,8 @@ deletes sample-home events only.
 ```
 {"type":"turn_start","turnId":"…","attempt":1,"messageId":"…","at":"…"}            (replay adds "replay":true)
 {"type":"text","delta":"…"}
-{"type":"tool_call","name":"get_device","args":{"device_id":"pi-1"}}
-{"type":"tool_result","name":"get_device","summary":"…","details":null,"ok":true,"ms":412,"redacted":0}
+{"type":"tool_call","name":"get_device","args":{"device_id":"pi-1"},"callId":"…"}
+{"type":"tool_result","name":"get_device","callId":"…","summary":"…","details":null,"ok":true,"ms":412,"redacted":0}   callId (optional) pairs a result with its call
 {"type":"approval_request","actionId":"…"}
 {"type":"followup_pending","turnId":"cont_act_…"}                                  look_into handed off to a follow-up
 {"type":"error","code":"…","message":"…","retryable":false}                         terminal
