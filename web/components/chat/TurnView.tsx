@@ -95,7 +95,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
       {turn.mode === "investigate" && <span className="pill turn-mode">Investigated</span>}
       {parts}
       {turn.busy && final < 0 && lastStep < 0 && <div className="bubble agent thinking">Thinking…</div>}
-      {turn.error && <div className="turn-error small">Problem: {turn.error}</div>}
+      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}</div>}
     </div>
   );
 }

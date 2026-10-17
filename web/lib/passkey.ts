@@ -2,6 +2,9 @@
 // Passkeys for expert sessions (WebAuthn). The browser creates a key pair in the person's authenticator (Face ID,
 // Touch ID, a phone, a security key); only the public key leaves it. Approving an expert command signs the exact
 // command with that key, so Nightlight's cloud can relay a command but never create or change one.
+import { useEffect, useState } from "react";
+import { ApiError } from "./api";
+import { firebase } from "./firebase";
 
 const b64u = (buf: ArrayBuffer | Uint8Array) => {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -80,4 +83,49 @@ function canonical(v: unknown): string {
 
 export async function challengeFor(payload: Record<string, unknown>) {
   return b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(payload))));
+}
+
+/** Where passkeys work: the app's own address (from /config). Elsewhere (a preview, another host) the browser refuses. */
+export function useAppHost(): { url: string; host: string; here: boolean } | null {
+  const [v, setV] = useState<{ url: string; host: string; here: boolean } | null>(null);
+  useEffect(() => {
+    firebase().then(({ config }) => {
+      const url = config.appUrl ?? window.location.origin;
+      let host = url;
+      try { host = new URL(url).host; } catch { /* keep as given */ }
+      const local = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+      setV({ url, host, here: local || window.location.origin === new URL(url).origin });
+    }).catch(() => setV(null));
+  }, []);
+  return v;
+}
+
+/** What went wrong with a passkey or a card, in one plain sentence. */
+export function passkeyProblem(e: unknown, host?: string): string {
+  if (e instanceof DOMException || (e instanceof Error && /^(NotAllowed|Security|InvalidState|Abort|NotSupported)Error$/.test(e.name))) {
+    const name = (e as Error).name;
+    if (name === "NotAllowedError" || name === "AbortError") return "Cancelled or timed out. Tap again.";
+    if (name === "SecurityError") return `Passkeys work only at ${host ?? "Nightlight's own address"}.`;
+    if (name === "InvalidStateError") return "This device already has a passkey for Nightlight. Use that one.";
+    if (name === "NotSupportedError") return "This browser can't make that kind of passkey. Try Safari, Chrome or a phone.";
+  }
+  if (e instanceof ApiError) {
+    return ({
+      expired: "This card expired. Ask again and Nightlight will put up a fresh one.",
+      stale: "This card expired. Ask again and Nightlight will put up a fresh one.",
+      not_pending: "This card was already decided.",
+      not_found: "This card is gone. Ask again and Nightlight will put up a fresh one.",
+      no_passkey: "Make your passkey first: open a device, then Settings, then Expert sessions.",
+      start_again: "That took too long. Tap again to start over.",
+      passkey_not_accepted: "Nightlight couldn't accept that passkey. Tap again, or try another phone or computer.",
+      passkey_type_unsupported: "That passkey is a kind your devices can't check. Try another phone or computer.",
+      signature_not_accepted: "That passkey didn't sign it. Use the passkey you made for Nightlight.",
+      sign_in_required: "Sign in with Google first: a passkey belongs to an account.",
+      rate_limited: "Too many tries. Wait a minute, then tap again.",
+    } as Record<string, string>)[e.code] ?? (e.status === 429 ? "Too many tries. Wait a minute, then tap again."
+      : e.status >= 500 ? "Nightlight had a problem. Tap again in a moment." : "That didn't work. Tap again.");
+  }
+  if (e instanceof Error && e.message && !/^(cancelled|Failed to fetch|Load failed|NetworkError)/i.test(e.message)) return e.message;
+  if (e instanceof Error && /fetch|network|load failed/i.test(e.message)) return "Couldn't reach Nightlight. Check the connection and tap again.";
+  return "Cancelled or timed out. Tap again.";
 }

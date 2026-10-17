@@ -79,7 +79,7 @@ export function useServicesState(uid: string | null, deviceId: string | null) {
 /** A stored step: older messages have only name and args; textOffset/ok/ms arrived with the layered chat. */
 export interface PastStep { name: string; args?: Record<string, unknown>; summary?: string; details?: string;
   textOffset?: number; ok?: boolean; ms?: number; unfinished?: boolean; actionId?: string }
-export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number;
+export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number; turnId?: string;
   mode?: "quick" | "investigate"; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
 
 /** A chat's saved messages, oldest first (read once when the chat opens). */
