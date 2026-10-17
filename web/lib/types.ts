@@ -81,6 +81,7 @@ export interface Device {
   lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
   net?: { self?: string | null; gateway?: string | null } | null; // keyed fingerprints, never addresses
   setupAt?: Date | null; setupPreset?: "watch" | "fix" | "custom"; // the owner's first choice of what it may do
+  macFolders?: "allowed" | "declined" | null; // a Mac's personal folders (null: never asked); helper 0.9.23+
 }
 /** A place's name (`users/{uid}/places/{placeId}`, placeId = a router's fingerprint, `net.gateway`). */
 export interface PlaceDoc { id: string; name: string }

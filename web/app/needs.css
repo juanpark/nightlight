@@ -30,6 +30,7 @@
 .setup-presets label > span { display: flex; flex-direction: column; gap: 2px; }
 .setup-check { display: flex; gap: 8px; align-items: flex-start; }
 .setup-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.mac-folders { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px; }
 .drawer-status { margin: 6px 0 4px; font-size: 15px; }
 /* a watched thing's panel (WatchedPanel.tsx) */
 .role-pick { display: block; margin-bottom: 6px; }

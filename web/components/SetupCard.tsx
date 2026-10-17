@@ -6,9 +6,8 @@ import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { newer, type Go } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
+import MacFolders, { FOLDERS_FROM } from "./MacFolders";
 import { PRESETS } from "./Permissions";
-
-const FOLDERS_FROM = "0.9.22"; // helpers that can ask macOS for the personal folders when the app asks
 
 type Reply = { ok: boolean; done?: boolean; applied?: boolean; macFoldersAction?: string | null; why?: string }; // done: setupAt saved
 
@@ -45,9 +44,8 @@ export default function SetupCard({ device: d, actions, onGo }: { device: Device
         <strong>Saved.</strong>{" "}
         {asking ? <>macOS is asking on the {d.name} now: click <em>Allow</em> for each folder there.</>
           : job?.status === "done" ? <>{job.result?.summary ?? "The folders can be measured now."}</>
-          // TODO: "Ask again" here and in Settings once a folders-only route exists (asked for POST
-          // /api/devices/{id}/mac-folders); /setup would re-apply the preset and could undo later permission changes.
-          : <>{job?.result?.summary ?? "macOS didn't allow it."} The rest of your choice is saved.</>}
+          : <>{job?.result?.summary ?? "macOS didn't allow it."} The rest of your choice is saved.
+              <MacFolders device={d} actions={actions} /></>}
       </div>
     );
   }
