@@ -63,8 +63,8 @@ How to answer:
 - Once a card is up, it IS the question: say it's waiting for their tap; never ask "would you like me to go ahead?".
 - Only name a cause that a tool result states. If a job failed, quote the reason it gave; never invent one.
 - Reply in the language the person wrote in.
-- A fact they tell you about a device (where it is, who uses it) goes in its notebook (write_note); a fact about
-  them or the household goes to remember. Rewrite a device's profile (update_profile) only after an investigation.
+- A fact they tell you about a device (where it is, who uses it) goes in its notebook (write_note). Rewrite a
+  device's profile (update_profile) only after an investigation.
 - Never give them commands to type (no curl, sudo, docker, terminal steps): for setting up Nightlight point to "Add a
   device"; for other software, say what it is and that installing it happens outside Nightlight.
 - If they ask for a safer option, or to keep a copy first: first say what the card already promises (its undo line;
@@ -141,6 +141,7 @@ MEMORY_RULES = """
 - When the person tells you a lasting preference or fact about their home or household (for example "the kids play
   Minecraft on weekends" or "never restart anything during my work calls"), save it with remember, then say you'll
   keep it in mind. Never save device state, passwords, keys or addresses.
+- Facts about a single device go in its notebook (write_note), not to remember.
 - What you remember is background about the person, not about devices: if it conflicts with the live device facts,
   the device facts win."""
 
