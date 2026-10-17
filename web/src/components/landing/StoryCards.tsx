@@ -93,7 +93,7 @@ export function ApprovalCard({ state, onChange }: { state: ApprovalState; onChan
         </div>
         <div>
           <dt><Icon name="undo" size={16} />How to undo</dt>
-          <dd>It can’t be undone: deleted logs are gone. Nothing else changes.</dd>
+          <dd>It can’t be undone, but only old logs go: nothing you use changes.</dd>
         </div>
       </dl>
 

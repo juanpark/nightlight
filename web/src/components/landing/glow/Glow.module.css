@@ -404,6 +404,9 @@
   color: var(--muted);
   text-wrap: pretty;
 }
+/* The hero's own way in: the demo, lined up with the lede. */
+.heroCta { margin-top: clamp(20px, 3.2svh, 36px); }
+.heroCta .actions { justify-items: start; }
 /* Mid widths: the house comes closer on the right, so the lede wraps sooner. */
 @media (max-width: 1100px) {
   .lede { max-width: 26rem; }
@@ -558,12 +561,12 @@
 }
 .cardSlot {
   grid-column: 2;
-  opacity: 0.14;
+  /* Waiting cards only fade, never blur: a control is never distorted (they're inert until their step). */
+  opacity: 0.35;
   translate: 0 28px;
-  filter: blur(4px);
-  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), translate 0.9s cubic-bezier(0.16, 1, 0.3, 1), filter 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), translate 0.9s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.step[data-active] .cardSlot { opacity: 1; translate: 0 0; filter: none; }
+.step[data-active] .cardSlot { opacity: 1; translate: 0 0; }
 /* The cards' own buttons (Approve, Not now, the trust choices) get full-size tap areas here. */
 .cardSlot button { min-height: 44px; }
 /* The cards are glass here, so the house stays visible behind them. */
@@ -646,7 +649,7 @@
 }
 .watchItems { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; align-content: start; }
 .watchItems li { transition: translate 0.6s cubic-bezier(0.16, 1, 0.3, 1), color 0.4s ease; }
-.watchBlock:hover .watchItems li { translate: 8px 0; color: var(--star); }
+.watchBlock:hover .watchItems li { translate: 8px 0; color: var(--text); }
 .watchBlock:hover .watchItems li:nth-child(2) { transition-delay: 0.04s; }
 .watchBlock:hover .watchItems li:nth-child(3) { transition-delay: 0.08s; }
 .watchBlock:hover .watchItems li:nth-child(4) { transition-delay: 0.12s; }
@@ -681,7 +684,7 @@
   letter-spacing: -0.025em;
   transition: translate 0.7s cubic-bezier(0.16, 1, 0.3, 1), color 0.4s ease;
 }
-.whoRow:hover .whoName { translate: 10px 0; color: var(--star); }
+.whoRow:hover .whoName { translate: 10px 0; color: var(--text); }
 
 .privacyCols {
   display: grid;
@@ -746,8 +749,8 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 10px var(--ok);
+  background: var(--text);
+  opacity: 0.7;
 }
 .hintTouch { display: none; }
 @media (hover: none) {
@@ -840,6 +843,7 @@
 @media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
   .hero { --h1-size: clamp(2.75rem, 13vw, 4.25rem); row-gap: 20px; padding: 112px var(--gutter) 40px; }
   .lede { margin: 0; font-size: 1.0625rem; }
+  .heroCta { margin-top: 0; }
   .cue { left: var(--gutter); }
   .sample { right: auto; left: calc(var(--gutter) - 12px); bottom: 88px; }
   .railWrap { display: none; }

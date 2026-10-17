@@ -4,9 +4,9 @@ import { Fragment, type ComponentType } from "react";
 import type { IconProps } from "@phosphor-icons/react";
 import {
   AppWindow as PAppWindow, Archive as PArchive, ArrowLeft as PArrowLeft, ArrowRight, ArrowsClockwise, ArrowsLeftRight,
-  ArrowDown, ArrowsOutCardinal, CaretDown, MapPin, SlidersHorizontal, Tag, Binoculars as PBinoculars, CaretRight, Check as PCheck, Clock, MinusCircle, StopCircle,
+  ArrowCounterClockwise, ArrowDown, ArrowsOutCardinal, CaretDown, MapPin, SlidersHorizontal, Tag, Binoculars as PBinoculars, CaretRight, Check as PCheck, Clock, MinusCircle, StopCircle,
   Broadcast, ChatCircle, CheckCircle, HourglassMedium, WarningCircle, Cloud as PCloud, Cpu as PCpu, Cube as PCube, Database as PDatabase, Desktop, DownloadSimple,
-  FilmStrip, Flask, FlowArrow, Folder as PFolder, GameController, GitBranch as PGitBranch, Globe as PGlobe, HardDrive,
+  Eye as PEye, FilmStrip, Flask, FlowArrow, Folder as PFolder, GameController, GitBranch as PGitBranch, Globe as PGlobe, HardDrive,
   HardDrives, House as PHouse, Image as PImage, Info as PInfo, Key, Laptop as PLaptop, List, ListBullets,
   Lock as PLock, MapTrifold, Moon as PMoon, Network as PNetwork, NotePencil, Plus as PPlus, Printer as PPrinter, Pulse,
   Question, SecurityCamera, Shield as PShield, ShieldCheck as PShieldCheck, ShippingContainer, SidebarSimple, SignOut,
@@ -115,3 +115,7 @@ export const Speaker = line(SpeakerHifi);
 export const Terminal = line(TerminalWindow);
 export const Unknown = line(Question);
 export const Workflow = line(FlowArrow);
+
+// The landing page's story cards
+export const Look = line(PEye); // a dry run: what would happen
+export const Undo = line(ArrowCounterClockwise);

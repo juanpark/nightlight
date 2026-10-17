@@ -6,6 +6,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import Lenis from "lenis";
 import { Logo } from "../../brand/Logo";
+import { ToLatest } from "../../icons";
 import { AuthButtons } from "../AuthButtons";
 import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, type TrustState } from "../StoryCards";
 import { display, sans } from "../fonts";
@@ -49,17 +50,17 @@ const STEPS = [
 const WATCH = [
   {
     title: ["Space", "running out"],
-    items: ["Disks filling up", "Old logs and caches", "Docker images", "The biggest folders"],
+    items: ["Disks filling up", "Old logs and caches", "Unused app downloads", "The biggest folders"],
     text: "It finds what’s taking the room, names it with sizes, and offers a clean-up you approve.",
   },
   {
     title: ["Things", "that stop"],
-    items: ["Containers", "System services", "Game servers", "The home VPN"],
-    text: "Before asking to restart anything, it looks into why: exit codes, memory, restarts.",
+    items: ["Apps that stopped", "Background helpers", "Game servers", "The home VPN"],
+    text: "Before asking to restart anything, it looks into why: how it stopped, how much memory it used, how often it restarted.",
   },
   {
     title: ["Updates", "and backups"],
-    items: ["Updates waiting", "Backups overdue", "Lagging game worlds", "Safety checks"],
+    items: ["Updates waiting", "Backups overdue", "Game worlds falling behind", "Risky log-in settings"],
     text: "One plain sentence when an update is waiting or a backup hasn’t run in days.",
   },
   {
@@ -77,8 +78,8 @@ const WHO = [
 ];
 
 
-const SENT = ["CPU, memory and disk percentages", "Which services and containers run", "How many updates are waiting", "Two safety checks"];
-const NEVER = ["Host names or addresses", "Your files", "Passwords or keys", "Environment variables"];
+const SENT = ["How busy and how full each machine is", "Which apps are running", "How many updates are waiting", "Two yes/no checks: admin without a password, log-in by password"];
+const NEVER = ["Your machines’ names or network addresses", "Your files", "Passwords or keys", "Settings and secrets in your apps"];
 
 const LINKS = [
   { href: "#story", label: "How a night goes" },
@@ -120,7 +121,6 @@ const STILL: View[] = KEYS.map((_, i) => ({
   trail: i === 0 ? 0 : 1,
   logs: i === 0 ? 0 : 1,
   mark: i === 3 ? 1 : 0,
-  done: i >= 4 ? 1 : 0,
   town: i === 7 ? 1 : 0,
 }));
 
@@ -242,8 +242,8 @@ export function GlowLanding() {
         words = cleared.current ? "Cleared · disk now 61%" : "Dry run · 412 old log files";
         tone = cleared.current ? "ok" : "warn";
       } else if (i === 4) {
-        words = "All 6 machines fine";
-        tone = "ok";
+        words = cleared.current ? "All 6 machines fine" : "1 thing still needs you";
+        tone = cleared.current ? "ok" : "warn";
       } else show = 0;
 
       const t = tag.current;
@@ -381,9 +381,9 @@ export function GlowLanding() {
           // 2 → 3: crane up over the logs; the dry run outlines the ones that would go.
           .to(v, { ...KEYS[3], duration: 1 }, 2)
           .to(v, { mark: 1, duration: 0.5 }, 2.35)
-          // 3 → 4: the old logs clear as the camera pulls back to the whole house.
+          // 3 → 4: the camera pulls back to the whole house. The old logs only clear on Approve.
           .to(v, { ...KEYS[4], duration: 1 }, 3)
-          .to(v, { mark: 0, done: 1, duration: 0.5 }, 3.2)
+          .to(v, { mark: 0, duration: 0.5 }, 3.2)
           // 4 → 5 → 6: up high for "why", then down onto the front path.
           .to(v, { ...KEYS[5], duration: 1 }, 4)
           .to(v, { ...KEYS[6], duration: 1 }, 5)
@@ -485,7 +485,7 @@ export function GlowLanding() {
 
       <main id="glow-main" className={s.main}>
         <section ref={hero} className={s.hero} aria-labelledby="glow-title">
-          {/* The buttons live in the nav; the hero is words, then the way on. */}
+          {/* Words, the demo, then the way on. */}
           <h1 id="glow-title" className={s.h1}>
             <span className={s.h1Sleep} data-rise>
               You sleep.
@@ -498,11 +498,12 @@ export function GlowLanding() {
             Nightlight looks after the computers in your home or small office. It tells you what’s wrong in plain
             words, and never fixes anything without your yes.
           </p>
+          <div className={s.heroCta} data-rise>
+            <AuthButtons demoOnly styles={s} />
+          </div>
           <a href="#intro" className={s.cue} data-rise>
             <span className={s.cueIcon} aria-hidden="true">
-              <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 2.5v11M3.5 9 8 13.5 12.5 9" />
-              </svg>
+              <ToLatest size={16} />
             </span>
             Scroll to watch one night
           </a>
@@ -559,7 +560,7 @@ export function GlowLanding() {
                   </div>
                   <p className={s.stepText}>{st.text}</p>
                 </div>
-                <div className={s.cardSlot} ref={(n) => { cards.current[i] = n; }}>
+                <div className={s.cardSlot} inert={step !== i + 1} ref={(n) => { cards.current[i] = n; }}>
                   {i === 0 && <NoticeCard />}
                   {i === 1 && <ExplainCard />}
                   {i === 2 && <ApprovalCard state={approval} onChange={setApproval} />}
