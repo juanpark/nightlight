@@ -32,6 +32,7 @@ const TYPE_MS = 55;
 
 const beat = (ms) => new Promise((r) => setTimeout(r, ms));
 const touch = new WeakSet(); // contexts that tap instead of click
+let current = null; // the page of the shot being recorded, for a screenshot when it fails
 
 /** A soft dot that follows the mouse and dips on press (desktop), or shows where a finger lands (phone). */
 function pointer() {
@@ -128,6 +129,7 @@ async function session(browser, size, theme, name, { fromLanding = false } = {})
   if (SIZES[size].hasTouch) touch.add(ctx);
   await ctx.addInitScript(pointer);
   const page = await ctx.newPage();
+  current = page;
   await page.goto(APP);
   const demo = page.getByRole("button", { name: /Try the demo/ });
   await demo.waitFor({ timeout: 30_000 });
@@ -333,7 +335,11 @@ for (const shot of wanted) {
       try {
         await (stills ?? SHOTS[shot])(browser, theme, name);
         report.push(`ok    ${name || shot} ${theme} (${Math.round((Date.now() - t0) / 1000)} s)`);
-      } catch (e) { report.push(`FAIL  ${name || shot} ${theme}: ${e.message.split("\n")[0]}`); }
+      } catch (e) {
+        report.push(`FAIL  ${name || shot} ${theme}: ${e.message.split("\n")[0]}`);
+        await current?.screenshot({ path: path.join(RAW, `${name || shot}-FAIL.png`) }).catch(() => {});
+        await current?.context().close().catch(() => {});
+      }
     }
   }
 }
