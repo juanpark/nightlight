@@ -560,7 +560,8 @@ def found_view(uid: str) -> list[dict]:
     return sorted(out, key=lambda r: (not r.get("router"), not (r["seenBy"] and r["seenBy"][0]["canWatch"])))
 
 
-DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
+DISCOVER_FROM = "0.9.21"
+UNHEALTHY_RESTART_FROM = "0.9.27"  # helpers that restart a running container that fails its health check  # helpers that can look nearby when the app asks
 
 
 def request_discover(uid: str, device_id: str) -> dict:
@@ -834,6 +835,10 @@ def checks(facts: dict) -> list[dict]:
                     "message": f"{_friendly(unit)} has stopped working.", "evidence": f"system service {unit}: failed",
                     "svcId": _doc_id(unit)})
     for c in facts.get("containers") or []:
+        if c.get("state") == "running" and "(unhealthy)" in (c.get("status") or ""):
+            out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_unhealthy", "severity": "warn",
+                        "message": f"{c['name']} is running but failing its own health check.",
+                        "evidence": f"container status: {c.get('status')}", "svcId": _doc_id(c["name"])})
         if c.get("state") not in ("running", None):
             out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_down", "severity": "warn",
                         "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
@@ -926,7 +931,8 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
         return _fix_card(device, params)
     if action_type == "restart_service":
         return _unit_card(device, services, params)
-    if action_type != "restart_container" or set(params) != {"container"}:
+    if action_type != "restart_container" or set(params) - {"restart"} != {"container"} \
+            or params.get("restart", True) is not True:
         raise ValueError("not_applicable")
     name = params["container"]
     if not isinstance(name, str) or not CONTAINER_NAME.fullmatch(name):
@@ -936,8 +942,22 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     svc = services.get(_doc_id(name))
     if not svc or svc.get("kind") != "container":
         raise ValueError("no_such_container")
+    unhealthy = "(unhealthy)" in (svc.get("detail") or "")
+    if params.get("restart") and not unhealthy:
+        raise ValueError("not_unhealthy")
     if svc.get("status") == "ok":
         raise ValueError("already_running")
+    if unhealthy and not params.get("restart"):
+        raise ValueError("needs_restart")  # a start card would do nothing for a running container
+    if unhealthy:  # running but failing its health check: the restart the card names is the job's own parameter
+        if release.newer(UNHEALTHY_RESTART_FROM, device.get("helperVersion")):
+            raise ValueError("helper_too_old")
+        return {"svcId": _doc_id(name), "plan": f"Restart the {name} container on the {device['name']}: it is "
+                                                f"running but failing its own health check.",
+                "dryRun": f"The helper on the device runs \"docker restart {name}\" and checks its health a few "
+                          f"seconds later. {name} is unavailable for a moment. Nothing else is touched.",
+                "rollback": "Nothing to undo: it starts again with the same settings and data.",
+                "blastRadius": [device["id"]], "riskClass": "service"}
     return {"svcId": _doc_id(name), "plan": f"Start the stopped {name} container again on the {device['name']}.",
             "dryRun": f"The helper on the device runs \"docker start {name}\" and checks it is still running a few "
                       f"seconds later. Nothing else is touched.",
@@ -972,7 +992,8 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
     for c in facts.get("containers") or []:
         image = c.get("image") or ""
         services[_doc_id(c["name"])] = {"name": c["name"], "category": "containers", "kind": "container",
-                               "status": "ok" if c.get("state") == "running" else "warn",
+                               "status": "ok" if c.get("state") == "running"
+                               and "(unhealthy)" not in (c.get("status") or "") else "warn",
                                "version": image.rsplit(":", 1)[1] if ":" in image else None,
                                "detail": c.get("status"), "findings": [],
                                **({"about": a} if (a := apps.about(image, c["name"])) else {})}

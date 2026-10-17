@@ -812,3 +812,33 @@ def test_the_app_can_raise_the_mac_folder_prompts_while_the_owner_is_there(helpe
     ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
     assert ok and "click Allow" in words and helper._load()["macPrivateFolders"] is True
     assert order and all(seen is True for seen in order)  # recorded before any folder was opened
+
+
+def test_a_running_container_that_fails_its_health_check_is_restarted(helper, monkeypatch):
+    calls, health = [], iter(["unhealthy", "healthy"])
+
+    def fake_run(cmd, timeout=20):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "inspect"]:
+            return next(health) if "Health" in cmd[3] else "running"
+        return ""
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    helper.set_allowed("restart_container", "photos", True)
+    start = {"id": "act_" + "a" * 26, "type": "restart_container", "params": {"container": "photos"}}
+    ok, summary, _ = helper.run_job(start, wait=0)  # a start was approved: a running container is left alone
+    assert ok and "already running" in summary and not any(c[:2] == ["docker", "restart"] for c in calls)
+    health = iter(["unhealthy", "healthy"])
+    ok, summary, st = helper.run_job({**start, "id": "act_" + "b" * 26, "params": {"container": "photos",
+                                                                                 "restart": True}}, wait=0)
+    assert ok and st == "running" and ["docker", "restart", "photos"] in calls and "healthy" in summary
+    assert ["docker", "start", "photos"] not in calls
+
+
+def test_an_approved_restart_of_a_container_that_has_since_stopped_reports_failure(helper, monkeypatch):
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: "exited" if cmd[:2] == ["docker", "inspect"] else "")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    helper.set_allowed("restart_container", "photos", True)
+    ok, summary, st = helper.run_job({"id": "act_" + "c" * 26, "type": "restart_container",
+                                      "params": {"container": "photos", "restart": True}}, wait=0)
+    assert not ok and st == "exited" and "stopped" in summary

@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.26"
+VERSION = "0.9.27"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -385,6 +385,12 @@ def set_allowed(kind, name, on):
 def _container_state(name):
     out = _run(["docker", "inspect", "--format", "{{.State.Status}}", name]).strip()
     return out[:32] or None
+
+
+def _container_health(name):
+    """"healthy", "unhealthy", "starting", or "" when the container has no health check."""
+    out = _run(["docker", "inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{end}}", name])
+    return out.strip()[:16]
 
 
 # ------------------------------------------------------------------ read-only looks (diagnose)
@@ -1682,7 +1688,21 @@ def run_job(job, wait=5):
     state = _container_state(name)
     if state is None:
         return False, f"There is no container named {name} here, so nothing was done.", None
-    if state == "running":
+    if params.get("restart") is True:  # the owner approved a restart of a running, unhealthy container: only that
+        if state != "running":
+            return False, f"{name} has stopped since the card was approved ({state or 'gone'}), so nothing was " \
+                          "restarted. Ask Nightlight to start it.", state
+        if _container_health(name) != "unhealthy":
+            return True, f"{name} is healthy again, so nothing needed restarting.", state
+        _run(["docker", "restart", name], timeout=90)
+        time.sleep(wait)
+        state, health = _container_state(name), _container_health(name)
+        if state == "running" and health != "unhealthy":
+            return True, f"Restarted {name}; it was running {wait} seconds later" + (
+                f" and its health check says {health}." if health else "."), state
+        return False, f"Restarted {name}, but it is {state or 'not running'}" + (
+            f" and still {health}." if health else "."), state
+    if state == "running":  # a start was approved: never more than that
         return True, f"{name} was already running; nothing needed doing.", state
     _run(["docker", "start", name], timeout=60)
     time.sleep(wait)

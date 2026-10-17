@@ -285,3 +285,20 @@ def test_passkeys_are_made_for_the_app_never_a_preview(started, monkeypatch):
     assert expert._origin("http://localhost:3000") == "http://localhost:3000"  # local development
     assert expert._origin(None) == "https://app.example"
     assert expert._origin("https://evil.example") == "https://app.example"
+
+
+def test_an_expired_passkey_card_turns_stale_and_unlock_time_reads_plainly(client, owner, monkeypatch):
+    uid, dev, pk = owner
+    g = actions.propose(uid, session_id="sess_test", turn_id="t5", generation=generation(uid),
+                        action_type="expert_grant", device_id=dev["deviceId"], params={"why": "look"})
+    r = client.post(f"/api/actions/{g['id']}/sign", json=pk.sign(g["params"]["challenge"]))
+    assert r.json()["status"] == "done"
+    assert "for the next 15 minutes" in db.action(uid, g["id"]).get().to_dict()["result"]["summary"]
+    g2 = actions.propose(uid, session_id="sess_test", turn_id="t6", generation=generation(uid),
+                         action_type="expert_grant", device_id=dev["deviceId"], params={"why": "again"})
+    real_time = expert.time.time
+    monkeypatch.setattr(expert.time, "time", lambda: real_time() + expert.GRANT_TTL + 60)
+    r = client.post(f"/api/actions/{g2['id']}/sign", json=pk.sign(g2["params"]["challenge"]))
+    assert r.status_code == 409 and r.json()["code"] == "expired"
+    a = db.action(uid, g2["id"]).get().to_dict()
+    assert a["status"] == "stale" and "Ask again" in a["result"]["summary"]

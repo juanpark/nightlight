@@ -455,7 +455,8 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _propose("update_server", device_id)
 
     def _restart_container_sync(device_id: str, container: str, tool_context: ToolContext) -> dict:
-        """Propose starting a stopped container again on a REAL device, through the helper on that device.
+        """Propose starting a stopped container again, or restarting one that runs but fails its health check, on a
+        REAL device, through the helper on that device.
 
         Only for containers the owner allowed on the device ("can restart"). Always puts an approval card in front of
         them; after approval the helper runs it on the device within about a minute.
@@ -464,7 +465,10 @@ def make_tools(ctx: TurnContext, read_only: bool):
             device_id: the real device's id from list_fleet.
             container: the container's name, exactly as get_device lists it.
         """
-        return _propose("restart_container", device_id, {"container": container})
+        svc = db.services(ctx.uid, device_id).document(real._doc_id(container)).get().to_dict() or {}
+        unhealthy = "(unhealthy)" in (svc.get("detail") or "")  # the operation is part of what they approve
+        return _propose("restart_container", device_id, {"container": container, **({"restart": True} if unhealthy
+                                                                                   else {})})
 
     def _look_into_sync(device_id: str, target: str, tool_context: ToolContext) -> dict:
         """Find out why something on a REAL device is down: its status and (if allowed) its last log lines.

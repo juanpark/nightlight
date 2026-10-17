@@ -185,8 +185,11 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
         raise not_found()
     if a.get("status") != "pending":
         raise ApiError(409, "not_pending")
-    if not k.get("pem") or a["params"]["payload"]["expires"] < time.time():
-        raise ApiError(409, "expired" if k.get("pem") else "no_passkey")
+    if not k.get("pem"):
+        raise ApiError(409, "no_passkey")
+    if a["params"]["payload"]["expires"] < time.time():
+        _expire(uid, action_id)  # the card stops offering a tap that can only fail
+        raise ApiError(409, "expired")
     credential = {"id": k["credentialId"], "rawId": k["credentialId"], "type": "public-key",
                   "response": {**{x: assertion[x] for x in ("authenticatorData", "clientDataJSON", "signature")}}}
     try:
@@ -202,12 +205,27 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
     from . import actions
     summary = None
     if not cap.on_device:  # it unlocks other jobs until its expiry
-        until = datetime.fromtimestamp(a["params"]["payload"]["expires"], timezone.utc)
-        summary = f"Investigation unlocked until {until:%H:%M} UTC."
+        left = max(1, round((a["params"]["payload"]["expires"] - time.time()) / 60))
+        summary = f"Investigation unlocked for the next {left} minute{'s' if left != 1 else ''}."
     out = actions.signed(uid, action_id, signed, summary)
     if v.new_sign_count:  # counterless passkeys stay at 0; recorded once the approval has committed
         _ref(uid).update({"signCount": v.new_sign_count})
     return out
+
+
+def _expire(uid: str, action_id: str) -> None:
+    """A passkey card whose signed window has passed becomes stale (only while it is still pending)."""
+    ref = db.action(uid, action_id)
+
+    @firestore.transactional
+    def run(tx):
+        a = ref.get(transaction=tx).to_dict() or {}
+        if a.get("status") == "pending":
+            tx.update(ref, {"status": "stale", "finishedAt": datetime.now(timezone.utc),
+                            "result": {"ok": False, "summary": "This card expired before it was signed. Ask again "
+                                                              "and Nightlight will put up a fresh one."}})
+
+    db.run_transaction(run)
 
 
 def grant_write(uid: str, a: dict) -> tuple:
