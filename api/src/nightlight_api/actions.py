@@ -414,7 +414,7 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         if cap.keeps_output:
             found, hidden = scrub(output or "")
             a["result"].update(output=found[:4000], hidden=hidden)
-        if a["type"] in ("restart_container", "restart_service"):
+        if cap.reports_state:
             a["result"].update(before={"state": "stopped"}, after={"state": state})
         current = user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration")
         writes = cap.on_result(tx, uid, a, device) if cap.on_result and current else []  # its reads happen here

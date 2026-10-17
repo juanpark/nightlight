@@ -27,6 +27,7 @@ class Capability:
     build: Callable[[Ctx], tuple[dict, dict]]  # -> (card fields, clean params); ValueError(code) when it can't
     reads: bool = False  # only reads: its result is evidence the asking turn narrates (no follow-up of its own)
     keeps_output: bool = False  # the result keeps what the device printed (scrubbed there and here)
+    reports_state: bool = False  # the result says what state the target was left in (e.g. running)
     on_device: bool = True  # handed to the device's helper (False: the server finishes it, e.g. a grant)
     while_silent: bool = False  # may be asked for while the device isn't reporting
     after_approval: Callable | None = None  # (uid, action) after it was approved, outside the transaction
@@ -143,9 +144,9 @@ def _service_recovered(tx, uid: str, a: dict, device: dict) -> list:
 
 REGISTRY: dict[str, Capability] = {c.name: c for c in (
     Capability("restart_container", "Restart a stopped container", "card", _restart_container,
-               on_result=_service_recovered),
+               reports_state=True, on_result=_service_recovered),
     Capability("restart_service", "Restart a stopped system service", "card", _restart_service,
-               on_result=_service_recovered),
+               reports_state=True, on_result=_service_recovered),
     Capability("fix", "Clean up space", "card", _fix),
     Capability("update_helper", "Update the helper", "card", _update),
     Capability("remove_device", "Remove a device", "card", _remove, while_silent=True,
