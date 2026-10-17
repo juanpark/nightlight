@@ -55,7 +55,8 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
         throw new Error("This card asks for more than 15 minutes. Not signed.");
       }
       const signed = await signWithPasskey(await challengeFor(payload), k.credentialId, k.rpId);
-      await api("POST", `/api/actions/${action!.id}/sign`, signed);
+      const r = await api<{ continuationTurnId?: string }>("POST", `/api/actions/${action!.id}/sign`, signed);
+      if (r.continuationTurnId) { followed.current = true; onFollowUp(r.continuationTurnId); } // it carries on
     } catch (e) {
       setErr(e instanceof ApiError ? (e.code === "signature_not_accepted" ? "That passkey didn't sign it." : e.code)
         : e instanceof Error ? e.message : "Couldn't sign it");

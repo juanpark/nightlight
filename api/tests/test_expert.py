@@ -265,3 +265,12 @@ def test_registration_of_a_real_shaped_passkey(client, started):  # the path the
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     assert r.json()["fingerprint"] == expert._fingerprint(der)  # the same code the browser and the device compute
     assert expert.status(started)["enabled"]
+
+
+def test_signing_the_investigation_card_resumes_the_chat(client, owner):
+    uid, dev, pk = owner
+    g = actions.propose(uid, session_id="sess_test", turn_id="t20", generation=generation(uid),
+                        action_type="expert_grant", device_id=dev["deviceId"], params={"why": "why it crashed"})
+    r = client.post(f"/api/actions/{g['id']}/sign", json=pk.sign(g["params"]["challenge"])).json()
+    turn = db.turns(uid, "sess_test").document(r["continuationTurnId"]).get().to_dict()
+    assert turn["mode"] == "investigate" and turn["kind"] == "user" and "why it crashed" in turn["input"]

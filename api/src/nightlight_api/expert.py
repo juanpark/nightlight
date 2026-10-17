@@ -136,6 +136,23 @@ def card(device: dict, params: dict) -> tuple[dict, dict]:
 GRANT_TTL = 15 * 60
 
 
+def _resume(uid: str, a: dict, action_id: str) -> str:
+    """Queue the turn that continues the investigation now that the owner approved it (tools on, Investigate mode)."""
+    from .ids import continuation_turn_id
+    turn_id = continuation_turn_id(action_id)
+    why = (a.get("params") or {}).get("why") or "the problem we were looking into"
+    db.turns(uid, a["sessionId"]).document(turn_id).set({
+        "kind": "user", "status": "queued", "attempt": 0, "demoGeneration": a.get("demoGeneration"),
+        "mode": "investigate", "actionId": action_id,
+        "input": ("[The owner approved the read-only investigation of this device with their passkey; it is active for "
+                  f"15 minutes.] Continue investigating now with run_command: {why}. Run the commands you need one "
+                  "at a time, then answer in the usual Investigate shape and update the device's profile."),
+        "createdAt": datetime.now(timezone.utc)}, merge=False)
+    db.user(uid).collection("turnIndex").document(turn_id).set({"sessionId": a["sessionId"],
+                                                               "demoGeneration": a.get("demoGeneration")})
+    return turn_id
+
+
 def grant_card(device: dict, params: dict) -> tuple[dict, dict]:
     """The card that unlocks an investigation: read-only commands on one device for 15 minutes, one passkey tap."""
     if "on" not in (device.get("allowedJobs") or {}).get("expert", []):
@@ -205,9 +222,13 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
         _grants(uid).document(f"grant_{a['deviceId']}").set({"payload": payload, "signed": signed,
                                                             "actionId": action_id})
         until = datetime.fromtimestamp(payload["expires"], timezone.utc)
-        ref.update({"status": "done", "params.signed": signed, "decision": decision, "followUp": "none",
-                    "result": {"ok": True, "summary": f"Investigation unlocked until {until:%H:%M} UTC."}})
-        return {"ok": True, "actionId": action_id, "status": "done"}
+        update = {"status": "done", "params.signed": signed, "decision": decision, "followUp": "none",
+                  "result": {"ok": True, "summary": f"Investigation unlocked until {until:%H:%M} UTC."}}
+        if a.get("sessionId"):  # the chat that asked carries on by itself, in Investigate mode, with the commands
+            update["continuationTurnId"] = _resume(uid, a, action_id)
+        ref.update(update)
+        return {"ok": True, "actionId": action_id, "status": "done",
+                **({"continuationTurnId": update["continuationTurnId"]} if "continuationTurnId" in update else {})}
     ref.update({"status": "approved", "params.signed": signed, "decision": decision})
     return {"ok": True, "actionId": action_id, "status": "approved"}
 
