@@ -2,10 +2,11 @@
 // One device on the map, read at a glance: its icon ringed in its status colour, three small gauges (disk, memory,
 // CPU), up to three starred apps by name, a dot per app it runs, and a mark when something needs the person. Zoomed out, only the icon and name stay.
 // Hover or select it for quick actions; drag from an edge dot to another device to draw a relationship.
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { Handle, NodeToolbar, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
-import { Info, MessageCircle, Star } from "lucide-react";
+import { Info, LayoutGrid, MessageCircle, Star } from "lucide-react";
 import { ago, answering, type Need } from "@/lib/needsYou";
+import { APP_CAP, appOrder } from "@/lib/apps";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
 import NeedsMark from "../NeedsMark";
@@ -14,7 +15,10 @@ import { appIcon, deviceIcon, roleOf } from "./kinds";
 export type DeviceNodeData = {
   device: Device; uid: string; needs?: Need[]; now: number; by?: string; // by: the device that watches it
   favorites?: boolean; // the Favorites filter is on: starred apps stand out
+  focused?: boolean; // opened in place: every app as a chip
   onOpen: (id: string) => void; onAsk: (q: string) => void;
+  onFocus: (id: string) => void; onApp: (id: string, svcId: string) => void;
+  onSize: (id: string, h: number) => void; // an opened card says how tall it grew, so its neighbours make room
 };
 export type DeviceNodeType = Node<DeviceNodeData, "device">;
 
@@ -49,9 +53,20 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   const bad = services.filter((s) => (s.status ?? "ok") !== "ok").length;
   // the apps the owner starred, in the order they starred them
   const favs = (d.favoriteApps ?? []).map((id) => services.find((s) => s.id === id)).filter((s) => !!s).slice(0, 3);
+  const box = useRef<HTMLDivElement>(null);
+  const { focused, onSize } = data;
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!focused || !el) return;
+    const ro = new ResizeObserver(() => onSize(d.id, el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [focused, onSize, d.id]);
   const tools = (
     <NodeToolbar position={Position.Top} className="dtools">
       <button onClick={() => data.onAsk(`How is my ${d.name} doing?`)}><MessageCircle size={14} /> Ask</button>
+      {d.kind !== "watched" && services.length > 0 && !focused &&
+        <button onClick={() => data.onFocus(d.id)}><LayoutGrid size={14} /> Open</button>}
       <button onClick={() => data.onOpen(d.id)}><Info size={14} /> Details</button>
     </NodeToolbar>
   );
@@ -73,8 +88,9 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
       </div>
     );
   }
+  const shown = focused ? appOrder(services, d.favoriteApps ?? []) : [];
   return (
-    <div className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""}`}
+    <div ref={box} className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${focused ? "focused" : ""}`}
       onDoubleClick={() => data.onOpen(d.id)}>
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
       {tools}
@@ -91,7 +107,24 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
             <Gauge label="Mem" value={d.vitals?.mem} />
             <Gauge label="CPU" value={d.vitals?.cpu} />
           </div>)}
-      {!compact && favs.length > 0 && (
+      {focused && !compact && (
+        <div className="dappgrid" role="group" aria-label={`Apps on ${d.name}`}>
+          {shown.slice(0, APP_CAP).map((s) => {
+            const Icon = appIcon(s);
+            const fav = (d.favoriteApps ?? []).includes(s.id);
+            return (
+              <button key={s.id} className={`dchip ${s.status ?? "ok"} ${fav && data.favorites ? "hl" : ""} nodrag`}
+                title={`${s.name}: ${s.status ?? "ok"}`}
+                onClick={(e) => { e.stopPropagation(); data.onApp(d.id, s.id); }}>
+                <Icon size={12} strokeWidth={2} aria-hidden /><span>{s.name}</span>
+                {fav && <Star className="dstar" size={10} aria-label="Favorite" />}
+              </button>);
+          })}
+          {shown.length > APP_CAP && (
+            <button className="dchip more nodrag" onClick={(e) => { e.stopPropagation(); data.onOpen(d.id); }}>
+              +{shown.length - APP_CAP} more</button>)}
+        </div>)}
+      {!focused && !compact && favs.length > 0 && (
         <div className={`dfavs ${data.favorites ? "hl" : ""}`}>
           {favs.map((s) => {
             const Icon = appIcon(s);
