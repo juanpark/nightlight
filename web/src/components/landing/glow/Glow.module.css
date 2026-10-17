@@ -520,7 +520,50 @@
 .privacyList[data-never] li { color: var(--muted); }
 .privacyNote { align-self: end; margin: 0; color: var(--text); }
 
-/* Down on the front path, the lit house under the last words. */
+/* The reveal: the words hold still while the street rises behind them. */
+.beyond {
+  position: relative;
+  height: 240vh;
+  padding: 0 var(--gutter);
+}
+.beyondPin {
+  position: sticky;
+  top: 0;
+  padding-top: clamp(110px, 18vh, 180px);
+}
+.beyondText {
+  margin: 0;
+  max-width: 30rem;
+  font-size: clamp(1.0625rem, 1.3vw, 1.25rem);
+  color: var(--text);
+  text-wrap: pretty;
+  text-shadow: 0 1px 18px rgb(17 20 31 / 0.95);
+}
+
+.hint {
+  margin: 18px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+  color: var(--muted);
+  text-shadow: 0 1px 14px rgb(17 20 31 / 0.95), 0 0 2px rgb(17 20 31 / 0.8);
+}
+.hint::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 10px var(--ok);
+}
+.hintTouch { display: none; }
+@media (hover: none) {
+  .hintMouse { display: none; }
+  .hintTouch { display: inline; }
+}
+
+/* Pulled back over the whole street, under the last words. */
 .closing {
   position: relative;
   min-height: 100vh;

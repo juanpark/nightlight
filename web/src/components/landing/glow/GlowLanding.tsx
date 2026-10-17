@@ -72,8 +72,8 @@ const WHO = [
   "A family with a NAS full of photos",
   "A Raspberry Pi running the home VPN",
   "A Minecraft world hosted for the kids",
-  "A small office, or a dental clinic",
 ];
+
 
 const SENT = ["CPU, memory and disk percentages", "Which services and containers run", "How many updates are waiting", "Two safety checks"];
 const NEVER = ["Host names or addresses", "Your files", "Passwords or keys", "Environment variables"];
@@ -88,11 +88,12 @@ const LINKS = [
 // Where the camera is at each beat. Every beat is its own shot of the same house,
 // and the camera travels between them without a cut, the way a drone would:
 // 0 the house from afar, 1 following the light to the Pi, 2 down at eye level in
-// the attic, 3 up over the Pi's old logs, 4 back out to the whole house, then
-// high above it for "why", and down on the front path for the closing.
+// the attic, 3 up over the Pi's old logs, 4 back out to the whole house, 5 high
+// above it, 6 down on the front path, and 7 pulled back to the whole street as
+// the shop, the office and the server room are wired in.
 const BASE: View = {
   tx: 0, ty: 12.6, tz: 0, zoom: 0.84, az: 30, el: 22, ox: 0, oy: 0, lift: -0.04,
-  follow: 0, trail: 0, rings: 0, done: 0, lit: 0, orb: 0, logs: 0, mark: 0,
+  follow: 0, trail: 0, rings: 0, done: 0, lit: 0, orb: 0, logs: 0, mark: 0, town: 0, fit: 0,
 };
 const KEYS: Partial<View>[] = [
   BASE,
@@ -102,10 +103,12 @@ const KEYS: Partial<View>[] = [
   { tx: 0, ty: 5.4, tz: 0, zoom: 1.12, az: 28, el: 20, ox: -0.12, oy: 0.18, lit: 1, orb: 1 },
   { tx: 0, ty: 0.5, tz: 0, zoom: 0.6, az: 42, el: 48, ox: 0.2, oy: -0.15, lift: 0.08 },
   { tx: -0.5, ty: 3.4, tz: 1.5, zoom: 0.92, az: 6, el: 5, ox: 0, oy: 0.2, lift: -0.25 },
+  { tx: 0, ty: 3, tz: 0, zoom: 0.44, az: 12, el: 26, ox: 0, oy: 0.19, lift: -0.12, fit: 26 },
 ];
 const BEATS = KEYS.length - 1;
 // The sections each beat belongs to; a beat lands when its section's top meets the top of the screen.
-const MARKS = ["step-1", "step-2", "step-3", "step-4", "watch", "closing"];
+// The last beat lands at the very bottom of the page, so the street is whole above the footer.
+const MARKS = ["step-1", "step-2", "step-3", "step-4", "watch", "beyond", "end"];
 // The still view for each beat (reduced motion).
 const STILL: View[] = KEYS.map((_, i) => ({
   ...BASE,
@@ -114,6 +117,7 @@ const STILL: View[] = KEYS.map((_, i) => ({
   logs: i === 0 ? 0 : 1,
   mark: i === 3 ? 1 : 0,
   done: i >= 4 ? 1 : 0,
+  town: i === 7 ? 1 : 0,
 }));
 
 const sm = (a: number, b: number, x: number) => {
@@ -144,7 +148,15 @@ export function GlowLanding() {
     const el = canvas.current;
     if (!el) return;
     const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let api: { draw: (v: View, t: number) => Probe; dispose: () => void } | undefined;
+    let api: { draw: (v: View, t: number) => Probe; point: (x: number | null, y?: number) => void; dispose: () => void } | undefined;
+    // Pointing at a building on the street names it: hover with a mouse, tap on touch.
+    const aim = (e: PointerEvent) => {
+      if ((e.type === "pointermove") === (e.pointerType === "mouse")) api?.point(e.clientX, e.clientY);
+    };
+    const away = () => api?.point(null);
+    window.addEventListener("pointermove", aim, { passive: true });
+    window.addEventListener("pointerdown", aim, { passive: true });
+    document.documentElement.addEventListener("mouseleave", away);
     let live = true;
     let said = "";
     // A small label rides on whatever the camera is looking at, and on wide
@@ -217,6 +229,9 @@ export function GlowLanding() {
       .catch(() => live && setGl("off"));
     return () => {
       live = false;
+      window.removeEventListener("pointermove", aim);
+      window.removeEventListener("pointerdown", aim);
+      document.documentElement.removeEventListener("mouseleave", away);
       gsap.ticker.remove(frame);
       api?.dispose();
     };
@@ -234,7 +249,7 @@ export function GlowLanding() {
         let marks = KEYS.map((_, i) => i);
         const measure = () => {
           const max = ScrollTrigger.maxScroll(window);
-          marks = [0, ...MARKS.map((id) => Math.min(max, (document.getElementById(id)?.getBoundingClientRect().top ?? 0) + window.scrollY))];
+          marks = [0, ...MARKS.map((id) => (id === "end" ? max : Math.min(max, (document.getElementById(id)?.getBoundingClientRect().top ?? 0) + window.scrollY)))];
         };
         const beat = (y: number) => {
           for (let i = 1; i < marks.length; i++) {
@@ -285,7 +300,10 @@ export function GlowLanding() {
           .to(v, { mark: 0, done: 1, duration: 0.5 }, 3.2)
           // 4 → 5 → 6: up high for "why", then down onto the front path.
           .to(v, { ...KEYS[5], duration: 1 }, 4)
-          .to(v, { ...KEYS[6], duration: 1 }, 5);
+          .to(v, { ...KEYS[6], duration: 1 }, 5)
+          // 6 → 7: pull back from the front path; the rest of the street rises and lights up.
+          .to(v, { ...KEYS[7], duration: 1 }, 6)
+          .to(v, { town: 1, duration: 0.9, ease: "none" }, 6.05);
 
         // Scrubbed by hand, so each beat lands on its own section. Lenis already smooths
         // the scroll; the timeline only takes a light, frame-rate-independent damping on top.
@@ -528,6 +546,29 @@ export function GlowLanding() {
             <p className={s.privacyNote} data-block>
               <span data-part>
                 On a real device, every restart waits for your tap, whatever the trust settings say.
+              </span>
+            </p>
+          </div>
+        </section>
+
+        {/* Back on the front path, then pulled away: the same light, further down the street. */}
+        <section id="beyond" className={s.beyond} aria-labelledby="beyond-title">
+          <div className={s.beyondPin}>
+            <h2 id="beyond-title" className={s.h2} data-lines>
+              Not just
+              <br />
+              your home.
+            </h2>
+            <p className={s.beyondText} data-block>
+              <span data-part>
+                The till and cameras in your shop. The file server at work. The rack in the back room. Wherever
+                machines run overnight, the same light can look after them.
+              </span>
+            </p>
+            <p className={s.hint} data-block>
+              <span data-part>
+                <span className={s.hintMouse}>Point at a building to see what it is.</span>
+                <span className={s.hintTouch}>Tap a building to see what it is.</span>
               </span>
             </p>
           </div>

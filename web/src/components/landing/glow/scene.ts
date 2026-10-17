@@ -28,6 +28,8 @@ export type View = {
   lift?: number; // focal point's offset upward, as a share of the height (every screen)
   logs?: number; // 0..1: the Pi's old logs have piled up beside it
   mark?: number; // 0..1: the dry run outlines the logs that would go
+  town?: number; // 0..1: the shop, the office and the server room rise and are wired in, one by one
+  fit?: number; // keep at least this much of the world's width on screen, in world units either side
 };
 
 // Where things land on screen this frame, in CSS pixels, for the page to pin
@@ -348,19 +350,23 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   route.push([0.22, F[2], -0.85], [0.22, F[2], -1.12], [0.22, 6.68, -1.12]); // the Pi
 
   // Straight runs with small rounded bends, like a cable pressed into corners.
-  const pts = route.map(([x, y, z]) => new THREE.Vector3(x, y, z));
-  const wire = new THREE.CurvePath<THREE.Vector3>();
-  let from = pts[0].clone();
-  for (let i = 1; i < pts.length - 1; i++) {
-    const [a, p, b] = [pts[i - 1], pts[i], pts[i + 1]];
-    const r = Math.min(0.14, p.distanceTo(a) / 2, p.distanceTo(b) / 2);
-    const into = p.clone().addScaledVector(a.clone().sub(p).normalize(), r);
-    const out = p.clone().addScaledVector(b.clone().sub(p).normalize(), r);
-    if (from.distanceTo(into) > 1e-4) wire.add(new THREE.LineCurve3(from, into));
-    wire.add(new THREE.QuadraticBezierCurve3(into, p.clone(), out));
-    from = out;
+  function cablePath(route: [number, number, number][], bend = 0.14) {
+    const pts = route.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+    const path = new THREE.CurvePath<THREE.Vector3>();
+    let from = pts[0].clone();
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [a, p, b] = [pts[i - 1], pts[i], pts[i + 1]];
+      const r = Math.min(bend, p.distanceTo(a) / 2, p.distanceTo(b) / 2);
+      const into = p.clone().addScaledVector(a.clone().sub(p).normalize(), r);
+      const out = p.clone().addScaledVector(b.clone().sub(p).normalize(), r);
+      if (from.distanceTo(into) > 1e-4) path.add(new THREE.LineCurve3(from, into));
+      path.add(new THREE.QuadraticBezierCurve3(into, p.clone(), out));
+      from = out;
+    }
+    path.add(new THREE.LineCurve3(from, pts[pts.length - 1]));
+    return path;
   }
-  wire.add(new THREE.LineCurve3(from, pts[pts.length - 1]));
+  const wire = cablePath(route);
 
   const SEG = 2400;
   const RAD = 6;
@@ -417,13 +423,232 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     return m;
   });
 
+  // ---------- Beyond the house: a shop, an office and a server room ----------
+  // Out of sight until the very end, when they rise from the ground one by one
+  // and the light's wire runs out from the house to each. Same clay, same lamps.
+  // They cast no shadows: the shadow map is drawn once, before they exist.
+  type Place = {
+    group: THREE.Group;
+    panes: { mat: THREE.MeshStandardMaterial; at: number }[]; // each window lights at its own moment
+    beacon: THREE.Mesh;
+    tag: THREE.Mesh; // its name, above it
+    cable: THREE.Mesh;
+    segs: number;
+    at: number; // 0..1: when, in the town's progress, it starts to rise
+  };
+  function placeBox(g: THREE.Group, w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, round = 0.06) {
+    const geo = round > 0 ? new RoundedBoxGeometry(w, h, d, 2, Math.min(round, w / 2, h / 2, d / 2)) : new THREE.BoxGeometry(w, h, d);
+    geos.push(geo);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y + h / 2, z);
+    m.receiveShadow = true;
+    g.add(m);
+    return m;
+  }
+  function pane(g: THREE.Group, w: number, h: number, x: number, y: number, z: number, at: number, list: Place["panes"]) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x141a2c, emissive: COOL_PANE.clone(), emissiveIntensity: 0.5, roughness: 0.3 });
+    placeBox(g, w, h, 0.05, x, y, z, mat, 0.015);
+    list.push({ mat, at });
+  }
+  // Tags: the page's own pill label (dark glass, a green dot, the place's name),
+  // drawn into the world above each place and turned to face the same way as
+  // its front, so the camera tilts it with the building. They fade in as each
+  // place lights up; on a phone they are drawn larger so they stay readable.
+  const font = getComputedStyle(canvas).getPropertyValue("--font-sans").trim() || "system-ui, sans-serif";
+  const tags: { tex: THREE.CanvasTexture; paint: () => void; mesh: THREE.Mesh }[] = [];
+  const TAG_H = 1.9; // world units
+  function tagIn(parent: THREE.Object3D, text: string, x: number, y: number, z: number) {
+    const cv = document.createElement("canvas");
+    const H = 128;
+    const ctx = cv.getContext("2d")!;
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geos.push(geo);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, toneMapped: false, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.renderOrder = 10;
+    mesh.visible = false;
+    parent.add(mesh);
+    const paint = () => {
+      const size = H * 0.36;
+      ctx.font = `600 ${size}px ${font}`;
+      const W = Math.ceil(ctx.measureText(text).width + H * 1.25);
+      cv.width = W;
+      cv.height = H;
+      ctx.font = `600 ${size}px ${font}`;
+      const r = H / 2 - 4;
+      ctx.beginPath();
+      ctx.roundRect(3, 3, W - 6, H - 6, r);
+      ctx.fillStyle = "rgba(17, 20, 31, 0.82)";
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(143, 214, 168, 0.55)";
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(H * 0.48, H / 2, H * 0.085, 0, Math.PI * 2);
+      ctx.fillStyle = "#8fd6a8";
+      ctx.fill();
+      ctx.fillStyle = "#e9e5da";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, H * 0.72, H / 2 + 2);
+      tex.needsUpdate = true;
+      mesh.scale.set((TAG_H * W) / H, TAG_H, 1);
+      mesh.userData.w = mesh.scale.x;
+    };
+    paint();
+    tags.push({ tex, paint, mesh });
+    return mesh;
+  }
+  // The page's font may still be loading; draw the tags again once it has.
+  document.fonts?.ready.then(() => tags.forEach((t) => t.paint()));
+  function showTag(m: THREE.Mesh, a: number, big: number) {
+    m.visible = a > 0.002;
+    (m.material as THREE.MeshBasicMaterial).opacity = a;
+    m.scale.set(m.userData.w * big, TAG_H * big, 1);
+  }
+
+  const beaconGeo = new THREE.SphereGeometry(0.16, 16, 12);
+  geos.push(beaconGeo);
+  // A seeded shuffle, so the windows light in the same order on every visit.
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+
+  const places: Place[] = [];
+  // What the pointer can land on: an unseen box around each building, the house first.
+  const hits: THREE.Mesh[] = [];
+  const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+  function hitBox(parent: THREE.Object3D, [w, h, d]: [number, number, number], at = new THREE.Vector3()) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    geos.push(geo);
+    const m = new THREE.Mesh(geo, hitMat);
+    m.position.set(at.x, at.y + h / 2, at.z);
+    parent.add(m);
+    return m;
+  }
+  hits.push(hitBox(scene, [13, 10.5, 7]));
+  function place(
+    at: number,
+    x: number,
+    z: number,
+    build: (g: THREE.Group, panes: Place["panes"]) => [number, number, number],
+    cable: [number, number, number][],
+    tag: [string, number, number, number], // text and where it floats, in the place's own space
+    size: [number, number, number], // its bulk, for pointing at it
+  ) {
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+    group.visible = false;
+    scene.add(group);
+    const panes: Place["panes"] = [];
+    const [bx, by, bz] = build(group, panes);
+    const tagMesh = tagIn(group, ...tag);
+    const beacon = new THREE.Mesh(beaconGeo, new THREE.MeshBasicMaterial({ color: OFF.clone(), toneMapped: false }));
+    beacon.position.set(bx, by, bz);
+    group.add(beacon);
+    const path = cablePath(cable, 0.3);
+    const segs = Math.max(60, Math.round(path.getLength() * 12));
+    const geo = new THREE.TubeGeometry(path, segs, 0.05, RAD, false);
+    geos.push(geo);
+    const mesh = new THREE.Mesh(geo, tubeMat);
+    mesh.geometry.setDrawRange(0, 0);
+    scene.add(mesh);
+    places.push({ group, panes, beacon, tag: tagMesh, cable: mesh, segs, at });
+    hits.push(hitBox(group, size));
+  }
+
+  // Sized against the house (12.6 wide, two storeys and an attic): a shop of one
+  // tall storey, an office tower half again as high as the house's roof, and a
+  // single-storey server room.
+
+  // The shop, out to the left: two shop windows under an awning, a lit sign.
+  place(0, -21, -2, (g, panes) => {
+    placeBox(g, 9, 4.4, 6, 0, 0, 0, mats.wall, 0.06);
+    placeBox(g, 9.4, 0.3, 6.4, 0, 4.4, 0, mats.floor, 0.06);
+    const awning = placeBox(g, 9.2, 0.1, 1.7, 0, 2.95, 3.75, mats.soft, 0.03);
+    awning.rotation.x = 0.3;
+    pane(g, 2.8, 2, -2.9, 0.45, 3.02, 0.3, panes);
+    pane(g, 2.2, 2, 0.1, 0.45, 3.02, 0.4, panes);
+    placeBox(g, 1.4, 2.5, 0.06, 2.9, 0, 3.02, mats.ground, 0.02); // door
+    pane(g, 6, 0.75, -0.5, 3.4, 3.04, 0.6, panes); // sign
+    return [3.9, 5.1, 2.4];
+  }, [[-6.6, 0.06, 4.2], [-21, 0.06, 4.2], [-21, 0.06, 1.05]], ["Your shop", 0, 6.9, 1.2], [9.4, 5, 7.6]);
+
+  // The office, back to the right: seven floors of windows that light up a few at a time.
+  place(0.22, 21, -9, (g, panes) => {
+    placeBox(g, 9, 15, 7, 0, 0, 0, mats.wall, 0.06);
+    placeBox(g, 9.4, 0.3, 7.4, 0, 15, 0, mats.floor, 0.06);
+    placeBox(g, 3, 1.4, 2.2, -1.8, 15.3, -1.2, mats.soft, 0.06); // plant room on the roof
+    pane(g, 4.2, 1.9, 0, 0.3, 3.52, 0.35, panes); // the lobby
+    for (let f = 1; f < 7; f++) {
+      for (let c = 0; c < 6; c++) pane(g, 1, 1.3, -3.5 + c * 1.4, 1.2 + f * 1.9, 3.52, 0.3 + rand() * 0.7, panes);
+    }
+    cylIn(g, 0.06, 0.06, 2, 2.8, 15.3, 1.5);
+    return [2.8, 17.5, 1.5];
+  }, [[6.6, 0.06, 4.6], [21, 0.06, 4.6], [21, 0.06, -5.45]], ["Your office", 0, 19.5, 1.2], [9.4, 17, 7.4]);
+
+  // The server room, front right: cut open like the house, five racks of blinking lights.
+  const rackLeds: { mat: THREE.MeshBasicMaterial; phase: number }[] = [];
+  place(0.44, 16, 11, (g) => {
+    placeBox(g, 8, 0.3, 5.5, 0, 0, 0, mats.floor, 0.06);
+    placeBox(g, 8, 4.2, 0.25, 0, 0, -2.62, mats.wall, 0.04);
+    placeBox(g, 0.25, 4.2, 5.5, -3.88, 0, 0, mats.wall, 0.04);
+    placeBox(g, 0.25, 4.2, 5.5, 3.88, 0, 0, mats.wall, 0.04);
+    placeBox(g, 8.4, 0.3, 5.8, 0, 4.2, -0.15, mats.floor, 0.06);
+    const ledGeo2 = new THREE.BoxGeometry(0.16, 0.07, 0.02);
+    geos.push(ledGeo2);
+    for (let r = 0; r < 5; r++) {
+      const x = -2.8 + r * 1.4;
+      placeBox(g, 1, 3.2, 1.2, x, 0.3, -1.7, mats.ground, 0.05);
+      for (let k = 0; k < 10; k++) {
+        const mat = new THREE.MeshBasicMaterial({ color: OFF.clone(), toneMapped: false });
+        const led = new THREE.Mesh(ledGeo2, mat);
+        led.position.set(x + 0.28, 0.65 + k * 0.28, -1.08);
+        g.add(led);
+        rackLeds.push({ mat, phase: rand() * 6.28 });
+      }
+    }
+    return [3.4, 5.9, -1.4];
+  }, [[6.6, 0.06, 4.6], [10, 0.06, 4.6], [10, 0.06, 11], [11.95, 0.06, 11]], ["Your server room", 0, 6.9, 1.2], [8.4, 5, 5.8]);
+
+  // A few trees to frame the street (the house has its own), growing in with the buildings.
+  const grove: { g: THREE.Group; at: number }[] = [];
+  for (const [x, z, sz, at] of [
+    [-28.5, -1, 1.4, 0.05], [-14.5, -8.5, 1.1, 0.1], [4.5, -10, 1.4, 0.18],
+    [28, 1.5, 1.3, 0.3], [24.5, 11, 1, 0.46], [-9, 11.5, 1.2, 0.12],
+  ] as const) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.visible = false;
+    cylIn(g, 0.12 * sz, 0.16 * sz, sz, 0, 0, 0);
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(0.95 * sz, 2.4 * sz, 7), mats.soft);
+    geos.push(crown.geometry);
+    crown.position.y = 2.1 * sz;
+    crown.receiveShadow = true;
+    g.add(crown);
+    scene.add(g);
+    grove.push({ g, at });
+  }
+
+  function cylIn(g: THREE.Group, rt: number, rb: number, h: number, x: number, y: number, z: number) {
+    const geo = new THREE.CylinderGeometry(rt, rb, h, 8);
+    geos.push(geo);
+    const m = new THREE.Mesh(geo, mats.wall);
+    m.position.set(x, y + h / 2, z);
+    g.add(m);
+  }
+  // Home's tag, above the roof.
+  const homeTag = tagIn(scene, "Your home", 0, 11.6, 0.6);
+
   // ---------- A field of dots on the ground, rippling out from the house ----------
   const STEP = 0.62;
   const dots: THREE.Vector2[] = [];
-  for (let x = -26; x <= 26; x += STEP) {
-    for (let z = -26; z <= 26; z += STEP) {
+  for (let x = -34; x <= 34; x += STEP) {
+    for (let z = -34; z <= 34; z += STEP) {
       const inHouse = Math.abs(x) < 6.6 && Math.abs(z) < 3.6;
-      if (!inHouse && x * x + z * z < 26 * 26) dots.push(new THREE.Vector2(x, z));
+      if (!inHouse && x * x + z * z < 34 * 34) dots.push(new THREE.Vector2(x, z));
     }
   }
   // The ripple is computed on the GPU: each dot only knows where it sits.
@@ -598,6 +823,48 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     paneMat.emissive.copy(COOL_PANE).lerp(WARM, warmth);
     paneMat.emissiveIntensity = 0.6 + warmth * 0.5;
 
+    // The town: each place rises, its cable runs out from the house, then it lights up.
+    const town = v.town ?? 0;
+    const big = narrow ? 1.8 : 1;
+    // Tags stay hidden until a building is pointed at (or tapped), then fade in.
+    const ease = dt === 0 || opts.calm ? 1 : 1 - Math.exp(-dt * 12);
+    tagA.forEach((a, i) => (tagA[i] = a + ((hovered === i ? 1 : 0) - a) * ease));
+    places.forEach((pl, k) => {
+      const rise = sm(pl.at, pl.at + 0.22, town);
+      const run = sm(pl.at + 0.1, pl.at + 0.34, town);
+      const lit = sm(pl.at + 0.3, pl.at + 0.42, town);
+      pl.group.visible = rise > 0.001;
+      pl.group.scale.set(1, Math.max(0.001, 1 - Math.pow(1 - rise, 3)), 1);
+      pl.cable.geometry.setDrawRange(0, Math.round(run * pl.segs) * RAD * 6);
+      (pl.beacon.material as THREE.MeshBasicMaterial).color.copy(OFF).lerp(OK, lit).multiplyScalar(1 + lit * 0.6);
+      pl.beacon.scale.setScalar(1 + lit * (opts.calm ? 0.2 : 0.2 + Math.sin(time * 2 + k) * 0.12));
+      pl.panes.forEach((pn) => {
+        const on = sm(pn.at - 0.1, pn.at + 0.05, lit);
+        pn.mat.emissive.copy(COOL_PANE).lerp(WARM, on);
+        pn.mat.emissiveIntensity = 0.5 + on * 0.9;
+      });
+      if (k === 2) {
+        rackLeds.forEach((l) => {
+          const blink = opts.calm ? 1 : 0.55 + 0.45 * Math.sin(time * 3.1 + l.phase);
+          l.mat.color.copy(OFF).lerp(OK, lit * blink).multiplyScalar(1 + lit * 0.5);
+        });
+      }
+      // A place has finished rising before it lights, so its tag is never squashed.
+      showTag(pl.tag, lit * tagA[k + 1], big);
+      if (hovered === k + 1) pl.beacon.scale.multiplyScalar(1.4);
+      placeLit[k + 1] = lit;
+    });
+    placeLit[0] = sm(0.02, 0.12, town);
+    showTag(homeTag, placeLit[0] * tagA[0], big);
+    grove.forEach(({ g, at }) => {
+      const rise = sm(at, at + 0.2, town);
+      g.visible = rise > 0.001;
+      g.scale.set(1, Math.max(0.001, 1 - Math.pow(1 - rise, 3)), 1);
+    });
+    // Further out, the fog lets go a little so the whole street reads.
+    (scene.fog as THREE.Fog).near = 62 + town * 14;
+    (scene.fog as THREE.Fog).far = 96 + town * 24;
+
     // Checking rings, expanding from the light
     rings.forEach((r, i) => {
       const ph = opts.calm ? 0.35 + i * 0.2 : ((time * 0.55 + i / 3) % 1);
@@ -627,7 +894,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     );
     camera.lookAt(target);
     const aspect = W / H;
-    const half = Math.max(11, (narrow ? 8.5 : 0) / aspect) / v.zoom;
+    let half = Math.max(11, (narrow ? 8.5 : 0) / aspect) / v.zoom;
+    if (v.fit) half = Math.max(half, v.fit / aspect);
     const halfW = half * aspect;
     const ox = narrow ? 0 : v.ox;
     const oy = (narrow ? v.oy : 0) + (v.lift ?? 0);
@@ -640,6 +908,14 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     composer.render();
 
     camera.updateMatrixWorld();
+    // What the pointer is over, for the next frame's tags: only lit places, only at the end.
+    hovered = -1;
+    if (pointer && town > 0.5) {
+      ray.setFromCamera(pointer, camera);
+      const hit = ray.intersectObjects(hits, false)[0];
+      const i = hit ? hits.indexOf(hit.object as THREE.Mesh) : -1;
+      if (i >= 0 && placeLit[i] > 0.5) hovered = i;
+    }
     toScreen(headPos, probe.head);
     toScreen(devices[devices.length - 1].at, probe.pi);
     toScreen(logTop, probe.logs);
@@ -647,8 +923,23 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     return probe;
   }
 
-  const probe: Probe = { head: { x: 0, y: 0 }, pi: { x: 0, y: 0 }, logs: { x: 0, y: 0 }, checked: 0 };
+  const probe: Probe = {
+    head: { x: 0, y: 0 },
+    pi: { x: 0, y: 0 },
+    logs: { x: 0, y: 0 },
+    checked: 0,
+  };
   const ndc = new THREE.Vector3();
+  const ray = new THREE.Raycaster();
+  let pointer: THREE.Vector2 | null = null;
+  let hovered = -1;
+  const tagA = [0, 0, 0, 0];
+  const placeLit = [0, 0, 0, 0];
+  // The canvas fills the screen, so a pointer's page position is its place on the canvas.
+  function point(x: number | null, y = 0) {
+    if (x === null) pointer = null;
+    else (pointer ??= new THREE.Vector2()).set((x / W) * 2 - 1, -(y / H) * 2 + 1);
+  }
   function toScreen(p: THREE.Vector3, out: { x: number; y: number }) {
     ndc.copy(p).project(camera);
     out.x = ((ndc.x + 1) / 2) * W;
@@ -661,6 +952,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
 
   return {
     draw,
+    point,
     dispose() {
       ro.disconnect();
       geos.forEach((g) => g.dispose());
@@ -668,6 +960,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
         const m = (o as THREE.Mesh).material;
         if (m) (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
       });
+      tags.forEach((t) => t.tex.dispose());
       composer.dispose();
       envTex.dispose();
       pmrem.dispose();
