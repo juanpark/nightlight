@@ -160,3 +160,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .app-chip.crit { border-color: var(--crit); }
 .app-chip .dstar { color: var(--glow); fill: var(--glow); flex: none; }
 @media (max-width: 380px) { .app-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Account settings: one row per switch. */
+.setting-row { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.setting-row input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+.setting-row.off { cursor: default; }
+.setting-help { margin: 4px 0 0 30px; }

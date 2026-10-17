@@ -14,6 +14,7 @@ import WatchPanel from "./WatchPanel";
 import AwayBanner from "./AwayBanner";
 import HomeView from "./map/HomeView";
 import DeviceDrawer, { type Tab } from "./DeviceDrawer";
+import AccountSettings from "./AccountSettings";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -23,7 +24,7 @@ import FirstRun from "./FirstRun";
 import "@/app/mobile.css";
 import MemoryPanel from "./MemoryPanel";
 
-type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
+type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
 
 export default function Home({ user }: { user: User }) {
   const uid = user.uid;
@@ -116,6 +117,7 @@ export default function Home({ user }: { user: User }) {
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button onClick={() => toggle("found")}>Found nearby</button>
         <button onClick={() => toggle("demo")}>Demo tools</button>
+        <button onClick={() => toggle("settings")}>Settings</button>
         {user.isAnonymous
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
           : <span className="small muted">{user.email}</span>}
@@ -143,6 +145,7 @@ export default function Home({ user }: { user: User }) {
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
+          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} onSave={saveWithGoogle} />}
           {panel === "memory" && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
           {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}

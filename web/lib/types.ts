@@ -209,6 +209,7 @@ export interface UserDoc {
   demo?: { state: "ready" | "resetting" };
   trustDefault?: Level;
   isDemo?: boolean;
+  settings?: { deviceNames?: boolean }; // deviceNames missing: on
 }
 
 export type StreamEvent =
