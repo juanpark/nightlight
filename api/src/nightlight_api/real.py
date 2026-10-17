@@ -329,12 +329,13 @@ def found_view(uid: str) -> list[dict]:
         if h.get("watchedBy") and not h.get("revoked"):
             room[h["watchedBy"]] = room.get(h["watchedBy"], 0) + 1
     for row in rows.values():
+        row["seenBy"] = [f for f in row["seenBy"] if f["deviceId"] in helpers]  # a forgotten device saw nothing
         for f in row["seenBy"]:
-            h = helpers.get(f["deviceId"]) or {}
+            h = helpers[f["deviceId"]]
             f["canWatch"] = f["canWatch"] and not h.get("archived") and not h.get("revoked") \
                 and room.get(f["deviceId"], 0) < WATCHED_PER_HELPER
         row["seenBy"].sort(key=lambda f: not f["canWatch"])  # Add uses the first finder
-    return list(rows.values())
+    return [row for row in rows.values() if row["seenBy"]]
 
 
 DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks

@@ -218,3 +218,20 @@ def test_add_uses_a_finder_with_room_left(client, started, monkeypatch):  # code
     first = row["seenBy"][0]
     assert first["deviceId"] == pi["deviceId"] and first["canWatch"]  # the Mac is full
     assert client.post(f"/api/discoveries/{first['deviceId']}/{first['cid']}/add", json={"name": "y"}).status_code == 201
+
+
+def test_what_a_forgotten_device_found_goes_with_it(client, started):  # codex discover rev4 #1
+    mac, pi = enrolled(client, "Mac"), enrolled(client, "Pi")
+    beat(client, mac["token"], FACTS)
+    beat(client, pi["token"], FACTS)
+    for dev, cid in ((mac, "aaaaaaaaaaa5"), (pi, "bbbbbbbbbbb5")):
+        h = {"X-Device-Token": dev["token"]}
+        assert client.post("/helper/discoveries", json={"items": [{**ITEM, "cid": cid, "tag": "9" * 20}]},
+                           headers=h).status_code == 200
+    client.post(f"/api/devices/{mac['deviceId']}/remove", json={})
+    assert client.delete(f"/api/devices/{mac['deviceId']}").status_code == 200  # forget for good
+    [row] = client.get("/api/found").json()["items"]
+    assert [f["deviceId"] for f in row["seenBy"]] == [pi["deviceId"]]
+    first = row["seenBy"][0]
+    assert client.post(f"/api/discoveries/{first['deviceId']}/{first['cid']}/add", json={"name": "HA"}).status_code == 201
+    assert not db.user(started).collection("discoveries").document(mac["deviceId"]).get().exists

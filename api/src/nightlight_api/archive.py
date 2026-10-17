@@ -125,6 +125,8 @@ def purge(uid: str, device_id: str) -> None:
     dref = db.device(uid, device_id)
     refs = [s.reference for sub in ("services", "history", "notes", "profile") for s in dref.collection(sub).stream()]
     refs += links.touching(uid, device_id)
+    refs.append(db.user(uid).collection("discoveries").document(device_id))  # what it found goes with it
+    refs.append(db.user(uid).collection("scans").document(device_id))
     for coll in (db.events(uid), db.actions(uid)):
         refs += [s.reference for s in coll.where(filter=FieldFilter("deviceId", "==", device_id)).stream()]
     for i in range(0, len(refs), 400):
