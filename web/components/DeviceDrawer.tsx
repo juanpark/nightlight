@@ -66,11 +66,12 @@ function keepTab(d: Device, t: Tab) {
 }
 
 export default function DeviceDrawer({ uid, generation, device, actions, devices, needs, release, tab, onTab, onGo,
-  onFollowUp, onAsk, onClose, app, onApp }: {
+  onFollowUp, onAsk, onClose, app, onApp, hidden }: {
   uid: string; generation?: number; device: Device; actions: Action[]; devices: Device[]; needs: Need[];
   release: { version: string } | null; tab: Tab | null; onTab: (t: Tab) => void; onGo: (g: Go) => void;
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
   app?: string | null; onApp?: (svcId: string | null) => void; // one app opened on its own, in the Apps tab
+  hidden?: boolean; // on a phone, the chat is showing instead
 }) {
   const { rows: services, loaded } = useServicesState(uid, device.id);
   const fav = useFavorites(uid, device);
@@ -87,9 +88,24 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [onClose]);
+  // On a phone the panel is a sheet over the whole page: a modal dialog, with everything behind it out of reach
+  // (inert) until it closes or the chat is shown instead. On a wide screen it is a side panel beside a usable map.
+  const [phone, setPhone] = useState(false);
   useEffect(() => {
-    if (window.matchMedia("(max-width: 900px)").matches) box.current?.focus({ preventScroll: true });
-  }, [device.id]);
+    const m = window.matchMedia("(max-width: 900px)");
+    setPhone(m.matches);
+    const on = () => setPhone(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  const modal = phone && !hidden;
+  useEffect(() => {
+    if (!modal) return;
+    const behind = [...document.querySelectorAll<HTMLElement>(".shell > .top, .main > .left, .main > .right, .shell > .pane-tabs")];
+    behind.forEach((el) => el.setAttribute("inert", ""));
+    box.current?.focus({ preventScroll: true });
+    return () => behind.forEach((el) => el.removeAttribute("inert"));
+  }, [modal, device.id]);
   // Each problem is said once: the urgent one as a row under the status sentence (with its "What should I do?"),
   // the rest under Problems.
   const listed = (f: Finding) => needs.some((n) => n.id === `critical:${device.id}:${f.id ?? f.message}`);
@@ -107,8 +123,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const openApp = (id: string) => { keepTab(device, "apps"); onTab("apps"); onApp?.(id); };
 
   return (
-    <div className={`drawer side ${watched ? "watched" : ""}`} ref={box} tabIndex={-1} role="region"
-      aria-label={`${device.name}: details`}>
+    <div className={`drawer side ${watched ? "watched" : ""}`} ref={box} tabIndex={-1} role={modal ? "dialog" : "region"}
+      aria-modal={modal || undefined} aria-label={`${device.name}: details`}>
       <Head key={device.id} device={device} fav={opened ? undefined : fav} onClose={onClose} />
       <div className="tabs" role="tablist" aria-label={`About the ${device.name}`}>
         {tabs.map((t) => (
