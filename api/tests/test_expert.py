@@ -245,3 +245,23 @@ def test_rev3_docker_listing_never_shows_container_commands(helper):  # rev3 #1
         assert argv[-2:] == ["--format", "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
     else:
         assert "isn't installed" in why
+
+
+def test_registration_of_a_real_shaped_passkey(client, started):  # the path the browser takes
+    import cbor2
+    opts = expert.register_options(started, ORIGIN if ORIGIN in expert.settings.web_origins else None)
+    rp_id, origin = opts["rp"]["id"], expert._ref(started).get().to_dict()["pending"]["origin"]
+    pk = Passkey()
+    cred_id = b"\x01" * 16
+    auth = (hashlib.sha256(rp_id.encode()).digest() + bytes([0x45]) + (0).to_bytes(4, "big")
+            + bytes(16) + len(cred_id).to_bytes(2, "big") + cred_id + pk.cose)
+    att = cbor2.dumps({"fmt": "none", "attStmt": {}, "authData": auth})
+    client_data = json.dumps({"type": "webauthn.create", "challenge": opts["challenge"], "origin": origin}).encode()
+    credential = {"id": expert.b64u(cred_id), "rawId": expert.b64u(cred_id), "type": "public-key",
+                  "response": {"clientDataJSON": expert.b64u(client_data), "attestationObject": expert.b64u(att)}}
+    r = client.post("/api/expert/register", json=credential)
+    assert r.status_code == 200, r.text
+    der = serialization.load_pem_public_key(pk.pem.encode()).public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    assert r.json()["fingerprint"] == expert._fingerprint(der)  # the same code the browser and the device compute
+    assert expert.status(started)["enabled"]

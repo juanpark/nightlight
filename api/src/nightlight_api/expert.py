@@ -74,7 +74,7 @@ def register(uid: str, credential: dict) -> dict:
     from cryptography.hazmat.primitives.asymmetric import ec
     from webauthn import verify_registration_response
     from webauthn.helpers import decode_credential_public_key
-    from webauthn.helpers.structs import DecodedEC2PublicKey
+    from webauthn.helpers.decode_credential_public_key import DecodedEC2PublicKey
 
     pending = (_ref(uid).get().to_dict() or {}).get("pending")
     if not pending or time.time() - pending["at"] > 300:
