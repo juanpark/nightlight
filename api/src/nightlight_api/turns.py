@@ -462,6 +462,10 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         out = resp.get("output") or ""
         first = next((ln for ln in out.splitlines()[1:] if ln.strip()), "")
         return (resp.get("summary") or status) + (f": {first[:120]}" if first else ""), (out[:DETAILS_CHARS] or None)
+    if name == "research" and resp.get("status") == "done":
+        src = ", ".join(s.get("title") or "" for s in resp.get("sources") or [])
+        return f"Searched the web: {len(resp.get('sources') or [])} source(s){': ' + src if src else ''}", \
+            (resp.get("answer") or "")[:DETAILS_CHARS]
     if name == "how_nightlight_works" and resp.get("title"):
         return f"Read Nightlight's guide: {resp['title']}", resp.get("text")
     if status == "pending":
