@@ -1,23 +1,39 @@
 /* The home map (components/map). Existing tokens only; React Flow's own styles are imported with it. */
 .homeview { display: flex; flex-direction: column; gap: 8px; flex: none; } /* never squeezed: the pane scrolls instead */
 .view-switch { padding: 0; }
-/* the bar above the map (HomeBar.tsx): Map or List, then place / kind / show chips, wrapping on narrow screens */
-.homebar { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px 14px; overflow-x: auto; scrollbar-width: none;
-  padding: 2px; margin: -2px; }
-.homebar > * { flex: none; }
-/* a soft fade at the right edge says the row scrolls when it is wider than the pane */
-.homebar { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }
-.homebar .chips { flex-wrap: nowrap; }
-.homebar .chips { align-items: center; }
+.homebar .view-switch button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; font-size: 13px; } /* the same size as the pills beside it */
+/* the bar above the map (HomeBar.tsx): Map or List, the quick toggles, then one menu per kind of filter. It wraps
+   onto a second line on narrow panes instead of scrolling choices out of sight. */
+.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; } /* wider gaps set the groups apart */
+.fgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fpill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px; font-size: 13px;
+  font-weight: 500; border-color: var(--line); white-space: nowrap; }
+.fpill:hover:not(:disabled) { border-color: var(--line-strong); }
+.fpill.on, .fpill.on:hover { background: var(--select); color: var(--ink); border-color: var(--accent); font-weight: 600; }
+.fpill > svg { flex: none; color: var(--muted); }
+.fpill.on > svg { color: var(--ink); }
+.fcount { min-width: 20px; padding: 0 6px; border-radius: 99px; line-height: 19px; font-size: 11.5px; font-weight: 700;
+  text-align: center; background: var(--glow); color: var(--on-primary); }
+.fclear { margin-left: auto; }
+/* a filter menu: the pill opens a short checklist under it */
+.fmenu { position: relative; }
+.fmenu-caret { transition: transform .15s ease-out; }
+.fmenu > [aria-expanded="true"] .fmenu-caret { transform: rotate(180deg); }
+.fmenu-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 220px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; gap: 1px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px;
+  background: var(--panel); box-shadow: var(--shadow); }
+.fmenu-panel label { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 10px; border-radius: 8px;
+  font-size: 13.5px; cursor: pointer; }
+.fmenu-panel label:hover { background: var(--panel-2); }
+.fmenu-panel input[type="checkbox"], .fmenu-panel input[type="radio"] { width: 16px; height: 16px; margin: 0;
+  accent-color: var(--accent); }
+.fcount-quiet { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.fmenu-panel .linkish { align-self: flex-start; margin: 4px 10px 2px; }
+.fmenu-panel .place-name { flex-wrap: wrap; padding: 6px 10px; }
+@media (prefers-reduced-motion: reduce) { .fmenu-caret { transition: none; } }
 .dapps-text b.crit { color: var(--crit); }
 .place-name { display: inline-flex; gap: 6px; align-items: center; }
 .place-name input { width: 180px; }
-@media (max-width: 600px) { /* one swipeable row per group */
-  .homebar .chips { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; padding-bottom: 2px; }
-  .homebar .chips > * { flex: none; }
-}
-.view-switch button { display: inline-flex; align-items: center; gap: 5px; }
 .homemap { display: flex; flex-direction: column; gap: 6px; }
 /* the canvas is sized by its wrapper: React Flow sets an inline height: 100% on itself */
 .hm-canvas { position: relative; height: min(64vh, 620px); min-height: 360px; }

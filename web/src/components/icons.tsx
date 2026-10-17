@@ -4,7 +4,7 @@ import { Fragment, type ComponentType } from "react";
 import type { IconProps } from "@phosphor-icons/react";
 import {
   AppWindow as PAppWindow, Archive as PArchive, ArrowLeft as PArrowLeft, ArrowRight, ArrowsClockwise, ArrowsLeftRight,
-  ArrowDown, ArrowsOutCardinal, Binoculars as PBinoculars, CaretRight, Check as PCheck, Clock, MinusCircle, StopCircle,
+  ArrowDown, ArrowsOutCardinal, CaretDown, MapPin, SlidersHorizontal, Tag, Binoculars as PBinoculars, CaretRight, Check as PCheck, Clock, MinusCircle, StopCircle,
   Broadcast, ChatCircle, CheckCircle, HourglassMedium, WarningCircle, Cloud as PCloud, Cpu as PCpu, Cube as PCube, Database as PDatabase, Desktop, DownloadSimple,
   FilmStrip, Flask, FlowArrow, Folder as PFolder, GameController, GitBranch as PGitBranch, Globe as PGlobe, HardDrive,
   HardDrives, House as PHouse, Image as PImage, Info as PInfo, Key, Laptop as PLaptop, List, ListBullets,
@@ -77,6 +77,11 @@ export const Working = line(HourglassMedium);
 export const Declined = line(MinusCircle);
 export const OutOfDate = line(Clock);
 export const ToLatest = mark(ArrowDown);
+export const Opens = mark(CaretDown); // a menu button's "opens below"
+export const Kinds = line(SlidersHorizontal);
+export const Place = line(MapPin);
+export const Tags = line(Tag);
+export const NeedsYou = line(WarningCircle);
 
 // Devices, roles and apps
 export const AppWindow = line(PAppWindow);

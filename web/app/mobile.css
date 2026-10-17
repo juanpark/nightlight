@@ -16,7 +16,8 @@
   .vitals { gap: 8px; }
 
   /* fingers: every control on the home is at least 44px tall */
-  .homebar .chips button, .view-switch button { min-height: 44px; padding-inline: 15px; }
+  .homebar .fpill, .view-switch button { min-height: 44px; padding-inline: 15px; }
+  .fmenu-panel label { min-height: 44px; }
   .homemap .react-flow__controls-button { width: 44px; height: 44px; }
   .homemap .react-flow__controls-button svg { max-width: 16px; max-height: 16px; }
   .firstrun-line .linkish { display: inline-flex; align-items: center; min-height: 44px; }

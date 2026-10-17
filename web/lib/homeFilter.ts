@@ -50,10 +50,13 @@ const tagged = (tags: string[], d: { realm?: string; tags?: string[] }) => tags.
   || tags.some((t) => t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t));
 
 /** Devices that pass every chosen filter (within one group, any choice matches). */
+/** Whether a device needs the person: something listed for it, or anything short of all good. */
+export const needsMe = (d: Device, marks?: Map<string, Need[]>) => (marks?.get(d.id)?.length ?? 0) > 0 || d.status !== "ok";
+
 export function applyFilter(f: Filter, devices: Device[], marks?: Map<string, Need[]>): Device[] {
   return devices.filter((d) => (!f.place || placeOf(d, devices) === f.place)
     && (f.kinds.length === 0 || f.kinds.includes(categoryOf(d)))
-    && (!f.needsMe || (marks?.get(d.id)?.length ?? 0) > 0 || d.status !== "ok")
+    && (!f.needsMe || needsMe(d, marks))
     && (!f.favorites || starred(d))
     && tagged(f.tags, d));
 }

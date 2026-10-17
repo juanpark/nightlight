@@ -34,7 +34,7 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
   return (
     <div className="homeview">
       {(devices.length > 0 || watches.length > 0 || filtering(filter)) && <HomeBar devices={devices} watches={watches}
-        places={places} filter={filter} onFilter={setFilter} view={view} onView={pick} />}
+        places={places} filter={filter} onFilter={setFilter} view={view} onView={pick} marks={marks} />}
       {devices.length > 0 && shown.length === 0
         ? <p className="small muted">Nothing here matches.{" "}
             <button className="linkish small" onClick={() => setFilter(NO_FILTER)}>Show everything</button></p>
