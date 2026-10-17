@@ -60,7 +60,8 @@ export default function ExpertSessions({ uid, device }: { uid: string; device: D
               : passkeysSupported()
                 ? <button disabled={busy} onClick={create}>{busy ? "Waiting…" : "Create my passkey"}</button>
                 : <span className="muted">this browser can&apos;t create passkeys</span>}</li>
-            <li>On the device: {on ? <strong>on</strong> : <>run <code className="perm-cmd">nightlight expert</code> there and
+            <li>On the device: {on ? <strong>on</strong> : <>run <code className="perm-cmd">nightlight expert</code> there
+              (if that says &quot;command not found&quot;: <code className="perm-cmd">~/.local/bin/nightlight expert</code>) and
               check it shows exactly the code above{mine ? <> ({mine})</> : null}.</>}</li>
           </ol>
           {err && <div style={{ color: "var(--crit)" }}>{err}</div>}

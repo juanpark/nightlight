@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.15"
+VERSION = "0.9.16"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2407,7 +2407,10 @@ def _link_command(script, py):
         os.chmod(tmp, 0o755)
         os.replace(tmp, target)
         if bindir not in os.environ.get("PATH", "").split(os.pathsep):
-            print(f"Tip: add {bindir} to your PATH to type `nightlight status` from anywhere.")
+            shell_rc = "~/.zshrc" if os.environ.get("SHELL", "").endswith("zsh") else "~/.bashrc"
+            print(f"The `nightlight` command is in {bindir}, which isn't on your PATH yet. Use "
+                  f"`~/.local/bin/nightlight status`, or add it once:\n"
+                  f"  echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> {shell_rc} && exec $SHELL")
     except (OSError, SystemExit):
         pass
 

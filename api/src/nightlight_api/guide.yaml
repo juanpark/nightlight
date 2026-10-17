@@ -134,7 +134,8 @@ expert_sessions:
   text: |
     For problems the usual checks don't cover, Nightlight can investigate with real commands, like a system
     administrator. Set it up once: open the device in the app, "Expert sessions" > "Create my passkey" (Face ID, Touch
-    ID or your phone), then on the device run `nightlight expert` and confirm it shows the same code. After that:
+    ID or your phone), then on the device run `nightlight expert` (or `~/.local/bin/nightlight expert` if the shell
+    says "command not found") and confirm it shows the same code. After that:
     read-only commands (logs, disk use, running programs, network) need one passkey tap per 15 minutes; any command
     that changes something comes as a card you sign with your passkey. The device checks your signature itself and
     refuses anything unsigned, expired, meant for another device, or (in an investigation) anything that could change
