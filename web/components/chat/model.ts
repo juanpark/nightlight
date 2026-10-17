@@ -11,7 +11,9 @@ export type Block =
   | { kind: "text"; text: string }
   | { kind: "step"; name: string; label: string; command?: string; status: StepStatus; summary?: string;
       details?: string; startedAt: number; ms?: number }
-  | { kind: "card"; actionId: string };
+  | { kind: "card"; actionId: string }
+  // "Let me check the Raspberry Pi." said just before a step: read as the first line of the work log, not as an answer
+  | { kind: "lead"; text: string };
 
 export type Turn =
   | { kind: "user"; key: string; text: string; past?: boolean }
@@ -128,4 +130,14 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       error: m.error?.message, after });
   }
   return out;
+}
+
+const LEAD = /^(Let me|I['’]ll) (check|look at|look into|see)[^.]{0,80}\.$/;
+
+/** A turn's blocks with its opening "Let me check…" sentence (only when it is the whole of the words before a step,
+ * and that step comes right after) turned into a work-log line. Nothing else changes: other words are never removed. */
+export function withLead(blocks: Block[]): Block[] {
+  const [first, second] = blocks;
+  if (first?.kind !== "text" || second?.kind !== "step" || !LEAD.test(first.text.trim())) return blocks;
+  return [{ kind: "lead", text: first.text.trim() }, ...blocks.slice(1)];
 }

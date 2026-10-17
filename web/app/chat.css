@@ -53,3 +53,4 @@
 .presets { padding: 0 0 6px; }
 .presets button .small { opacity: .8; }
 .perm-switches > summary { cursor: pointer; margin: 4px 0; }
+.wl-lead { color: var(--muted); font-style: italic; }
