@@ -8,6 +8,7 @@ import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents,
 import { byDevice, needsYou, verdict, type Go, useDismissed } from "@/lib/needsYou";
 import NeedsList from "./NeedsList";
 import FoundNearby from "./FoundNearby";
+import { addable, useFound } from "@/lib/found";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
 import WatchedRow from "./WatchedRow";
@@ -38,12 +39,13 @@ export default function Home({ user }: { user: User }) {
   const trust = useTrust(uid, gen);
   const watches = useWatches(uid);
   const discoveries = useDiscoveries(uid);
+  const found = useFound(discoveries, now);
   const release = useRelease();
   const expert = useExpertStatus();
   // Everything waiting for the person, derived once: tile marks, the device panel and the strip use the same items.
   const [dismissed] = useDismissed();
-  const needs = useMemo(() => needsYou({ devices, actions, trust, discoveries, release, expert, now, dismissed }),
-    [devices, actions, trust, discoveries, release, expert, now, dismissed]);
+  const needs = useMemo(() => needsYou({ devices, actions, trust, found: addable(found.items), release, expert, now,
+    dismissed }), [devices, actions, trust, found.items, release, expert, now, dismissed]);
   const marks = useMemo(() => byDevice(needs), [needs]);
   const [drawerTab, setDrawerTab] = useState<"overview" | "about" | "settings">("overview");
   const notify = useNotifySetting();
@@ -144,7 +146,7 @@ export default function Home({ user }: { user: User }) {
           {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby discoveries={discoveries} devices={devices} onGo={go} />}
+          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
           {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
             <div className="chips" aria-label="Show only">
