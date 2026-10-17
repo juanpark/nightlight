@@ -77,7 +77,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   useEffect(() => {
     if (devices.length !== fitted.current && flow.current) {
       fitted.current = devices.length;
-      requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, maxZoom: 1.1, duration: 300 }));
+      requestAnimationFrame(() => flow.current?.fitView({ padding: 0.08, maxZoom: 1, duration: 300 }));
     }
   }, [devices.length, nodes.length]);
 
@@ -121,7 +121,12 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   }
 
   return (
-    <div className="homemap" aria-label="Map of your home">
+    <div className="homemap" aria-label="Map of your home" onKeyDown={(e) => {
+      // Enter on a focused device opens it, as a click does (Tab moves between devices)
+      const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
+      if (e.key === "Enter" && id) open(id);
+    }}>
+      <div className="hm-canvas">
       <ReactFlow<DeviceNodeType, LinkEdgeType>
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         onNodesChange={(ch: NodeChange<DeviceNodeType>[]) => onNodesChange(ch.filter((c) => c.type !== "remove"))}
@@ -134,7 +139,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
         panOnScroll zoomOnScroll={false} zoomOnPinch zoomOnDoubleClick={false}
-        fitView fitViewOptions={{ padding: 0.2, maxZoom: 1.1 }}>
+        fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }}>
         {/* graph paper: fine squares, with a stronger line every fifth */}
         <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(120,128,150,.16)" />
         <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(120,128,150,.3)" />
@@ -142,6 +147,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         <MiniMap className="hm-minimap" pannable zoomable style={{ width: 140, height: 90 }}
           nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />
       </ReactFlow>
+      </div>
       {/* the key sits under the map, never over a device */}
       <div className="hm-legend small">
         {LINK_KINDS.map((k) => (
