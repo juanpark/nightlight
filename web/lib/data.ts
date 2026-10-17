@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, PlaceDoc, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -51,6 +51,11 @@ export function useDevices(uid: string | null, gen: number | undefined): Device[
   // the server archives a watched thing you stop watching; ones stopped before it did are only revoked
   return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived && !(d.kind === "watched" && d.revoked))
     .filter(current(gen));
+}
+
+/** Names the person gave their places (one per router; unnamed ones are "Place 1", "Place 2"…). */
+export function usePlaces(uid: string | null): PlaceDoc[] {
+  return useCollection<PlaceDoc>(uid, ["places"]);
 }
 
 /** Lines between devices on the map (the sample home's go away with it). */

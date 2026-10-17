@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { Cpu, Laptop } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import type { Device } from "@/lib/types";
@@ -42,7 +43,7 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
   }, []);
   async function send() {
     const left = new Date(expiresAt).getTime() - Date.now();
-    if (left <= 0) { setNote("This line has run out. Close this and get a new one."); return; }
+    if (left <= 0) { setNote("This line has run out. Get a new one above, then send it."); return; }
     const minutes = Math.max(1, Math.round(left / 60000));
     const text = setupMessage(owner, line, minutes);
     if (navigator.share) {
@@ -53,13 +54,9 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
       () => setNote("Couldn't copy. Copy the line above and send it with these steps."));
   }
   return (
-    <div className="send-line">
-      <p className="small"><strong>Can&apos;t do this on the device yourself?</strong> Nightlight needs a small helper
-        installed on it once. Send these steps to someone who can (whoever set up or looks after that computer); it takes
-        them a minute.</p>
-      <button onClick={send}>Send the steps</button>
-      {note && <span className="small muted">{note}</span>}
-    </div>
+    <p className="send-line small muted">Setting it up on a computer somewhere else?{" "}
+      <button className="linkish small" onClick={send}>Send these steps</button>
+      {note && <span> {note}</span>}</p>
   );
 }
 
@@ -71,14 +68,31 @@ function Waiting({ devices, before }: { devices: Device[]; before: Set<string> }
     : <p className="live-status"><span className="dot offline pulse" /> Waiting for your device…</p>;
 }
 
+type Os = "mac" | "linux";
+
+/** One numbered step: a small drawing of what to look for, then what to do. */
+function Step({ n, art, children }: { n: number; art: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <li className="setup-step">
+      <span className="setup-n" aria-hidden>{n}</span>
+      <span className="setup-art" aria-hidden>{art}</span>
+      <div className="setup-text">{children}</div>
+    </li>
+  );
+}
+
+const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
+
 export default function AddDevice({ anonymous, onSave, devices }: {
   anonymous: boolean; onSave: () => void; devices: Device[];
 }) {
+  const [os, setOs] = useState<Os | null>(null);
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [before, setBefore] = useState<Set<string> | null>(null);
   const [paired, setPaired] = useState<{ approved: boolean; name: string } | null>(null);
   const [origin, setOrigin] = useState("");
   const [err, setErr] = useState("");
+  const [other, setOther] = useState(false);
   useEffect(() => { setOrigin(window.location.origin); }, []);
 
   if (anonymous) {
@@ -106,27 +120,54 @@ export default function AddDevice({ anonymous, onSave, devices }: {
           : "Couldn't get a code. Please try again.");
     }
   }
-  const [other, setOther] = useState(false);
+  function pick(o: Os) { setOs(o); if (!code) getCode(); }
   const line = code ? `curl -fsSL ${origin}/install.sh | sh -s -- ${code.code}` : "";
+  const mac = os === "mac";
 
   return (
     <div className="panel">
       <h3>Add one of your devices</h3>
-      <p className="small muted" style={{ marginTop: 0 }}>Works on a Raspberry Pi, a Linux computer or a Mac. Takes about
-        a minute.</p>
-      <ol className="steps-list">
-        <li>
-          <strong>Get your line.</strong>{" "}
-          {!code ? <button className="primary" onClick={getCode}>Get my line</button>
-            : <span className="small muted">(works once, for 10 minutes)</span>}
-          {code && <Copy text={line} />}
-          {code && <SendLine line={line} expiresAt={code.expiresAt} />}
-        </li>
-        <li><strong>Paste it on the device</strong>: open its Terminal (on a Mac: Applications &gt; Utilities &gt;
-          Terminal), paste, press Enter. It may ask for the device&apos;s password once.</li>
-        <li><strong>That&apos;s it.</strong> We&apos;ll show it here the moment it connects.
-          {before && !paired && <Waiting devices={devices} before={before} />}</li>
-      </ol>
+      <p className="small muted" style={{ marginTop: 0 }}>Three steps, about a minute. You&apos;ll see it on your map
+        the moment it connects.</p>
+      <div className="setup-pick" role="radiogroup" aria-label="Which kind of device?">
+        <button role="radio" aria-checked={mac} className={mac ? "on" : ""} onClick={() => pick("mac")}>
+          <Laptop size={22} strokeWidth={1.6} /> A Mac</button>
+        <button role="radio" aria-checked={os === "linux"} className={os === "linux" ? "on" : ""} onClick={() => pick("linux")}>
+          <Cpu size={22} strokeWidth={1.6} /> Linux or Raspberry Pi</button>
+      </div>
+
+      {os && (
+        <ol className="setup-steps">
+          {mac
+            ? <Step n={1} art={<span className="art-keys"><kbd>⌘</kbd>+<kbd>Space</kbd></span>}>
+                <strong>Open Terminal on the Mac.</strong> Press <kbd>⌘</kbd> <kbd>Space</kbd>, type <em>Terminal</em>,
+                and press Enter. A window with a blinking cursor opens.
+              </Step>
+            : <Step n={1} art={<Term text="$ _" />}>
+                <strong>Open a terminal on it.</strong> On the device itself, open Terminal from its menu. Or, from
+                another computer, connect to it with SSH as you usually do.
+              </Step>}
+          <Step n={2} art={<Term text="$ curl …" />}>
+            <strong>Paste this line into it.</strong>
+            {code ? <><Copy key={code.code} text={line} /><span className="small muted">Your own line: it works once, for 10
+              minutes.</span></>
+              : !err && <p className="small muted">Making your line…</p>}
+            {err && <p className="small" style={{ color: "var(--crit)" }}>{err}{" "}
+              <button className="linkish small" onClick={getCode}>Try again</button></p>}
+          </Step>
+          <Step n={3} art={<span className="art-keys"><kbd>{mac ? "return" : "Enter"}</kbd></span>}>
+            <strong>Press Enter.</strong> It may ask for {mac ? "this Mac's" : "the device's"} password once. Typing
+            it shows nothing on screen; that&apos;s normal, just type it and press Enter.
+          </Step>
+        </ol>)}
+
+      {os && before && !paired && <Waiting devices={devices} before={before} />}
+      {os && code && (
+        <>
+          <SendLine key={code.code} line={line} expiresAt={code.expiresAt} />
+          {new Date(code.expiresAt).getTime() < Date.now() &&
+            <button className="linkish small" onClick={getCode}>Get a new line</button>}
+        </>)}
 
       <button className="linkish small" onClick={() => setOther(!other)}>
         {other ? "Hide" : "Can't paste on that device? Use a code it shows instead"}</button>
@@ -151,7 +192,6 @@ export default function AddDevice({ anonymous, onSave, devices }: {
         <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
         <p className="soon">Coming later: installers for Mac, Windows and NAS app stores, no terminal needed.</p>
       </details>
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
     </div>
   );
 }

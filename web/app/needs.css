@@ -52,7 +52,32 @@
 .firstrun-alt { margin: 8px 0 0; }
 .needs-line { padding: 4px 0 8px 16px; }
 .send-line { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; margin: 2px 0 4px; } /* AddDevice */
-.send-line > p { flex-basis: 100%; margin: 6px 0 2px; }
+.send-line { margin: 10px 0 4px; }
+/* Add a device: pick the kind, then three numbered steps with a small drawing each (AddDevice.tsx) */
+.setup-pick { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.setup-pick button { flex: 1 1 180px; display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 14px; font-size: 15px; font-weight: 600; border-radius: 12px; }
+.setup-pick button.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.setup-steps { list-style: none; margin: 12px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.setup-step { display: grid; grid-template-columns: 34px 96px 1fr; gap: 12px; align-items: start; }
+.setup-n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
+  background: var(--accent); color: var(--bg); }
+.setup-art { display: grid; place-items: center; min-height: 52px; }
+.setup-text { min-width: 0; line-height: 1.5; }
+.setup-text pre { white-space: pre-wrap; word-break: break-all; }
+kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 6px; background: var(--panel); font: 600 12px/1.6 ui-monospace, monospace; text-align: center; }
+.art-keys { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.art-keys kbd { font-size: 14px; padding: 4px 8px; }
+.art-term { position: relative; width: 92px; height: 52px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--ink); overflow: hidden; }
+.art-term i { position: absolute; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.art-term i:nth-child(1) { left: 6px; } .art-term i:nth-child(2) { left: 15px; } .art-term i:nth-child(3) { left: 24px; }
+.art-term b { position: absolute; left: 8px; bottom: 9px; font: 600 11px ui-monospace, monospace; color: var(--bg); }
+@media (max-width: 600px) {
+  .setup-step { grid-template-columns: 30px 1fr; }
+  .setup-art { display: none; }
+}
 .look-nearby { margin-top: 10px; } /* FoundNearby */
 .found-row { flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .found-row.router { border-left: 3px solid var(--accent); padding-left: 8px; }
