@@ -47,8 +47,8 @@ trust settings say.
 
 | Area | In short |
 |---|---|
-| Map | a canvas on graph paper that opens fitted to any screen (pan, pinch or zoom); devices snap to the grid where you drop them; a list view too; lines between devices (connected through, backs up to, relies on, powered by) that the agent uses to reason about what depends on what; tags and filters; Live / Sample marks |
-| Chat | streamed answers with the agent's steps shown; cards inline; history kept 30 days; starter questions when the chat is empty |
+| Map | a canvas on graph paper that opens fitted to any screen (pan, pinch or zoom); devices snap to the grid where you drop them; a list view too; draw a line by dragging from one device to another (works by touch); Tab and Enter open a device; lines between devices (connected through, backs up to, relies on, powered by) that the agent uses to reason about what depends on what; tags and filters; Live / Sample marks |
+| Chat | streamed answers with the agent's steps shown; Quick or Investigate deeply; a Stop button that keeps what was already done; cards inline; history kept 30 days; starter questions when the chat is empty |
 | Checkups (playbooks) | known problems (disk filling up, slow, no internet, updates, after a restart) written once as data; checks run, causes are matched in code, safe clean-ups come up as cards, with no AI call |
 | Investigate mode | a toggle under the chat: a stronger model with high thinking and up to 24 steps works like an administrator and reports what it checked, found and recommends |
 | Web research | for an error it does not recognise, one Gemini call grounded with Google Search, sources shown; 20 per person per day; the question is stripped of addresses, secrets and the home's own names first |
