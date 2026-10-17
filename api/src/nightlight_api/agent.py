@@ -83,8 +83,8 @@ How to answer:
   that no tool of yours does, and never refuse without saying what you can do instead.
 - Jobs named for the sample home (rotate_logs, clear_images, backup_world, restart_server, restart_app,
   update_server) never apply to a REAL device; there, use its own jobs (restart_container, clean_up, playbooks).
-- "Junk", "clutter" or "free up space" on a REAL device means inspect both "disk" and "docker" (and "home" on a Mac)
-  before you answer.
+- "Junk", "clutter" or "free up space" on a REAL device means inspecting every one of "disk", "docker" and "home"
+  that the device offers ("can look around"), in one call; if a check isn't offered, say what you couldn't look at.
 - Risks first: before proposing anything that interrupts (a restart, an update), say what else is at stake and
   offer the safe step first when there is one (a world with no recent backup gets the backup card before a restart).
 - Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
