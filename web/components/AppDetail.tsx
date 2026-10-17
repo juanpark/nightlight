@@ -28,7 +28,7 @@ export default function AppDetail({ uid, generation, device: d, app: s, actions,
   const what = s.about?.oneLiner || KIND[s.kind ?? ""] || "";
   return (
     <div className="app-detail">
-      <button className="linkish small" onClick={onBack}><ArrowLeft size={13} /> Everything on the {d.name}</button>
+      <button className="linkish small" onClick={onBack}><ArrowLeft size={13} /> Back to {d.name}</button>
       <div className="app-detail-head">
         <span className={`dicon ${s.status ?? "ok"}`}><Icon size={18} strokeWidth={1.8} /></span>
         <strong style={{ fontSize: 17 }}>{s.name}</strong>

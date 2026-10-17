@@ -15,20 +15,26 @@ function plain<T>(id: string, data: DocumentData): T {
   return { id, ...(conv(data) as object) } as T;
 }
 
-function useCollection<T>(uid: string | null, path: string[]): T[] {
-  const [rows, setRows] = useState<T[]>([]);
+/** A collection's rows, and whether they have arrived for this path yet (rows for another path never show here). */
+function useCollectionState<T>(uid: string | null, path: string[]): { rows: T[]; loaded: boolean } {
+  const [got, setGot] = useState<{ key: string; rows: T[] } | null>(null);
   const key = path.join("/");
   useEffect(() => {
     if (!uid) return;
     let stop = () => {};
     firebase().then(({ db }) => {
       stop = onSnapshot(collection(db, "users", uid, ...(path as [string])), (snap) =>
-        setRows(snap.docs.map((d) => plain<T>(d.id, d.data()))));
+        setGot({ key, rows: snap.docs.map((d) => plain<T>(d.id, d.data())) }));
     });
     return () => stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, key]);
-  return rows;
+  return got?.key === key ? { rows: got.rows, loaded: true } : { rows: EMPTY as T[], loaded: false };
+}
+const EMPTY: never[] = [];
+
+function useCollection<T>(uid: string | null, path: string[]): T[] {
+  return useCollectionState<T>(uid, path).rows;
 }
 
 export function useUserDoc(uid: string | null): UserDoc | null | undefined {
@@ -65,6 +71,9 @@ export function useLinks(uid: string | null, gen: number | undefined): Link[] {
 
 export function useServices(uid: string | null, deviceId: string | null): Service[] {
   return useCollection<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
+}
+export function useServicesState(uid: string | null, deviceId: string | null) {
+  return useCollectionState<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
 }
 
 /** A stored step: older messages have only name and args; textOffset/ok/ms arrived with the layered chat. */

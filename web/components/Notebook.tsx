@@ -17,7 +17,7 @@ export default function Notebook({ uid, deviceId, app }: { uid: string; deviceId
     if (!text.trim()) return;
     setProblem("");
     try {
-      await api("POST", `/api/devices/${deviceId}/notes`, { text: text.trim() });
+      await api("POST", `/api/devices/${deviceId}/notes`, app ? { text: text.trim(), service: app.name } : { text: text.trim() });
       setText("");
     } catch (e) {
       setProblem(e instanceof ApiError && JSON.stringify(e.body).includes("looks_secret")
@@ -42,7 +42,8 @@ export default function Notebook({ uid, deviceId, app }: { uid: string; deviceId
     <section className="notebook">
       <h4>Notebook <span className="muted small">what Nightlight and you noted about this {app ? "app" : "device"}</span></h4>
       {notes.length === 0 && (app
-        ? <p className="small muted">Nothing about {app.name} yet. Nightlight adds what it learns when it looks into it.</p>
+        ? <p className="small muted">Nothing about {app.name} yet. Nightlight adds what it learns when it looks into it;
+            you can add things too.</p>
         : <p className="small muted">Nothing yet. Nightlight adds what it learns here when it looks into a problem; you
             can add things too (where it is, who uses it, quirks).</p>)}
       {shown.map(row)}
@@ -53,11 +54,11 @@ export default function Notebook({ uid, deviceId, app }: { uid: string; deviceId
           <div className="small muted"><strong>{s}</strong></div>
           {notes.filter((n) => n.service === s).map(row)}
         </div>))}
-      {!app && <form className="note-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
+      <form className="note-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
         <input value={text} onChange={(e) => setText(e.target.value)} maxLength={300}
-          placeholder="Add a note (e.g. in the hallway cupboard; the kids' game server)" />
+          placeholder={app ? `Add a note about ${app.name}` : "Add a note (e.g. in the hallway cupboard; the kids' game server)"} />
         <button disabled={!text.trim()}>Add</button>
-      </form>}
+      </form>
       {problem && <p className="small" style={{ color: "var(--crit)" }}>{problem}</p>}
     </section>
   );

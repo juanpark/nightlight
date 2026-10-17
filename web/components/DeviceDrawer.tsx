@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import { api } from "@/lib/api";
-import { useServices } from "@/lib/data";
+import { useServicesState } from "@/lib/data";
 import { useFavorites } from "@/lib/favorites";
 import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
@@ -61,8 +61,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
   app?: string | null; onApp?: (svcId: string | null) => void; // one app opened on its own
 }) {
-  const services = useServices(uid, device.id);
-  const fav = useFavorites(device);
+  const { rows: services, loaded } = useServicesState(uid, device.id);
+  const fav = useFavorites(uid, device);
   const [allServices, setAllServices] = useState(false);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
@@ -81,6 +81,16 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
   const current: Tab = tabs.includes(tab) ? tab : "overview";
   const opened = app ? services.find((s) => s.id === app) : undefined;
+  // an app that isn't on this device (any more) closes, so it can't come back by itself later
+  useEffect(() => { if (app && loaded && !opened) onApp?.(null); }, [app, loaded, opened, onApp]);
+  if (app && !watched && !opened) {
+    return (
+      <div className="panel drawer" ref={box}>
+        <Head key={device.id} device={device} onClose={onClose} />
+        <p className="small muted">{loaded ? "That app isn't on this device any more." : "Loading…"}</p>
+      </div>
+    );
+  }
   if (opened && !watched) {
     return (
       <div className="panel drawer" ref={box}>

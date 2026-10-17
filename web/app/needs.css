@@ -126,3 +126,5 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .app-what { margin: 0; }
 .app-detail .drawer-status { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .app-link { padding: 0; color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.app-detail > .linkish { min-height: 40px; }
+.app-detail .details > div { overflow-wrap: anywhere; }
