@@ -4,7 +4,7 @@
 import { useState, type JSX } from "react";
 import type { Action, Device } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
-import type { AgentTurn, Block } from "./model";
+import { withLead, type AgentTurn, type Block } from "./model";
 
 type Step = Extract<Block, { kind: "step" }>;
 
@@ -37,7 +37,8 @@ function WorkLog({ blocks, busy, investigate, ms }: { blocks: Block[]; busy: boo
   const running = steps.find((s) => s.status === "running");
   const n = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
   // Folded, the log still shows what is happening now and anything that went wrong: failures are never hidden.
-  const visible = open ? blocks : blocks.filter((b) => b.kind === "step" && (b === running || b.status === "failed"));
+  const visible = open ? blocks
+    : blocks.filter((b) => b.kind === "lead" || (b.kind === "step" && (b === running || b.status === "failed")));
   return (
     <div className={`worklog ${open ? "open" : ""}`}>
       <button className="wl-head" onClick={() => setOpen(!open)} aria-expanded={open}>
@@ -48,6 +49,7 @@ function WorkLog({ blocks, busy, investigate, ms }: { blocks: Block[]; busy: boo
         <div className="wl-body">
           {visible.map((b, i) => b.kind === "text"
             ? <p key={i} className="wl-note">{b.text.trim()}</p>
+            : b.kind === "lead" ? <div key={i} className="wl-step wl-lead">{b.text}</div>
             : b.kind === "step" ? <StepRow key={i} s={b} /> : null)}
         </div>)}
     </div>
@@ -59,11 +61,12 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
 }) {
   // The answer is the last thing said; words said before or between steps are commentary in a work log. Everything
   // keeps its order: a card appears where it was put up, between the steps around it.
+  const blocks = withLead(turn.blocks);
   let final = -1;
-  turn.blocks.forEach((b, i) => { if (b.kind === "text" && b.text.trim()) final = i; });
+  blocks.forEach((b, i) => { if (b.kind === "text" && b.text.trim()) final = i; });
   const parts: JSX.Element[] = [];
   let seg: Block[] = [];
-  const lastStep = turn.blocks.reduce((n, b, i) => b.kind === "step" ? i : n, -1);
+  const lastStep = blocks.reduce((n, b, i) => b.kind === "step" ? i : n, -1);
   const flush = (i: number) => {
     if (!seg.length) return;
     const blocks = seg;
@@ -76,7 +79,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
       blocks.forEach((b, j) => b.kind === "text" && parts.push(<p key={`n${i}.${j}`} className="wl-note">{b.text.trim()}</p>));
     }
   };
-  turn.blocks.forEach((b, i) => {
+  blocks.forEach((b, i) => {
     if (b.kind === "card") {
       flush(i);
       const a = actions.find((x) => x.id === b.actionId);
@@ -89,7 +92,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
       seg.push(b);
     }
   });
-  flush(turn.blocks.length);
+  flush(blocks.length);
   return (
     <div className={`turn agent ${turn.past ? "past" : ""}`}>
       {turn.mode === "investigate" && <span className="pill turn-mode">Investigated</span>}
