@@ -1,8 +1,8 @@
 # Nightlight
 
-Nightlight is a house-sitter for the computers you run at home or in a small office, for people who have no IT
-person: it shows every device and what runs on it on one map, watches them, explains problems in plain words, and
-fixes them only with your permission, earning more freedom one kind of job at a time.
+Nightlight is a house-sitter for the computers you run at home or in a small office, for people with no IT person.
+It shows every device and what runs on it on one map. It watches them, explains problems in plain words, and fixes
+them only with your permission, earning more freedom one kind of job at a time.
 
 **Live app:** https://nightlight-web-1032111130355.asia-northeast3.run.app (one click, no account needed)
 
@@ -11,7 +11,7 @@ Everything here was written during the hackathon window.
 
 ## Try it in 30 seconds
 
-1. Open the live app and choose the one-click demo. You get a **simulated sample home**, labelled "Sample": a
+1. Open the live app and tap "Try the demo (no account)". You get a **simulated sample home**, labelled "Sample": a
    Raspberry Pi (VPN and a car data logger), a Mac Mini (home automation), a NAS (photos and a nightly backup), a
    Minecraft server, a camera recorder and a router.
 2. In the chat, ask: **"Is anything wrong at home?"**
@@ -49,16 +49,16 @@ trust settings say; only signed helper updates may install on their own, and onl
 |---|---|
 | Map | a canvas on graph paper that opens fitted to any screen (pan, pinch or zoom); devices snap to the grid where you drop them; a list view too; draw a line by dragging from one device to another (works by touch); Tab and Enter open a device; lines between devices (connected through, backs up to, relies on, powered by) that the agent uses to reason about what depends on what; tags and filters; Live / Sample marks |
 | Cards that open in place | a device's card opens on the map to show its apps (needs-a-look first, then starred, up to twelve); tap an app for its own view: what it is in one plain line, how it is, its version, and the notes, fixes and jobs about it |
-| Favourites | star a device or any of its apps; up to three starred apps show on the device's card; a Favorites chip narrows the map |
+| Favorites | star a device or any of its apps; up to three starred apps show on the device's card; a Favorites chip narrows the map |
 | Device drawer | a panel from the left with one job per tab (Overview, Apps, Knowledge, Settings); the map stays usable beside it |
-| The map follows the chat | devices the agent's steps work on glow while it works; when it is done the main one opens with the apps it named pulsing; it never moves the view while you are touching the map, and with reduced motion it only highlights |
-| Chat | streamed answers with the agent's steps shown; it first says what it will look at; Quick or Investigate deeply; a Stop button that keeps what was already done; cards inline; history kept 30 days; replies in the language you write in |
+| The map follows the chat | devices the agent's steps work on glow while it works; when it is done the main one opens with the apps it named pulsing; it never moves the view while you are touching the map, and with reduced motion the view moves without animation |
+| Chat | streamed answers with the agent's steps shown; it first says what it will look at; Quick, or Investigate (the "Investigate deeply" toggle); a Stop button that keeps what was already done; cards inline; history kept 30 days; replies in the language you write in |
 | Honest agent | says plainly what Nightlight can't do (Windows, jobs it has no tool for), never hands out commands to type, and when you ask for something safer offers only alternatives it really has |
 | Checkups (playbooks) | known problems (disk filling up, slow, no internet, updates, after a restart) written once as data; checks run, causes are matched in code, safe clean-ups come up as cards, with no AI call |
-| Investigate mode | a toggle under the chat: a stronger model (medium thinking, up to 24 steps) works like an administrator and reports what it checked, found and recommends |
+| Investigate | a toggle under the chat: a stronger model (medium thinking, up to 24 steps) works like an administrator and reports what it checked, found and recommends |
 | Web research | for an error it does not recognise, one Gemini call grounded with Google Search, sources shown; 20 per person per day; the question is stripped of addresses, secrets and the home's own names first |
 | Knowledge per device | like an administrator's folder: a profile, notes grouped by app, runbooks (fixes that worked there, offered again as cards) and a log of every job that ran; read before every investigation; the owner can edit it |
-| Found nearby | your devices list what else is on the network, with the names and models things announce: Apple devices through Bonjour, printers through IPP, the router through UPnP. Add one and Nightlight watches whether it answers |
+| Found nearby | your devices list what else is on the network, with the names and models things announce: Apple devices and printers through Bonjour, the router through UPnP. Add one and Nightlight watches whether it answers |
 | Activity and history | who did what (you, the device, Nightlight); per real device, 24 hours or 7 days of disk, memory and CPU |
 | Watched websites | up to 10 public addresses per account, checked from the cloud (status code and latency only) |
 | Memory | short facts you tell the agent ("the kids play on weekends"), kept in Agent Platform Memory Bank; a panel lists them and forgets all |
@@ -103,7 +103,7 @@ How the pieces talk:
 - **Browser to API.** Every `/api/*` call carries a Firebase ID token. The user id comes only from that verified
   token; nothing in a request body can choose it. The browser reads its own data straight from Firestore with
   listeners (read-only, own subtree only, enforced by `firestore.rules`); every write goes through the API.
-- **Chat.** A turn is one in-process ADK agent run. Replies stream as server-sent events. Every model call first
+- **Chat.** A turn is one in-process ADK agent run. Replies stream as server-sent events (the browser keeps one connection open and words arrive as they are written). Every model call first
   reserves its worst-case cost in a Firestore transaction (see Budgets below). Things that happen outside the
   person's own messages (a job finished, a job declined, an investigation approved) are posted as **events**, not as
   fake user messages ([ADR 0002](docs/adr/0002-conversation-events.md)).
@@ -127,7 +127,7 @@ How the pieces talk:
 | **Google Search grounding** | one grounded Gemini call for unknown errors, sources returned | the agent should not guess at error messages it has never seen |
 | **Cloud Run** | the web app (Next.js) and the API (FastAPI); scale to zero, max 3 instances each | the judges' link stays up at near-zero idle cost |
 | **Cloud Scheduler** | `POST /internal/sweep` every 5 minutes with a Google-signed token (audience and invoker checked) | silent devices and watched websites are noticed with nobody watching |
-| **Firestore** | devices, services, history (TTL), approval cards, trust, chats, activity, quotas | transactions make approvals and job hand-over exactly-once; listeners give the browser live data |
+| **Firestore** | devices, services, history (expires on its own), approval cards, trust, chats, activity, quotas | transactions make approvals and job hand-over exactly-once; listeners give the browser live data |
 | **Firebase Authentication** | Google sign-in, and anonymous sign-in for the one-click demo | judges never create an account; real devices are always tied to a Google account |
 | **Firebase emulator** | the whole API test suite runs against the Firestore emulator | no cloud access needed to test |
 
@@ -324,7 +324,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `api/src/nightlight_api/playbooks.py`, `playbooks.yaml` | known problems as data |
 | `api/src/nightlight_api/research.py` | Google Search grounded research |
 | `api/src/nightlight_api/memory.py`, `notebook.py`, `runbooks.py`, `knowledge.py` | Memory Bank facts; per-device notes, runbooks and job log |
-| `api/src/nightlight_api/quota.py`, `redact.py`, `fence.py` | cost reservations, scrubbing, turn leases |
+| `api/src/nightlight_api/quota.py`, `redact.py`, `fence.py` | cost reservations, scrubbing, one chat turn at a time per person |
 | `api/src/nightlight_api/release.py`, `scripts/sign_helper.sh` | signed helper releases |
 | `api/src/nightlight_api/guide.yaml` | what the agent says about Nightlight itself |
 | `api/tests/` | the test suite (`fake_llm.py` stands in for Gemini) |
