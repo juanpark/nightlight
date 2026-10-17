@@ -486,7 +486,15 @@ def chat_message(session_id: str, body: MessageBody, request: Request, uid: str 
 def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"(turn_[0-9a-f-]{36}|cont_act_[0-9a-f]{26})", turn_id):
         raise not_found()
-    claimed = turns.claim(uid, turn_id)
+    try:
+        claimed = turns.claim(uid, turn_id)
+    except ApiError as e:
+        # A follow-up waiting on a device job that never reported: once its time is up the job ends as failed and
+        # this follow-up says so, instead of the browser waiting on a turn that would never exist.
+        if e.code != "not_found" or not turn_id.startswith("cont_") \
+                or not actions.expire_unreported(uid, turn_id.removeprefix("cont_")):
+            raise
+        claimed = turns.claim(uid, turn_id)
     return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
                              headers=SSE_HEADERS)
 

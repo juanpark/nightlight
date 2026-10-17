@@ -8,7 +8,6 @@ History is rebuilt from Firestore on every turn, so any instance can serve any t
 import asyncio
 import hashlib
 import json
-import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -33,7 +32,7 @@ ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server",
                 "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
 
 
-CARD_CLAIM = re.compile(r"\b(I've|I have|I) (just )?put (up )?(a|an|the) [\w\s-]{0,30}card\b", re.I)
+# Last resort only: agent.after_model already removes a card claim no card backs before it is shown.
 NO_CARD = "(Correction: no card was put up in this answer. Ask me again and I'll put it up.)"
 
 
@@ -419,8 +418,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
-        if not ctx.actions and CARD_CLAIM.search(shown):
-            # It said it put a card up, but no card was made in this answer: never leave that claim standing.
+        if not ctx.actions and agentlib.claims_a_card(shown):
+            # A claim still got through (it shouldn't: after_model removes them), and no card was made in this
+            # answer: never leave that claim standing.
             piece = "\n\n" + NO_CARD
             shown += piece
             yield out({"type": "text", "delta": piece})

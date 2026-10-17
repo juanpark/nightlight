@@ -275,7 +275,7 @@ def _reconcile_count() -> None:
 
 def sweep() -> dict:
     started = time.monotonic()
-    silent = checked = pruned = 0
+    silent = checked = pruned = unreported = 0
     for r in registry().stream():
         if time.monotonic() - started > SWEEP_BUDGET / 2:
             break  # devices get half the time; the rest waits for the next sweep
@@ -287,6 +287,8 @@ def sweep() -> dict:
                 pruned += 1
                 continue
             silent += _mark_silent(d["uid"], d["deviceId"])
+            from . import actions  # jobs handed to it that never reported end as failed
+            unreported += actions.expire_device_jobs(d["uid"], d["deviceId"])
         except Exception as e:  # one bad record never stops the sweep
             log.warning("sweep device failed: %s", type(e).__name__)
     try:
@@ -321,4 +323,5 @@ def sweep() -> dict:
             checked += 1
         except Exception as e:
             log.warning("sweep watch failed: %s", type(e).__name__)
-    return {"ok": True, "newlySilent": silent, "watchesChecked": checked, "pruned": pruned}
+    return {"ok": True, "newlySilent": silent, "watchesChecked": checked, "pruned": pruned,
+            "jobsWithoutReport": unreported}
