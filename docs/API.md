@@ -129,15 +129,20 @@ Heartbeat facts (anything else is rejected):
 
 Discovery items use a fixed vocabulary: `guess`, `vendor`, `services` and `ports` (22, 80, 443, 445, 631, 8123,
 25565, 32400) must be one of the helper's known words or numbers; `cid` is a random 12-hex id; the optional `tag` is
-the keyed fingerprint of its address (20 hex). Helper 0.9.22+ adds `maker` (≤40) and `model` (≤60) as the thing
-announces them (the router's UPnP description, fetched from a few well-known places on the router only: manufacturer,
-modelName and modelNumber, never friendlyName; mDNS TXT records of printers, AirPlay and Apple devices, asked of the
-system's own mDNS service, `dns-sd` or avahi, with Apple model codes in plain words such as "Mac mini"). The helper
-only asks and never waits for incoming traffic, so it never raises a firewall prompt. It adds the services `router`,
-`media player` and `media server` from the UPnP device type, with the guesses `Router` and `Media server`. `maker` and
-`model` allow letters, digits, spaces and `.,!+&()_#/-` only (`422` otherwise); both the helper and the server drop
-values that read like a person's name ("Juan's iPhone", "iPhone de Juan", "Juans-MacBook"), an address or a bare
-number. No addresses or other free text. The server scrubs every value of every
+the keyed fingerprint of its address (20 hex). Helper 0.9.22+ adds `maker` and `model`, read from what the thing
+announces (the router's UPnP description, fetched from a few well-known places on the router only, UTF-8 without a
+DTD, one 12-second deadline for the whole look: manufacturer, modelName and modelNumber, never friendlyName; mDNS TXT
+records of printers, AirPlay and Apple devices, asked of the system's own mDNS service, `dns-sd` or avahi). The helper
+only asks and never waits for incoming traffic, so it never raises a firewall prompt. **Both are allow-listed, never
+free text**, by the same rules in the helper and the server: `maker` is one of about 70 home and office brands
+(`real.MAKERS`, `422` otherwise), written as the list spells it ("Brother Industries, Ltd." is sent as `Brother`);
+`model` comes only with a maker and is either an Apple model in plain words from a fixed table ("Macmini9,1" is sent as
+`Mac mini`) or shaped like a product code: at most 40 characters and 5 words, a digit somewhere, every word made of
+letters, digits and `/+-` and holding a digit, or a short all-capitals code, a single letter or a known series word
+(`HL-L2350DW`, `DocuPrint CP115/118 w`, `Nighthawk R7000`). Anything else, a name ("Alex MacBook"), a host name, a
+sentence, is dropped before it leaves the device and again on the server. It adds the services `router`, `media
+player` and `media server` from the UPnP device type, with the guesses `Router` and `Media server`. No addresses or
+other free text. The server scrubs every value of every
 helper request. Free-text values such as container names come from the device and are shown as reported.
 
 ## Real devices

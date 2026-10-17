@@ -271,17 +271,50 @@ PRIVATE_MAC = "private address (likely a phone or laptop)"  # the helper's word 
 FOUND_GUESSES = ("Home Assistant", "Plex media server", "Minecraft server", "Printer", "File share (NAS or computer)",
                  "Speaker or TV", "Raspberry Pi", "VMware virtual machine", "Computer (remote login)",
                  "Device with a web page", "Unknown device", "Router", "Media server", *FOUND_VENDORS)
-# A maker or model as the thing announces it ("Brother", "HL-L2350DW series"): plain product characters only.
-PRODUCT = r"^[A-Za-z0-9][A-Za-z0-9 .,!+&()_#/-]{0,%d}$"
-_NAMELIKE = re.compile(r"\b(de|von|van|di|da|du|of)\s+[A-Z]|^[A-Z][a-z]+s-|(?i:https?\b|www\.|\.local\b|\[\w+\])")
+# Maker and model are allow-listed, never free text (a device's own words can carry a person's name): the maker is one
+# of these brands as spelled here (the helper's KNOWN_MAKERS, normalised there), the model an Apple model from the
+# helper's table or something shaped like a product code (see product_code). Same rules as nightlight_helper.py.
+MAKERS = ("Apple", "Brother", "Canon", "Epson", "HP", "Xerox", "Fuji Xerox", "Fujifilm", "Lexmark", "Samsung", "Kyocera",
+          "Ricoh", "Konica Minolta", "Sharp", "OKI", "Dell", "Pantum", "Netgear", "TP-Link", "ASUS", "Linksys", "D-Link",
+          "Ubiquiti", "AVM", "Synology", "QNAP", "Western Digital", "Seagate", "Buffalo", "Asustor", "TerraMaster",
+          "Sonos", "Bose", "Sony", "LG", "Philips", "Panasonic", "Yamaha", "Denon", "Marantz", "Onkyo", "Pioneer",
+          "Harman", "Roku", "Google", "Amazon", "Microsoft", "Nintendo", "Raspberry Pi", "Huawei", "ZTE", "Xiaomi",
+          "Tenda", "Mercusys", "Zyxel", "eero", "Arris", "Technicolor", "Sagemcom", "Cisco", "MikroTik", "Belkin",
+          "Vizio", "TCL", "Hisense", "NVIDIA", "ipTIME", "allRadio")
+APPLE_MODELS = ("MacBook Pro", "MacBook Air", "MacBook", "Mac mini", "Mac Pro", "iMac", "iPhone", "iPad", "Apple TV",
+                "HomePod", "Mac")
+SERIES_WORDS = {"docuprint", "laserjet", "officejet", "deskjet", "envy", "pixma", "imageclass", "ecotank", "workforce",
+                "nighthawk", "archer", "deco", "orbi", "diskstation", "rackstation", "fritz", "box", "mycloud",
+                "readynas", "terastation", "linkstation", "airport", "bravia", "color", "colour", "pro", "plus",
+                "mini", "ultra", "series", "wireless", "multifunction", "mfp", "lite"}
+MODEL_CHARS = r"^[A-Za-z0-9][A-Za-z0-9 /+-]{0,39}$"
 
 
-def product(text: str | None) -> str | None:
-    """A maker or model kept only when it reads like a product: never a person's name ("iPhone de Juan",
-    "Juans-MacBook"), an address, something the scrubber hid, or a bare number."""
-    if not isinstance(text, str) or _NAMELIKE.search(text) or re.fullmatch(r"[\d .,_#-]+", text):
+def product_code(text: str | None) -> str | None:
+    """A model that looks like a product code ("HL-L2350DW", "DocuPrint CP115/118 w"): at most 40 characters and 5
+    words, a digit somewhere, each word of letters, digits and / + - holding a digit, or a short all-capitals code, a
+    single letter, or a known series word. Names ("Alex MacBook"), host names and sentences never pass."""
+    if not isinstance(text, str):
         return None
+    words = text.split(" ")
+    if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
+        return None
+    for w in words:
+        if not re.fullmatch(r"[A-Za-z0-9/+-]+", w) or not (
+                re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6) or len(w) == 1
+                or w.lower() in SERIES_WORDS):
+            return None
     return text
+
+
+def product(maker: str | None, model: str | None) -> tuple[str | None, str | None]:
+    """(maker, model) as stored: a known maker, and a model only with one (an Apple model from the table, or a
+    product code); anything else is dropped."""
+    if maker not in MAKERS:
+        return None, None
+    if maker == "Apple":
+        return maker, model if model in APPLE_MODELS else None
+    return maker, model if product_code(model) == model else None
 
 
 def discoveries_ref(uid: str):

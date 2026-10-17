@@ -8,8 +8,8 @@ facts (administrator commands without a password; SSH password logins), what you
 for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
 variables or passwords. To draw lines between your devices it sends keyed fingerprints of local network addresses
 (its own, its router's, and those it backs up to or relies on), never the addresses themselves. Things it finds nearby
-are sent as a guess of what they are and their maker and model (as they announce them), never their names or
-addresses. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
+are sent as a guess of what they are and their maker and model (only a known brand, and a model that is a known Apple
+model or looks like a product code), never their names or addresses. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
 scrubbed here first. It talks only HTTPS to the address you joined with.
 
 By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
@@ -2107,10 +2107,12 @@ def _guess(vendor, services, ports):
 # Who made it and which model, as the things themselves announce it. Only outgoing questions, never a socket that
 # waits for others to call in (an unattended helper must never raise a firewall prompt): mDNS records come from the
 # system's own service (`dns-sd` on a Mac, avahi on Linux), and the router's UPnP description file is fetched from a
-# few well-known places on the router only. Only a maker and a model leave this device, and only when they read like a
-# product, never like a name ("Juan's iPhone"), an address or a bare number. friendlyName (often a name) is never read.
+# few well-known places on the router only. What they announce is free text a person may have typed ("Alex MacBook"),
+# so nothing of it leaves as written: the maker must be one of the brands below (sent as the table spells it), and the
+# model must be an Apple model from the table below or look like a product code ("HL-L2350DW", "DocuPrint CP115/118
+# w"). Anything else is dropped here, and the server checks the same rules again. friendlyName is never read.
 
-IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models (mDNS records, then the router's description)
+IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models, start to finish
 MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
 DESCRIPTION_BYTES = 64 * 1024
 MDNS_ASK = ("_ipp._tcp", "_printer._tcp", "_airplay._tcp", "_raop._tcp", "_device-info._tcp", "_googlecast._tcp",
@@ -2123,24 +2125,56 @@ UPNP_KIND = (("InternetGatewayDevice", "router"), ("MediaRenderer", "media playe
 APPLE_MODELS = (("MacBookPro", "MacBook Pro"), ("MacBookAir", "MacBook Air"), ("MacBook", "MacBook"),
                 ("Macmini", "Mac mini"), ("MacPro", "Mac Pro"), ("iMac", "iMac"), ("iPhone", "iPhone"),
                 ("iPad", "iPad"), ("AppleTV", "Apple TV"), ("AudioAccessory", "HomePod"), ("Mac", "Mac"))
-PRINTER_MAKERS = ("Brother", "Canon", "Epson", "HP", "Xerox", "Lexmark", "Samsung", "Kyocera", "Ricoh", "Dell",
-                  "OKI", "Sharp", "Konica Minolta", "Pantum")
-PLAIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,!+&()_#/-]*$")  # the server accepts exactly these characters
-_COMPANY = re.compile(r"(?i)[,.]?\s+(inc|ltd|llc|co|corp|corporation|limited|gmbh|ag|industries)\.?$")
+# Makers common in homes and small offices: how they announce themselves (lower case, punctuation as spaces; a longer
+# announcement that starts with one of these counts, "brother industries ltd") -> how Nightlight writes them. The
+# server keeps the same list (real.MAKERS).
+KNOWN_MAKERS = {
+    "apple": "Apple", "brother": "Brother", "canon": "Canon", "epson": "Epson", "seiko epson": "Epson", "hp": "HP",
+    "hewlett packard": "HP", "xerox": "Xerox", "fuji xerox": "Fuji Xerox", "fujifilm": "Fujifilm", "lexmark": "Lexmark",
+    "samsung": "Samsung", "kyocera": "Kyocera", "ricoh": "Ricoh", "konica minolta": "Konica Minolta", "sharp": "Sharp",
+    "oki": "OKI", "dell": "Dell", "pantum": "Pantum", "netgear": "Netgear", "tp link": "TP-Link", "asus": "ASUS",
+    "asustek": "ASUS", "linksys": "Linksys", "d link": "D-Link", "ubiquiti": "Ubiquiti", "avm": "AVM",
+    "synology": "Synology", "qnap": "QNAP", "western digital": "Western Digital", "wd": "Western Digital",
+    "seagate": "Seagate", "buffalo": "Buffalo", "asustor": "Asustor", "terramaster": "TerraMaster", "sonos": "Sonos",
+    "bose": "Bose", "sony": "Sony", "lg": "LG", "philips": "Philips", "signify": "Philips", "panasonic": "Panasonic",
+    "yamaha": "Yamaha", "denon": "Denon", "marantz": "Marantz", "onkyo": "Onkyo", "pioneer": "Pioneer",
+    "harman": "Harman", "roku": "Roku", "google": "Google", "amazon": "Amazon", "microsoft": "Microsoft",
+    "nintendo": "Nintendo", "raspberry pi": "Raspberry Pi", "huawei": "Huawei", "zte": "ZTE", "xiaomi": "Xiaomi",
+    "tenda": "Tenda", "mercusys": "Mercusys", "zyxel": "Zyxel", "eero": "eero", "arris": "Arris",
+    "technicolor": "Technicolor", "sagemcom": "Sagemcom", "cisco": "Cisco", "mikrotik": "MikroTik", "belkin": "Belkin",
+    "vizio": "Vizio", "tcl": "TCL", "hisense": "Hisense", "nvidia": "NVIDIA", "iptime": "ipTIME", "allradio": "allRadio"}
+# Words allowed in a model besides codes ("LaserJet Pro M404dn"): series names, never anything that is also a name.
+SERIES_WORDS = {"docuprint", "laserjet", "officejet", "deskjet", "envy", "pixma", "imageclass", "ecotank", "workforce",
+                "nighthawk", "archer", "deco", "orbi", "diskstation", "rackstation", "fritz", "box", "mycloud",
+                "readynas", "terastation", "linkstation", "airport", "bravia", "color", "colour", "pro", "plus",
+                "mini", "ultra", "series", "wireless", "multifunction", "mfp", "lite"}
 
 
-def _plain(text, limit):
-    """A maker or model fit to leave the device, or None: printable ASCII product words only. Anything that reads like
-    a person's name ("Juan's iPhone", "iPhone de Juan", "Juans-MacBook"), an address or only a number is dropped."""
+def _maker(text):
+    """The table's spelling of a known maker, or None for anything else."""
     if not isinstance(text, str):
         return None
-    text = _COMPANY.sub("", _COMPANY.sub("", " ".join(text.split())))  # "Brother Industries, Ltd." -> "Brother"
-    if not text or not PLAIN_RE.fullmatch(text) or scrub(text)[0] != text or re.fullmatch(r"[\d .,_#/-]+", text):
+    words = " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+    return next((name for key, name in sorted(KNOWN_MAKERS.items(), key=lambda kv: -len(kv[0]))
+                 if words == key or words.startswith(key + " ")), None)
+
+
+def _product_code(text):
+    """A model kept only when it looks like a product code: at most 40 characters and 5 words, with a digit somewhere;
+    each word made of letters, digits and / + - only, and either holding a digit, or a short all-capitals code, a single
+    letter, or a known series word. "Alex MacBook", host names and sentences never pass."""
+    if not isinstance(text, str):
         return None
-    if re.search(r"(?i)https?\b|www\.|\.local\b", text) or re.search(r"\b(de|von|van|di|da|du|of)\s+[A-Z]", text) \
-            or re.match(r"[A-Z][a-z]+s-", text):
+    text = re.sub(r"(?i)\s+series$", "", " ".join(text.split()))
+    words = text.split(" ")
+    if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
         return None
-    return text[:limit].rstrip(" .,-") or None
+    for w in words:
+        if not re.fullmatch(r"[A-Za-z0-9/+-]+", w) or not (
+                re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6) or len(w) == 1
+                or w.lower() in SERIES_WORDS):
+            return None
+    return text
 
 
 def _apple_model(code):
@@ -2151,12 +2185,13 @@ def _apple_model(code):
 
 
 def _txt_about(kind, txt):
-    """{maker, model} from one mDNS TXT record of a printer, an AirPlay speaker or TV, or an Apple device."""
+    """{maker, model} as announced in one mDNS TXT record of a printer, an AirPlay speaker or TV, or an Apple device
+    (raw: `_keep` decides what may leave)."""
     if kind in ("_ipp._tcp", "_printer._tcp"):
         maker, model, ty = txt.get("usb_MFG"), txt.get("usb_MDL"), txt.get("ty") or ""
         if not model and ty:  # "Brother HL-L2350DW series"
-            maker = maker or next((m for m in PRINTER_MAKERS if ty.lower().startswith(m.lower() + " ")), None)
-            model = ty[len(maker) + 1:] if maker and ty.lower().startswith(maker.lower() + " ") else ty
+            maker = maker or ty
+            model = ty
         return {"maker": maker, "model": model}
     if kind in ("_airplay._tcp", "_raop._tcp", "_device-info._tcp"):
         code = txt.get("model") or txt.get("am")
@@ -2237,17 +2272,18 @@ def _dns_sd_zone(text, kind):
 
 def _mdns_records(seconds=MDNS_SECONDS):
     """[(address, kind, txt)] for services announced nearby, from the system's mDNS service (asked, not listened
-    for). On Linux avahi resolves the addresses itself; on a Mac the host names are looked up within the same time."""
+    for). Takes at most twice `seconds`: on Linux avahi resolves the addresses itself; on a Mac the listings run for
+    `seconds` and the host names are looked up in the time left."""
     out = []
     if shutil.which("avahi-browse"):
-        for line in _run(["avahi-browse", "-aprtk"], timeout=6).splitlines():
+        for line in _run(["avahi-browse", "-aprtk"], timeout=max(1.0, 2 * seconds)).splitlines():
             f = line.split(";")
             if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS_ASK and _private_v4(f[7]):
                 out.append((f[7], f[4], _txt(f[9]) if len(f) > 9 else {}))
         return out
     if sys.platform != "darwin" or not shutil.which("dns-sd"):
         return out
-    deadline = time.monotonic() + seconds + 3
+    deadline = time.monotonic() + 2 * seconds
     found = []
     for kind, text in zip(MDNS_ASK, _watch([["dns-sd", "-Z", k, "local"] for k in MDNS_ASK], seconds)):
         found += _dns_sd_zone(text, kind)
@@ -2261,13 +2297,23 @@ def _mdns_records(seconds=MDNS_SECONDS):
 
 
 def _upnp_about(data):
-    """{maker, model, kind} from a UPnP description file. A file with a DOCTYPE or ENTITY is refused unread (entities
-    can make a few bytes expand without end); the friendlyName, often a person's name, is never read."""
+    """{maker, model, kind} as a UPnP description file announces them (raw: `_keep` decides what may leave). Only
+    UTF-8 (or ASCII) files are read, and one with a DOCTYPE or ENTITY is refused (entities can make a few bytes expand
+    without end): the check runs on the decoded text, so another encoding can't hide them. friendlyName, often a
+    person's name, is never read."""
     import xml.etree.ElementTree as ET
-    if not data or len(data) > DESCRIPTION_BYTES or re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
+    if not data or len(data) > DESCRIPTION_BYTES or data[:2] in (b"\xfe\xff", b"\xff\xfe") or b"\0" in data:
         return {}
     try:
-        root = ET.fromstring(data)
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return {}
+    declared = re.match(r"\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']*)", text)
+    if (declared and declared.group(1).lower() not in ("utf-8", "us-ascii", "ascii")) \
+            or re.search(r"<!\s*(DOCTYPE|ENTITY)", text, re.I):
+        return {}
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
     except (ET.ParseError, ValueError):
         return {}
     device = next((e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "device"), None)
@@ -2277,56 +2323,81 @@ def _upnp_about(data):
     for child in device:
         key = child.tag.rsplit("}", 1)[-1]
         if key in ("manufacturer", "modelName", "modelNumber", "deviceType") and (child.text or "").strip():
-            got[key] = child.text.strip()
-    model = got.get("modelName") or ""
-    if len(got.get("modelNumber", "")) > 2 and got["modelNumber"] not in model:  # not a bare "1"
-        model = (model + " " + got["modelNumber"]).strip()
+            got[key] = child.text.strip()[:100]
+    name, number = got.get("modelName", ""), got.get("modelNumber", "")
+    models = [" ".join(x for x in (name, number if number not in name else "") if x), name, number]
     kind = next((w for t, w in UPNP_KIND if ":" + t + ":" in got.get("deviceType", "")), None)
-    return {"maker": got.get("manufacturer"), "model": model or None, "kind": kind}
+    return {"maker": got.get("manufacturer"), "model": next((m for m in models if _product_code(m)), None),
+            "kind": kind}
 
 
-_LAN = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)  # nearby: no proxy, no redirects
-
-
-def _description(url, timeout):
-    try:
-        with _LAN.open(url, timeout=timeout) as r:
-            return r.read(DESCRIPTION_BYTES + 1)
-    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+def _fetch(host, port, path, deadline):
+    """The body of a plain HTTP GET, or b"" (an error, not 200, too big, or the deadline passed). Connecting,
+    sending and every read are held to the one deadline; the connection is closed when it passes."""
+    import socket as _s
+    left = deadline - time.monotonic()
+    if left <= 0.05:
         return b""
+    data = b""
+    try:
+        with _s.create_connection((host, port), timeout=left) as sock:
+            sock.sendall(("GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n" % (path, host, port)).encode())
+            while len(data) <= DESCRIPTION_BYTES + 4096:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return b""  # out of time: what came so far is not used
+                sock.settimeout(left)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            else:
+                return b""  # too big to be a description
+    except (OSError, ValueError):
+        return b""
+    head, _sep, body = data.partition(b"\r\n\r\n")
+    return body if re.match(rb"HTTP/1\.[01] 200 ", head) else b""
 
 
-def _router_about(budget):
+def _router_about(deadline):
     """(router address, {maker, model, kind}) from its UPnP description, tried at a few well-known places on the
-    router only (plain outgoing requests, 1 s each, one shared deadline); (None, {}) when none answers in time."""
-    gateway = _gateway()
+    router only (plain outgoing requests, at most 1 s each); (None, {}) when there's no answer by `deadline`."""
+    gateway = _gateway(timeout=max(0.1, min(5.0, deadline - time.monotonic())))
     if not _private_v4(gateway):
         return None, {}
-    deadline = time.monotonic() + budget
     for port, path in UPNP_PLACES:
-        left = deadline - time.monotonic()
-        if left <= 0.2:
+        if deadline - time.monotonic() <= 0.2:
             break
-        about = _upnp_about(_description("http://%s:%d%s" % (gateway, port, path), min(1.0, left)))
+        about = _upnp_about(_fetch(gateway, port, path, min(deadline, time.monotonic() + 1.0)))
         if about.get("maker") or about.get("model"):
             return gateway, about
     return gateway, {}
 
 
 def _keep(mine, about):
-    """Keep the first maker and model that may leave the device."""
-    maker, model = _plain(about.get("maker"), 40), _plain(about.get("model"), 60)
-    if maker and model and model.lower().startswith(maker.lower() + " "):
-        model = model[len(maker) + 1:]  # "FUJI XEROX DocuPrint CP115" made by FUJI XEROX: "DocuPrint CP115"
+    """Keep the first maker and model that may leave the device: a known maker (as the table spells it) and a model
+    from the Apple table or shaped like a product code. An unknown maker means neither is kept."""
+    maker = _maker(about.get("maker"))
+    if not maker:
+        return
+    model = about.get("model") if isinstance(about.get("model"), str) else ""
+    if maker == "Apple":
+        model = model if model in {w for _p, w in APPLE_MODELS} else None  # only ever from the table
+    else:
+        for prefix in (about.get("maker") or "", maker):  # "FUJI XEROX DocuPrint CP115" made by FUJI XEROX
+            if prefix and model.lower().startswith(prefix.lower() + " "):
+                model = model[len(prefix) + 1:]
+        model = _product_code(model)
     if model and not mine.get("model"):
-        mine["model"], mine["maker"] = model, maker or mine.get("maker")
-    elif maker and not mine.get("maker"):
+        mine["model"], mine["maker"] = model, maker
+    elif not mine.get("maker"):
         mine["maker"] = maker
 
 
 def _identify(budget=IDENTIFY_BUDGET):
-    """{address: {"services": set, "maker", "model"}} for things that say who made them. One deadline covers the
-    mDNS listings and the router's description; what doesn't fit is left out, and nothing here can fail the look."""
+    """{address: {"services": set, "maker", "model"}} for things that say who made them. One deadline covers it all,
+    from the mDNS listings to the last byte of the router's description; what doesn't fit is left out, and nothing
+    here can fail the look."""
     deadline = time.monotonic() + budget
     out = {}
     try:
@@ -2335,7 +2406,7 @@ def _identify(budget=IDENTIFY_BUDGET):
             if kind in MDNS:
                 mine["services"].add(MDNS[kind])
             _keep(mine, _txt_about(kind, txt))
-        router, about = _router_about(max(0.0, deadline - time.monotonic()))
+        router, about = _router_about(deadline)
         if about:
             mine = out.setdefault(router, {"services": set()})
             if about.get("kind"):
@@ -2509,7 +2580,7 @@ def _hex_v4(h):
     return _s.inet_ntoa(struct.pack("=I", int(h, 16)))
 
 
-def _gateway():
+def _gateway(timeout=5):
     try:
         with open("/proc/net/route") as f:
             for line in f.read().splitlines()[1:]:
@@ -2520,7 +2591,7 @@ def _gateway():
     except (OSError, ValueError):
         pass
     if sys.platform == "darwin":
-        m = re.search(r"gateway:\s*([\d.]+)", _run(["route", "-n", "get", "default"], timeout=5))
+        m = re.search(r"gateway:\s*([\d.]+)", _run(["route", "-n", "get", "default"], timeout=timeout))
         return m.group(1) if m else None
     return None
 
