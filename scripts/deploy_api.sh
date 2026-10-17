@@ -7,7 +7,8 @@ PROJECT=${PROJECT:-nightlight-aibc}
 REGION=${REGION:-asia-northeast3}
 WEB_ORIGINS=${WEB_ORIGINS:-http://localhost:3000,https://nightlight-web-1032111130355.asia-northeast3.run.app,https://fe-preview---nightlight-web-1032111130355.asia-northeast3.run.app}
 # Optional: the Memory Bank id (last segment of .../reasoningEngines/<id>). Unset = memory off.
-MEMORY_BANK_ID=${MEMORY_BANK_ID:-4443553098354393088}  # Agent Platform Memory Bank (resource id, not a secret)
+# Agent Platform Memory Bank (resource id, not a secret). Unset → this bank; MEMORY_BANK_ID='' → memory off.
+MEMORY_BANK_ID=${MEMORY_BANK_ID-4443553098354393088}
 API_URL=${API_URL:-https://nightlight-api-1032111130355.${REGION}.run.app}
 SWEEP_INVOKER=${SWEEP_INVOKER:-sweep-invoker@${PROJECT}.iam.gserviceaccount.com}
 ./scripts/secret_scan.sh

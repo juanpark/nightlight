@@ -42,3 +42,16 @@ def test_a_reset_keeps_links_between_real_devices_only(client, started):
     got = _links(started)
     assert "box-a__box-b" in got and "box-a__nas-1" not in got
     assert "game-1__nas-1" in got  # the new sample home brings its own again
+
+
+def test_sample_lines_cannot_be_deleted_while_the_home_resets(client, started):
+    db.user(started).update({"demo.state": "resetting"})
+    assert client.delete("/api/links/pi-1__router-1").status_code == 409
+    db.user(started).update({"demo.state": "ready"})
+    assert client.delete("/api/links/pi-1__router-1").status_code == 200
+
+
+def test_a_line_from_an_older_sample_home_is_not_found(client, started):
+    db.links(started).document("old-1__old-2").set({"from": "old-1", "to": "old-2", "kind": "network", "realm": "sim",
+                                                     "demoGeneration": -1})
+    assert client.delete("/api/links/old-1__old-2").status_code == 404

@@ -54,10 +54,25 @@ def put(uid: str, src: str, dst: str, kind: str) -> dict:
 
 
 def remove(uid: str, lid: str) -> None:
+    """Delete a line. A sample-home line follows the same barrier as every other demo write: never while a reset is
+    rebuilding the home, and never one from an older sample home."""
     ref = db.links(uid).document(lid)
-    if not ref.get().exists:
-        raise not_found()
-    ref.delete()
+
+    @firestore.transactional
+    def run(tx):
+        snap = ref.get(transaction=tx)
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
+        link = snap.to_dict() if snap.exists else None
+        if not link:
+            raise not_found()
+        if link.get("realm") != "real":
+            if user.get("demo", {}).get("state") != "ready":
+                raise conflict("resetting", retryAfter=5)
+            if link.get("demoGeneration") != user.get("demoGeneration"):
+                raise not_found()
+        tx.delete(ref)
+
+    db.run_transaction(run)
 
 
 def touching(uid: str, device_id: str) -> list:
