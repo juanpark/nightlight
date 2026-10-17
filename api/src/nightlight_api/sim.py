@@ -11,6 +11,7 @@ from copy import deepcopy
 SEVERITY = {"crit": 3, "warn": 2, "info": 1}
 # Which service a full disk hurts, for the card and the finding.
 DISK_SERVICE = {"pi-1": "teslamate", "game-1": "minecraft"}
+APP_SERVICE = {"mac-1": "immich"}  # the sample app that can go unhealthy, per device
 
 
 def disk_pct(device: dict) -> int | None:
@@ -102,7 +103,7 @@ def inject(device: dict, services: dict, kind: str) -> tuple[dict, dict, dict]:
         logs["sizeGb"] = round(max(0.94 * d["diskGb"] - others, 0.1), 1)
         event = {"kind": "disk_full", "severity": "crit", "svcId": DISK_SERVICE.get(d["id"])}
     elif kind == "logs_locked":
-        d["simFailNext"] = True
+        d["simFailNext"] = "rotate_logs"  # only the job this incident is about fails
         event = {"kind": "logs_locked", "severity": "info", "svcId": DISK_SERVICE.get(d["id"]),
                  "message": f"Another program is holding the {d['name']}'s log folder."}
     elif kind == "server_lagging":
@@ -159,6 +160,31 @@ def _rotate_logs_apply(d, svcs):
     d, svcs = refresh(d, svcs)
     after = d["vitals"]["diskPct"]
     return {"summary": f"Freed {freed} GB on the {d['name']} ({before}% → {after}% full).",
+            "before": {"diskPct": before}, "after": {"diskPct": after}}, d, svcs
+
+
+def _clear_images_card(d, svcs):
+    images = _consumer(d, "images")
+    if not images or not images.get("sizeGb"):
+        raise ValueError("no_images")
+    before = disk_pct(d)
+    after_dev = deepcopy(d)
+    _consumer(after_dev, "images")["sizeGb"] = 0.0
+    return {"svcId": DISK_SERVICE.get(d["id"]),
+            "plan": f"Remove the Docker images no app uses on the {d['name']}.",
+            "dryRun": f"Would free about {round(images['sizeGb'], 1)} GB ({before}% → {disk_pct(after_dev)}% full). "
+                      "Logs and running apps are not touched.",
+            "rollback": "Nothing to undo: an app downloads its image again if it ever needs it."}
+
+
+def _clear_images_apply(d, svcs):
+    before = disk_pct(d)
+    images = _consumer(d, "images")
+    freed = round(images["sizeGb"], 1)
+    images["sizeGb"] = 0.0
+    d, svcs = refresh(d, svcs)
+    after = d["vitals"]["diskPct"]
+    return {"summary": f"Removed unused Docker images: freed {freed} GB on the {d['name']} ({before}% → {after}% full).",
             "before": {"diskPct": before}, "after": {"diskPct": after}}, d, svcs
 
 
@@ -244,24 +270,60 @@ def _game_svc(d):
     return "minecraft"
 
 
+def _app(d, svcs):
+    s = svcs.get(APP_SERVICE.get(d["id"]) or "")
+    if not s:
+        raise ValueError("no_app")
+    return s
+
+
+def _app_name(s):
+    return (s.get("name") or "the app").capitalize()
+
+
+def _restart_app_card(d, svcs):
+    s = _app(d, svcs)
+    if s.get("status") == "ok" and not s.get("findings"):
+        raise ValueError("app_healthy")
+    return {"svcId": APP_SERVICE[d["id"]],
+            "plan": f"Restart {_app_name(s)} on the {d['name']} so it reconnects to its database.",
+            "dryRun": f"{_app_name(s)} is unavailable for about 30 seconds. Your photos and its database are not "
+                      "touched.",
+            "rollback": "Nothing to undo: it starts again with the same settings."}
+
+
+def _restart_app_apply(d, svcs):
+    s = _app(d, svcs)
+    s.update(status="ok", findings=[], detail="Up 1 minute (healthy)")
+    d, svcs = refresh(d, svcs)
+    return {"summary": f"Restarted {_app_name(s)}; it reports healthy again and reconnected to its database.",
+            "before": {"status": "warn"}, "after": {"status": "ok"}}, d, svcs
+
+
 ACTIONS = {
     "rotate_logs": {"label": "Clean up old log files", "riskClass": "routine", "allowlisted": True,
                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _rotate_logs_card, "apply": _rotate_logs_apply,
                     "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
+    "clear_images": {"label": "Remove unused Docker images", "riskClass": "routine", "allowlisted": True,
+                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _clear_images_card,
+                     "apply": _clear_images_apply, "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
     "backup_world": {"label": "Back up the game world", "riskClass": "routine", "allowlisted": True,
                      "svc": _game_svc, "card": _backup_card, "apply": _backup_apply,
                      "snapshot": lambda d, s: {"lastBackupDaysAgo": (_game(s) or {}).get("lastBackupDaysAgo")}},
     "restart_server": {"label": "Restart the game server", "riskClass": "service", "allowlisted": False,
                        "svc": _game_svc, "card": _restart_card, "apply": _restart_apply,
                        "snapshot": lambda d, s: {"mem": (d.get("vitals") or {}).get("mem")}},
+    "restart_app": {"label": "Restart an app", "riskClass": "service", "allowlisted": False,
+                    "svc": lambda d: APP_SERVICE.get(d["id"]), "card": _restart_app_card, "apply": _restart_app_apply,
+                    "snapshot": lambda d, s: {"status": (s.get(APP_SERVICE.get(d["id"]) or "") or {}).get("status")}},
     "update_server": {"label": "Update the game server", "riskClass": "service", "allowlisted": False,
                       "svc": _game_svc, "card": _update_card, "apply": _update_apply,
                       "snapshot": lambda d, s: {"version": (_game(s) or {}).get("version")}},
 }
 
 
-FIX_FOR = {"disk_over_90": "rotate_logs", "memory_high": "restart_server", "backup_overdue": "backup_world",
-           "update_available": "update_server"}  # which job answers which problem
+FIX_FOR = {"disk_over_90": ("rotate_logs", "clear_images"), "memory_high": "restart_server", "backup_overdue": "backup_world",
+           "update_available": "update_server", "container_unhealthy": "restart_app"}  # which job answers which
 
 
 def fixes(device: dict, services: dict) -> list[dict]:
@@ -271,13 +333,12 @@ def fixes(device: dict, services: dict) -> list[dict]:
     checks += [f.get("check") for s in services.values() for f in s.get("findings") or []]
     out = []
     for check in dict.fromkeys(checks):
-        job = FIX_FOR.get(check)
-        if not job:
-            continue
-        try:
-            out.append({"tool": job, "for": check, "plan": card(device, services, job, {})["plan"]})
-        except ValueError:
-            pass
+        jobs = FIX_FOR.get(check) or ()
+        for job in (jobs,) if isinstance(jobs, str) else jobs:  # the first answers it best; the rest are options
+            try:
+                out.append({"tool": job, "for": check, "plan": card(device, services, job, {})["plan"]})
+            except ValueError:
+                pass
     return out
 
 
@@ -295,14 +356,22 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     return {**c, "blastRadius": [device["id"]], "riskClass": ACTIONS[action_type]["riskClass"]}
 
 
+FAILS_BECAUSE = {"rotate_logs": "log folder was locked by another program",
+                 "clear_images": "Docker was busy with another task",
+                 "restart_app": "app didn't stop in time",
+                 "backup_world": "game server didn't respond in time", "restart_server": "game server didn't respond in time",
+                 "update_server": "game server didn't respond in time"}
+
+
 def apply(device: dict, services: dict, action_type: str, params: dict) -> tuple[bool, dict, dict, dict]:
     """Run the action on the simulated device. Returns (ok, result, device, services)."""
     if action_type not in ACTIONS:
         raise ValueError("unknown_action")
     d, svcs = deepcopy(device), deepcopy(services)
-    if d.pop("simFailNext", False):
-        what = "log folder was locked by another program" if action_type == "rotate_logs" \
-            else "game server didn't respond in time"
+    fail = d.get("simFailNext")
+    if fail is True or fail == action_type:  # True: an incident from before failures named their job
+        d.pop("simFailNext")
+        what = FAILS_BECAUSE.get(action_type, "job didn't finish in time")
         snap = ACTIONS[action_type]["snapshot"](d, svcs)  # unchanged state, shown on the failed card
         return False, {"ok": False, "summary": f"The {d['name']}'s {what}, so nothing was changed.",
                        "before": snap, "after": dict(snap)}, d, svcs
