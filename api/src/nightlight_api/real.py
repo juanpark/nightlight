@@ -267,6 +267,7 @@ FOUND_SERVICES = ("remote login (SSH)", "web page", "secure web page", "file sha
 FOUND_VENDORS = ("Raspberry Pi", "Synology", "QNAP", "VMware virtual machine", "Philips Hue", "Sonos",
                  "Espressif (smart-home gadget)", "Google", "Amazon", "Ubiquiti", "Nintendo",
                  "private address (likely a phone or laptop)")
+PRIVATE_MAC = "private address (likely a phone or laptop)"  # the helper's word for a randomized hardware address
 FOUND_GUESSES = ("Home Assistant", "Plex media server", "Minecraft server", "Printer", "File share (NAS or computer)",
                  "Speaker or TV", "Raspberry Pi", "VMware virtual machine", "Computer (remote login)",
                  "Device with a web page", "Unknown device", *FOUND_VENDORS)
@@ -324,18 +325,29 @@ def found_view(uid: str) -> list[dict]:
                                   "canWatch": any(p in WATCH_PORTS for p in it.get("ports") or [])})
     # A finder can watch it when it saw a port to check, is still a working device of yours, and has room left.
     helpers = {snap.id: snap.to_dict() for snap in db.devices(uid).get()}
+    routers = {(h.get("net") or {}).get("gateway") for h in helpers.values() if not h.get("archived")} - {None}
     room = {}
     for h in helpers.values():
         if h.get("watchedBy") and not h.get("revoked"):
             room[h["watchedBy"]] = room.get(h["watchedBy"], 0) + 1
     for row in rows.values():
+        # Plain words: what the server knows beats a guess (the thing your devices reach the internet through is your
+        # router), and a randomized hardware address says "phone or laptop", not a maker.
+        if row["vendor"] == PRIVATE_MAC:
+            row["vendor"] = None
+            row["privateAddress"] = True
+            if row["guess"] in (PRIVATE_MAC, "Unknown device", None):
+                row["guess"] = "Phone or laptop"
+        if row.get("tag") and row["tag"] in routers:
+            row["guess"], row["router"] = "Your router (internet connection)", True
         row["seenBy"] = [f for f in row["seenBy"] if f["deviceId"] in helpers]  # a forgotten device saw nothing
         for f in row["seenBy"]:
             h = helpers[f["deviceId"]]
             f["canWatch"] = f["canWatch"] and not h.get("archived") and not h.get("revoked") \
                 and room.get(f["deviceId"], 0) < WATCHED_PER_HELPER
         row["seenBy"].sort(key=lambda f: not f["canWatch"])  # Add uses the first finder
-    return [row for row in rows.values() if row["seenBy"]]
+    out = [row for row in rows.values() if row["seenBy"]]
+    return sorted(out, key=lambda r: (not r.get("router"), not (r["seenBy"] and r["seenBy"][0]["canWatch"])))
 
 
 DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks

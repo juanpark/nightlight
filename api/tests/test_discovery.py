@@ -121,7 +121,7 @@ def test_things_seen_by_several_devices_are_listed_once_and_your_own_devices_not
         h = {"X-Device-Token": dev["token"]}
         assert client.post("/helper/discoveries", json={"items": items}, headers=h).status_code == 200
     rows = client.get("/api/found").json()["items"]
-    assert len(rows) == 1 and rows[0]["guess"] == "Device with a web page"  # the router once; the Pi is yours
+    assert len(rows) == 1 and rows[0]["guess"] == "Your router (internet connection)"  # once; the Pi is yours
     assert sorted(s["name"] for s in rows[0]["seenBy"]) == ["Mac", "Pi"]
     assert "seen by Mac, Pi" in agentlib.fleet_summary(started, generation(started)).replace("Pi, Mac", "Mac, Pi")
 
@@ -235,3 +235,17 @@ def test_what_a_forgotten_device_found_goes_with_it(client, started):  # codex d
     first = row["seenBy"][0]
     assert client.post(f"/api/discoveries/{first['deviceId']}/{first['cid']}/add", json={"name": "HA"}).status_code == 201
     assert not db.user(started).collection("discoveries").document(mac["deviceId"]).get().exists
+
+
+def test_found_things_are_named_plainly_and_the_router_comes_first(client, started):
+    dev = enrolled(client, "MacBook")
+    beat(client, dev["token"], {**FACTS, "net": {"self": "1" * 20, "gateway": "2" * 20, "peers": []}})
+    phone = {**ITEM, "cid": "aaaaaaaaaaa6", "guess": real.PRIVATE_MAC, "vendor": real.PRIVATE_MAC, "services": [],
+             "ports": [], "tag": "3" * 20}
+    router = {**ITEM, "cid": "bbbbbbbbbbb6", "guess": "Device with a web page", "vendor": None,
+              "services": ["web page"], "ports": [80], "tag": "2" * 20}
+    h = {"X-Device-Token": dev["token"]}
+    assert client.post("/helper/discoveries", json={"items": [phone, router]}, headers=h).status_code == 200
+    rows = client.get("/api/found").json()["items"]
+    assert rows[0]["guess"] == "Your router (internet connection)" and rows[0]["router"]
+    assert rows[1]["guess"] == "Phone or laptop" and rows[1]["vendor"] is None and rows[1]["privateAddress"]
