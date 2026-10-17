@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.13"
+VERSION = "0.9.14"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1123,9 +1123,12 @@ def _update_lock(wait):
 
 def _install(version, api, auto, target):
     cfg = _load()
-    floor = max(_ver(VERSION), _ver(_file_version(target) or "0"))
+    installed = _file_version(target) or "0"
+    if _ver(version) and _ver(version) in (_ver(VERSION), _ver(installed)):
+        return True, f"Already on {version}; nothing to do.", None  # the asked-for state is already reached
+    floor = max(_ver(VERSION), _ver(installed))
     if not _ver(version) or _ver(version) <= floor:
-        return False, f"{version} isn't newer than what is installed, so nothing changed.", None
+        return False, f"{version} is older than what is installed, so nothing changed.", None
     if auto and (cfg.get("autoPaused") or version in (cfg.get("skipVersions") or [])):
         return False, f"Automatic updates are paused after a rollback; tap Update in the app to install {version}.", None
     base = check_api(api or _load()["api"]) + "/helper/release/"

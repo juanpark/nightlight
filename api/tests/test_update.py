@@ -170,7 +170,7 @@ def test_an_old_worker_or_a_repeat_cannot_go_back_or_lose_the_backup(helper, tmp
     helper._RESTART.clear()  # an overlapping old worker that didn't install it
     srv.shutdown()
     srv, api = _release(helper, tmp_path, "9.9.8")
-    assert "isn't newer than what is installed" in helper.self_update("9.9.8", api)[1]
+    assert "is older than what is installed" in helper.self_update("9.9.8", api)[1]
     srv.shutdown()
     assert 'VERSION = "9.9.9"' in Path(target).read_text()
     assert Path(helper.APP_DIR, "nightlight_helper.prev.py").read_text() == original
@@ -256,3 +256,19 @@ def test_the_chat_can_propose_an_update_card(client, started, offer):
     assert "update 9.9.9 available" in agent.fleet_summary(started, generation(started))
     ctx = agent.TurnContext.__new__(agent.TurnContext)
     assert "update_helper" in {t.__name__ for t in agent.make_tools(ctx, read_only=False)}
+
+
+def test_an_update_result_updates_the_version_shown_and_a_repeat_is_success(client, started, offer, helper, tmp_path, monkeypatch):
+    dev = enrolled(client)
+    beat(client, dev["token"], {**FACTS, "helperVersion": "0.9.0", "allowedJobs": {"update": ["signed"]}})
+    aid = client.post(f"/api/devices/{dev['deviceId']}/update", json={}).json()["actionId"]
+    _again(dev["token"])
+    beat(client, dev["token"], {**FACTS, "helperVersion": "0.9.0", "allowedJobs": {"update": ["signed"]}})
+    client.post(f"/helper/jobs/{aid}/result", json={"ok": True, "summary": "Updated"},
+                headers={"X-Device-Token": dev["token"]})
+    assert db.device(started, dev["deviceId"]).get().to_dict()["helperVersion"] == "9.9.9"
+    target = _installed(helper, monkeypatch)
+    helper._save_config({"token": "t" * 43, "manage": "app", "remote": {}})
+    Path(target).write_text('VERSION = "9.9.9"\n')  # installed already, still running the old one
+    ok, summary, _ = helper.self_update("9.9.9", "http://127.0.0.1:9")
+    assert ok and "Already on 9.9.9" in summary

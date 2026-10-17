@@ -138,6 +138,14 @@ def _store_grant(tx, uid: str, a: dict) -> list:
     return [expert.grant_write(uid, a)]
 
 
+def _helper_updated(tx, uid: str, a: dict, device: dict, current: bool) -> list:
+    """The device says it now runs (or already ran) this version: the app shows it at once, not at the next report."""
+    from . import db
+    if not a["result"]["ok"]:
+        return []
+    return [(db.device(uid, device["id"]), {"helperVersion": a["params"]["version"]}, True)]
+
+
 def _service_recovered(tx, uid: str, a: dict, device: dict, current: bool) -> list:
     from . import db
     if not a["result"]["ok"] or not a.get("svcId"):
@@ -153,7 +161,7 @@ REGISTRY: dict[str, Capability] = {c.name: c for c in (
     Capability("restart_service", "Restart a stopped system service", "card", _restart_service,
                reports_state=True, on_result=_service_recovered),
     Capability("fix", "Clean up space", "card", _fix),
-    Capability("update_helper", "Update the helper", "card", _update),
+    Capability("update_helper", "Update the helper", "card", _update, on_result=_helper_updated),
     Capability("remove_device", "Remove a device", "card", _remove, while_silent=True,
                after_approval=_finish_removal),
     Capability("diagnose", "Look into", "device", _diagnose, reads=True, keeps_output=True),
