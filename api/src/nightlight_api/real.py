@@ -377,18 +377,30 @@ def found_name(text: str | None) -> str | None:
     return text.strip()
 
 
-def _filled_in(d: dict, device_id: str, items: list[dict]) -> dict:
+def _same_thing(d: dict, it: dict, device_id: str) -> bool:
+    """Whether a found item is this thing on the map. The hardware fingerprint decides when both have one (another
+    machine can get its old address); the finder's id or the address only stand in when one of them has none."""
+    hw = (d.get("net") or {}).get("hw")
+    if hw and it.get("hw"):
+        return hw == it["hw"]
+    tag = (d.get("net") or {}).get("self")
+    return (d.get("watchedBy") == device_id and it.get("cid") == d.get("cid")) or bool(tag and it.get("tag") == tag)
+
+
+def _filled_in(d: dict, device_id: str, items: list[dict], taken: set) -> dict:
     """What a new look adds to a thing already on the map: its maker, model, services and announced name when they
-    were missing (it may have been added before the helper could tell). Fills blanks only, and its name only while it
-    is still the guess it was given, so nothing the owner typed is changed."""
+    were missing (it may have been added before the helper could tell), and its hardware fingerprint when it had none
+    and no other thing on the map holds it. Fills blanks only, and its name only while it is still the guess it was
+    given, so nothing the owner typed is changed."""
     if d.get("archived") or d.get("revoked"):
         return {}
-    tag, hw = (d.get("net") or {}).get("self"), (d.get("net") or {}).get("hw")
-    it = next((i for i in items if (d.get("watchedBy") == device_id and i.get("cid") == d.get("cid"))
-               or (hw and i.get("hw") == hw) or (tag and i.get("tag") == tag)), None)
+    it = next((i for i in items if _same_thing(d, i, device_id)), None)
     if not it:
         return {}
     update = {}
+    if not (d.get("net") or {}).get("hw") and it.get("hw") and it["hw"] not in taken:
+        update["net.hw"] = it["hw"]
+        taken.add(it["hw"])
     if not d.get("model") and it.get("model"):
         update["maker"], update["model"] = it.get("maker") or d.get("maker"), it["model"]  # maker and model together
     elif not d.get("maker") and it.get("maker"):
@@ -417,14 +429,15 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
         names = names_on(db.user(uid).get(transaction=tx).to_dict() or {})
         name = (dsnap.to_dict() or {}).get("name", "A device")
         on_map = db.devices(uid).where(filter=FieldFilter("kind", "==", "watched")).get(transaction=tx)
-        added = {w.to_dict().get("cid") for w in watched}  # already on the map: stays "added" across rediscovery
-        kept = [{**it, "name": found_name(it.get("name")) if names else None, "added": it["cid"] in added}
-                for it in items]
+        mapped = [w.to_dict() for w in watched]  # already on the map: stays "added" across rediscovery
+        kept = [{**it, "name": found_name(it.get("name")) if names else None,
+                 "added": any(_same_thing(w, it, device_id) for w in mapped if not w.get("revoked"))} for it in items]
+        taken = {(w.to_dict().get("net") or {}).get("hw") for w in on_map} - {None}
         tx.set(discoveries_ref(uid).document(device_id), {
             "items": kept, "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
         for w in on_map:
-            update = _filled_in(w.to_dict(), device_id, kept)
+            update = _filled_in(w.to_dict(), device_id, kept, taken)
             if update:
                 tx.update(w.reference, update)
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
@@ -494,6 +507,7 @@ def found_view(uid: str) -> list[dict]:
     devices = [s.to_dict() for s in db.devices(uid).get()]
     mine = own_tags(devices)
     mine_hw = {(d.get("net") or {}).get("hw") for d in devices if not d.get("archived")} - {None}
+    hw_at = {t: (d.get("net") or {}).get("hw") for d in devices if not d.get("archived") for t in links.tags_of(d)}
     looks = [(snap.id, d) for snap in discoveries_ref(uid).get() for d in [snap.to_dict()]
              if not (d.get("expiresAt") and d["expiresAt"] < now)]
     # The hardware fingerprint outlasts an address; an older helper's row joins it through the address both saw.
@@ -501,7 +515,8 @@ def found_view(uid: str) -> list[dict]:
     rows: dict[str, dict] = {}
     for snap_id, d in looks:
         for it in d.get("items") or []:
-            if it.get("added") or it.get("tag") in mine or it.get("hw") in mine_hw:
+            moved_in = it.get("hw") and hw_at.get(it.get("tag")) and hw_at[it["tag"]] != it["hw"]  # new machine, old address
+            if it.get("added") or (it.get("tag") in mine and not moved_in) or it.get("hw") in mine_hw:
                 continue
             key = it.get("hw") or same.get(it.get("tag")) or it.get("tag") or f"{snap_id}:{it.get('cid')}"
             row = rows.setdefault(key, {"guess": it.get("guess"), "vendor": it.get("vendor"), "tag": it.get("tag"),

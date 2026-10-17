@@ -2545,15 +2545,22 @@ def discover(yes=False, quiet=False):
     ips = set(neigh) | set(mdns) | {ip for ip in about if _private_v4(ip)}
     ports = _open_ports(ips)
     ips = _one_per_machine(ips, neigh, lambda ip: len(ports.get(ip, [])) + len(mdns.get(ip, ())) + len(about.get(ip) or {}))
-    known = {v.get("ip"): k for k, v in (cfg.get("found") or {}).items()}  # same thing, same id as last time
-    items, local = [], {}
+    found = cfg.get("found") or {}
+    known = {v.get("ip"): k for k, v in found.items()}  # same thing, same id as last time
+    known_hw = {v["hw"]: k for k, v in found.items() if v.get("hw")}  # ... even at a new address
+    items, local, elsewhere = [], {}, set()
     for ip in sorted(ips):
         vendor = _vendor(neigh.get(ip))
         told = about.get(ip) or {}
         services = sorted(mdns.get(ip, set()) | told.get("services", set()) | {PORTS[p] for p in ports.get(ip, [])})
         if not services and not vendor and not told.get("model"):
             continue  # nothing to say about it
-        cid = known.get(ip) or secrets_hex(6)
+        hw = hw_tag(cfg.get("netKey"), neigh.get(ip))  # the same thing after its address changes
+        at_ip = known.get(ip)
+        if at_ip and hw and found[at_ip].get("hw") not in (None, hw):
+            elsewhere.add(at_ip)  # another machine has that address now: the old thing isn't here
+            at_ip = None
+        cid = (hw and known_hw.get(hw)) or at_ip or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
         for k in ("maker", "model") + (("name",) if cfg.get("deviceNames") is True else ()):
@@ -2562,10 +2569,11 @@ def discover(yes=False, quiet=False):
         tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
         if tag:
             items[-1]["tag"] = tag
-        hw = hw_tag(cfg.get("netKey"), neigh.get(ip))  # the same thing after its address changes
         if hw:
             items[-1]["hw"] = hw
-        local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
+        before = found.get(cid) or {}
+        seen = set(ports.get(ip, [])) | (set(before.get("ports") or []) if hw and before.get("hw") == hw else set())
+        local[cid] = {"ip": ip, "ports": sorted(seen), **({"hw": hw} if hw else {})}  # a watch follows it when it moves
     if not items:
         say("Didn't find anything to suggest on this network.")
         if not quiet:
@@ -2592,7 +2600,8 @@ def discover(yes=False, quiet=False):
         say("Nothing sent.")
         return True, 0
     picked = {it["cid"]: local[it["cid"]] for it in chosen}
-    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **picked}))
+    moved = {cid: {**found[cid], "ip": None} for cid in elsewhere - set(local)}  # its watch says "not reachable"
+    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **moved, **picked}))
     st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
                      {"X-Device-Token": cfg["token"]})
     say(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
@@ -2617,6 +2626,9 @@ def _watch_results():
         port = w.get("port")
         if not target or type(port) is not int or port not in PORTS or port not in target.get("ports", []):
             continue  # only a port this device saw open on that thing, from the fixed list
+        if not target.get("ip"):
+            out.append({"cid": w["cid"], "up": False, "ms": None})  # not at its old address any more
+            continue
         t = time.time()
         try:
             with _s.create_connection((target["ip"], port), timeout=1):

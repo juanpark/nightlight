@@ -343,3 +343,39 @@ def test_apple_devices_say_their_name_and_model_and_old_addresses_fold_into_one(
     assert helper.hw_tag(None, ipad) is None
     text = json.dumps(sent)
     assert "192.168" not in text and "7a:11" not in text and "AA:BB" not in text and "b8:27" not in text
+
+
+def test_a_watched_thing_that_moves_is_watched_at_its_new_address(helper, monkeypatch):
+    # Codex fill-in #2: same hardware, new address: same id, and its watch checks the new address with the ports it
+    # was seen with. Another machine at the old address of a different watched thing: that one reads "not reachable".
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY,
+                         "found": {"aaaaaaaaaaaa": {"ip": "192.168.1.20", "ports": [445],
+                                                    "hw": helper.hw_tag(KEY, "b8:27:eb:00:00:01")},
+                                   "bbbbbbbbbbbb": {"ip": "192.168.1.30", "ports": [80],
+                                                    "hw": helper.hw_tag(KEY, "b8:27:eb:00:00:02")}},
+                         "watch": [{"cid": "aaaaaaaaaaaa", "port": 445}, {"cid": "bbbbbbbbbbbb", "port": 80}]})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.25": "b8:27:eb:00:00:01",
+                                                        "192.168.1.30": "b8:27:eb:00:00:03"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.25": [22], "192.168.1.30": [22]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: (None, {}))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    cids = {i["cid"] for i in sent[0]["items"]}
+    assert "aaaaaaaaaaaa" in cids and "bbbbbbbbbbbb" not in cids and len(cids) == 2
+    found = helper._load()["found"]
+    assert found["aaaaaaaaaaaa"]["ip"] == "192.168.1.25" and found["aaaaaaaaaaaa"]["ports"] == [22, 445]
+    assert found["bbbbbbbbbbbb"]["ip"] is None
+    probed = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    import socket
+    monkeypatch.setattr(socket, "create_connection", lambda addr, timeout=None: probed.append(addr) or Conn())
+    results = {r["cid"]: r["up"] for r in helper._watch_results()}
+    assert results == {"aaaaaaaaaaaa": True, "bbbbbbbbbbbb": False} and probed == [("192.168.1.25", 445)]

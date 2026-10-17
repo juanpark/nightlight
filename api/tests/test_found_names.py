@@ -133,3 +133,33 @@ def test_one_thing_under_two_addresses_is_one_row_and_stays_matched_after_it_mov
                         "maker": "Apple"}])
     assert client.get("/api/found").json()["items"] == []
     assert db.device(started, sid).get().to_dict()["model"] == "Apple TV"
+
+
+def test_another_machine_at_an_old_address_is_its_own_thing(client, started):
+    # Codex fill-in #1: watched A (hardware a) left; machine B (hardware b) got its address and the finder reused
+    # A's id. B must not lend A its name or model, and must stay in Found.
+    mac = enrolled(client, "Mac")
+    _send(client, mac, [{**SPEAKER, "name": None, "tag": "1" * 20, "hw": "a" * 20}])
+    sid = client.post(f"/api/discoveries/{mac['deviceId']}/{SPEAKER['cid']}/add", json={}).json()["deviceId"]
+    _again(mac["token"])
+    _send(client, mac, [{**SPEAKER, "tag": "1" * 20, "hw": "b" * 20, "name": "Bedroom", "model": "Apple TV",
+                         "maker": "Apple"}])
+    a = db.device(started, sid).get().to_dict()
+    assert a["net"]["hw"] == "a" * 20 and "seenName" not in a and not a.get("model")
+    assert [r["name"] for r in client.get("/api/found").json()["items"]] == ["Bedroom"]
+
+
+def test_a_thing_added_before_fingerprints_learns_its_own(client, started):
+    # Codex fill-in #3: added by an older helper (no hardware fingerprint), seen again at the same place with one: it
+    # keeps it, so after it moves it is still the same thing and doesn't come back in Found.
+    mac = enrolled(client, "Mac")
+    _send(client, mac, [{**SPEAKER, "name": None, "tag": "1" * 20}])
+    sid = client.post(f"/api/discoveries/{mac['deviceId']}/{SPEAKER['cid']}/add", json={}).json()["deviceId"]
+    _again(mac["token"])
+    _send(client, mac, [{**SPEAKER, "name": None, "tag": "1" * 20, "hw": "a" * 20}])
+    assert db.device(started, sid).get().to_dict()["net"] == {"self": "1" * 20, "hw": "a" * 20}
+    _again(mac["token"])
+    _send(client, mac, [{**SPEAKER, "cid": "e0e0e0e0e0e0", "tag": "4" * 20, "hw": "a" * 20, "model": "Apple TV",
+                         "maker": "Apple"}])
+    assert client.get("/api/found").json()["items"] == []
+    assert db.device(started, sid).get().to_dict()["model"] == "Apple TV"
