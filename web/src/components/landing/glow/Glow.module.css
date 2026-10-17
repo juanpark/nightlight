@@ -857,15 +857,6 @@
     transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
   }
   .step[data-active] .stepStick { opacity: 1; }
-  /* A wash of night rises behind the sheet so its words never sit on the bright house. */
-  .stepStick::before {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    inset: -88px calc(-1 * var(--gutter)) -28px;
-    background: linear-gradient(rgb(var(--night-rgb) / 0), rgb(var(--night-rgb) / 0.9) 88px);
-    pointer-events: none;
-  }
   .stepCopy {
     position: static;
     width: auto;
@@ -982,15 +973,6 @@
     background: rgb(var(--surface-rgb) / 0.96);
     border: 1px solid rgb(var(--line-rgb) / 0.8);
     box-shadow: 0 -12px 40px -16px rgb(var(--shadow-rgb) / 0.7), 0 24px 48px -16px rgb(var(--shadow-rgb) / 0.8);
-  }
-  /* A wash of night rises behind the panel so it never sits on the bright house. */
-  .sheet::before {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    inset: -96px calc(-1 * var(--gutter)) calc(-1 * max(16px, env(safe-area-inset-bottom)) - 24px);
-    background: linear-gradient(rgb(var(--night-rgb) / 0), rgb(var(--night-rgb) / 0.85) 96px);
-    pointer-events: none;
   }
   /* Where you are in the four stays fixed in the panel's corner. */
   .sheetPips { position: absolute; z-index: 1; top: 30px; right: 20px; display: flex; gap: 4px; }
