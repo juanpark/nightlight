@@ -32,3 +32,4 @@
 .fr-mark.doing { border-color: var(--accent); color: var(--accent); }
 .fr-title { flex: 1; min-width: 0; }
 .firstrun-alt { margin: 8px 0 0; }
+.needs-line { padding: 4px 0 8px 16px; }

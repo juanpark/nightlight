@@ -808,7 +808,7 @@ def set_permissions(uid: str, device_id: str, perms: dict) -> dict:
                  "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
                  **{k: sorted(set(perms[k])) for k in
                                                          ("logs", "restart_container", "restart_service")}}
-        tx.update(ref, {"permissions": clean})
+        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP})
         words = []
         if clean["diagnose"] != before.get("diagnose"):
             words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")

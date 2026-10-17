@@ -1,7 +1,7 @@
 "use client";
 // One agent turn: a work log of what Nightlight checked (its running commentary, each step and what came back), then
 // its answer, then any approval cards. Quick answers keep the log folded; investigations show it open.
-import { useState } from "react";
+import { useState, type JSX } from "react";
 import type { Action, Device } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
 import type { AgentTurn, Block } from "./model";
@@ -17,7 +17,7 @@ function StepRow({ s }: { s: Step }) {
       <span className={`wl-dot ${s.status}`} aria-label={s.status} />
       <span className="wl-label">{s.label}</span>
       {s.summary && <span className="wl-summary"> — {s.summary}</span>}
-      {s.status === "stopped" && <span className="wl-summary muted"> — stopped watching</span>}
+      {s.status === "stopped" && <span className="wl-summary muted"> — stopped</span>}
       {s.ms != null && s.status !== "running" && <span className="wl-ms">{secs(s.ms)}</span>}
     </>
   );
@@ -57,24 +57,44 @@ function WorkLog({ blocks, busy, investigate, ms }: { blocks: Block[]; busy: boo
 export default function TurnView({ turn, actions, devices, onFollowUp }: {
   turn: AgentTurn; actions: Action[]; devices: Device[]; onFollowUp: (turnId: string) => void;
 }) {
-  // The answer is the last thing said; words said before or between steps are commentary in the log.
+  // The answer is the last thing said; words said before or between steps are commentary in a work log. Everything
+  // keeps its order: a card appears where it was put up, between the steps around it.
   let final = -1;
   turn.blocks.forEach((b, i) => { if (b.kind === "text" && b.text.trim()) final = i; });
-  const log = turn.blocks.filter((b, i) => b.kind !== "card" && i !== final);
-  const hasSteps = log.some((b) => b.kind === "step");
-  const cards = turn.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []);
+  const parts: JSX.Element[] = [];
+  let seg: Block[] = [];
+  const lastStep = turn.blocks.reduce((n, b, i) => b.kind === "step" ? i : n, -1);
+  const flush = (i: number) => {
+    if (!seg.length) return;
+    const blocks = seg;
+    seg = [];
+    if (blocks.some((b) => b.kind === "step")) {
+      const isLast = i > lastStep; // the segment holding the last step carries the turn's totals
+      parts.push(<WorkLog key={`log${i}`} blocks={blocks} busy={turn.busy && isLast}
+        investigate={turn.mode === "investigate"} ms={isLast ? turn.ms : undefined} />);
+    } else {
+      blocks.forEach((b, j) => b.kind === "text" && parts.push(<p key={`n${i}.${j}`} className="wl-note">{b.text.trim()}</p>));
+    }
+  };
+  turn.blocks.forEach((b, i) => {
+    if (b.kind === "card") {
+      flush(i);
+      const a = actions.find((x) => x.id === b.actionId);
+      parts.push(<ApprovalCard key={b.actionId} action={a} device={devices.find((d) => d.id === a?.deviceId)}
+        onFollowUp={onFollowUp} />);
+    } else if (i === final) {
+      flush(i);
+      parts.push(<div key="answer" className="bubble agent">{(b as { text: string }).text.trim()}</div>);
+    } else {
+      seg.push(b);
+    }
+  });
+  flush(turn.blocks.length);
   return (
     <div className={`turn agent ${turn.past ? "past" : ""}`}>
       {turn.mode === "investigate" && <span className="pill turn-mode">Investigated</span>}
-      {hasSteps && <WorkLog blocks={log} busy={turn.busy} investigate={turn.mode === "investigate"} ms={turn.ms} />}
-      {!hasSteps && log.map((b, i) => b.kind === "text" ? <p key={i} className="wl-note">{b.text.trim()}</p> : null)}
-      {final >= 0
-        ? <div className="bubble agent">{(turn.blocks[final] as { text: string }).text.trim()}</div>
-        : turn.busy && !hasSteps && <div className="bubble agent thinking">Thinking…</div>}
-      {cards.map((id) => {
-        const a = actions.find((x) => x.id === id);
-        return <ApprovalCard key={id} action={a} device={devices.find((d) => d.id === a?.deviceId)} onFollowUp={onFollowUp} />;
-      })}
+      {parts}
+      {turn.busy && final < 0 && lastStep < 0 && <div className="bubble agent thinking">Thinking…</div>}
       {turn.error && <div className="turn-error small">Problem: {turn.error}</div>}
     </div>
   );

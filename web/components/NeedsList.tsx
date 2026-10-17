@@ -4,7 +4,9 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import type { Go, Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
+import { useDismissed } from "@/lib/needsYou";
 import ApprovalCard from "./ApprovalCard";
+import { Copy } from "./AddDevice";
 
 const TONE = { 1: "crit", 2: "warn", 3: "offline" } as const;
 
@@ -14,6 +16,7 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
 }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const [, dismiss] = useDismissed();
   if (!needs.length) return null;
   const shown = all ? needs : needs.slice(0, max);
   const name = (id?: string) => devices.find((d) => d.id === id)?.name;
@@ -35,8 +38,17 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
               : n.cta.go.to === "card"
                 ? <button className={`small ${n.priority < 3 ? "primary" : ""}`}
                     onClick={() => setOpen(open === n.id ? null : n.id)}>{open === n.id ? "Hide" : n.cta.label}</button>
-                : <button className="small" onClick={() => onGo(n.cta.go)}>{n.cta.label}</button>}
+                : n.cta.go.to === "line"
+                  ? <button className="small" onClick={() => setOpen(open === n.id ? null : n.id)}>
+                      {open === n.id ? "Hide" : n.cta.label}</button>
+                  : <button className="small" onClick={() => onGo(n.cta.go)}>{n.cta.label}</button>}
           </div>
+          {open === n.id && n.cta.go.to === "line" && (
+            <div className="needs-line small">
+              On the removed device, run:
+              <Copy text={`curl -fsSL ${window.location.origin}/uninstall.sh | sh`} />
+              <button className="small" onClick={() => dismiss(n.id)}>Done, I ran it</button>
+            </div>)}
           {open === n.id && n.cta.go.to === "card" && (() => {
             const a = actions.find((x) => x.id === (n.cta.go as { actionId: string }).actionId);
             return <ApprovalCard action={a} device={devices.find((d) => d.id === a?.deviceId)} onFollowUp={onFollowUp} />;

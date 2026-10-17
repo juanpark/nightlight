@@ -59,6 +59,7 @@ export interface Device {
   realm?: "sim" | "real";
   demoGeneration?: number;
   lastSeen?: Date | null;
+  permissionsAt?: Date | null; // when the owner last changed the switches
   revoked?: boolean;
   allowedJobs?: Record<string, string[]>;
   /** Reported by the helper: "app" lets the owner change permissions here; "strict" only on the device. Missing on
@@ -94,6 +95,7 @@ export interface Action {
   params?: Record<string, unknown>;
   continuationTurnId?: string;
   createdAt?: Date | null;
+  finishedAt?: Date | null;
 }
 
 export interface PlaybookResult {
@@ -172,7 +174,7 @@ export interface UserDoc {
 }
 
 export type StreamEvent =
-  | { type: "turn_start"; turnId: string; replay?: boolean }
+  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate" }
   | { type: "text"; delta: string }
   | { type: "tool_call"; name: string; args?: Record<string, unknown> }
   | { type: "tool_result"; name: string; summary?: string; details?: string | null; ok?: boolean; ms?: number | null }

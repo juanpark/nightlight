@@ -7,6 +7,8 @@ import pytest
 from nightlight_api import agent as agentlib, db, demo, turns
 from nightlight_api.errors import ApiError
 from fake_llm import FakeLlm
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types
 
 
 @pytest.fixture(autouse=True)
@@ -175,3 +177,56 @@ def test_stored_messages_keep_each_steps_outcome(client, started):
     assert all(isinstance(t["textOffset"], int) and t["ok"] is True and t["ms"] >= 0 and "_t" not in t
                for t in msg["toolCalls"])
     assert msg["mode"] == "quick"
+
+
+def _moon_then_check(llm_request, stream):
+    """Says a few words with a character outside the BMP, then reads the Pi; then answers."""
+    async def gen():
+        asked = any(p.function_response for c in llm_request.contents for p in (c.parts or []))
+        parts = [types.Part(text="Done.")] if asked else [
+            types.Part(text="Night \U0001F319 check."),
+            types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"}))]
+        yield LlmResponse(content=types.Content(role="model", parts=parts), partial=False, turn_complete=True)
+    return gen()
+
+
+def test_step_offsets_count_utf16_units_like_the_browser(client, started):
+    FakeLlm.behavior = _moon_then_check
+    sid = new_session(client)
+    events(ask(client, sid))
+    msg = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    off = msg["toolCalls"][0]["textOffset"]
+    before = msg["text"].encode("utf-16-le")[:2 * off].decode("utf-16-le")  # raises if a pair were split
+    assert before.strip() == "Night \U0001F319 check."
+
+
+def test_a_dropped_stream_stops_the_turn_and_frees_the_chat(client, started):
+    # Stop in the browser (or a closed page) ends the reading; the turn then ends as "stopped" at once, keeps what was
+    # already done, and the next question isn't refused with turn_in_progress while a lease runs out.
+    import asyncio
+    FakeLlm.behavior = _moon_then_check
+    sid = new_session(client)
+    turn_id = turns.accept_message(started, sid, "What's wrong with my Pi?", str(uuid.uuid4()))
+    claimed = turns.claim(started, turn_id)
+
+    async def read_a_little_then_drop():
+        gen = turns.stream(started, claimed, "127.0.0.1")
+        seen = [json.loads((await gen.__anext__())[5:])]
+        while seen[-1]["type"] != "tool_call":
+            chunk = await gen.__anext__()
+            if chunk.startswith("data:"):
+                seen.append(json.loads(chunk[5:]))
+        await gen.aclose()
+        return seen
+
+    seen = asyncio.run(read_a_little_then_drop())
+    assert seen[-1]["type"] == "tool_call"
+    turn = db.turns(started, sid).document(turn_id).get().to_dict()
+    assert turn["status"] == "failed" and turn["error"]["code"] == "stopped"
+    assert db.session(started, sid).get().to_dict()["activeTurn"] is None
+    kept = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    assert kept["error"]["code"] == "stopped" and kept["text"].startswith("Night")
+    step = kept["toolCalls"][0]  # it never answered: stored as unfinished, never as a success
+    assert step.get("unfinished") is True and step["ok"] is False
+    FakeLlm.behavior = None
+    assert ask(client, sid, "And now?").status_code == 200  # the chat is free right away

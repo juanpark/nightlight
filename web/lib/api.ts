@@ -26,7 +26,7 @@ export async function api<T = Record<string, unknown>>(method: string, path: str
 }
 
 /** POST that answers with Server-Sent Events. Calls onEvent for each event; resolves when the stream ends. Aborting
- * the signal only stops reading: the turn carries on (and is stored) on the server. */
+ * the signal closes the stream, which stops the turn on the server (what it already did is kept). */
 export async function stream(path: string, body: unknown, onEvent: (e: StreamEvent) => void,
   signal?: AbortSignal): Promise<void> {
   const { config } = await firebase();

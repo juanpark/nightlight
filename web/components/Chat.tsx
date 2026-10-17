@@ -40,7 +40,9 @@ const Chat = forwardRef<ChatHandle, {
     devicesRef.current = devices;
     const actionsRef = useRef(actions);
     actionsRef.current = actions;
-    const busy = turns.some((t) => t.kind === "agent" && t.busy);
+    const [sending, setSending] = useState(false); // from Send until the answer's turn exists (session may be created)
+    const sendingRef = useRef(false);
+    const busy = sending || turns.some((t) => t.kind === "agent" && t.busy);
 
     useEffect(() => { setMode(savedMode()); }, []);
     // Follow the conversation only while the person is at the bottom; reading further up is never interrupted.
@@ -88,27 +90,40 @@ const Chat = forwardRef<ChatHandle, {
         if (ctl.signal.aborted) {
           update(k, stop);
         } else {
-          update(k, (t) => ({ ...t, busy: false, error: t.error ?? (e instanceof ApiError ? e.code : "connection problem") }));
+          update(k, (t) => ({ ...stop(t), error: t.error ?? (e instanceof ApiError ? e.code : "connection problem") }));
         }
       } finally {
         watching.current.delete(ctl);
       }
     }, []);
 
-    /** Stop following the answers in progress. The server has no cancel: the work finishes and is kept. */
+    /** Stop the answers in progress: closing the stream ends the turn on the server, keeping what it already did. */
     const stopWatching = () => {
       if (!watching.current.size) return;
       for (const c of watching.current) c.abort();
       setTurns((cur) => [...cur, { kind: "system", key: key(), icon: "stopped",
-        text: "Stopped watching. Nightlight finishes this on its own; reload to see the result." }]);
+        text: "Stopped. What Nightlight already did is kept; ask again to go on." }]);
     };
 
     const ask = useCallback(async (q: string) => {
-      if (!q.trim() || busy) return;
+      // Reserved synchronously: a second Send while the session is being created can't start a second answer.
+      if (!q.trim() || busy || sendingRef.current) return;
+      sendingRef.current = true;
+      setSending(true);
       setText("");
       nearBottom.current = true;
       setTurns((cur) => [...cur, { kind: "user", key: key(), text: q }]);
-      const sid = await chatSession(uid, generation);
+      let sid: string;
+      try {
+        sid = await chatSession(uid, generation);
+      } catch {
+        setTurns((cur) => [...cur, { kind: "agent", key: key(), mode, blocks: [], busy: false,
+          error: "Couldn't start the chat. Please try again." }]);
+        return;
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+      }
       await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID(), mode }, mode);
     }, [busy, run, uid, generation, mode]);
 
@@ -181,7 +196,7 @@ const Chat = forwardRef<ChatHandle, {
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} />
           {busy
-            ? <button type="button" onClick={stopWatching} title="Stop following this answer here (it still finishes)">
+            ? <button type="button" onClick={stopWatching} title="Stop this answer (what was already done is kept)">
                 Stop</button>
             : <button className="primary" disabled={disabled || !text.trim()}>Send</button>}
         </form>

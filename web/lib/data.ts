@@ -57,7 +57,7 @@ export function useServices(uid: string | null, deviceId: string | null): Servic
 
 /** A stored step: older messages have only name and args; textOffset/ok/ms arrived with the layered chat. */
 export interface PastStep { name: string; args?: Record<string, unknown>; summary?: string; details?: string;
-  textOffset?: number; ok?: boolean; ms?: number }
+  textOffset?: number; ok?: boolean; ms?: number; unfinished?: boolean; actionId?: string }
 export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number;
   mode?: "quick" | "investigate"; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
 

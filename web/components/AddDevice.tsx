@@ -4,7 +4,7 @@ import { api, ApiError } from "@/lib/api";
 import type { Device } from "@/lib/types";
 import PairApprove from "./PairApprove";
 
-function Copy({ text }: { text: string }) {
+export function Copy({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0" }}>

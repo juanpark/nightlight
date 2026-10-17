@@ -222,10 +222,13 @@ older than 0.9.13 (`docs/adr/0003-job-channel.md`).
 
 **Chat history.** Messages live at `users/{uid}/sessions/{sid}/messages/{msgId}`
 `{role, text, seq, turnId, mode, toolCalls?, actionIds?, error?, createdAt, expiresAt}`. Each tool call is
-`{name, args, textOffset, summary?, details?, ok?, ms?}`: `textOffset` is the length of `text` when the step began
+`{name, args, textOffset, summary?, details?, ok?, ms?, actionId?, unfinished?}`: `textOffset` is the length of
+`text` in UTF-16 code units (as JavaScript counts) when the step began; `actionId` is the card the step put up (shown
+right after it); `unfinished: true` (with `ok: false`) marks a step that never answered because the turn ended
 (splitting `text` there rebuilds the live order of words and steps), `ok` is false when the tool reported
 `error`/`refused`/`failed`, `ms` is how long it took. `mode` is `quick` or `investigate`. A turn that failed after
-some words were shown keeps them with `error: {code, message}`. Messages are readable by the owner through Firestore
+some words were shown keeps them with `error: {code, message}`. Closing the stream stops the turn: it ends
+at once as failed with code `stopped` (words and steps so far kept), and the session is free for the next message. Messages are readable by the owner through Firestore
 (the web app reads them in `seq` order when the chat opens). `expiresAt` is 30 days after writing; a Firestore TTL
 policy on the `messages` collection group deletes them after that.
 

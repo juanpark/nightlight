@@ -1,16 +1,20 @@
 // "Needs you": one derived list of everything that is waiting for the person, computed from data the app already
 // has. The same items, with the same words, appear as a mark on the device tile, at the top of the device panel and
 // in the strip above the map. Nothing is stored: an item disappears when its reason does.
+import { useCallback, useEffect, useState } from "react";
+import { applied, normal } from "./permissions";
 import type { Action, Device, Discovery, TrustDoc } from "./types";
 
-export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing" | "expertHalf" | "found" | "offer";
+export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing" | "uninstallLine" | "expertHalf"
+  | "permsWaiting" | "found" | "offer";
 export type Priority = 1 | 2 | 3; // 1 act now (red), 2 decide (orange), 3 finish setting up (grey)
 export type Go =
   | { to: "card"; actionId: string }
   | { to: "drawer"; deviceId: string; tab?: "overview" | "about" | "settings" }
   | { to: "panel"; panel: "found" }
   | { to: "chat"; ask: string }
-  | { to: "offer"; actionType: string; offerId: string };
+  | { to: "offer"; actionType: string; offerId: string }
+  | { to: "line"; line: "uninstall" }; // shown in place, with Copy and Done
 
 export interface Need {
   id: string; kind: NeedKind; priority: Priority; deviceId?: string; title: string; detail?: string;
@@ -20,7 +24,29 @@ export interface Need {
 export interface NeedsInput {
   devices: Device[]; actions: Action[]; trust: TrustDoc[]; discoveries: Discovery[];
   release?: { version: string } | null; expert?: { enabled: boolean } | null; now: number;
+  dismissed?: string[]; // items the person marked done (only the ones that can't clear themselves)
 }
+
+/** Needs the person marked done, kept in this browser (an uninstall line pasted elsewhere can't be seen). */
+export function useDismissed(): [string[], (id: string) => void] {
+  const [ids, setIds] = useState<string[]>([]);
+  useEffect(() => {
+    try { setIds(JSON.parse(localStorage.getItem("nl_dismissed") ?? "[]")); } catch { setIds([]); }
+    const on = (e: Event) => setIds((e as CustomEvent<string[]>).detail);
+    window.addEventListener("nl_dismissed", on);
+    return () => window.removeEventListener("nl_dismissed", on);
+  }, []);
+  const dismiss = useCallback((id: string) => {
+    let next: string[] = [id];
+    try { next = [...new Set([...JSON.parse(localStorage.getItem("nl_dismissed") ?? "[]"), id])].slice(-50);
+      localStorage.setItem("nl_dismissed", JSON.stringify(next)); } catch { /* this visit only */ }
+    window.dispatchEvent(new CustomEvent("nl_dismissed", { detail: next }));
+  }, []);
+  return [ids, dismiss];
+}
+
+const WEEK = 7 * 86400000;
+const PERMS_GRACE = 3 * 60000; // a device picks a change up on its next report, about a minute
 
 /** True when version a is newer than b ("0.9.10" > "0.9.9"). */
 export function newer(a?: string, b?: string): boolean {
@@ -79,6 +105,13 @@ export function needsYou(i: NeedsInput): Need[] {
         title: `Helper update ${d.helperVersion} → ${i.release.version}`,
         cta: { label: "Update", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: i.now });
     }
+    const sent = d.permissionsAt?.getTime();
+    if (real && d.manage === "app" && sent && i.now - sent > PERMS_GRACE
+        && !applied(normal(d.permissions), d.allowedJobs ?? {}, (d.containerCount ?? 0) === 0)) {
+      out.push({ id: `perms:${d.id}`, kind: "permsWaiting", priority: 3, deviceId: d.id,
+        title: "Permission change not yet applied", detail: "The device hasn't picked it up",
+        cta: { label: "Details", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: sent });
+    }
     // Only a real mismatch: the device trusts a passkey the app no longer has (expert sessions are opt-in per
     // device, so a device without them is not "half set up").
     const pinned = (d.allowedJobs?.expert ?? []).includes("on");
@@ -87,6 +120,15 @@ export function needsYou(i: NeedsInput): Need[] {
         title: "Expert sessions half set up", detail: "This device trusts a passkey: create it again in the app",
         cta: { label: "Finish", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: i.now });
     }
+  }
+  // A removed device is gone from the map, but if it couldn't uninstall itself the person still has one step to do.
+  for (const a of i.actions) {
+    const at = (a.finishedAt ?? a.createdAt)?.getTime() ?? 0;
+    if (a.type !== "remove_device" || a.status !== "done" || !a.result?.summary.includes("uninstall line")
+        || i.now - at > WEEK || i.dismissed?.includes(`uninstall:${a.id}`)) continue;
+    out.push({ id: `uninstall:${a.id}`, kind: "uninstallLine", priority: 3,
+      title: `Finish removing it: paste the uninstall line on the device`, detail: a.result.summary,
+      cta: { label: "Show line", go: { to: "line", line: "uninstall" } }, at });
   }
   const found = i.discoveries.filter((x) => (x.expiresAt?.getTime() ?? 0) > i.now)
     .reduce((n, x) => n + x.items.filter((it) => !it.added).length, 0);

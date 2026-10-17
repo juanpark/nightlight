@@ -207,7 +207,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
             seq = session["nextSeq"]
             tx.set(db.messages(uid, c.session_id).document(msg_id), {
                 "role": "assistant", "text": text, "seq": seq, "turnId": c.turn_id, "attempt": c.attempt,
-                "toolCalls": [{k: v for k, v in t.items() if not k.startswith("_")} for t in tool_calls],
+                "toolCalls": [_stored_step(t, error) for t in tool_calls],
                 "actionIds": action_ids, "demoGeneration": c.generation, "mode": c.turn.get("mode", "quick"),
                 **({"error": error} if error else {}),
                 "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": _keep_until()})
@@ -273,7 +273,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     """
     t0 = time.monotonic()
     yield sse({"type": "turn_start", "turnId": c.turn_id, "attempt": c.attempt,
-               "messageId": c.turn.get("userMessageId"), "at": _iso(_utcnow()),
+               "messageId": c.turn.get("userMessageId"), "at": _iso(_utcnow()), "mode": c.turn.get("mode", "quick"),
                **({"replay": True} if c.mode == "replay" else {})})
     if c.mode == "replay":
         msg = await asyncio.to_thread(lambda: db.messages(uid, c.session_id).document(c.turn["finalMessageId"]).get())
@@ -292,6 +292,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     # Text is released only when a model call has finished, so it is always scrubbed as a whole: a secret can't
     # leak through a partly-seen value. `shown` is exactly what the browser has; it is what we store and replay.
     raw, shown, tool_calls, first_text_ms = "", "", [], None
+    finishing = False  # set once a terminal write has started; a stop after that changes nothing
     last_sent = time.monotonic()
 
     async def produce():
@@ -379,7 +380,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 if part.function_call and not ev.partial:
                     args, _ = scrub_value(dict(part.function_call.args or {}))
                     # Where the step falls in the text (to rebuild reason → act → result after a reload) and when it began.
-                    tool_calls.append({"name": part.function_call.name, "args": args, "textOffset": len(shown),
+                    tool_calls.append({"name": part.function_call.name, "args": args, "textOffset": _u16(shown),
                                        "_t": time.monotonic()})
                     yield out({"type": "tool_call", "name": part.function_call.name, "args": args})
                 if part.function_response:
@@ -397,6 +398,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
                                "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
+                        if step is not None:
+                            step["actionId"] = resp.get("actionId")  # the card sits right after its step
                         yield out({"type": "approval_request", "actionId": resp.get("actionId")})
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
@@ -408,15 +411,30 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         text = shown  # exactly what the browser received; stored and replayed as-is
         metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
                    "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6)}
+        finishing = True
         await asyncio.to_thread(finish, uid, c, text=text, metrics=metrics, tool_calls=tool_calls,
                                 action_ids=[a["id"] for a in ctx.actions])
         yield sse({"type": "done", "turnId": c.turn_id, "metrics": metrics})
+    except (asyncio.CancelledError, GeneratorExit):
+        # The browser stopped reading (Stop, or the page closed): the turn stops here, like Esc in a terminal. What
+        # was said and done so far is kept, and the chat is free for the next question at once (no lingering lease).
+        # Synchronous on purpose: nothing can be awaited in a cancelled task.
+        if not finishing:
+            finishing = True
+            try:
+                finish(uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics, tool_calls=tool_calls,
+                       action_ids=[a["id"] for a in ctx.actions],
+                       error={"code": "stopped", "message": "Stopped before it finished."})
+            except Exception:
+                pass  # superseded or already finished: nothing to record
+        raise
     except ApiError as e:
         if e.code == "stale":
             yield sse({"type": "error", "code": "stale", "message": "The demo was reset. Start a new question.",
                        "retryable": False})
             return
         err = {"code": e.code, "message": _error_message(e.code)}
+        finishing = True
         try:
             await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics,
                                     tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
@@ -425,6 +443,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         yield sse({"type": "error", **err, "retryable": e.status == 429})
     except Exception:
         err = {"code": "internal", "message": "Something went wrong on our side. Please try again."}
+        finishing = True
         try:
             await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics,
                                     tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
@@ -490,6 +509,19 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if status:
         return f"Result: {status}", None
     return "Done", None
+
+
+def _u16(text: str) -> int:
+    """Length in UTF-16 code units: the unit JavaScript slices by, so offsets mean the same on both sides."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _stored_step(t: dict, error: dict | None) -> dict:
+    """A tool call as stored; one that never answered because the turn ended is marked unfinished, never ok."""
+    step = {k: v for k, v in t.items() if not k.startswith("_")}
+    if "summary" not in step and error:
+        step.update(ok=False, unfinished=True)
+    return step
 
 
 def _ok(resp: dict) -> bool:

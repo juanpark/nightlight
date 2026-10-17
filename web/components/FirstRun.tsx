@@ -4,7 +4,8 @@
 import { useEffect, useState } from "react";
 import type { Go } from "@/lib/needsYou";
 import type { Device, Discovery } from "@/lib/types";
-import { chosePreset, DEFAULTS, normal, samePerms } from "./Permissions";
+import { DEFAULTS, normal, samePerms } from "@/lib/permissions";
+import { chosePreset } from "./Permissions";
 
 type State = "todo" | "doing" | "done";
 

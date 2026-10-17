@@ -57,7 +57,7 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
   const last = blocks[blocks.length - 1];
   switch (e.type) {
     case "turn_start":
-      return { ...t, turnId: e.turnId };
+      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode };
     case "text":
       if (last?.kind === "text") blocks[blocks.length - 1] = { ...last, text: last.text + e.delta };
       else blocks.push({ kind: "text", text: e.delta });
@@ -77,8 +77,8 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
     case "approval_request":
       if (blocks.some((b) => b.kind === "card" && b.actionId === e.actionId)) return t;
       return { ...t, blocks: [...blocks, { kind: "card", actionId: e.actionId }] };
-    case "error":
-      return { ...t, error: e.message || e.code };
+    case "error": // the turn is over: a step still waiting will never answer
+      return { ...stop(t), busy: t.busy, error: e.message || e.code };
     case "done":
       return { ...t, ms: e.metrics?.latencyMs };
     default:
@@ -94,12 +94,14 @@ export function stop(t: AgentTurn): AgentTurn {
 
 function pastStep(s: PastStep, devices: Device[]): Block {
   return { kind: "step", name: s.name, label: label(s.name, s.args, devices), command: command(s.name, s.args),
-    status: failed(s.ok, s.summary) ? "failed" : "done", summary: s.summary, details: s.details, startedAt: 0,
+    status: s.unfinished ? "stopped" : failed(s.ok, s.summary) ? "failed" : "done", summary: s.summary,
+    details: s.details, startedAt: 0,
     ms: s.ms };
 }
 
-/** Stored messages as turns. Steps go back where they happened in the text when the message says where; older
- * messages (no textOffset) show their steps before the answer, as the live chat used to. */
+/** Stored messages as turns. Steps go back where they happened in the text when the message says where (offsets
+ * are UTF-16 units, as JavaScript slices), each card right after the step that made it; older messages (no
+ * textOffset) show their steps before the answer, as the live chat used to. */
 export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
   const out: Turn[] = [];
   for (const m of msgs) {
@@ -111,9 +113,12 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       if (m.text.slice(at, cut).trim()) blocks.push({ kind: "text", text: m.text.slice(at, cut) });
       at = cut;
       blocks.push(pastStep(s, devices));
+      if (s.actionId) blocks.push({ kind: "card", actionId: s.actionId });
     }
     if (m.text.slice(at).trim()) blocks.push({ kind: "text", text: m.text.slice(at) });
-    for (const id of m.actionIds ?? []) blocks.push({ kind: "card", actionId: id });
+    for (const id of m.actionIds ?? []) {
+      if (!blocks.some((b) => b.kind === "card" && b.actionId === id)) blocks.push({ kind: "card", actionId: id });
+    }
     // An agent message right after another one is a follow-up: it continues that one's actions.
     const prev = out[out.length - 1];
     const after = prev?.kind === "agent"
