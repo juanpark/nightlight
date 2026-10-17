@@ -142,7 +142,7 @@ def test_declined_offer_is_not_repeated(client, started):  # M4
 def test_failed_run_keeps_device_version(started):  # open question: failure changes nothing on the device
     uid = started
     _fail_next(uid)  # injecting the failure itself changes the device, so open cards come after it
-    other = propose(uid, turn="turn_other")
+    other = propose(uid, turn="turn_other", device="game-1")  # a different open card (same job twice is one card)
     before = device(uid)["version"]
     failed = propose(uid)
     actions.decide(uid, failed["id"], "approve")

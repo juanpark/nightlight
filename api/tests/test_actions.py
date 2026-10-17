@@ -84,8 +84,8 @@ def test_same_turn_finds_the_same_action(started):
     a = propose(uid, turn="turn_fixed")
     b = propose(uid, turn="turn_fixed")
     assert a["id"] == b["id"] and len(db.actions(uid).get()) == 1
-    c = propose(uid, turn="turn_other")
-    assert c["id"] != a["id"]
+    c = propose(uid, turn="turn_other")  # another turn while the card waits: the same card again
+    assert c["id"] == a["id"] and len(db.actions(uid).get()) == 1
 
 
 def _earn_offer(uid):
@@ -166,3 +166,14 @@ def test_validation_and_ownership(client, started):
     r = client.post(f"/api/actions/{foreign['id']}/decide", json={"decision": "approve"})
     assert r.status_code == 404  # another user's action looks exactly like a missing one
     assert db.action("someone_else", foreign["id"]).get().to_dict()["status"] == "pending"
+
+
+def test_asking_for_the_same_fix_again_shows_the_waiting_card(started):
+    # Two questions (or two chats) that lead to the same fix put up one card, not twins.
+    first = propose(started, turn="turn_a")
+    again = propose(started, turn="turn_b", session="sess_other")
+    assert again["id"] == first["id"] and again["status"] == "pending"
+    from nightlight_api import actions as acts
+    acts.decide(started, first["id"], "deny")
+    fresh = propose(started, turn="turn_c")  # once it's decided, asking again is a new card
+    assert fresh["id"] != first["id"]

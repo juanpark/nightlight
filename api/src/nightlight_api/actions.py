@@ -7,6 +7,7 @@ update, continuation turn and the stored response commit together or not at all.
 from datetime import datetime, timezone
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from . import capabilities, conversation, db, real, sim, trust as trustlib
 from .redact import scrub
@@ -95,6 +96,19 @@ def _read_context(tx, uid: str, device_id: str, action_type: str):
     return user_snap, device_snap, services, trust_ref, trust_snap
 
 
+def _waiting_card(tx, uid: str, device_id: str, action_type: str, params: dict, generation) -> dict | None:
+    """A card for the same job on the same device that is still waiting for the person, from any turn. Asking for the
+    same fix again (a second question, another chat) shows that card again instead of putting up a twin."""
+    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("status", "==", "pending"))
+    for snap in q.get(transaction=tx):
+        a = snap.to_dict()
+        if a.get("type") == action_type and (a.get("params") or {}) == (params or {}) \
+                and a.get("demoGeneration") == generation:
+            return dict(a, id=snap.id)
+    return None
+
+
 def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_type: str, device_id: str,
             params: dict, fence=None, mode: str = "quick") -> dict:
     """Create (or find) the action for this logical operation. Sample-home jobs run at once when trust allows; a
@@ -127,6 +141,8 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         existing = db.action(uid, aid).get(transaction=tx)
         if existing.exists:
             return dict(existing.to_dict(), id=aid)
+        if twin := _waiting_card(tx, uid, device_id, action_type, params, generation):
+            return twin
         c = sim.card(device, _by_id(services), action_type, params)  # only a genuinely new proposal is validated
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action_type, generation)
         decision = trustlib.resolve(user, trust_doc, device, _service_doc(services, c["svcId"]), action_type, params)
@@ -178,6 +194,8 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
             raise ValueError("device_not_reporting")
         fields, clean = cap.build(capabilities.Ctx(uid, device, _by_id(services), params))
         approved = cap.approval == "device" or (origin == "app" and cap.approval == "card")
+        if not approved and (twin := _waiting_card(tx, uid, device_id, name, clean, gen)):
+            return twin
         a = {"id": aid, "proposalKey": key, "type": name, "deviceId": device_id, "params": clean, **fields,
              "status": "approved" if approved else "pending", "realm": "real", "demoGeneration": gen,
              "deviceVersion": device.get("version"), "trustLevelAtProposal": "ask", "resolvedBy": "real_device",
