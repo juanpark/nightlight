@@ -221,7 +221,11 @@ older than 0.9.13 (`docs/adr/0003-job-channel.md`).
 `resetting`. The result goes to Activity. Permissions add `updates` (default true) and `autoUpdate` (default false).
 
 **Chat history.** Messages live at `users/{uid}/sessions/{sid}/messages/{msgId}`
-`{role, text, seq, turnId, toolCalls?, actionIds?, createdAt, expiresAt}`, readable by the owner through Firestore
+`{role, text, seq, turnId, mode, toolCalls?, actionIds?, error?, createdAt, expiresAt}`. Each tool call is
+`{name, args, textOffset, summary?, details?, ok?, ms?}`: `textOffset` is the length of `text` when the step began
+(splitting `text` there rebuilds the live order of words and steps), `ok` is false when the tool reported
+`error`/`refused`/`failed`, `ms` is how long it took. `mode` is `quick` or `investigate`. A turn that failed after
+some words were shown keeps them with `error: {code, message}`. Messages are readable by the owner through Firestore
 (the web app reads them in `seq` order when the chat opens). `expiresAt` is 30 days after writing; a Firestore TTL
 policy on the `messages` collection group deletes them after that.
 
@@ -328,7 +332,7 @@ deletes sample-home events only.
 {"type":"turn_start","turnId":"…","attempt":1,"messageId":"…","at":"…"}            (replay adds "replay":true)
 {"type":"text","delta":"…"}
 {"type":"tool_call","name":"get_device","args":{"device_id":"pi-1"}}
-{"type":"tool_result","name":"get_device","summary":"…","redacted":0}
+{"type":"tool_result","name":"get_device","summary":"…","details":null,"ok":true,"ms":412,"redacted":0}
 {"type":"approval_request","actionId":"…"}
 {"type":"followup_pending","turnId":"cont_act_…"}                                  look_into handed off to a follow-up
 {"type":"error","code":"…","message":"…","retryable":false}                         terminal

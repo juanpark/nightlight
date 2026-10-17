@@ -171,3 +171,7 @@ def test_stored_messages_keep_each_steps_outcome(client, started):
     events(ask(client, sid))
     msg = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
     assert msg["toolCalls"] and all("summary" in t for t in msg["toolCalls"])
+    # enough to rebuild the live work log after a reload: where each step sat in the text, whether it worked, how long
+    assert all(isinstance(t["textOffset"], int) and t["ok"] is True and t["ms"] >= 0 and "_t" not in t
+               for t in msg["toolCalls"])
+    assert msg["mode"] == "quick"

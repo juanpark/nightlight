@@ -25,10 +25,13 @@ export async function api<T = Record<string, unknown>>(method: string, path: str
   return data as T;
 }
 
-/** POST that answers with Server-Sent Events. Calls onEvent for each event; resolves when the stream ends. */
-export async function stream(path: string, body: unknown, onEvent: (e: StreamEvent) => void): Promise<void> {
+/** POST that answers with Server-Sent Events. Calls onEvent for each event; resolves when the stream ends. Aborting
+ * the signal only stops reading: the turn carries on (and is stored) on the server. */
+export async function stream(path: string, body: unknown, onEvent: (e: StreamEvent) => void,
+  signal?: AbortSignal): Promise<void> {
   const { config } = await firebase();
-  const r = await fetch(config.apiUrl + path, { method: "POST", headers: await headers(), body: JSON.stringify(body) });
+  const r = await fetch(config.apiUrl + path,
+    { method: "POST", headers: await headers(), body: JSON.stringify(body), signal });
   if (!r.ok || !r.body) {
     const data = await r.json().catch(() => ({}));
     throw new ApiError(r.status, data.code ?? "error", data);

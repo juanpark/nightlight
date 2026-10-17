@@ -2,206 +2,188 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, savedSession } from "@/lib/session";
-import { api, ApiError, stream } from "@/lib/api";
+import { ApiError, stream } from "@/lib/api";
 import type { Action, Device, StreamEvent } from "@/lib/types";
-import ApprovalCard from "./ApprovalCard";
+import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
+import TurnView, { afterLine } from "./chat/TurnView";
+import "@/app/chat.css";
 
 export interface ChatHandle { ask: (text: string) => void; followUp: (turnId: string) => void }
-
-type Item =
-  | { kind: "user"; text: string; past?: boolean }
-  | { kind: "agent"; text: string; steps: Step[]; cards: string[]; error?: string; busy: boolean; past?: boolean };
-
-/** One thing Nightlight did while answering, and (once it came back) what it found. */
-interface Step { name: string; label: string; result?: string; details?: string }
 
 const SUGGESTIONS = ["Is anything wrong at home?", "My kids say Minecraft is laggy tonight. Can you help?",
   "When was the Minecraft world last backed up?"];
 
-function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[]) {
-  const id = (e.args?.device_id as string) ?? "";
-  const name = devices.find((d) => d.id === id)?.name ?? "the device";
-  return ({
-    list_fleet: "Looking over your home…", get_device: `Checking the ${name}…`,
-    get_recent_events: "Reading what happened recently…", restart_container: `Preparing a fix for the ${name}…`,
-    look_into: `Asking the ${name} what happened to ${(e.args?.target as string) ?? "it"}…`, remember: "Making a note…",
-    restart_service: `Preparing a fix for the ${name}…`, clean_up: `Preparing a clean-up for the ${name}…`,
-    inspect: `Looking around the ${name}…`, run_playbook: `Running a checkup on the ${name}…`,
-    write_note: `Noting what I learned about the ${name}…`, how_nightlight_works: "Checking how Nightlight does this…",
-    remove_device: `Preparing to remove the ${name}…`,
-    update_helper: `Preparing the helper update for the ${name}…`,
-    start_investigation: `Asking to investigate the ${name}…`,
-    run_command: `$ ${(e.args?.command as string) ?? ""}`,
-    propose_command: `Preparing a command for the ${name}…`,
-    update_profile: `Updating what I know about the ${name}…`,
-    research: `Searching the web: ${(e.args?.question as string) ?? ""}`,
-  } as Record<string, string>)[e.name] ?? `Working on the ${name}…`;
+const MODES: { id: Mode; name: string; hint: string }[] = [
+  { id: "quick", name: "Quick", hint: "Fast answers from what Nightlight already knows" },
+  { id: "investigate", name: "Investigate deeply",
+    hint: "Works like an administrator: hypotheses, checks, commands. Slower, a few cents" },
+];
+
+function savedMode(): Mode {
+  try { return localStorage.getItem("nl_mode") === "investigate" ? "investigate" : "quick"; } catch { return "quick"; }
 }
 
 const Chat = forwardRef<ChatHandle, {
   uid: string; actions: Action[]; devices: Device[]; disabled: boolean; generation?: number;
 }>(
   function Chat({ uid, actions, devices, disabled, generation }, ref) {
-    const [items, setItems] = useState<Item[]>([]);
+    const [turns, setTurns] = useState<Turn[]>([]);
     const [text, setText] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [deep, setDeep] = useState(false); // Investigate: a stronger model that digs in (slower, a few cents)
+    const [mode, setMode] = useState<Mode>("quick");
     const log = useRef<HTMLDivElement>(null);
+    const nearBottom = useRef(true);
     const streamed = useRef(new Set<string>());
     const pending = useRef(new Set<string>()); // follow-ups promised by a device that hasn't answered yet
     const [pendingTick, setPendingTick] = useState(0); // re-check actions when a new promise arrives
+    const watching = useRef(new Set<AbortController>());
     const devicesRef = useRef(devices);
     devicesRef.current = devices;
+    const actionsRef = useRef(actions);
+    actionsRef.current = actions;
+    const busy = turns.some((t) => t.kind === "agent" && t.busy);
 
-    useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" }); }, [items]);
+    useEffect(() => { setMode(savedMode()); }, []);
+    // Follow the conversation only while the person is at the bottom; reading further up is never interrupted.
+    useEffect(() => {
+      if (nearBottom.current) log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
+    }, [turns]);
     // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
     useEffect(() => {
-      setItems([]);
+      setTurns([]);
       const sid = savedSession(uid, generation);
       if (!sid) return;
       let cancelled = false;
       loadMessages(uid, sid).then((msgs) => {
-        if (cancelled || !msgs.length) return;
-        const past: Item[] = msgs.map((m) => m.role === "user"
-          ? { kind: "user", text: m.text, past: true }
-          : { kind: "agent", text: m.text, busy: false, past: true, cards: m.actionIds ?? [],
-              steps: (m.toolCalls ?? []).map((t) => ({ name: t.name, result: "",
-                label: step({ type: "tool_call", name: t.name, args: t.args ?? {} } as Extract<StreamEvent, { type: "tool_call" }>,
-                  devicesRef.current) })) });
-        setItems((cur) => [...past, ...cur]);
+        if (!cancelled && msgs.length) setTurns((cur) => [...fromHistory(msgs, devicesRef.current), ...cur]);
       }).catch(() => {});
       return () => { cancelled = true; };
     }, [uid, generation]);
 
-    const update = (fn: (a: Extract<Item, { kind: "agent" }>) => void) =>
-      setItems((cur) => {
-        const next = [...cur];
-        const last = next[next.length - 1];
-        if (last?.kind === "agent") {
-          const copy = { ...last, steps: last.steps.map((s) => ({ ...s })), cards: [...last.cards] };
-          fn(copy);
-          next[next.length - 1] = copy;
-        }
-        return next;
-      });
+    const update = (k: string, fn: (t: AgentTurn) => AgentTurn) =>
+      setTurns((cur) => cur.map((t) => t.kind === "agent" && t.key === k ? fn(t) : t));
 
-    const run = useCallback(async (path: string, body: unknown, retries = 0) => {
-      // A follow-up can't start while the turn that asked is still finishing (409): wait and try again.
-      for (let i = 0; i < retries; i++) {
-        try {
-          await stream(path, body, () => {});
-          break;
-        } catch (e) {
-          if (!(e instanceof ApiError && e.status === 409)) break;
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-      }
-      setItems((cur) => [...cur, { kind: "agent", text: "", steps: [], cards: [], busy: true }]);
+    const run = useCallback(async (path: string, body: unknown, turnMode: Mode, after?: string[], retries = 0) => {
+      const k = key();
+      const ctl = new AbortController();
+      watching.current.add(ctl);
+      setTurns((cur) => [...cur, { kind: "agent", key: k, mode: turnMode, blocks: [], busy: true, after }]);
+      const onEvent = (e: StreamEvent) => {
+        // A device that answers later promises a follow-up turn: open it once its action points to it.
+        if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
+        else update(k, (t) => apply(t, e, devicesRef.current));
+      };
       try {
-        await stream(path, body, (e) => update((a) => {
-          if (e.type === "text") a.text += e.delta;
-          else if (e.type === "tool_call") a.steps.push({ name: e.name, label: step(e, devicesRef.current) });
-          else if (e.type === "tool_result") {
-            const s = a.steps.find((x) => x.name === e.name && x.result === undefined);
-            if (s) { s.result = e.summary ?? "done"; s.details = e.details ?? undefined; }
+        // A follow-up can't start while the turn that asked is still finishing (409): wait and try again.
+        for (let i = 0; ; i++) {
+          try {
+            await stream(path, body, onEvent, ctl.signal);
+            break;
+          } catch (e) {
+            if (!(e instanceof ApiError && e.status === 409 && i < retries)) throw e;
+            await new Promise((r) => setTimeout(r, 3000));
           }
-          else if (e.type === "approval_request" && !a.cards.includes(e.actionId)) a.cards.push(e.actionId);
-          else if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
-          else if (e.type === "error") a.error = e.message || e.code;
-        }));
+        }
+        update(k, (t) => ({ ...t, busy: false }));
       } catch (e) {
-        update((a) => { a.error = e instanceof ApiError ? e.code : "connection problem"; });
+        if (ctl.signal.aborted) {
+          update(k, stop);
+        } else {
+          update(k, (t) => ({ ...t, busy: false, error: t.error ?? (e instanceof ApiError ? e.code : "connection problem") }));
+        }
       } finally {
-        update((a) => { a.busy = false; });
+        watching.current.delete(ctl);
       }
     }, []);
 
-    const session = () => chatSession(uid, generation);
+    /** Stop following the answers in progress. The server has no cancel: the work finishes and is kept. */
+    const stopWatching = () => {
+      if (!watching.current.size) return;
+      for (const c of watching.current) c.abort();
+      setTurns((cur) => [...cur, { kind: "system", key: key(), icon: "stopped",
+        text: "Stopped watching. Nightlight finishes this on its own; reload to see the result." }]);
+    };
 
     const ask = useCallback(async (q: string) => {
       if (!q.trim() || busy) return;
-      setBusy(true);
       setText("");
-      setItems((cur) => [...cur, { kind: "user", text: q }]);
-      try {
-        const sid = await session();
-        await run(`/api/chat/sessions/${sid}/messages`,
-          { text: q, clientRequestId: crypto.randomUUID(), mode: deep ? "investigate" : "quick" });
-      } finally {
-        setBusy(false);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [busy, run, uid, generation, deep]);
+      nearBottom.current = true;
+      setTurns((cur) => [...cur, { kind: "user", key: key(), text: q }]);
+      const sid = await chatSession(uid, generation);
+      await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID(), mode }, mode);
+    }, [busy, run, uid, generation, mode]);
 
-
+    const followUp = useCallback((turnId: string, retries = 0) => {
+      if (streamed.current.has(turnId)) return;
+      streamed.current.add(turnId);
+      const after = actionsRef.current.filter((a) => a.continuationTurnId === turnId).map((a) => a.id);
+      run(`/api/turns/${turnId}/stream`, {}, "quick", after, retries);
+    }, [run]);
 
     // When a slow device answers, its action gets the follow-up turn: open it.
     useEffect(() => {
       for (const a of actions) {
         if (a.continuationTurnId && pending.current.has(a.continuationTurnId)) {
           pending.current.delete(a.continuationTurnId);
-          if (!streamed.current.has(a.continuationTurnId)) {
-            streamed.current.add(a.continuationTurnId);
-            run(`/api/turns/${a.continuationTurnId}/stream`, {}, 20);
-          }
+          followUp(a.continuationTurnId, 20);
         }
       }
-    }, [actions, run, pendingTick]);
+    }, [actions, followUp, pendingTick]);
+    useImperativeHandle(ref, () => ({ ask, followUp: (id: string) => followUp(id) }), [ask, followUp]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    useImperativeHandle(ref, () => ({ ask, followUp: (id: string) => followUp(id) }), [ask]);
-
-    const followUp = useCallback((turnId: string) => {
-      if (streamed.current.has(turnId)) return;
-      streamed.current.add(turnId);
-      run(`/api/turns/${turnId}/stream`, {});
-    }, [run]);
+    function pickMode(m: Mode) {
+      if (m === mode) return;
+      setMode(m);
+      try { localStorage.setItem("nl_mode", m); } catch { /* private window: this chat only */ }
+      if (turns.length) {
+        setTurns((cur) => [...cur, { kind: "system", key: key(), icon: "mode",
+          text: m === "investigate" ? "Switched to Investigate deeply" : "Switched to Quick answers" }]);
+      }
+    }
 
     return (
       <>
-        <div className="chat-log" ref={log}>
-          {items.length === 0 && (
+        <div className="chat-log" ref={log} onScroll={(e) => {
+          const el = e.currentTarget;
+          nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}>
+          {turns.length === 0 && (
             <div className="muted small">Ask Nightlight about your home. It explains in plain words and asks before it
               changes anything.</div>
           )}
-          {items.some((it) => it.past) && (
+          {turns.some((t) => "past" in t && t.past) && (
             <div className="chat-past-note small muted">Earlier in this chat (kept 30 days) ·{" "}
-              <button className="linkish" disabled={busy} onClick={() => { newChat(uid, generation); setItems([]); }}>
+              <button className="linkish" disabled={busy} onClick={() => { newChat(uid, generation); setTurns([]); }}>
                 Start a new chat</button></div>
           )}
-          {items.map((it, i) => it.kind === "user"
-            ? <div key={i} className={`bubble user ${it.past ? "past" : ""}`}>{it.text}</div>
-            : (
-              <div key={i} className={it.past ? "past" : ""} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {it.steps.length > 0 && (
-                  <div className="steps" aria-label="What Nightlight did">
-                    {it.steps.map((s, j) => (
-                      <div key={j} className="step">
-                        <span className={`step-dot ${s.result === undefined ? "busy" : s.result.startsWith("Couldn't") ? "bad" : "ok"}`} />
-                        <span>{s.label.replace(/…$/, "")}{s.result ? <span className="step-result"> — {s.result}</span> : null}</span>
-                        {s.details && <details className="step-details"><summary>details</summary><pre>{s.details}</pre></details>}
-                      </div>))}
-                  </div>)}
-                {(it.text || it.busy) && <div className="bubble agent">{it.text || "…"}</div>}
-                {it.cards.map((id) => {
-                  const a = actions.find((x) => x.id === id);
-                  return <ApprovalCard key={id} action={a} device={devices.find((d) => d.id === a?.deviceId)}
-                    onFollowUp={followUp} />;
-                })}
-                {it.error && <div className="small" style={{ color: "var(--crit)" }}>Problem: {it.error}</div>}
+          {turns.map((t) => {
+            if (t.kind === "user") return <div key={t.key} className={`bubble user ${t.past ? "past" : ""}`}>{t.text}</div>;
+            if (t.kind === "system") return <div key={t.key} className={`chat-system ${t.icon}`}>{t.text}</div>;
+            const line = afterLine(t.after, actions, devices);
+            return (
+              <div key={t.key} className="turn-wrap">
+                {line && <div className="chat-system job">{line}</div>}
+                <TurnView turn={t} actions={actions} devices={devices} onFollowUp={followUp} />
               </div>
-            ))}
+            );
+          })}
         </div>
         <div className="suggest">
           {SUGGESTIONS.map((s) => <button key={s} disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>)}
         </div>
-        <label className="deep-toggle small" title="A stronger model that investigates step by step (slower)">
-          <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} /> Investigate deeply
-        </label>
+        <div className="mode-switch" role="radiogroup" aria-label="How Nightlight answers">
+          {MODES.map((m) => (
+            <button key={m.id} role="radio" aria-checked={mode === m.id} className={mode === m.id ? "on" : ""}
+              onClick={() => pickMode(m.id)}>{m.name}</button>
+          ))}
+          <span className="mode-hint small muted">{MODES.find((m) => m.id === mode)?.hint}</span>
+        </div>
         <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} />
-          <button className="primary" disabled={busy || disabled || !text.trim()}>Send</button>
+          {busy
+            ? <button type="button" onClick={stopWatching} title="Stop following this answer here (it still finishes)">
+                Stop</button>
+            : <button className="primary" disabled={disabled || !text.trim()}>Send</button>}
         </form>
       </>
     );

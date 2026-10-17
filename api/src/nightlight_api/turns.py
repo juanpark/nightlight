@@ -207,7 +207,9 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
             seq = session["nextSeq"]
             tx.set(db.messages(uid, c.session_id).document(msg_id), {
                 "role": "assistant", "text": text, "seq": seq, "turnId": c.turn_id, "attempt": c.attempt,
-                "toolCalls": tool_calls, "actionIds": action_ids, "demoGeneration": c.generation,
+                "toolCalls": [{k: v for k, v in t.items() if not k.startswith("_")} for t in tool_calls],
+                "actionIds": action_ids, "demoGeneration": c.generation, "mode": c.turn.get("mode", "quick"),
+                **({"error": error} if error else {}),
                 "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": _keep_until()})
             update["finalMessageId"] = msg_id
             session_update["nextSeq"] = seq + 1
@@ -376,7 +378,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     continue
                 if part.function_call and not ev.partial:
                     args, _ = scrub_value(dict(part.function_call.args or {}))
-                    tool_calls.append({"name": part.function_call.name, "args": args})
+                    # Where the step falls in the text (to rebuild reason → act → result after a reload) and when it began.
+                    tool_calls.append({"name": part.function_call.name, "args": args, "textOffset": len(shown),
+                                       "_t": time.monotonic()})
                     yield out({"type": "tool_call", "name": part.function_call.name, "args": args})
                 if part.function_response:
                     resp = dict(part.function_response.response or {})
@@ -384,12 +388,14 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     # The stored message keeps each step's outcome too, so a reloaded chat shows the same work log.
                     step = next((t for t in tool_calls if t["name"] == part.function_response.name
                                  and "summary" not in t), None)
+                    ok, ms = _ok(resp), None
                     if step is not None:
-                        step["summary"] = line
+                        step["summary"], step["ok"] = line, ok
+                        ms = step["ms"] = int((time.monotonic() - step.pop("_t")) * 1000)
                         if details:
                             step["details"] = details[:DETAILS_CHARS]
-                    yield out({"type": "tool_result", "name": part.function_response.name,
-                               "summary": line, "details": details, "redacted": ctx.redacted})
+                    yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
+                               "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
                         yield out({"type": "approval_request", "actionId": resp.get("actionId")})
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
@@ -412,16 +418,16 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             return
         err = {"code": e.code, "message": _error_message(e.code)}
         try:
-            await asyncio.to_thread(finish, uid, c, text=None, metrics=ctx.metrics, tool_calls=tool_calls,
-                                    action_ids=[], error=err)
+            await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics,
+                                    tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
         except ApiError:
             pass  # superseded meanwhile: nothing to record
         yield sse({"type": "error", **err, "retryable": e.status == 429})
     except Exception:
         err = {"code": "internal", "message": "Something went wrong on our side. Please try again."}
         try:
-            await asyncio.to_thread(finish, uid, c, text=None, metrics=ctx.metrics, tool_calls=tool_calls,
-                                    action_ids=[], error=err)
+            await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics,
+                                    tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
         except ApiError:
             pass
         yield sse({"type": "error", **err, "retryable": True})
@@ -484,6 +490,12 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if status:
         return f"Result: {status}", None
     return "Done", None
+
+
+def _ok(resp: dict) -> bool:
+    """Whether a step worked, from the tool's own status (the chat marks failed steps; it never hides them)."""
+    status = resp.get("status")
+    return not (status in ("error", "refused", "failed") or (status is None and (resp.get("reason") or resp.get("error"))))
 
 
 def _error_message(code: str) -> str:

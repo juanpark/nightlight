@@ -1,0 +1,43 @@
+/* The layered chat: work log, system lines, mode switch (UX spec 2026-10-17 §4). Existing tokens only. */
+.turn-wrap, .turn { display: flex; flex-direction: column; gap: 6px; }
+.turn.past, .chat-log .past { opacity: .75; }
+.turn-mode { align-self: flex-start; font-size: 11px; }
+.bubble.agent.thinking { color: var(--muted); }
+.turn-error { color: var(--crit); }
+
+.worklog { border: 1px solid var(--line); border-radius: 10px; font-size: 12px; background: var(--bg); max-width: 100%; }
+.wl-head { all: unset; cursor: pointer; display: flex; gap: 6px; align-items: center; padding: 6px 10px; color: var(--muted);
+  width: 100%; box-sizing: border-box; }
+.wl-head:focus-visible { outline: 2px solid var(--accent); border-radius: 10px; }
+.wl-chev { width: 10px; }
+.wl-body { display: flex; flex-direction: column; gap: 3px; padding: 0 10px 8px; border-top: 1px solid var(--line);
+  padding-top: 6px; }
+.wl-note { margin: 2px 0; color: var(--muted); white-space: pre-wrap; }
+.wl-step { line-height: 1.45; }
+.wl-step > summary { cursor: pointer; list-style: none; }
+.wl-step > summary::-webkit-details-marker { display: none; }
+.wl-step > summary::after { content: " ›"; color: var(--muted); }
+.wl-step[open] > summary::after { content: " ⌄"; }
+.wl-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; transform: translateY(-1px);
+  background: var(--ok); }
+.wl-dot.running { background: var(--muted); animation: pulse 1s infinite alternate; }
+.wl-dot.failed { background: var(--crit); }
+.wl-dot.stopped { background: transparent; border: 1.5px solid var(--muted); width: 5px; height: 5px; }
+.wl-summary { color: var(--ink); }
+.wl-ms { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
+.wl-cmd { display: block; margin: 4px 0 2px 13px; font-size: 11px; white-space: pre-wrap; word-break: break-all; }
+.wl-out { margin: 2px 0 4px 13px; font-size: 11px; white-space: pre-wrap; max-height: 240px; overflow: auto;
+  background: var(--panel, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+
+.chat-system { align-self: center; text-align: center; font-size: 12px; color: var(--muted); max-width: 92%;
+  border-top: 1px dashed var(--line); padding-top: 4px; }
+.chat-system.stopped::before { content: "◌ "; }
+.chat-system.job::before { content: "✓ "; color: var(--ok); }
+.chat-system.mode::before { content: "⇄ "; }
+
+.mode-switch { display: flex; align-items: center; gap: 0; flex-wrap: wrap; padding: 0 10px 6px; }
+.mode-switch button { font-size: 12px; padding: 4px 10px; border-radius: 0; }
+.mode-switch button:first-child { border-radius: 8px 0 0 8px; }
+.mode-switch button:nth-child(2) { border-radius: 0 8px 8px 0; margin-left: -1px; }
+.mode-switch button.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.mode-hint { flex-basis: 100%; padding-top: 3px; }
