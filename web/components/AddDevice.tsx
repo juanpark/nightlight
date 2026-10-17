@@ -41,8 +41,9 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
     firebase().then(({ auth }) => setOwner(auth.currentUser?.displayName?.split(" ")[0] || null)).catch(() => {});
   }, []);
   async function send() {
-    const minutes = Math.round((new Date(expiresAt).getTime() - Date.now()) / 60000);
-    if (minutes < 1) { setNote("This line has run out. Close this and get a new one."); return; }
+    const left = new Date(expiresAt).getTime() - Date.now();
+    if (left <= 0) { setNote("This line has run out. Close this and get a new one."); return; }
+    const minutes = Math.max(1, Math.round(left / 60000));
     const text = setupMessage(owner, line, minutes);
     if (navigator.share) {
       try { await navigator.share({ title: "Set up Nightlight", text }); return; }
