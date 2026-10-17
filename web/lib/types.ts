@@ -81,7 +81,7 @@ export interface Device {
   nameFromSeen?: boolean;
   checkPort?: number | null; watchedBy?: string | null; cid?: string;
   lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
-  net?: { self?: string | null; gateway?: string | null } | null; // keyed fingerprints, never addresses
+  net?: { self?: string | null; selves?: string[]; gateway?: string | null; hw?: string } | null; // keyed fingerprints, never addresses
   setupAt?: Date | null; setupPreset?: "watch" | "fix" | "custom"; // the owner's first choice of what it may do
   macFolders?: "allowed" | "declined" | null; // a Mac's personal folders (null: never asked); helper 0.9.23+
 }

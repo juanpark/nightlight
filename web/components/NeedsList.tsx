@@ -42,6 +42,7 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
                   ? <button className="small" onClick={() => setOpen(open === n.id ? null : n.id)}>
                       {open === n.id ? "Hide" : n.cta.label}</button>
                   : <button className="small" onClick={() => onGo(n.cta.go)}>{n.cta.label}</button>}
+            {n.kind === "duplicate" && <button className="small" onClick={() => dismiss(n.id)}>Keep both</button>}
             {extra?.(n)}
           </div>
           {open === n.id && n.cta.go.to === "line" && (
