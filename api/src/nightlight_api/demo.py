@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, links, memory, sim, trust as trustlib
+from . import apps, db, links, memory, sim, trust as trustlib
 from .config import settings
 from .errors import ApiError, conflict, invalid, not_found
 from .ids import new_id
@@ -121,7 +121,9 @@ def _seed(uid: str, op: str, generation: int, template: str, hook) -> int:
     def work(tx):
         for raw in t["devices"]:
             device = deepcopy(raw)
-            services = {svc.pop("id"): {**svc, "findings": svc.get("findings", [])}
+            services = {svc.pop("id"): {**svc, "findings": svc.get("findings", []),
+                                        **({"about": a} if not svc.get("about") and (a := apps.about(svc.get("image"),
+                                            svc.get("name"))) else {})}
                         for svc in deepcopy(device.pop("services"))}
             device_id = device.pop("id")
             device.update(version=1, simulated=True, demoGeneration=generation, lastSeen=firestore.SERVER_TIMESTAMP,

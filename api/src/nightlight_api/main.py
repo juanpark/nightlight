@@ -39,6 +39,8 @@ class LayoutBody(Strict):
     name: str | None = Field(default=None, min_length=1, max_length=40)
     tags: list[str] | None = Field(default=None, max_length=6)
     role: Literal["router", "printer", "fileshare", "smarthome", "server", "speaker", "computer", "other"] | None = None
+    favorite: StrictBool | None = None  # starred by the owner: shown first and under the Favorites filter
+    favoriteApps: list[Annotated[str, Field(min_length=1, max_length=80)]] | None = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def short_tags(self):
@@ -163,7 +165,9 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
                 raise not_found()
             if name is not None:
                 raise ApiError(422, "sample_devices_keep_their_names")
-        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags)) if v is not None}
+        apps = None if body.favoriteApps is None else list(dict.fromkeys(body.favoriteApps))  # [] clears them
+        update = {k: v for k, v in (("x", body.x), ("y", body.y), ("name", name), ("tags", tags),
+                                    ("favorite", body.favorite), ("favoriteApps", apps)) if v is not None}
         if body.role is not None:
             if d.get("kind") != "watched":
                 raise ApiError(422, "role_is_for_watched_things")

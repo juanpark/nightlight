@@ -12,7 +12,7 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 import re
 
-from . import db, links, release
+from . import apps, db, links, release
 from .errors import ApiError, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub, scrub_value
@@ -974,10 +974,12 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         services[_doc_id(c["name"])] = {"name": c["name"], "category": "containers", "kind": "container",
                                "status": "ok" if c.get("state") == "running" else "warn",
                                "version": image.rsplit(":", 1)[1] if ":" in image else None,
-                               "detail": c.get("status"), "findings": []}
+                               "detail": c.get("status"), "findings": [],
+                               **({"about": a} if (a := apps.about(image, c["name"])) else {})}
     for unit in facts.get("failedUnits") or []:
         services[_doc_id(unit)] = {"name": _friendly(unit), "unit": unit, "category": "system", "kind": "system",
                                    "status": "warn", "failed": True,
+                                   **({"about": a} if (a := apps.about(unit)) else {}),
                           "findings": [f for f in findings if f.get("svcId") == _doc_id(unit)]}
 
     @firestore.transactional
@@ -1201,7 +1203,7 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
         containers, units = containers[:PERMISSION_TARGETS], units[:PERMISSION_TARGETS]
         logs = (containers + units)[:PERMISSION_TARGETS]  # the same limits as the switches (and the helper)
         current = d.get("permissions") or DEFAULT_PERMISSIONS
-        perms = {"watch": {**DEFAULT_PERMISSIONS, "autoUpdate": auto_update},
+        perms = {"watch": {**DEFAULT_PERMISSIONS, "autoUpdate": auto_update, "logs": logs},  # reading logs is watching
                  "fix": {"diagnose": True, "cleanup": True, "updates": True, "autoUpdate": auto_update,
                          "logs": logs, "restart_container": containers, "restart_service": units},
                  "custom": {**DEFAULT_PERMISSIONS, **current, "autoUpdate": auto_update}}[preset]

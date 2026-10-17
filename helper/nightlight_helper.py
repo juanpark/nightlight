@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.25"
+VERSION = "0.9.26"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -3238,7 +3238,7 @@ def settings():
                 "rebuild themselves, remove unused Docker images)?", False):
             allow["fix"] = ["all"]
         for t in targets[:20]:
-            if _ask(f"  Read recent log lines of {t}?", False):
+            if _ask(f"  Read recent log lines of {t} (secrets are removed before they leave)?", True):
                 allow["logs"].append(t)
             kind = "restart_container" if t in [c["name"] for c in _containers()] else "restart_service"
             if _ask(f"  Restart {t} when it has stopped (after you approve)?", False):
