@@ -71,6 +71,8 @@ class Settings:
     deep_max_output_tokens: int = int(os.environ.get("DEEP_MAX_OUTPUT_TOKENS", "4096"))
     deep_calls_per_turn: int = int(os.environ.get("DEEP_CALLS_PER_TURN", "24"))
     deep_turn_seconds: int = int(os.environ.get("DEEP_TURN_SECONDS", "240"))
+    # No words for the person after this long: the next model call is told to answer now (first words by ~90 s).
+    deep_first_words_seconds: int = int(os.environ.get("DEEP_FIRST_WORDS_SECONDS", "60"))
 
     @property
     def deep_c_max(self) -> float:

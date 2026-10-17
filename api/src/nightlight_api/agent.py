@@ -13,7 +13,11 @@ import time
 from dataclasses import dataclass, field
 
 from google import genai
+from typing import Any
+
 from google.adk.agents import LlmAgent
+from google.adk.models.base_llm import BaseLlm
+from google.adk.models.google_llm import Gemini
 from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import ToolContext
 from google.genai import types
@@ -176,6 +180,7 @@ class TurnContext:
     promised: tuple | None = None  # (tool, device id) of a call made from the model's words: always a card
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
+    spoke: bool = False  # a finished model response had words for the person (for the first-words deadline)
 
     @property
     def mode(self) -> str:
@@ -1138,6 +1143,68 @@ def _keep_card_promise(ctx: TurnContext, llm_response) -> None:
         name=pick[0], args={"device_id": pick[1]}), thought_signature=signature)])
 
 
+# Sentences that are the model talking to itself, not to the person ("Wait! If someone asks…", "Let me think").
+# Only unmistakable notes to itself: "Wait!" or "Hold on" can be a real warning to the person, so they stay.
+SELF_TALK = re.compile(r"(?im)(?:^|(?<=[.!?:]\s))[\W_]{0,3}(?:let me think|let's think|hmm+\b|note to self\b|"
+                       r"if (?:someone|the user) asks?\b)")
+TOOL_NAMES = ("list_fleet", "get_device", "get_recent_events", "look_into", "run_playbook", "write_note",
+              "how_nightlight_works", "run_command", "update_profile", "link_devices", "read_device_log",
+              "save_runbook", "rotate_logs", "backup_world", "restart_server", "restart_app", "clear_images",
+              "update_server", "restart_container", "restart_service", "clean_up", "remove_device", "update_helper",
+              "use_runbook", "start_investigation", "propose_command", "fixes_you_can_propose")
+SENTENCE_END = re.compile(r"[.!?…][\"')\]]*(?=\s|$)")
+
+
+def _fleet_names(fleet: str) -> dict:
+    """Device id → name, from the summary lines "- pi-1 (Raspberry Pi, …)". Only id-shaped ids (with a digit, a dash
+    or an underscore), so a plain word in an answer is never taken for one."""
+    out = {}
+    for i, rest in re.findall(r"(?m)^- ([a-z0-9_-]+) \((.+)$", fleet or ""):
+        name = re.split(r"[,)]| \(", rest, maxsplit=1)[0].strip().strip('"')  # "NAS, simulated): …" or "NAS) is…"
+        if name and re.search(r"[\d_-]", i):
+            out.setdefault(i, name)  # the device line comes first; link lines only repeat it
+    return out
+
+
+def _tidy_thinking(ctx: TurnContext, llm_response) -> None:
+    """A final answer sometimes arrives as the model's own working notes in plain text (device ids in backticks, tool
+    names, "Wait! …", cut off mid-sentence). Only an answer without a tool call is touched, and only what matches:
+    self-talk paragraphs are dropped (and only those), a cut-off end is trimmed to the last
+    whole sentence, ids become device names and tool names become plain words."""
+    parts = (llm_response.content.parts if llm_response.content else None) or []
+    visible = [p for p in parts if p.text and not p.thought]
+    if not visible or any(p.function_call for p in parts):
+        return
+    text = "".join(p.text for p in visible)
+    out = text
+    paras = re.split(r"\n\s*\n", out.strip())
+    talk = [i for i, p in enumerate(paras) if SELF_TALK.search(p)]
+    if talk:  # all of it notes to itself: nothing is said, and the turn's empty-answer fallback speaks instead
+        out = "\n\n".join(p for i, p in enumerate(paras) if i not in talk)
+    if talk or llm_response.finish_reason == types.FinishReason.MAX_TOKENS:
+        ends = list(SENTENCE_END.finditer(out.rstrip()))
+        if ends and ends[-1].end() < len(out.rstrip()):
+            out = out[:ends[-1].end()]  # the unfinished last sentence goes
+    for device_id, name in _fleet_names(ctx.fleet).items():
+        out = re.sub(rf"`{re.escape(device_id)}`|(?<![\w./-]){re.escape(device_id)}(?![\w/-])", lambda _m: name, out)
+    for tool in TOOL_NAMES:
+        out = re.sub(rf"`{tool}(?:\(\))?`|(?<![\w./-]){tool}(?![\w/-])", tool.replace("_", " "), out)
+    if out == text:
+        return
+    visible[0].text = out
+    for p in visible[1:]:
+        p.text = None
+
+
+def model_busy(e: BaseException) -> bool:
+    """The model refused a call for lack of capacity or quota (HTTP 429 RESOURCE_EXHAUSTED); not our own limits."""
+    return not isinstance(e, ApiError) and (getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e))
+
+
+HURRY = ("Time is nearly up and the person has seen nothing yet: answer now, in plain words, with what you have "
+         "found so far and what you would check next. Don't start new checks.")
+
+
 def make_callbacks(ctx: TurnContext):
     fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
 
@@ -1147,6 +1214,11 @@ def make_callbacks(ctx: TurnContext):
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
             scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
+        if ctx.deep and not ctx.spoke and time.monotonic() - ctx.started > settings.deep_first_words_seconds:
+            # Nothing said yet after a minute: this call answers now, thinking less, so first words come by ~90 s.
+            llm_request.append_instructions([HURRY])
+            if llm_request.config.thinking_config is not None:
+                llm_request.config.thinking_config = types.ThinkingConfig(thinking_level="LOW")
         await asyncio.to_thread(bound_input, llm_request)
         # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
         ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence,
@@ -1159,7 +1231,10 @@ def make_callbacks(ctx: TurnContext):
             return None
         # Scrub the model's own words (as one text) before they become history for the next call.
         scrub_content(llm_response.content)
+        _tidy_thinking(ctx, llm_response)
         _keep_card_promise(ctx, llm_response)
+        if any(p.text and not p.thought for p in (llm_response.content.parts if llm_response.content else None) or []):
+            ctx.spoke = True
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
         actual = quota.cost_of(u, (settings.deep_price_in_per_m, settings.deep_price_out_per_m) if ctx.deep else None)
@@ -1196,9 +1271,10 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
         if ctx.memories:
             instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
                             "always win):\n" + memory_summary(ctx.memories))
+    chosen = model or (settings.deep_model if ctx.deep and not continuation else settings.model)
     return LlmAgent(
         name="nightlight",
-        model=model or (settings.deep_model if ctx.deep and not continuation else settings.model),
+        model=chosen,
         instruction=instruction,
         tools=[] if continuation else make_tools(ctx, read_only=False),
         generate_content_config=types.GenerateContentConfig(

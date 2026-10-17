@@ -83,9 +83,10 @@ def test_same_turn_finds_the_same_action(started):
     uid = started
     a = propose(uid, turn="turn_fixed")
     b = propose(uid, turn="turn_fixed")
-    assert a["id"] == b["id"] and len(db.actions(uid).get()) == 1
+    cards = lambda: [s for s in db.actions(uid).get() if not s.to_dict().get("seeded")]  # noqa: E731 (not the sample past)
+    assert a["id"] == b["id"] and len(cards()) == 1
     c = propose(uid, turn="turn_other")  # another turn while the card waits: the same card again
-    assert c["id"] == a["id"] and len(db.actions(uid).get()) == 1
+    assert c["id"] == a["id"] and len(cards()) == 1
 
 
 def _earn_offer(uid):

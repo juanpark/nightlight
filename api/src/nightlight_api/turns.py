@@ -457,8 +457,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         except ApiError:
             pass  # superseded meanwhile: nothing to record
         yield sse({"type": "error", **err, "retryable": e.status == 429})
-    except Exception:
+    except Exception as e:
         err = {"code": "internal", "message": "Something went wrong on our side. Please try again."}
+        if agentlib.model_busy(e):  # the model itself is out of capacity: say so plainly, nothing technical
+            err = {"code": "busy", "message": "Nightlight is busy right now. Try again in a minute"
+                   + (", or ask in Quick mode." if ctx.deep else ".")}
         finishing = True
         try:
             await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else None, metrics=ctx.metrics,

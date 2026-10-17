@@ -109,9 +109,11 @@ def test_sample_device_log_belongs_to_its_generation(client, started):
                         action_type="rotate_logs", device_id="pi-1", params={})
     client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
     jobs = client.get("/api/devices/pi-1/log").json()["jobs"]
-    assert [j["actionId"] for j in jobs] == [a["id"]] and jobs[0]["ok"] and jobs[0]["by"] == "you"
+    seeded = [j["actionId"] for j in jobs[1:]]  # the sample home's own past jobs come after it
+    assert jobs[0]["actionId"] == a["id"] and jobs[0]["ok"] and jobs[0]["by"] == "you" and len(seeded) == 2
     demo.reset(started)
-    assert client.get("/api/devices/pi-1/log").json()["jobs"] == []
+    after = [j["actionId"] for j in client.get("/api/devices/pi-1/log").json()["jobs"]]
+    assert a["id"] not in after and len(after) == 2 and not set(after) & set(seeded)
 
 
 def test_another_person_sees_nothing_of_a_device(client, started, uid):
