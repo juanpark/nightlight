@@ -31,6 +31,7 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 | `users/{uid}/devices/{deviceId}` | name, `kind`, `purpose` (plain words), `status` (`ok`/`warn`/`crit`/`offline`), `health` (`verified`/`unknown`), `vitals`, `version`, `simulated`, `realm` (`real` for helper devices), map position `x`,`y`, `tags[]`, `findings[]` |
 | `users/{uid}/links/{from}__{to}` | `{from, to, kind, realm, demoGeneration, createdAt, source, why}`: lines between devices on the map (see `POST /api/links`). `source` is `user` (drawn by the person or by Nightlight when told), `auto` (seen by the helpers, see [Lines the helpers see](#lines-the-helpers-see)) or missing (sample home, drawn before 0.9.20); `auto` lines carry `why` in plain words ("Time Machine backs up here") |
 | `…/devices/{deviceId}/services/{svcId}` | name, status, version, `updateAvailable`, `category`, `findings[]` (plain message + evidence) |
+| `…/devices/{deviceId}/notes/{noteId}`, `…/runbooks/{runbookId}`, `…/profile/main` | what Nightlight keeps per device (see [Device knowledge](#device-knowledge-notes-per-service-runbooks-job-log)) |
 | `…/devices/{deviceId}/history/{YYYYMMDDTHHMMSS}` | real devices only: `{at, cpu, mem, disk, status, problems, expiresAt}`, at most one point per 5 minutes, deleted after 8 days (Firestore TTL on `expiresAt`) |
 | `users/{uid}/events/{eventId}` | Activity: what happened, when, how serious (see Events) |
 | `users/{uid}/actions/{actionId}` | approval cards and jobs: `type`, `params`, `plan`, `dryRun`, `blastRadius`, `rollback`, `riskClass`, `status`, `decision`, `result`, `realm` (`sim`/`real`), `continuationTurnId`, `followUp` |
@@ -272,9 +273,48 @@ the agent. `GET /api/devices/removed` lists them; `DELETE /api/devices/{id}` del
 services, history, notes, events and actions now (`409 remove_first` if it isn't archived). The sweep purges the
 rest when `purgeAt` passes.
 
-**Notebook.** `users/{uid}/devices/{id}/notes/{noteId}` `{text, by: "nightlight"|"you", at}`, read with Firestore.
-`POST /api/devices/{id}/notes {"text"}` (201; `422` with `msg: "looks_secret"` when it looked like a secret),
-`DELETE /api/devices/{id}/notes/{noteId}`. At most 30 per device.
+**Notebook.** `users/{uid}/devices/{id}/notes/{noteId}` `{text, by: "nightlight"|"you", at, service?, svcId?}`, read
+with Firestore. `POST /api/devices/{id}/notes {"text", "service"?}` (201; `422` with `msg: "looks_secret"` when it
+looked like a secret, `msg: "unknown_service"` when the device has no service by that id or name), `DELETE
+/api/devices/{id}/notes/{noteId}`. A note with `service` (the service's name, matched by its id or name in any case)
+belongs to that service; without it, to the device. At most 30 per device (services included).
+
+## Device knowledge (notes per service, runbooks, job log)
+
+Per device, Nightlight keeps what an administrator would: the profile, the notebook (device-wide and per service),
+runbooks (fixes that worked there, as steps) and a log of every job that ran there. The agent reads them before it
+investigates (`get_device`, `read_device_log`), offers a matching runbook before improvising (`use_runbook`), and
+after a fix worked writes a note and saves one runbook (`write_note`, `save_runbook`). Sample-home devices work the
+same way, scoped to the current `demoGeneration`; a reset clears them. Real devices keep theirs until removed.
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /api/devices/{id}/knowledge` | | `200 {profile: {text, by, updatedAt} \| null, notes: {device: [note], services: {"<service name>": [note]}}, runbooks: [runbook]}`; notes newest first `{id, text, by, at, service?}`; runbooks most used first. `404` for a device that isn't on the map (or an older sample home) |
+| `GET /api/devices/{id}/log?limit=50` | | `200 {jobs: [{at, kind, title, ok, summary, by, actionId, service?, output?, command?}]}`, newest first, finished jobs only (`done`/`failed`). `limit` 1-100 (`422` otherwise) |
+| `POST /api/devices/{id}/runbooks/{runbookId}` | `{"title"?: 1-80, "when"?: 1-200}` | `200` the runbook: the owner renames it or rewrites when it helps (steps are not edited); `422` with `msg: "looks_secret"`; `404` |
+| `DELETE /api/devices/{id}/runbooks/{runbookId}` | | `200 {ok}`; `404` |
+
+**Log rows.** `kind` is the job type (`restart_container`, `restart_service`, `fix`, `diagnose`, `inspect`,
+`expert_read`, `expert_command`, `update_helper`, `remove_device`, `discover`, or a sample-home job such as
+`rotate_logs`), or `playbook` for a checkup. `title` is the card's plan (`Checkup: <playbook title>` for a checkup);
+`summary` is the result (a checkup's findings in sentences), at most 600 characters; `output` (at most 2,000
+characters) is what a look printed and `command` an expert command's text, both scrubbed again when read. `service`
+names the container, system service or sample service the job was about. `by`: `you` (the person approved or asked
+for it), `nightlight` (Nightlight ran it on its own: a read the owner allows on the device, or a job they let run
+without asking), `device` (the device's own report started it, like the look after a restart). Read from
+`users/{uid}/actions`; nothing is stored twice.
+
+**Runbooks.** `users/{uid}/devices/{id}/runbooks/{runbookId}` (ids `rb_…`), readable with Firestore:
+`{title, when, steps: [{say, job?: {type, params}, command?}], service?, svcId?, createdBy: "nightlight", uses,
+lastUsedAt, createdAt, updatedAt, demoGeneration?}`. At most 20 per device and 10 steps each; title ≤80, when ≤200,
+say ≤200 characters, all scrubbed (something that looks like a secret is refused). A step's job is one the person
+approves (`restart_container`, `restart_service`, `fix`, or a sample-home job); its parameters are checked by the
+capability registry when the runbook is used, not when it is saved. An expert command is stored only as text.
+Saving under an existing title (any case) replaces that runbook and keeps its `uses`. A runbook never runs by
+itself: `use_runbook` proposes each step the normal way, so a job becomes a pending card (or, on the sample home,
+runs if the person allowed that job to run on its own) and an expert command a card signed with the passkey.
+`uses` counts once per chat turn. In the chat stream, a `use_runbook` step sends one `approval_request` per card it put
+up; the stored step keeps `actionId` (the first) and `actionIds` (all of them) when there are several.
 
 ## Keeping watch
 

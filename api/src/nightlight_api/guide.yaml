@@ -161,3 +161,16 @@ investigate_mode:
     Tick "Investigate deeply" under the chat to let a stronger model dig in step by step: it forms hypotheses, runs
     checks (and read-only commands, if expert sessions are on), reads the results and tries again, then tells you what
     it checked, what it found, the likely cause and what to do. It is slower (up to a few minutes) and costs a few cents.
+
+device_knowledge:
+  title: What Nightlight keeps per device (notes, runbooks, job log)
+  text: |
+    Each device has its own folder, like an administrator keeps for a machine. The profile ("About this device") says
+    what it is and how it is set up. The notebook holds short dated notes from you and from Nightlight, for the device
+    as a whole or for one service on it (the Minecraft server, a container). Runbooks are fixes that worked there
+    before, kept as steps ("Clear old Docker images"): Nightlight saves one after a fix worked and offers it the next
+    time the same problem shows up. A runbook never runs by itself: using it puts its steps up as cards you approve
+    (an expert command still needs your passkey). The log lists every job that ran on the device, newest first: what
+    it was, who started it, whether it worked and what it reported. Nightlight reads all of this before it looks into
+    a device. Runbooks can be renamed or deleted and notes deleted from the device's page; passwords, keys and
+    addresses are never kept.
