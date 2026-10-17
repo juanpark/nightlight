@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from . import __version__, actions, archive, db, expert, demo, links, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, archive, db, expert, demo, knowledge, links, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
@@ -218,6 +218,7 @@ def device_issue(device_id: str, finding_id: str, body: IssueBody, uid: str = De
 
 class NoteBody(Strict):
     text: str = Field(min_length=1, max_length=notebook.NOTE_CHARS)
+    service: str | None = Field(default=None, min_length=1, max_length=100)  # a service on the device: id or name
 
 
 def _generation(uid: str) -> int | None:
@@ -229,7 +230,7 @@ def add_note(device_id: str, body: NoteBody, uid: str = Depends(current_uid)):
     """Write a note in a device's notebook (Nightlight reads it before it looks into that device)."""
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
         raise not_found()
-    return notebook.owner_add(uid, device_id, body.text, _generation(uid))
+    return notebook.owner_add(uid, device_id, body.text, _generation(uid), body.service)
 
 
 class ProfileBody(Strict):
@@ -253,6 +254,47 @@ def delete_note(device_id: str, note_id: str, uid: str = Depends(current_uid)):
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id) or not re.fullmatch(r"note_[0-9A-Za-z]{26}", note_id):
         raise not_found()
     return notebook.remove(uid, device_id, note_id)
+
+
+@app.get("/api/devices/{device_id}/knowledge")
+def device_knowledge(device_id: str, uid: str = Depends(current_uid)):
+    """What Nightlight knows about a device: its profile, its notes (device-wide and per service) and its runbooks."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    return knowledge.view(uid, device_id, _generation(uid))
+
+
+@app.get("/api/devices/{device_id}/log")
+def device_log(device_id: str, limit: int = 50, uid: str = Depends(current_uid)):
+    """Every job that finished on a device, newest first."""
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
+        raise not_found()
+    if not 1 <= limit <= knowledge.LOG_LIMIT:
+        raise invalid("limit", "out_of_range")
+    return {"jobs": knowledge.log(uid, device_id, _generation(uid), limit=limit)}
+
+
+class RunbookBody(Strict):
+    title: str | None = Field(default=None, min_length=1, max_length=runbooks.TITLE_CHARS)
+    when: str | None = Field(default=None, min_length=1, max_length=runbooks.WHEN_CHARS)
+
+
+def _runbook_ids(device_id: str, runbook_id: str) -> None:
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id) or not re.fullmatch(r"rb_[0-9A-Za-z]{26}", runbook_id):
+        raise not_found()
+
+
+@app.post("/api/devices/{device_id}/runbooks/{runbook_id}")
+def edit_runbook(device_id: str, runbook_id: str, body: RunbookBody, uid: str = Depends(current_uid)):
+    """The owner renames a runbook or rewrites when it helps (its steps stay as Nightlight saved them)."""
+    _runbook_ids(device_id, runbook_id)
+    return runbooks.edit(uid, device_id, runbook_id, _generation(uid), body.title, body.when)
+
+
+@app.delete("/api/devices/{device_id}/runbooks/{runbook_id}")
+def delete_runbook(device_id: str, runbook_id: str, uid: str = Depends(current_uid)):
+    _runbook_ids(device_id, runbook_id)
+    return runbooks.remove(uid, device_id, runbook_id, _generation(uid))
 
 
 class PlaybookRunBody(Strict):

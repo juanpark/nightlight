@@ -28,7 +28,7 @@ from .redact import scrub, scrub_value
 
 APP = "nightlight"
 ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server", "restart_container", "restart_service",
-                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper"}
+                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
 
 
 def _utcnow() -> datetime:
@@ -403,9 +403,13 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
                                "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
+                        ids = resp.get("actionIds") or [resp.get("actionId")]  # a runbook can put up several
                         if step is not None:
-                            step["actionId"] = resp.get("actionId")  # the card sits right after its step
-                        yield out({"type": "approval_request", "actionId": resp.get("actionId")})
+                            step["actionId"] = ids[0]  # the card sits right after its step
+                            if len(ids) > 1:
+                                step["actionIds"] = ids
+                        for aid in ids:
+                            yield out({"type": "approval_request", "actionId": aid})
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
@@ -483,11 +487,22 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         return f"{len(resp['events'])} recent events", None
     if "vitals" in resp:
         v = resp.get("vitals") or {}
+        book = resp.get("notebook") or {}
+        notes = len(book.get("device") or []) + sum(len(n) for n in (book.get("services") or {}).values())
         bits = [f"disk {v.get('diskPct')}%" if v.get("diskPct") is not None else None,
                 f"memory {round(v['mem'])}%" if v.get("mem") is not None else None,
                 f"{len(resp.get('findings') or [])} problem(s)",
-                f"{len(resp.get('notebook') or [])} note(s) in its notebook" if resp.get("notebook") else None]
+                f"{notes} note(s) in its notebook" if notes else None,
+                f"{len(resp['runbooks'])} runbook(s)" if resp.get("runbooks") else None]
         return ", ".join(b for b in bits if b), None
+    if name == "read_device_log" and "jobs" in resp:
+        jobs = resp["jobs"]
+        return f"Read its log: {len(jobs)} past job(s)", \
+            "\n".join(f"{j.get('at')} {j.get('title')}: {j.get('summary')}" for j in jobs)[:DETAILS_CHARS] or None
+    if name == "use_runbook" and resp.get("runbook"):
+        cards = len(resp.get("actionIds") or [])
+        return f"Runbook \"{resp['runbook']}\": " + (f"put up {cards} card(s) for your approval" if cards
+                                                     else f"result: {resp.get('status')}"), None
     if name == "run_playbook" and resp.get("playbook"):
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]

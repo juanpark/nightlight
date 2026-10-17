@@ -123,7 +123,8 @@ def forget(uid: str, device_id: str) -> dict:
 
 def purge(uid: str, device_id: str) -> None:
     dref = db.device(uid, device_id)
-    refs = [s.reference for sub in ("services", "history", "notes", "profile") for s in dref.collection(sub).stream()]
+    refs = [s.reference for sub in ("services", "history", "notes", "profile", "runbooks")
+            for s in dref.collection(sub).stream()]
     refs += links.touching(uid, device_id)
     refs.append(db.user(uid).collection("discoveries").document(device_id))  # what it found goes with it
     refs.append(db.user(uid).collection("scans").document(device_id))
