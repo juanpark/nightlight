@@ -65,7 +65,7 @@ class Settings:
 
     # Investigate mode: a stronger model that thinks longer and may take many more steps (the person chose it).
     deep_model: str = os.environ.get("DEEP_MODEL", "gemini-3.8-flash")
-    deep_thinking: str = os.environ.get("DEEP_THINKING", "HIGH")
+    deep_thinking: str = os.environ.get("DEEP_THINKING", "MEDIUM")  # HIGH took up to 2 minutes for a first word
     deep_price_in_per_m: float = float(os.environ.get("DEEP_PRICE_IN_PER_M", "0.75"))
     deep_price_out_per_m: float = float(os.environ.get("DEEP_PRICE_OUT_PER_M", "3.75"))
     deep_max_output_tokens: int = int(os.environ.get("DEEP_MAX_OUTPUT_TOKENS", "4096"))

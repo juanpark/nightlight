@@ -98,7 +98,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
       {turn.busy && final < 0 && (lastStep < 0
         ? <div className="bubble agent thinking"><Mascot size={36} mood="thinking" /> Thinking…</div>
         : <div className="thinking-mascot"><Mascot size={36} mood="thinking" label="Nightlight is working" /></div>)}
-      {turn.error && <div className="turn-error small">Problem: {turn.error}</div>}
+      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}</div>}
     </div>
   );
 }

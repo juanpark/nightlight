@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError } from "@/lib/api";
-import { challengeFor, passkeysSupported, signWithPasskey } from "@/lib/passkey";
+import { api } from "@/lib/api";
+import { challengeFor, passkeyProblem, passkeysSupported, signWithPasskey, useAppHost } from "@/lib/passkey";
+import { useNow } from "@/lib/data";
 import type { Action, Device } from "@/lib/types";
 
 const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky", read: "Read-only" } as const;
@@ -17,9 +18,44 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const followed = useRef(false);
+  const appHost = useAppHost();
+  const now = useNow(5000);
+  const payload0 = (action?.params as { payload?: Record<string, unknown> } | undefined)?.payload;
+  const signable = !!action && SIGNED.has(action.type) && action.status === "pending";
+  const expired = signable && typeof payload0?.expires === "number" && payload0.expires * 1000 <= now + 5000;
+  // what the passkey prompt needs, worked out when the card shows (not on the tap)
+  const [prep, setPrep] = useState<{ challenge: string; credentialId: string; rpId: string } | { problem: string } | null>(null);
+  useEffect(() => {
+    if (!signable || expired || !action) return;
+    let live = true;
+    (async () => {
+      try {
+        // The challenge is computed HERE from the payload this card displays, never taken from the server as is.
+        const payload = payload0;
+        if (!payload) throw new Error("This card has nothing to sign.");
+        if (payload.device !== action.deviceId || payload.device !== device?.id) {
+          throw new Error("This card's signed device doesn't match the device it shows. Not signed.");
+        }
+        if (typeof payload.expires !== "number" || payload.expires * 1000 - Date.now() > 16 * 60 * 1000) {
+          throw new Error("This card asks for more than 15 minutes. Not signed.");
+        }
+        const [k, challenge] = await Promise.all([
+          api<{ enabled: boolean; credentialId?: string; rpId?: string }>("GET", "/api/expert"), challengeFor(payload)]);
+        if (!k.enabled || !k.credentialId || !k.rpId) {
+          throw new Error("Make your passkey first: open a device, then Settings, then Expert sessions.");
+        }
+        if (live) setPrep({ challenge, credentialId: k.credentialId, rpId: k.rpId });
+      } catch (e) {
+        if (live) setPrep({ problem: passkeyProblem(e) });
+      }
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [action?.id, action?.status, signable, expired, device?.id, JSON.stringify(payload0 ?? null)]);
 
   // A real-device job finishes later (the helper runs it); its follow-up turn appears on the action when it does.
   useEffect(() => {
+    // (the chat runs it only if its answer isn't already in the saved conversation, so a reload never repeats it)
     if (action?.continuationTurnId && !followed.current && action.decision?.by === "user"
         && ["done", "failed"].includes(action.status) && action.realm === "real") {
       followed.current = true;
@@ -35,31 +71,22 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
         { decision });
       if (r.continuationTurnId) { followed.current = true; onFollowUp(r.continuationTurnId); }
     } catch (e) {
-      setErr(e instanceof ApiError ? e.code : "Something went wrong");
+      setErr(passkeyProblem(e));
     } finally {
       setBusy(false);
     }
   }
+  // Safari (iPhone, iPad, Mac) only lets a tap open the passkey prompt if nothing slow happens first, so everything
+  // the prompt needs is ready before the tap, and the prompt is the first thing the tap waits for.
   async function signIt() {
+    if (!prep || "problem" in prep) return;
     setBusy(true); setErr("");
     try {
-      const k = await api<{ enabled: boolean; credentialId?: string; rpId?: string }>("GET", "/api/expert");
-      if (!k.enabled || !k.credentialId || !k.rpId) throw new Error("Create your passkey first (open the device > Expert sessions).");
-      // The challenge is computed HERE from the payload this card displays, never taken from the server as is.
-      const payload = (action!.params as { payload?: Record<string, unknown> } | undefined)?.payload;
-      if (!payload) throw new Error("This card has nothing to sign.");
-      if (payload.device !== action!.deviceId || payload.device !== device?.id) {
-        throw new Error("This card's signed device doesn't match the device it shows. Not signed.");
-      }
-      if (typeof payload.expires !== "number" || payload.expires * 1000 - Date.now() > 16 * 60 * 1000) {
-        throw new Error("This card asks for more than 15 minutes. Not signed.");
-      }
-      const signed = await signWithPasskey(await challengeFor(payload), k.credentialId, k.rpId);
+      const signed = await signWithPasskey(prep.challenge, prep.credentialId, prep.rpId);
       const r = await api<{ continuationTurnId?: string }>("POST", `/api/actions/${action!.id}/sign`, signed);
       if (r.continuationTurnId) { followed.current = true; onFollowUp(r.continuationTurnId); } // it carries on
     } catch (e) {
-      setErr(e instanceof ApiError ? (e.code === "signature_not_accepted" ? "That passkey didn't sign it." : e.code)
-        : e instanceof Error ? e.message : "Couldn't sign it");
+      setErr(passkeyProblem(e, appHost?.host));
     } finally {
       setBusy(false);
     }
@@ -90,12 +117,23 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       {action.status === "pending" && (
         <div className="actions">
           {signedCard
-            ? <button className="primary" disabled={busy || !passkeysSupported()} onClick={signIt}>
-                {busy ? "Waiting for your passkey…" : "Approve with passkey"}</button>
+            ? expired ? null
+              : appHost && !appHost.here ? null
+              : !passkeysSupported() ? null
+              : <button className="primary" disabled={busy || !prep || "problem" in prep} onClick={signIt}>
+                  {busy ? "Waiting for your passkey…" : prep ? "Approve with passkey" : "Getting ready…"}</button>
             : <button className="primary" disabled={busy} onClick={() => decide("approve")}>Approve</button>}
           <button disabled={busy} onClick={() => decide("deny")}>Not now</button>
         </div>
       )}
+      {action.status === "pending" && signedCard && (
+        expired ? <div className="small muted">This card expired. Ask again and Nightlight will put up a fresh one.</div>
+        : appHost && !appHost.here ? <div className="small muted">Passkeys work only at{" "}
+            <a href={appHost.url}>{appHost.host}</a>. Open Nightlight there to approve this.</div>
+        : !passkeysSupported() ? <div className="small muted">This browser can&apos;t use passkeys, so the button is off.
+            Approve from a phone or computer that can (Safari, Chrome, Edge or Firefox, up to date).</div>
+        : prep && "problem" in prep ? <div className="small" style={{ color: "var(--crit)" }}>{prep.problem}</div>
+        : null)}
       {err && <div className="small" style={{ color: "var(--crit)" }}>{err}</div>}
     </div>
   );

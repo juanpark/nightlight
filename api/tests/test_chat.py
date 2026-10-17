@@ -23,6 +23,8 @@ def fake_model(monkeypatch):
                         real_build(ctx, continuation=continuation, model=FakeLlm()))
     db.client().collection("ops").document("flags").delete()
     db.client().collection("ops").document("quota").delete()
+    for d in db.client().collection("ipQuotas").list_documents():  # probes sharing this emulator count calls too
+        d.delete()
     yield
 
 
@@ -250,3 +252,151 @@ def test_stopping_on_the_first_frame_also_frees_the_chat(client, started):
     # a turn that is already over is never touched by a dropped replay
     replay = turns.claim(started, turn_id)
     assert replay.mode == "failed"
+
+
+def test_a_card_claimed_without_a_card_is_corrected(client, started):
+    from fake_llm import reply
+    FakeLlm.behavior = reply("I've put a card up for your approval to clean up old logs.")
+    ev = events(ask(client, new_session(client), "Clean up the Pi please"))
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert text.endswith(turns.NO_CARD) and not any(e["type"] == "approval_request" for e in ev)
+    FakeLlm.behavior = reply("The card I put up earlier is still waiting for you.")
+    ev = events(ask(client, new_session(client), "Is the card still there?"))
+    assert turns.NO_CARD not in "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+
+
+def test_the_sample_mac_minis_unhealthy_app_has_a_fix(client, started):
+    from nightlight_api import actions, sim
+    from conftest import generation
+    svcs = {s.id: s.to_dict() for s in db.services(started, "mac-1").get()}
+    device = dict(db.device(started, "mac-1").get().to_dict(), id="mac-1")
+    assert any(f["tool"] == "restart_app" for f in sim.fixes(device, svcs))
+    card = actions.propose(started, session_id="s", turn_id="t", generation=generation(started),
+                           action_type="restart_app", device_id="mac-1", params={})
+    assert card["status"] == "pending" and "Immich" in card["plan"]
+    d = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()
+    assert d["status"] == "done"
+    immich = db.services(started, "mac-1").document("immich").get().to_dict()
+    assert immich["status"] == "ok" and immich["findings"] == []
+    svcs = {s.id: s.to_dict() for s in db.services(started, "mac-1").get()}
+    assert not any(f["tool"] == "restart_app" for f in sim.fixes(device, svcs))
+
+
+def test_a_full_sample_pi_offers_logs_first_and_unused_images_as_an_option(client, started):
+    from nightlight_api import actions, sim
+    from conftest import generation
+    device = dict(db.device(started, "pi-1").get().to_dict(), id="pi-1")
+    svcs = {s.id: s.to_dict() for s in db.services(started, "pi-1").get()}
+    assert [f["tool"] for f in sim.fixes(device, svcs) if f["for"] == "disk_over_90"] == ["rotate_logs", "clear_images"]
+    card = actions.propose(started, session_id="s", turn_id="t", generation=generation(started),
+                           action_type="clear_images", device_id="pi-1", params={})
+    assert "Nothing to undo" in card["rollback"]
+    assert client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()["status"] == "done"
+    device = dict(db.device(started, "pi-1").get().to_dict(), id="pi-1")
+    assert device["vitals"]["diskPct"] < 94
+    assert "clear_images" not in [f["tool"] for f in sim.fixes(device, svcs)]
+
+
+def test_an_unbacked_card_claim_becomes_the_tool_call(client, started):
+    # The model reads the full Pi, then only *says* it put a card up: the claim is turned into the fix it offered.
+    from google.adk.models.llm_response import LlmResponse as R
+    calls = []
+
+    async def behave(llm_request, stream):
+        calls.append(1)
+        if len(calls) == 1:
+            part = types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"}))
+        elif len(calls) == 2:
+            part = types.Part(text="The Pi is 94% full. I've put a card up to clean up old log files.")
+        else:
+            part = types.Part(text="A card to clean up old logs is waiting for your tap.")
+        u = types.GenerateContentResponseUsageMetadata(prompt_token_count=500, candidates_token_count=20,
+                                                       total_token_count=520)
+        yield R(content=types.Content(role="model", parts=[part]), partial=False, usage_metadata=u,
+                turn_complete=True)
+    FakeLlm.behavior = behave
+    ev = events(ask(client, new_session(client), "Is anything wrong at home?"))
+    names = [e["name"] for e in ev if e["type"] == "tool_call"]
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert names == ["get_device", "rotate_logs"] and any(e["type"] == "approval_request" for e in ev)
+    assert turns.NO_CARD not in text and "I've put a card up" not in text
+
+
+def _scripted(*steps):
+    from google.adk.models.llm_response import LlmResponse as R
+    calls = []
+
+    async def behave(llm_request, stream):
+        step = steps[min(len(calls), len(steps) - 1)]
+        calls.append(1)
+        part = types.Part(function_call=types.FunctionCall(name=step[0], args=step[1])) if isinstance(step, tuple) \
+            else types.Part(text=step)
+        u = types.GenerateContentResponseUsageMetadata(prompt_token_count=500, candidates_token_count=20,
+                                                       total_token_count=520)
+        yield R(content=types.Content(role="model", parts=[part]), partial=False, usage_metadata=u,
+                turn_complete=True)
+    return behave
+
+
+def test_a_promise_never_runs_a_trusted_job_or_picks_an_unrelated_fix(client, started):  # Codex agent quality #1
+    from nightlight_api import trust as trustlib
+    from conftest import generation
+    ref = db.trust_doc(started, "sim", "rotate_logs")
+    ref.set({**trustlib.new_doc("rotate_logs", generation(started)), "level": "auto"})
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "The Pi is full. I've put a card up to clean up old logs.", "It's waiting for your tap.")
+    ev = events(ask(client, new_session(client), "Is anything wrong at home?"))
+    aid = next(e["actionId"] for e in ev if e["type"] == "approval_request")
+    assert db.action(started, aid).get().to_dict()["status"] == "pending"  # a card, though trust says auto
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put a card up to restart the Minecraft game server.")
+    ev = events(ask(client, new_session(client), "And the game?"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "Earlier I said \"I've put a card up to clean up logs\" but that wasn't right.")
+    ev = events(ask(client, new_session(client), "Did you?"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+
+
+def test_a_log_lock_fails_only_the_log_clean_up(client, started):  # Codex agent quality #2
+    from nightlight_api import actions
+    from conftest import generation
+    assert client.post("/api/demo/inject", json={"kind": "logs_locked", "deviceId": "pi-1"}).status_code == 201
+    card = actions.propose(started, session_id="s", turn_id="t", generation=generation(started),
+                           action_type="clear_images", device_id="pi-1", params={})
+    assert client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()["status"] == "done"
+    card = actions.propose(started, session_id="s", turn_id="t2", generation=generation(started),
+                           action_type="rotate_logs", device_id="pi-1", params={})
+    d = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()
+    assert d["status"] == "failed"
+    assert "locked" in db.action(started, card["id"]).get().to_dict()["result"]["summary"]
+
+
+def test_a_promise_about_another_device_is_not_moved_to_the_one_read(client, started):  # Codex rev2 #1
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put up a card to clean up logs on the Mac Mini.")
+    ev = events(ask(client, new_session(client), "Clean up the Mac Mini"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put up a card to clean up old logs on the Raspberry Pi.", "Waiting for you.")
+    ev = events(ask(client, new_session(client), "Clean up the Pi"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device", "rotate_logs"]
+
+
+def test_a_promise_naming_a_device_loosely_must_still_be_that_device(client, started):  # Codex rev3 #1
+    for claim, made in (("I've put up a card to clean up logs on the Mac.", False),
+                        ("I've put up a card to clean up logs on your Pi.", True)):
+        FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), claim, "Waiting for you.")
+        ev = events(ask(client, new_session(client), "Clean up"))
+        assert ("rotate_logs" in [e["name"] for e in ev if e["type"] == "tool_call"]) is made, claim
+
+
+def test_a_promised_card_needs_its_device_positively_named(client, started):  # Codex rev4 #1
+    for claim, made in (("The Raspberry Pi is full. I've put up a card to clean up logs for your Mac.", False),
+                        ("I've put up a card to clean up old logs.", False),  # no device named at all
+                        ("The Pi is 94% full. I've put up a card to clean up old logs.", True)):
+        FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), claim, "Waiting for you.")
+        ev = events(ask(client, new_session(client), "Clean up"))
+        assert ("rotate_logs" in [e["name"] for e in ev if e["type"] == "tool_call"]) is made, claim

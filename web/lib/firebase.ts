@@ -6,6 +6,7 @@ import { getFirestore, type Firestore } from "firebase/firestore";
 
 export interface RuntimeConfig {
   apiUrl: string;
+  appUrl?: string;
   firebase: { apiKey: string; authDomain: string; projectId: string; appId: string };
 }
 

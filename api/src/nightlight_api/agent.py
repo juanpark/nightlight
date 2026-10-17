@@ -8,6 +8,7 @@ is preceded by a cost reservation and an input-size bound, and followed by recon
 import asyncio
 import functools
 import json
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -31,6 +32,8 @@ The lines under "How they connect" are the person's own map: use them to reason 
 failure would take down, where backups go). When they tell you how two devices relate, draw it with link_devices.
 
 How to answer:
+- Start with one short sentence saying what you'll look at ("Let me check the Raspberry Pi."), then call your tools:
+  it shows while you work. Skip it when you can answer from the summary alone.
 - The summary of their home is below; use get_device for details before proposing a fix. Never invent device
   state.
 - Lead with what matters in one or two short sentences: what is wrong, why it matters to them, how serious it is.
@@ -48,6 +51,27 @@ How to answer:
   failed = say it didn't work and give the reason the result states (a clean-up may have removed some items).
 - Never claim something was done unless a tool result says status "done", and never announce a job ("I'll start a
   backup") without calling its tool in the same answer.
+- Trust: every kind of job asks first. On the sample home, after the person approves the same safe kind of job a few
+  times, Nightlight offers to do that kind on its own and tell them afterwards (the Trust panel shows each job's step
+  and can move it back); jobs that can't be undone always ask. On their own devices every restart, clean-up or
+  removal waits for their tap; only helper updates can run by themselves, if they allowed that. Never say it will
+  "never" act on its own, and when they ask you to handle something on your own, explain this and point to Trust.
+- They see these devices as their home: never call a device "simulated", "sample" or "fake" unless they ask.
+- Nightlight's helper runs on Macs and Linux machines (a Raspberry Pi, a Linux server or NAS). Windows isn't
+  supported yet: say so plainly; Nightlight can still watch whether a Windows PC answers on the network (Found
+  nearby). Phones, routers, printers and cameras can only be watched that way too.
+- Once a card is up, it IS the question: say it's waiting for their tap; never ask "would you like me to go ahead?".
+- Only name a cause that a tool result states. If a job failed, quote the reason it gave; never invent one.
+- Reply in the language the person wrote in.
+- A fact they tell you about a device (where it is, who uses it) goes in its notebook (write_note). Rewrite a
+  device's profile (update_profile) only after an investigation.
+- Never give them commands to type (no curl, sudo, docker, terminal steps): for setting up Nightlight point to "Add a
+  device"; for other software, say what it is and that installing it happens outside Nightlight.
+- If they ask for a safer option, or to keep a copy first: first say what the card already promises (its undo line;
+  for example removed logs are kept in an archive for 24 hours). Then offer only alternatives you have a tool for: on
+  a sample device, the other fixes get_device lists; on a REAL device, another clean-up from its list, or in
+  Investigate mode an exact command they sign with their passkey. Never promise a job (copying, archiving, moving)
+  that no tool of yours does, and never refuse without saying what you can do instead.
 - Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
 - Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper.
   On a REAL device the jobs are the ones your tools offer for it: read-only checks (look_into, inspect,
@@ -109,6 +133,7 @@ Investigate mode (the person asked you to dig in, like a system administrator wo
   likely cause on the device before you conclude; mention the source in a few words.
 - When something must change, propose it (a card); for anything outside your fixed jobs use propose_command, which
   they sign with their passkey.
+- The person reads your answer as written: no device ids, no notes to yourself, no half sentences.
 - Answer in at most 300 words, in this order: what I checked (the commands, briefly); what I found; the likely cause
   (say how sure you are); what I've put up as cards; what you can do; what I'd check next."""
 
@@ -116,6 +141,7 @@ MEMORY_RULES = """
 - When the person tells you a lasting preference or fact about their home or household (for example "the kids play
   Minecraft on weekends" or "never restart anything during my work calls"), save it with remember, then say you'll
   keep it in mind. Never save device state, passwords, keys or addresses.
+- Facts about a single device go in its notebook (write_note), not to remember.
 - What you remember is background about the person, not about devices: if it conflicts with the live device facts,
   the device facts win."""
 
@@ -146,6 +172,8 @@ class TurnContext:
     memories: list = field(default_factory=list)  # newest facts loaded once at turn start (memory cache)
     memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
+    fixes: list = field(default_factory=list)  # (tool, device id, plan) a sample device read this turn offers
+    promised: tuple | None = None  # (tool, device id) of a call made from the model's words: always a card
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
 
@@ -329,6 +357,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
         if d.get("realm") != "real":  # sample devices: which tool fixes which problem, so the next step is explicit
             out["fixes_you_can_propose"] = sim.fixes(dict(snap.to_dict(), id=device_id),
                                                      {s["id"]: s for s in services})
+            ctx.fixes = [(f["tool"], device_id, f["plan"]) for f in out["fixes_you_can_propose"]] + ctx.fixes
         return _bounded(out, ctx)
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
@@ -343,7 +372,8 @@ def make_tools(ctx: TurnContext, read_only: bool):
         try:
             a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode, generation=ctx.generation,
                                 action_type=action_type, device_id=device_id, params=params or {},
-                                fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
+                                fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation),
+                                ask=ctx.promised == (action_type, device_id))
         except ApiError as e:
             if e.code == "stale":
                 raise
@@ -394,6 +424,25 @@ def make_tools(ctx: TurnContext, read_only: bool):
             device_id: the game server's device id, for example "game-1".
         """
         return _propose("restart_server", device_id)
+
+    def _clear_images_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose removing Docker images no app uses on a sample device (an alternative to clearing its logs when it
+        is full). Nothing to undo: an app downloads its image again if it needs it. Always needs approval.
+
+        Args:
+            device_id: the sample device's id, for example "pi-1".
+        """
+        return _propose("clear_images", device_id)
+
+    def _restart_app_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose restarting an app that reports unhealthy on a sample device (get_device lists it under
+        fixes_you_can_propose). It is unavailable for about 30 seconds; its data is not touched. Always needs the
+        person's approval.
+
+        Args:
+            device_id: the sample device's id, for example "mac-1".
+        """
+        return _propose("restart_app", device_id)
 
     def _update_server_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Propose updating a game server to its latest version (it backs up the world first).
@@ -566,7 +615,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return tool
 
     action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
-                                       _update_server_sync)]
+                                       _restart_app_sync, _clear_images_sync, _update_server_sync)]
     action_tools.append(restart_container)
     action_tools.append(restart_service)
 
@@ -793,7 +842,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             when: when it helps, in one plain sentence, e.g. "The disk is nearly full and Docker holds old images".
             steps: 1 to 10 steps in order. Each is {"say": "what this step does, plainly"} plus at most one of
                 "job": {"type": a job you proposed (fix, restart_container, restart_service, rotate_logs,
-                backup_world, restart_server or update_server), "params": the same parameters, e.g.
+                clear_images, backup_world, restart_server, restart_app or update_server), "params": the same parameters, e.g.
                 {"recipe": "docker_prune"} or {"container": "name"}} or "command": an expert command you proposed.
             service: optional: the service on that device it is about (its name as get_device lists it).
         """
@@ -1042,6 +1091,49 @@ def scrub_content(content) -> None:
             del parts[i]
 
 
+CARD_CLAIM = re.compile(r"\b(I've|I have|I) (just )?put (up )?(a|an|the|your) [\w\s-]{0,30}card\b", re.I)
+FIX_WORDS = (("clear_images", r"image"), ("rotate_logs", r"\blog"), ("backup_world", r"back ?up|copy of the world"),
+             ("update_server", r"updat"), ("restart_app", r"immich|photo|restart (the )?app"),
+             ("restart_server", r"restart"))
+
+
+def _keep_card_promise(ctx: TurnContext, llm_response) -> None:
+    """A model sometimes says "I've put a card up" without calling the tool. When this turn read a sample device that
+    offers the fix it describes, the answer becomes that tool call instead (the model then words the result), so the
+    promise is kept rather than corrected. Proposing only puts a card up; nothing changes without the person's tap."""
+    parts = (llm_response.content.parts if llm_response.content else None) or []
+    text = "".join(p.text for p in parts if p.text and not p.thought)
+    if ctx.actions or not ctx.fixes or any(p.function_call for p in parts) or not CARD_CLAIM.search(text):
+        return
+    claim = CARD_CLAIM.search(text)
+    sentence = re.split(r"(?<=[.!?])\s+", text[claim.start():])[0].lower()
+    before = text[max(0, claim.start() - 60):claim.start()].lower()
+    if re.search(r"\b(not|no|never|wasn't|isn't|didn't|haven't|hadn't|inaccurate|wrong|mistake)\b|n't\b",
+                 before + " " + sentence) or '"' in before[-3:]:
+        return  # a negated or quoted mention is not a promise (the visible correction still applies)
+    named = next((tool for tool, words in FIX_WORDS if re.search(words, sentence)), None)
+    matches = [f for f in ctx.fixes if f[0] == named]
+    if len({(t, d) for t, d, _p in matches}) != 1:
+        return  # only an unambiguous fix on one device this turn read; otherwise the correction applies
+    pick = matches[0]
+    # The card's device must be positively identified: the answer names it (its name or a word of it, "the Pi"), and
+    # the claim names no other device ("logs for your Mac" is not the Pi's card). Otherwise nothing is made.
+    names = dict(re.findall(r"(?m)^- ([a-z0-9_-]+) \(([^,)]+)", ctx.fleet or ""))
+    words = {i: {w for w in re.findall(r"[a-z0-9]+", n.lower()) if len(w) >= 2} for i, n in names.items()}
+    mine = words.get(pick[1]) or set()
+    theirs = set().union(*(w for i, w in words.items() if i != pick[1])) - mine
+    said_words = set(re.findall(r"[a-z0-9]+", sentence))
+    if said_words & theirs or not mine or not set(re.findall(r"[a-z0-9]+", text.lower())) & mine:
+        return
+    ctx.promised = (pick[0], pick[1])
+    # Gemini 3 wants a thought signature on every call in the history: carry the model's own over, else the
+    # documented placeholder for a call the client made.
+    signature = next((p.thought_signature for p in parts if p.thought_signature), None) \
+        or b"skip_thought_signature_validator"
+    llm_response.content = types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(
+        name=pick[0], args={"device_id": pick[1]}), thought_signature=signature)])
+
+
 def make_callbacks(ctx: TurnContext):
     fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
 
@@ -1063,6 +1155,7 @@ def make_callbacks(ctx: TurnContext):
             return None
         # Scrub the model's own words (as one text) before they become history for the next call.
         scrub_content(llm_response.content)
+        _keep_card_promise(ctx, llm_response)
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
         actual = quota.cost_of(u, (settings.deep_price_in_per_m, settings.deep_price_out_per_m) if ctx.deep else None)

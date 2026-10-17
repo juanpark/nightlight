@@ -48,6 +48,11 @@ const Chat = forwardRef<ChatHandle, {
     const log = useRef<HTMLDivElement>(null);
     const nearBottom = useRef(true);
     const streamed = useRef(new Set<string>());
+    // Turns already in the saved conversation (by their id), and follow-ups asked for before it finished loading:
+    // a follow-up runs only once the conversation is known, and never when its answer is already there.
+    const saved = useRef(new Set<string>());
+    const hydrated = useRef(false);
+    const queued = useRef<{ turnId: string; retries: number }[]>([]);
     const pending = useRef(new Set<string>()); // follow-ups promised by a device that hasn't answered yet
     const [pendingTick, setPendingTick] = useState(0); // re-check actions when a new promise arrives
     const watching = useRef(new Set<AbortController>());
@@ -70,12 +75,24 @@ const Chat = forwardRef<ChatHandle, {
     // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
     useEffect(() => {
       setTurns([]);
-      const sid = savedSession(uid, generation);
-      if (!sid) return;
+      saved.current.clear();
+      hydrated.current = false;
+      queued.current = [];
       let cancelled = false;
+      const ready = () => {
+        if (cancelled) return;
+        hydrated.current = true;
+        const waiting = queued.current;
+        queued.current = [];
+        for (const q of waiting) followUpRef.current(q.turnId, q.retries);
+      };
+      const sid = savedSession(uid, generation);
+      if (!sid) { ready(); return () => { cancelled = true; }; }
       loadMessages(uid, sid).then((msgs) => {
-        if (!cancelled && msgs.length) setTurns((cur) => [...fromHistory(msgs, devicesRef.current), ...cur]);
-      }).catch(() => {});
+        if (cancelled) return;
+        for (const m of msgs) if (m.turnId) saved.current.add(m.turnId);
+        if (msgs.length) setTurns((cur) => [...fromHistory(msgs, devicesRef.current), ...cur]);
+      }).catch(() => {}).finally(ready);
       return () => { cancelled = true; };
     }, [uid, generation]);
 
@@ -112,7 +129,9 @@ const Chat = forwardRef<ChatHandle, {
         if (ctl.signal.aborted) {
           update(k, stop);
         } else {
-          update(k, (t) => ({ ...stop(t), error: t.error ?? (e instanceof ApiError ? e.code : "connection problem") }));
+          update(k, (t) => ({ ...stop(t), error: t.error ?? (e instanceof ApiError
+            ? e.code === "turn_in_progress" ? "Nightlight is still finishing the last answer. Try again in a minute." : e.code
+            : "connection problem") }));
         }
       } finally {
         watching.current.delete(ctl);
@@ -153,19 +172,27 @@ const Chat = forwardRef<ChatHandle, {
     }, [busy, run, uid, generation, mode]);
 
     // Approve can be tapped while the answer that showed the card is still streaming: its follow-up then waits its turn.
-    const followUp = useCallback((turnId: string, retries = 10) => {
+    // Retries wait up to 10 s each, so 30 covers an Investigate answer still running (up to about 4 minutes).
+    const followUp = useCallback((turnId: string, retries = 30) => {
       if (streamed.current.has(turnId)) return;
+      if (!hydrated.current) { // wait for the saved conversation, then decide
+        if (!queued.current.some((q) => q.turnId === turnId)) queued.current.push({ turnId, retries });
+        return;
+      }
+      if (saved.current.has(turnId)) return; // it already ran (before this page was opened): its answer is shown
       streamed.current.add(turnId);
       const after = actionsRef.current.filter((a) => a.continuationTurnId === turnId).map((a) => a.id);
       run(`/api/turns/${turnId}/stream`, {}, "quick", after, retries);
     }, [run]);
+    const followUpRef = useRef(followUp);
+    followUpRef.current = followUp;
 
     // When a slow device answers, its action gets the follow-up turn: open it.
     useEffect(() => {
       for (const a of actions) {
         if (a.continuationTurnId && pending.current.has(a.continuationTurnId)) {
           pending.current.delete(a.continuationTurnId);
-          followUp(a.continuationTurnId, 20);
+          followUp(a.continuationTurnId);
         }
       }
     }, [actions, followUp, pendingTick]);
