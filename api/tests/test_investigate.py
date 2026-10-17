@@ -45,9 +45,9 @@ LEAK = ("Checking `nas-1` with get_device first, then `game-1`.\n\n"
 
 
 def test_leaked_notes_become_a_plain_answer():
-    out = _tidied(LEAK)
-    assert out == ("Your NAS is fine: its disk is 40% full and the nightly backup ran. The Game server's backups go "
-                   "there too.")
+    out = _tidied(LEAK)  # the note to itself goes; the rest is kept, with names for ids and a whole last sentence
+    assert out == ("Checking NAS with get device first, then Game server.\n\nYour NAS is fine: its disk is 40% full "
+                   "and the nightly backup ran. The Game server's backups go there too.")
     # ids become names and tool names plain words, even without self-talk
     assert _tidied("I read `nas-1` with get_device: the NAS is fine.") == \
         "I read NAS with get device: the NAS is fine."
@@ -74,7 +74,8 @@ def test_a_leak_in_an_investigate_turn_reaches_the_person_as_a_plain_answer(clie
     FakeLlm.behavior = behave
     ev = events(dig(client, new_session(client)))
     text = said(ev)
-    assert ev[-1]["type"] == "done" and text.startswith("Your NAS is fine")
+    assert ev[-1]["type"] == "done" and text.endswith("The Game server's backups go there too.")
+    assert "NAS)" not in text and "is connected through" not in text  # link lines are not names
     assert "`" not in text and "nas-1" not in text and "Wait!" not in text and text.endswith("too.")
 
 
@@ -83,37 +84,26 @@ def _busy():
                                               "exhausted. Please try again later."}})
 
 
-def test_a_busy_deep_model_hands_the_turn_to_the_quick_model(client, started):
-    asked = []
+def test_a_real_warning_is_never_taken_for_a_note(client, started):  # Codex investigate #2
+    text = "The NAS backup failed.\n\nWait! Do not restart it until a backup succeeds.\n\nYou can check its disk next."
+    assert _tidied(text) == text
+    assert _tidied("Hold on: the Pi is still copying files. Leave it plugged in.") == \
+        "Hold on: the Pi is still copying files. Leave it plugged in."
+
+
+def test_a_busy_model_ends_the_turn_with_a_plain_message_and_no_second_call(client, started):  # Codex #1
+    calls = []
 
     async def behave(llm_request, stream):
-        asked.append((llm_request.model, llm_request.config.thinking_config.thinking_level))
-        if llm_request.model == settings.deep_model:
-            raise _busy()
-        done = any(p.function_response for c in llm_request.contents for p in (c.parts or []))
-        if not done:
-            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(
-                function_call=types.FunctionCall(name="get_device", args={"device_id": "nas-1"}))]),
-                partial=False, usage_metadata=_usage(), turn_complete=True)
-        else:
-            yield _answer("Your NAS is fine.")
-    FakeLlm.behavior = behave
-    ev = events(dig(client, new_session(client)))
-    assert ev[-1]["type"] == "done" and said(ev) == "Your NAS is fine."
-    # the deep model was tried once; that call and the rest of the turn went to the quick model
-    assert [m for m, _ in asked] == [settings.deep_model, settings.model, settings.model]
-    assert all(str(t).endswith(settings.thinking_level) for _, t in asked[1:])
-
-
-def test_when_both_models_are_busy_the_person_reads_a_plain_message(client, started):
-    async def behave(llm_request, stream):
+        calls.append(llm_request.model)
         raise _busy()
         yield  # an async generator
     FakeLlm.behavior = behave
     ev = events(dig(client, new_session(client)))
     assert ev[-1]["type"] == "error" and ev[-1]["code"] == "busy" and ev[-1]["retryable"] is True
     assert ev[-1]["message"] == "Nightlight is busy right now. Try again in a minute, or ask in Quick mode."
-    FakeLlm.behavior = behave  # Quick mode: no fallback, and no pointing at Quick mode
+    assert len(calls) == 1  # no hidden second call to another model
+    FakeLlm.behavior = behave  # Quick mode: no pointing at Quick mode
     ev = events(client.post(f"/api/chat/sessions/{new_session(client)}/messages",
                             json={"text": "hi", "clientRequestId": str(uuid.uuid4())}))
     assert ev[-1]["code"] == "busy" and ev[-1]["message"] == "Nightlight is busy right now. Try again in a minute."

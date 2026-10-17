@@ -180,7 +180,6 @@ class TurnContext:
     promised: tuple | None = None  # (tool, device id) of a call made from the model's words: always a card
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
-    fell_back: bool = False  # the deep model was busy (429) once: the rest of this turn uses the quick model
     spoke: bool = False  # a finished model response had words for the person (for the first-words deadline)
 
     @property
@@ -1145,8 +1144,9 @@ def _keep_card_promise(ctx: TurnContext, llm_response) -> None:
 
 
 # Sentences that are the model talking to itself, not to the person ("Wait! If someone asks…", "Let me think").
-SELF_TALK = re.compile(r"(?im)(?:^|(?<=[.!?:]\s))[\W_]{0,3}(?:wait[!,.]|let me think|let's think|hmm+\b|hold on\b|"
-                       r"actually,? wait\b|note to self\b|if (?:someone|the user) asks?\b)")
+# Only unmistakable notes to itself: "Wait!" or "Hold on" can be a real warning to the person, so they stay.
+SELF_TALK = re.compile(r"(?im)(?:^|(?<=[.!?:]\s))[\W_]{0,3}(?:let me think|let's think|hmm+\b|note to self\b|"
+                       r"if (?:someone|the user) asks?\b)")
 TOOL_NAMES = ("list_fleet", "get_device", "get_recent_events", "look_into", "run_playbook", "write_note",
               "how_nightlight_works", "run_command", "update_profile", "link_devices", "read_device_log",
               "save_runbook", "rotate_logs", "backup_world", "restart_server", "restart_app", "clear_images",
@@ -1160,16 +1160,16 @@ def _fleet_names(fleet: str) -> dict:
     or an underscore), so a plain word in an answer is never taken for one."""
     out = {}
     for i, rest in re.findall(r"(?m)^- ([a-z0-9_-]+) \((.+)$", fleet or ""):
-        name = re.split(r",| \(", rest, maxsplit=1)[0].strip().strip('"')
+        name = re.split(r"[,)]| \(", rest, maxsplit=1)[0].strip().strip('"')  # "NAS, simulated): …" or "NAS) is…"
         if name and re.search(r"[\d_-]", i):
-            out[i] = name
+            out.setdefault(i, name)  # the device line comes first; link lines only repeat it
     return out
 
 
 def _tidy_thinking(ctx: TurnContext, llm_response) -> None:
     """A final answer sometimes arrives as the model's own working notes in plain text (device ids in backticks, tool
     names, "Wait! …", cut off mid-sentence). Only an answer without a tool call is touched, and only what matches:
-    self-talk paragraphs are dropped (what follows the last of them is kept), a cut-off end is trimmed to the last
+    self-talk paragraphs are dropped (and only those), a cut-off end is trimmed to the last
     whole sentence, ids become device names and tool names become plain words."""
     parts = (llm_response.content.parts if llm_response.content else None) or []
     visible = [p for p in parts if p.text and not p.thought]
@@ -1179,9 +1179,8 @@ def _tidy_thinking(ctx: TurnContext, llm_response) -> None:
     out = text
     paras = re.split(r"\n\s*\n", out.strip())
     talk = [i for i, p in enumerate(paras) if SELF_TALK.search(p)]
-    if talk:
-        keep = paras[talk[-1] + 1:] or [p for p in paras if not SELF_TALK.search(p)][-1:]
-        out = "\n\n".join(keep)
+    if talk and len(talk) < len(paras):
+        out = "\n\n".join(p for i, p in enumerate(paras) if i not in talk)
     if talk or llm_response.finish_reason == types.FinishReason.MAX_TOKENS:
         ends = list(SENTENCE_END.finditer(out.rstrip()))
         if ends and ends[-1].end() < len(out.rstrip()):
@@ -1200,34 +1199,6 @@ def _tidy_thinking(ctx: TurnContext, llm_response) -> None:
 def model_busy(e: BaseException) -> bool:
     """The model refused a call for lack of capacity or quota (HTTP 429 RESOURCE_EXHAUSTED); not our own limits."""
     return not isinstance(e, ApiError) and (getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e))
-
-
-class Fallback(BaseLlm):
-    """The deep model, with the quick model behind it: when the deep model is busy (429) before saying anything, the
-    same call goes to the quick model, and so does the rest of the turn. If the quick model fails too, that error
-    stands."""
-
-    primary: BaseLlm
-    backup: BaseLlm
-    ctx: Any
-
-    async def generate_content_async(self, llm_request, stream: bool = False):
-        if not self.ctx.fell_back:
-            started = False
-            try:
-                async for r in self.primary.generate_content_async(llm_request, stream):
-                    started = True
-                    yield r
-                return
-            except Exception as e:
-                if started or not model_busy(e):
-                    raise
-            self.ctx.fell_back = True
-        llm_request.model = settings.model
-        if llm_request.config is not None and llm_request.config.thinking_config is not None:
-            llm_request.config.thinking_config = types.ThinkingConfig(thinking_level=settings.thinking_level)
-        async for r in self.backup.generate_content_async(llm_request, stream):
-            yield r
 
 
 HURRY = ("Time is nearly up and the person has seen nothing yet: answer now, in plain words, with what you have "
@@ -1266,8 +1237,7 @@ def make_callbacks(ctx: TurnContext):
             ctx.spoke = True
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
-        deep_prices = ctx.deep and not ctx.fell_back  # a call the quick model answered costs quick prices
-        actual = quota.cost_of(u, (settings.deep_price_in_per_m, settings.deep_price_out_per_m) if deep_prices else None)
+        actual = quota.cost_of(u, (settings.deep_price_in_per_m, settings.deep_price_out_per_m) if ctx.deep else None)
         if u:
             ctx.metrics["tokensIn"] += u.prompt_token_count or 0
             ctx.metrics["tokensOut"] += u.candidates_token_count or 0
@@ -1301,11 +1271,7 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
         if ctx.memories:
             instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
                             "always win):\n" + memory_summary(ctx.memories))
-    if ctx.deep and not continuation:  # the deep model, with the quick one behind it if the deep one is busy
-        chosen = Fallback(model=settings.deep_model, primary=model or Gemini(model=settings.deep_model),
-                          backup=model or Gemini(model=settings.model), ctx=ctx)
-    else:
-        chosen = model or settings.model
+    chosen = model or (settings.deep_model if ctx.deep and not continuation else settings.model)
     return LlmAgent(
         name="nightlight",
         model=chosen,
