@@ -2266,7 +2266,7 @@ def _mount_host(source):
 def _time_machine_hosts():
     if sys.platform != "darwin" or not shutil.which("tmutil"):
         return []
-    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=10), re.M)
+    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=5), re.M)
     return [h for h in (_mount_host("//" + u.split("://", 1)[-1]) for u in urls) if h]
 
 
@@ -2304,12 +2304,32 @@ def _connections():
     return [(ip, port) for ip, port in out if port in NET_PORTS]
 
 
-def _relied_on():
-    """[(address, why)]: where this device backs up to, whose shared folders it mounts, which services it uses."""
+NET_BUDGET = 10  # seconds for the whole look (commands and name lookups); a report never waits longer for it
+NET_HOSTS = 8  # names looked up per kind: duplicates go first, then the list is cut
+
+
+def _relied_on(budget=NET_BUDGET):
+    """[(address, why)]: where this device backs up to, whose shared folders it mounts, which services it uses. One
+    deadline covers everything; what didn't fit in it is simply left out of this report."""
+    deadline = time.monotonic() + budget
+
+    def resolved(hosts, why):
+        out = []
+        for host in list(dict.fromkeys(hosts))[:NET_HOSTS]:
+            left = deadline - time.monotonic()
+            if left <= 0.2:
+                break
+            ip = _resolve(host, min(3, left))
+            if ip:
+                out.append((ip, why))
+        return out
+
     found = []
-    for step in (lambda: [(_resolve(h), "time_machine") for h in _time_machine_hosts()],
-                 lambda: [(_resolve(h), "network_drive") for h in _drive_hosts()],
-                 lambda: [(ip, "service:%d" % port) for ip, port in _connections()]):
+    for step in (lambda: [(ip, "service:%d" % port) for ip, port in _connections()],
+                 lambda: resolved(_time_machine_hosts(), "time_machine"),
+                 lambda: resolved(_drive_hosts(), "network_drive")):
+        if deadline - time.monotonic() <= 0.5:
+            break
         try:
             found += [(ip, why) for ip, why in step() if ip]
         except Exception:  # one probe failing never hides the others

@@ -127,3 +127,24 @@ def test_an_older_helper_keeps_the_stored_fingerprints(client, started):
     _report(client, dev, _net(PI))
     _report(client, dev, FACTS)  # no `net`: before 0.9.20
     assert db.device(started, dev["deviceId"]).get().to_dict()["net"]["self"] == PI
+
+
+def test_a_failed_attempt_is_retried_by_a_later_identical_report(client, started, monkeypatch):  # codex auto_links #1
+    mac, nas = enrolled(client, "Mac"), enrolled(client, "NAS")
+    _report(client, nas, _net(NAS))
+    real_infer, calls = links.infer, []
+
+    def broken_once(uid):
+        calls.append(uid)
+        if len(calls) == 1:
+            raise RuntimeError("Firestore hiccup")
+        return real_infer(uid)
+    monkeypatch.setattr(links, "infer", broken_once)
+    _report(client, mac, _net(MAC, peers=[(NAS, "time_machine")]))
+    assert not _links(started)  # the first attempt failed after the fingerprints were stored
+    monkeypatch.setattr(links, "RETRY_SECONDS", 0)
+    _report(client, mac, _net(MAC, peers=[(NAS, "time_machine")]))  # nothing changed, but lines are still due
+    assert any(l["kind"] == "backup" for l in _links(started).values())
+    calls.clear()
+    _report(client, mac, _net(MAC, peers=[(NAS, "time_machine")]))  # done now: no more work per report
+    assert not calls

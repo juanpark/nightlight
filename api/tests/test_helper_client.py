@@ -741,3 +741,22 @@ def test_where_shared_folders_and_backups_live(helper):
     assert helper._mount_host("nas:/export") == "nas"
     assert helper._mount_host("/dev/disk3s1") is None
     assert helper._hex_v4("0101A8C0") in ("192.168.1.1", "1.1.168.192")  # /proc/net: this machine's byte order
+
+
+def test_looking_for_peers_has_one_overall_deadline(helper, monkeypatch):  # codex auto_links #2
+    # 120 mounted shares whose names never resolve must not hold up the report: names are deduplicated and capped,
+    # and every lookup shares one budget.
+    import time as _t
+    monkeypatch.setattr(helper, "_connections", lambda: [])
+    monkeypatch.setattr(helper, "_time_machine_hosts", lambda: [])
+    monkeypatch.setattr(helper, "_drive_hosts", lambda: [f"nas{i}.local" for i in range(120)])
+    looked = []
+
+    def slow(host, timeout=3):
+        looked.append(host)
+        _t.sleep(min(timeout, 0.3))
+        return None
+    monkeypatch.setattr(helper, "_resolve", slow)
+    t = _t.monotonic()
+    assert helper._relied_on(budget=1.0) == []
+    assert _t.monotonic() - t < 1.5 and len(looked) <= helper.NET_HOSTS

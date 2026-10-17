@@ -13,6 +13,7 @@ deleted is not drawn again.
 """
 
 import secrets
+from datetime import datetime, timezone
 
 from google.cloud import firestore
 
@@ -125,17 +126,30 @@ def same_network(devices: dict) -> list[str]:
 
 # ------------------------------------------------------------------ lines the helpers see
 
-def net_key(tx, uid: str) -> str:
-    """The account's fingerprint key (32 random bytes, hex), created on first use. Kept outside `users/{uid}`, which
-    browsers can read: only the account's own helpers receive it, in their report replies. Reads, then may write: call
-    it after the transaction's other reads."""
-    ref = db.client().collection("netKeys").document(uid)
+RETRY_SECONDS = 60  # lines still due after a failed attempt are tried again by a later report, at most this often
+
+
+def _net_ref(uid: str):
+    return db.client().collection("netKeys").document(uid)
+
+
+def net_state(tx, uid: str, changed: bool) -> tuple[str, bool]:
+    """(the account's fingerprint key, whether lines should be worked out after this report).
+
+    The key (32 random bytes, hex) is created on first use and kept outside `users/{uid}`, which browsers can read:
+    only the account's own helpers receive it, in their report replies. A report whose fingerprints `changed` marks
+    the account's lines as due in the same transaction that stores them; only a successful `infer` clears that, so a
+    failed or interrupted attempt is retried by a later report (at most once a minute per account). Reads, then may
+    write: call it after the transaction's other reads."""
+    ref = _net_ref(uid)
     snap = ref.get(transaction=tx)
-    if snap.exists:
-        return snap.to_dict()["key"]
-    key = secrets.token_hex(32)
-    tx.set(ref, {"key": key, "createdAt": firestore.SERVER_TIMESTAMP})
-    return key
+    doc = snap.to_dict() if snap.exists else {"key": secrets.token_hex(32), "createdAt": firestore.SERVER_TIMESTAMP}
+    tried = doc.get("triedAt")
+    retry = bool(doc.get("linesDue")) and (tried is None or (datetime.now(timezone.utc) - tried).total_seconds()
+                                           > RETRY_SECONDS)
+    if changed or not snap.exists:
+        tx.set(ref, {**doc, **({"linesDue": True} if changed else {})})
+    return doc["key"], changed or retry
 
 
 def _why(reason: str) -> tuple[str, str]:
@@ -179,6 +193,7 @@ def infer(uid: str) -> int:
     @firestore.transactional
     def run(tx):
         user = db.user(uid).get(transaction=tx).to_dict() or {}
+        state = _net_ref(uid).get(transaction=tx)
         devices = {s.id: s.to_dict() for s in db.devices(uid).get(transaction=tx)}
         existing = {s.id: s.to_dict() for s in db.links(uid).get(transaction=tx)}
         devices = {i: d for i, d in devices.items() if d.get("realm") == "real" and not d.get("archived")}
@@ -197,14 +212,18 @@ def infer(uid: str) -> int:
                                                  "createdAt": firestore.SERVER_TIMESTAMP})
             count += not old
             changed += 1
+        if state.exists and state.to_dict().get("linesDue"):
+            tx.update(_net_ref(uid), {"linesDue": False})  # done: only a success clears it
         return changed
 
     return db.run_transaction(run)
 
 
 def infer_quietly(uid: str) -> None:
-    """`infer` after a report or an added device: drawing lines must never break what just succeeded."""
+    """`infer` after a report or an added device: drawing lines must never break what just succeeded. A failure leaves
+    the account's lines due, so a later report tries again."""
     try:
+        _net_ref(uid).set({"triedAt": firestore.SERVER_TIMESTAMP}, merge=True)  # spaces out retries
         infer(uid)
     except Exception as e:
         import logging

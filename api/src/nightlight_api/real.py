@@ -642,8 +642,10 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
                    if not (w.to_dict() or {}).get("revoked")]
         if not dsnap.exists:
             raise ApiError(401, "invalid_token")
-        net_key = links.net_key(tx, uid)  # the last read (it may write)
         device = dsnap.to_dict()
+        net = facts.get("net")  # fingerprints only; an older helper sends none and keeps what was there
+        net_changed = net is not None and net != device.get("net")
+        net_key, lines_due = links.net_state(tx, uid, net_changed)  # the last read (it may write)
         trend, to_full = disk_forecast(device.get("diskTrend"), facts.get("diskPct"), _now())
         escalate_disk(findings, facts.get("diskPct"), to_full)
         marked, states = apply_issue_states(findings, device.get("issueStates") or {})
@@ -674,8 +676,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
                   + gap["words"])
         tx.update(tref, {"lastSeen": _now()})
         extra["diskTrend"] = trend
-        net = facts.get("net")  # fingerprints only; an older helper sends none and keeps what was there
-        if net is not None and net != device.get("net"):
+        if net_changed:
             extra["net"] = net
         tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
@@ -717,14 +718,14 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
                  "permissions": device.get("permissions") or DEFAULT_PERMISSIONS}
         jobs = _hand_over(tx, approved, user) if take_jobs else []
-        return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, "net" in extra
+        return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, lines_due
 
     restarted = [False]
-    uid, device_id, jobs, poll, watch_list, about, net_changed = db.run_transaction(run)
+    uid, device_id, jobs, poll, watch_list, about, lines_due = db.run_transaction(run)
     if restarted[0]:
         post_mortem(token, device_id, facts)
-    if net_changed:
-        links.infer_quietly(uid)  # its fingerprints changed: lines on the map may have too
+    if lines_due:
+        links.infer_quietly(uid)  # fingerprints changed (or an earlier attempt failed): lines may have too
     offer = release.latest()
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
             "watch": watch_list, **about, **({"latestHelper": offer["version"]} if offer else {})}
