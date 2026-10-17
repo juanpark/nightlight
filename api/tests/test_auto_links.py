@@ -195,3 +195,27 @@ def test_the_router_is_recognised_named_and_can_be_corrected(client, started):
     links.infer(started)  # what the person said wins
     assert db.device(started, rid).get().to_dict()["role"] == "printer"
     assert client.post(f"/api/devices/{mac['deviceId']}/layout", json={"role": "printer"}).status_code == 422
+
+
+def test_a_corrected_role_changes_what_the_agent_reads(client, started):  # codex roles #2
+    mac = enrolled(client, "Mac")
+    _report(client, mac, _net(MAC))
+    h = {"X-Device-Token": mac["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ROUTER_ITEM]}, headers=h).status_code == 200
+    rid = client.post(f"/api/discoveries/{mac['deviceId']}/{ITEM['cid']}/add", json={"name": "Box"}).json()["deviceId"]
+    assert "Your router" in agentlib.fleet_summary(started, generation(started))
+    assert client.post(f"/api/devices/{rid}/layout", json={"role": "printer"}).status_code == 200
+    text = agentlib.fleet_summary(started, generation(started))
+    assert "A printer. Watched by Mac" in text and "Your router" not in text
+
+
+def test_an_old_devices_router_never_names_a_new_thing(client, started):  # codex roles #1
+    old, new = enrolled(client, "Old"), enrolled(client, "New")
+    _report(client, old, _net("1" * 20, gateway=ROUTER))  # the old place's router fingerprint
+    _report(client, new, _net("2" * 20, gateway="e" * 20))
+    db.device(started, old["deviceId"]).update({"archived": True})
+    h = {"X-Device-Token": new["token"]}
+    printer = {**ROUTER_ITEM, "guess": "Printer", "services": ["printer"], "ports": [631]}
+    assert client.post("/helper/discoveries", json={"items": [printer]}, headers=h).status_code == 200
+    pid = client.post(f"/api/discoveries/{new['deviceId']}/{ITEM['cid']}/add", json={"name": "P"}).json()["deviceId"]
+    assert db.device(started, pid).get().to_dict()["role"] == "printer"

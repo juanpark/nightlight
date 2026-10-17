@@ -306,6 +306,17 @@ ROLE_FROM_GUESS = {"Printer": "printer", "File share (NAS or computer)": "filesh
                    "Philips Hue": "smarthome", "Espressif (smart-home gadget)": "smarthome", "Sonos": "speaker"}
 
 
+ROLE_WORDS = {"router": "Your router: your devices reach the internet through it", "printer": "A printer",
+              "fileshare": "A file share (a NAS or a computer sharing folders)", "smarthome": "A smart-home hub or gadget",
+              "server": "A media or game server", "speaker": "A TV or speaker", "computer": "A computer",
+              "other": "Something on your network"}
+
+
+def role_purpose(role: str, watcher: str | None) -> str:
+    """The plain description the app and the agent show for a watched thing, always from its current role."""
+    return f"{ROLE_WORDS.get(role, ROLE_WORDS['other'])}. Watched by {watcher or 'one of your devices'}."
+
+
 def role_for(item: dict, routers: set) -> str:
     """What a found thing most likely is, in the app's few words (the person can correct it)."""
     if item.get("tag") and item["tag"] in routers:
@@ -462,12 +473,12 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
             raise ApiError(422, "no_check_port")  # nothing we could check answers on it
         helper_name = hsnap.to_dict().get("name", "your device")
         tx.update(dref, {"items": [{**it, "added": it.get("cid") == cid or it.get("added")} for it in d["items"]]})
-        routers = {(h.to_dict().get("net") or {}).get("gateway") for h in helpers_now} - {None}
+        routers = {(h.to_dict().get("net") or {}).get("gateway") for h in helpers_now
+                   if not h.to_dict().get("archived")} - {None}
         role = role_for(item, routers)
         tx.set(db.device(uid, device_id), {
             "name": name, "kind": "watched", "role": role,
-            "purpose": ("Your router: your devices reach the internet through it" if role == "router"
-                        else str(item.get("guess"))) + f". Watched by {helper_name}.",
+            "purpose": role_purpose(role, helper_name),
             "guess": item.get("guess"), "services": item.get("services") or [], "ports": item.get("ports") or [],
             "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
             "vendor": item.get("vendor"), "health": "unknown", "status": "offline", "vitals": {}, "findings": [],

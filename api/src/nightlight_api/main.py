@@ -167,7 +167,9 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
         if body.role is not None:
             if d.get("kind") != "watched":
                 raise ApiError(422, "role_is_for_watched_things")
-            update.update(role=body.role, roleSetBy="user")
+            watcher = (db.device(uid, d["watchedBy"]).get(transaction=tx).to_dict() or {}).get("name") \
+                if d.get("watchedBy") else None  # a read, before this transaction's writes
+            update.update(role=body.role, roleSetBy="user", purpose=real.role_purpose(body.role, watcher))
         if update:
             tx.update(ref, update)
         return update

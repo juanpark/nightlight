@@ -227,7 +227,9 @@ def infer(uid: str) -> int:
             if d.get("kind") != "watched" or (d.get("net") or {}).get("self") not in gateways \
                     or d.get("roleSetBy") == "user":
                 continue
-            fix = {"role": "router", "purpose": "Your router: your devices reach the internet through it."}
+            from .real import role_purpose
+            watcher = (devices.get(d.get("watchedBy")) or {}).get("name")
+            fix = {"role": "router", "purpose": role_purpose("router", watcher)}
             if d.get("name") in (d.get("guess"), "Device with a web page"):
                 fix["name"] = "Router"  # still the generic name it was added with
             if any(d.get(k) != v for k, v in fix.items()):
