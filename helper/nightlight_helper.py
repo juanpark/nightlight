@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.16"
+VERSION = "0.9.17"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1863,25 +1863,28 @@ _CHANNEL = {"ok": True}  # False once a server said it has no work channel (an o
 def _wait_and_claim(seconds):
     """Until the next report, keep the work channel open (docs/adr/0003-job-channel.md): the server holds the
     request and answers the moment a job is approved here, so approvals start within about a second."""
-    end = time.time() + seconds
-    while time.time() < end and not _RESTART:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and not _RESTART:
         if not _CHANNEL["ok"]:
-            return _poll_until(max(0.0, end - time.time()))
+            return _poll_until(max(0.0, end - time.monotonic()))
         try:
             cfg = _load()
             api, token = check_api(cfg["api"]), cfg["token"]
         except Exception:  # not joined (or config unreadable): nothing to wait for
-            time.sleep(max(0.0, end - time.time()))
+            time.sleep(max(0.0, end - time.monotonic()))
+            return
+        hold = int(min(25, max(0.0, end - time.monotonic())))  # answered by the time the next report is due
+        if hold < 1:
             return
         try:
-            st, body = _post(api + "/helper/jobs/wait", {}, {"X-Device-Token": token})
+            st, body = _post(api + f"/helper/jobs/wait?hold={hold}", {}, {"X-Device-Token": token})
         except Exception:
             st, body = 0, {}
         if st == 404:
             _CHANNEL["ok"] = False
             continue
-        if st != 200:  # network or server trouble: wait a little, never spin
-            time.sleep(min(15.0, max(0.0, end - time.time())))
+        if st != 200:  # network or server trouble (or a wait already open): wait a little, never spin
+            time.sleep(min(15.0, max(0.0, end - time.monotonic())))
             continue
         jobs = [j for j in (body.get("jobs") if isinstance(body.get("jobs"), list) else [])
                 if isinstance(j, dict) and isinstance(j.get("id"), str) and ACTION_RE.fullmatch(j["id"])]

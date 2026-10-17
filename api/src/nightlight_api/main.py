@@ -737,4 +737,8 @@ def helper_wait(body: Empty, request: Request):
     token = request.headers.get("x-device-token", "")
     if not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", token):
         raise ApiError(401, "invalid_token")
-    return real.wait_for_jobs(token)
+    try:  # the helper asks to be answered by the time its next report is due (at most 25 s)
+        hold = float(request.query_params.get("hold", real.WAIT_SECONDS))
+    except ValueError:
+        hold = real.WAIT_SECONDS
+    return real.wait_for_jobs(token, hold)

@@ -915,9 +915,29 @@ def wait_for_jobs(token: str, hold: float = WAIT_SECONDS) -> dict:
     `hold` seconds with none. A Firestore listener on the device's approved jobs wakes it; the hand-over itself is
     the same at-most-once transaction as every other."""
     import threading
-    t = tokens_ref().document(_sha(token)).get().to_dict()
-    if not t or t.get("revoked"):
-        raise ApiError(401, "invalid_token")
+    hold = max(0.0, min(hold, WAIT_SECONDS))
+    tref = tokens_ref().document(_sha(token))
+
+    @firestore.transactional
+    def lease(tx):  # one open wait per device, across instances; a crashed one expires by itself
+        t = tref.get(transaction=tx).to_dict()
+        if not t or t.get("revoked"):
+            raise ApiError(401, "invalid_token")
+        busy = t.get("waitUntil")
+        if busy and busy > _now():
+            raise ApiError(429, "already_waiting", retryAfter=max(1, int((busy - _now()).total_seconds())))
+        tx.update(tref, {"waitUntil": _now() + timedelta(seconds=hold + 5)})
+        return t
+
+    t = db.run_transaction(lease)
+    try:
+        return _wait(token, t, hold)
+    finally:
+        tref.update({"waitUntil": None})
+
+
+def _wait(token: str, t: dict, hold: float) -> dict:
+    import threading
     first = claim(token, rate_limited=False)
     if first["jobs"]:
         return first
@@ -926,7 +946,7 @@ def wait_for_jobs(token: str, hold: float = WAIT_SECONDS) -> dict:
         filter=FieldFilter("status", "==", "approved"))
     watch = query.on_snapshot(lambda docs, changes, read_time: woke.set() if docs else None)
     try:
-        woke.wait(max(0.0, min(hold, WAIT_SECONDS)))
+        woke.wait(hold)
     finally:
         watch.unsubscribe()
     return claim(token, rate_limited=False) if woke.is_set() else {"ok": True, "jobs": [], "pollEverySec": 0}

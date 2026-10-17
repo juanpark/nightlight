@@ -598,9 +598,9 @@ def test_waiting_uses_the_work_channel_and_falls_back_on_old_servers(helper, mon
     monkeypatch.setattr(helper, "_do_job", lambda api, token, job: ran.append(job["id"]))
     monkeypatch.setattr(helper, "_poll_until", lambda seconds: calls.append("poll"))
     helper._wait_and_claim(60)  # a job came: it ran, and the wait ended so the change is reported
-    assert calls == ["https://api.example.com/helper/jobs/wait"] and ran == ["act_" + "a" * 26]
+    assert calls == ["https://api.example.com/helper/jobs/wait?hold=25"] and ran == ["act_" + "a" * 26]
     helper._wait_and_claim(60)  # an old server (404): fall back to polling
-    assert calls[1:] == ["https://api.example.com/helper/jobs/wait", "poll"] and helper._CHANNEL["ok"] is False
+    assert calls[1:] == ["https://api.example.com/helper/jobs/wait?hold=25", "poll"] and helper._CHANNEL["ok"] is False
 
 
 def test_a_too_soon_report_waits_the_asked_gap_not_a_backoff(helper, monkeypatch):

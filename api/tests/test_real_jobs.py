@@ -273,3 +273,20 @@ def test_the_work_channel_comes_back_empty_after_its_hold(client, started, monke
     beat(client, dev["token"], ALLOW)
     monkeypatch.setattr(real, "WAIT_SECONDS", 1)
     assert real.wait_for_jobs(dev["token"], hold=1)["jobs"] == []
+
+
+def test_one_open_wait_per_device_and_the_hold_follows_the_report(client, started):
+    import threading
+    import time
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    first = threading.Thread(target=lambda: client.post("/helper/jobs/wait?hold=3", json={},
+                                                        headers={"X-Device-Token": dev["token"]}))
+    first.start()
+    time.sleep(1)
+    second = client.post("/helper/jobs/wait?hold=3", json={}, headers={"X-Device-Token": dev["token"]})
+    assert second.status_code == 429 and second.json()["code"] == "already_waiting"
+    first.join()
+    t = time.monotonic()
+    r = client.post("/helper/jobs/wait?hold=2", json={}, headers={"X-Device-Token": dev["token"]})
+    assert r.status_code == 200 and r.json()["jobs"] == [] and time.monotonic() - t < 6
