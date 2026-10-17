@@ -140,3 +140,7 @@
   .pane-count { font-size: 11px; min-width: 18px; padding: 1px 5px; border-radius: 9px; background: var(--glow); color: var(--on-primary); }
 }
 @media (prefers-reduced-motion: reduce) { .side, .side.open { transition: none; } }
+
+/* Save with Google: what happened, in one line, until dismissed */
+.save-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 12px 16px; font-size: 14px; }
+.save-notice > span { flex: 1 1 260px; }

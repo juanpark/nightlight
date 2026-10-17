@@ -5,9 +5,10 @@
    three and are kept for status only, each always paired with a word:
    green for "fine", amber for "needs a look". The 3D scene reads its colours
    from these same tokens. They are set on the html element too (where :has is
-   supported) so the page's edges, overscroll and first paint share the navy. */
+   supported) so the page's edges, overscroll and first paint share the navy; not while the
+   returning-visitor loading screen stands in for the page (AppGate). */
 .page,
-:global(html):has(.page) {
+:global(html:not([data-session])):has(.page) {
   --night: #0b1430;
   --surface: #111c3d;
   --surface-2: #18254b;
@@ -49,8 +50,8 @@
   color-scheme: dark;
 }
 
-:global(html):has(.page),
-:global(html):has(.page) :global(body) {
+:global(html:not([data-session])):has(.page),
+:global(html:not([data-session])):has(.page) :global(body) {
   background: var(--night);
 }
 

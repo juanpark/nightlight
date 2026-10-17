@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
+import { FirebaseError } from "firebase/app";
+import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
@@ -114,9 +115,58 @@ export default function Home({ user }: { user: User }) {
     else if (g.to === "chat") askChat(g.ask);
   }
 
+  // Save with Google: the demo's guest account takes on a Google login and keeps its home. Every outcome says what
+  // happened in one plain line (closing the Google window is the person's choice, so that one stays quiet).
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(peekNotice);
+  useEffect(() => leaveNotice(null), []); // shown once: read on the first render, cleared after it
+  const [, redraw] = useState(0);
+  const attempt = useRef(0); // only the latest try may update the button or the message
+  // Firebase notices a closed Google window only after about 8 s; coming back to the page means it closed, so the
+  // button is ready again shortly after (a sign-in that did finish still lands and says so).
+  useEffect(() => {
+    if (!saving) return;
+    let t: ReturnType<typeof setTimeout>;
+    const back = () => { t = setTimeout(() => setSaving(false), 1500); };
+    window.addEventListener("focus", back);
+    return () => { window.removeEventListener("focus", back); clearTimeout(t); };
+  }, [saving]);
   async function saveWithGoogle() {
+    const mine = ++attempt.current;
+    const latest = () => mine === attempt.current;
+    setSaving(true);
+    setNotice(null);
     const { auth } = await firebase();
-    if (auth.currentUser) await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e) => alertless(e));
+    const guest = auth.currentUser;
+    try {
+      if (!guest) return;
+      await linkWithPopup(guest, new GoogleAuthProvider());
+      // The same user now has Google: get a token that says so (owner-only requests check it), and redraw, because
+      // linking changes the user in place without announcing a sign-in.
+      await guest.getIdToken(true);
+      setNotice(`Saved. This home now belongs to ${guest.email ?? "your Google account"}; sign in with Google to open it anywhere.`);
+      redraw((n) => n + 1);
+    } catch (e) {
+      const code = e instanceof FirebaseError ? e.code : "";
+      if (!latest() && code === "auth/cancelled-popup-request") return; // replaced by a newer try
+      const cred = code === "auth/credential-already-in-use" ? GoogleAuthProvider.credentialFromError(e as FirebaseError) : null;
+      if (cred) {
+        // That Google login already has a home of its own: open it (the app restarts for that account).
+        leaveNotice("This Google account already had a Nightlight home, so we opened it. The demo's sample home wasn't kept.");
+        await signInWithCredential(auth, cred).catch(() => { leaveNotice(null); setNotice("Couldn't open that account. Please try again."); });
+      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request" || code === "auth/user-cancelled") {
+        // closed on purpose: nothing to say
+      } else if (code === "auth/popup-blocked") {
+        setNotice("Your browser blocked the Google window. Allow pop-ups for this site, then try again.");
+      } else if (code === "auth/network-request-failed") {
+        setNotice("Couldn't reach Google. Check your connection, then try again.");
+      } else {
+        console.warn("link failed", e);
+        setNotice("Couldn't connect your Google account. Please try again.");
+      }
+    } finally {
+      if (latest()) setSaving(false);
+    }
   }
 
   const item = (p: Panel, label: string, Icon: LucideIcon, count?: number) => (
@@ -160,8 +210,8 @@ export default function Home({ user }: { user: User }) {
             <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
           <div className="side-account">
             {user.isAnonymous
-              ? <button className="primary side-save" onClick={saveWithGoogle}
-                  title="Keep this home by linking a Google account">Save with Google</button>
+              ? <button className="primary side-save" onClick={saveWithGoogle} disabled={saving}
+                  title="Keep this home by linking a Google account">{saving ? "Opening Google…" : "Save with Google"}</button>
               : <span className="small muted side-email">{user.email}</span>}
             <button className="side-item" onClick={async () => signOut((await firebase()).auth)}>
               <LogOut size={18} /> <span>Sign out</span></button>
@@ -171,6 +221,9 @@ export default function Home({ user }: { user: User }) {
       {menu && <button className="side-scrim" aria-label="Close menu" onClick={() => setMenu(false)} />}
       <div className="main" data-pane={pane}>
         <section className="left">
+          {notice && <div className="panel save-notice" role="status">
+            <span>{notice}</span>
+            <button className="linkish small" onClick={() => setNotice(null)}>Dismiss</button></div>}
           {panel === "none" ? <>
             <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
             <div className="panel needs needs-strip" data-state={needs.length ? "needs" : "ok"}>
@@ -278,6 +331,10 @@ function useTheme(): ["night" | "day", () => void] {
   return [theme, flip];
 }
 
-function alertless(e: unknown) {
-  console.warn("link failed", e);
+// A message that has to outlive a switch of account (the app restarts for the new user), kept for this tab only.
+function leaveNotice(text: string | null) {
+  try { if (text) sessionStorage.setItem("nl_notice", text); else sessionStorage.removeItem("nl_notice"); } catch { /* lost */ }
+}
+function peekNotice(): string | null {
+  try { return sessionStorage.getItem("nl_notice"); } catch { return null; }
 }
