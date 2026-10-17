@@ -194,8 +194,8 @@ Signed in with Google, open **Add a device**. The app shows a one-line install c
 installer downloads the helper from the same web address, checks its sha256, joins with a one-time code (or shows a
 code and a QR code for you to approve on your phone), and installs a background service that runs as your normal
 user. On a Mac it asks once, there and then, whether it may measure Downloads, Desktop, Documents, Movies and the
-Trash, so nobody has to come back to the terminal for it. If someone else looks after the device, **Ask someone to set
-it up** shares the line with three plain steps. The helper is [`helper/nightlight_helper.py`](helper/nightlight_helper.py): Python 3.8+, standard library
+Trash, so nobody has to come back to the terminal for it. If someone else looks after the device, **Send the steps**
+shares the line with three plain steps for them. The helper is [`helper/nightlight_helper.py`](helper/nightlight_helper.py): Python 3.8+, standard library
 only, about 2,500 lines, reviewable in one sitting.
 
 It changes nothing by default. What it can do, and only after you allow it:

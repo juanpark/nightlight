@@ -54,9 +54,11 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
   }
   return (
     <div className="send-line">
-      <button onClick={send}>Ask someone to set it up</button>
+      <p className="small"><strong>Can&apos;t do this on the device yourself?</strong> Nightlight needs a small helper
+        installed on it once. Send these steps to someone who can (whoever set up or looks after that computer); it takes
+        them a minute.</p>
+      <button onClick={send}>Send the steps</button>
       {note && <span className="small muted">{note}</span>}
-      <span className="small muted send-hint">Someone who can open a terminal on that device, like whoever looks after it.</span>
     </div>
   );
 }

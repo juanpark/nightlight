@@ -52,7 +52,7 @@
 .firstrun-alt { margin: 8px 0 0; }
 .needs-line { padding: 4px 0 8px 16px; }
 .send-line { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; margin: 2px 0 4px; } /* AddDevice */
-.send-hint { flex-basis: 100%; }
+.send-line > p { flex-basis: 100%; margin: 6px 0 2px; }
 .look-nearby { margin-top: 10px; } /* FoundNearby */
 .found-row { flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .found-row.router { border-left: 3px solid var(--accent); padding-left: 8px; }
