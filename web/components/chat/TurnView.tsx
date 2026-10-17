@@ -10,6 +10,10 @@ import type { AgentTurn, Block } from "./model";
 
 type Step = Extract<Block, { kind: "step" }>;
 
+/** An answer as paragraphs: a blank line starts a new one, a single line break stays a line break. */
+const paragraphs = (text: string) =>
+  text.trim().split(/\n\s*\n/).map((p, i) => <p key={i}><ArrowText text={p.trim()} /></p>);
+
 const MASCOT = 30; // in a turn: small enough to sit on one line with the text
 
 const secs = (ms?: number) => ms == null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
@@ -102,7 +106,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp, latest, h
         onFollowUp={onFollowUp} />);
     } else if (i === final) {
       flush(i);
-      parts.push(<div key="answer" className="bubble agent"><ArrowText text={(b as { text: string }).text.trim()} /></div>);
+      parts.push(<div key="answer" className="answer">{paragraphs((b as { text: string }).text)}</div>);
     } else {
       seg.push(b);
     }

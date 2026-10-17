@@ -2,10 +2,9 @@
 .turn-wrap, .turn { display: flex; flex-direction: column; gap: 6px; }
 /* earlier turns step back to the secondary ink (never opacity: that makes off-token shades and fails contrast);
    a card still waiting for an answer keeps full strength */
-.bubble.past, .turn.past > .bubble, .turn.past > .wl-note { color: var(--muted); }
+.bubble.past, .turn.past > .answer, .turn.past > .wl-note { color: var(--muted); }
 .turn-mode { align-self: flex-start; font-size: 11px; }
 .turn-mascot.thinking { color: var(--muted); display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
-.bubble.agent { line-height: 1.55; } /* long answers */
 
 /* An empty chat: what it is for, and questions about what is on the map to start with (centred, not at the bottom). */
 .chat-empty { margin: auto 0; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 4px; }
@@ -30,9 +29,9 @@
 .wl-step > summary::-webkit-details-marker { display: none; }
 .wl-more { margin-left: 4px; color: var(--muted); vertical-align: -0.05em; }
 .wl-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; transform: translateY(-1px);
-  background: var(--ok); }
+  background: var(--ok-fill); }
 .wl-dot.running { background: var(--muted); animation: pulse 1s infinite alternate; }
-.wl-dot.failed { background: var(--crit); }
+.wl-dot.failed { background: var(--crit-fill); }
 .wl-dot.stopped { background: transparent; border: 1.5px solid var(--muted); width: 5px; height: 5px; }
 .wl-summary { color: var(--ink); }
 .wl-ms { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
@@ -73,19 +72,24 @@
 
 /* A settled card folds to one line: how it went, then what it was. */
 .card.folded { padding: 0; background: transparent; }
+.card.folded { transition: border-color .15s ease-out; }
 .card.folded > summary { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none;
-  font-size: 13px; line-height: 1.45; border-radius: var(--radius); }
+  font-size: 13px; line-height: 1.45; border-radius: calc(var(--radius) - 1px); }
 .card.folded > summary::-webkit-details-marker { display: none; }
-.card.folded > summary:hover { background: var(--panel-2); }
+/* Hover only firms up the outline and the caret: a calm cue that the row opens. */
+.card.folded:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--line-strong)); }
+.card.folded > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card.folded > summary > svg { flex: none; margin-top: 1px; }
-.card.folded > summary .caret { margin-top: 4px; color: var(--muted); }
+.card.folded > summary .caret { margin-top: 4px; color: var(--muted); transition: transform .15s ease-out, color .15s; }
+.card.folded:hover > summary .caret { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .card.folded, .card.folded > summary .caret { transition: none; } }
 .card.folded .fold-text { flex: 1; min-width: 0; color: var(--ink); }
 .card.folded .fold-text b { font-weight: 650; margin-right: 4px; }
-.card.folded.done > summary > svg, .card.folded.done .fold-text b { color: var(--ok); }
-.card.folded.failed > summary > svg, .card.folded.failed .fold-text b { color: var(--warn); }
-.card.folded.quiet > summary > svg, .card.folded.quiet .fold-text b { color: var(--muted); }
+.card.folded.done > summary > svg:first-child, .card.folded.done .fold-text b { color: var(--ok); }
+.card.folded.failed > summary > svg:first-child, .card.folded.failed .fold-text b { color: var(--warn); }
+.card.folded.quiet > summary > svg:first-child, .card.folded.quiet .fold-text b { color: var(--muted); }
 .card.folded[open] { background: var(--panel); }
-.card.folded[open] > summary { border-bottom: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0; }
+.card.folded[open] > summary { border-bottom: 1px solid var(--line); border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
 .card.folded[open] > :not(summary) { margin: 10px 16px; }
 .card.folded[open] > dl { margin-bottom: 14px; }
 

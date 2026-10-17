@@ -1,7 +1,7 @@
 "use client";
 // The home as a map (pan, zoom, lines between devices) or as a plain list of tiles, narrowed by the bar above it;
 // Map or List is remembered here. Watched websites follow below with the filters that apply to them.
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePlaces } from "@/lib/data";
 import { applyFilter, applyToWatches, filtering, NO_FILTER, placesOf, type Filter } from "@/lib/homeFilter";
 import type { Need } from "@/lib/needsYou";
@@ -11,15 +11,22 @@ import WatchedRow from "../WatchedRow";
 import HomeBar, { type View } from "./HomeBar";
 import HomeMap from "./HomeMap";
 
+const isPhone = () => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches;
+const viewKey = () => isPhone() ? "nl_view_phone" : "nl_view";
+function startView(): View {
+  try { const v = localStorage.getItem(viewKey()); if (v === "map" || v === "list") return v; } catch { /* default */ }
+  return isPhone() ? "list" : "map";
+}
+
 export default function HomeView({ uid, devices, watches, links, marks, selected, onSelect, onApp, onAsk, now, settingUp }: {
   uid: string; devices: Device[]; watches: Watch[]; links: Link[]; marks?: Map<string, Need[]>; selected: string | null;
   onSelect: (id: string) => void; onApp?: (id: string, svcId: string) => void; onAsk: (q: string) => void; now: number;
   settingUp: boolean;
 }) {
-  const [view, setView] = useState<View>("map");
+  // Phones start on the list (the map is too small to read there) and remember their own choice, apart from a computer's.
+  const [view, setView] = useState<View>(() => startView());
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
-  useEffect(() => { try { if (localStorage.getItem("nl_view") === "list") setView("list"); } catch { /* default */ } }, []);
-  const pick = (v: View) => { setView(v); try { localStorage.setItem("nl_view", v); } catch { /* this visit */ } };
+  const pick = (v: View) => { setView(v); try { localStorage.setItem(viewKey(), v); } catch { /* this visit */ } };
   const names = usePlaces(uid);
   const places = useMemo(() => placesOf(devices, names), [devices, names]);
   const shown = useMemo(() => applyFilter(filter, devices, marks), [filter, devices, marks]);

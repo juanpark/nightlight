@@ -1,12 +1,16 @@
 /* Nightlight app tokens. Two sets that share names: night (navy, cream text, the star) and day (cream, navy ink,
    the same star). The app shell sets data-theme; outside it (/pair) the system setting picks. Status colours are
    only ever shown with a word. Secondary text (--muted) is the same ink at 70%, mixed toward the ground in OKLab, so
-   it reads as a quieter shade of the main text rather than a second colour. */
+   it reads as a quieter shade of the main text rather than a second colour.
+   Each status has two strengths: --ok/--warn/--crit/--offline for text and anything with text on it (≥ 4.5:1), and
+   a livelier --*-fill for dots, rings, borders and glows (≥ 3:1). Hues: a fresh green, an amber kept orange so it never
+   reads as the star yellow, a warm coral-red, and a slate. */
 :root, [data-theme="day"] {
   --bg: #f5efe2; --panel: #fffaf0; --panel-2: #efe7d6; --line: #e2d7c1; --line-strong: #c4b595;
   --ink: #15224a; --muted: #4f5b77; --glow: #fdd83a; --glow-rgb: 232 178 0;
   --accent: #15224a; --on-accent: #fffaf0; --primary: #fdd83a; --primary-hover: #ffe36a; --on-primary: #15224a;
-  --ok: #2f7a4c; --warn: #9c5a00; --crit: #c4553f; --offline: #737a95; --on-status: #fffaf0;
+  --ok: #217541; --warn: #995814; --crit: #b63731; --offline: #5b6681; --on-status: #fffaf0;
+  --ok-fill: #21914e; --warn-fill: #c26c0a; --crit-fill: #e1564d; --offline-fill: #737e9a;
   --select: rgb(21 34 74 / .08);
   --shadow: 0 1px 2px rgb(21 34 74 / .05), 0 10px 26px -14px rgb(21 34 74 / .22);
   --logo-light: #f2b800;
@@ -20,7 +24,8 @@
   --bg: #0b1430; --panel: #111c3d; --panel-2: #18254b; --line: #22305c; --line-strong: #33457a;
   --ink: #f4efe4; --muted: #a5a7ab; --glow: #fdd83a; --glow-rgb: 253 216 58;
   --accent: #fdd83a; --on-accent: #15224a; --primary: #fdd83a; --primary-hover: #ffe36a; --on-primary: #15224a;
-  --ok: #8fd6a8; --warn: #f5b84a; --crit: #ffb4a3; --offline: #8a93b3; --on-status: #0b1430;
+  --ok: #70d795; --warn: #fab050; --crit: #fb817a; --offline: #97a1bb; --on-status: #0b1430;
+  --ok-fill: #5cd38a; --warn-fill: #fea83b; --crit-fill: #f66d67; --offline-fill: #8892ab;
   --select: #1d2b5a;
   --shadow: 0 1px 0 rgb(255 255 255 / .03) inset, 0 10px 28px -12px rgb(3 7 20 / .6);
   --logo-light: #fdd83a;
@@ -31,15 +36,14 @@
   --bg: #0b1430; --panel: #111c3d; --panel-2: #18254b; --line: #22305c; --line-strong: #33457a;
   --ink: #f4efe4; --muted: #a5a7ab; --glow: #fdd83a; --glow-rgb: 253 216 58;
   --accent: #fdd83a; --on-accent: #15224a; --primary: #fdd83a; --primary-hover: #ffe36a; --on-primary: #15224a;
-  --ok: #8fd6a8; --warn: #f5b84a; --crit: #ffb4a3; --offline: #8a93b3; --on-status: #0b1430;
+  --ok: #70d795; --warn: #fab050; --crit: #fb817a; --offline: #97a1bb; --on-status: #0b1430;
+  --ok-fill: #5cd38a; --warn-fill: #fea83b; --crit-fill: #f66d67; --offline-fill: #8892ab;
   --select: #1d2b5a;
   --shadow: 0 1px 0 rgb(255 255 255 / .03) inset, 0 10px 28px -12px rgb(3 7 20 / .6);
   --logo-light: #fdd83a;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-/* Icons (src/components/icons.tsx): the duotone fill, strong enough to read on navy as well as cream. */
-.icon > path[opacity="0.2"] { opacity: .35; }
 .arrow-to { display: inline-block; margin: 0 .3em; opacity: .7; }
 .arrow-to > svg { vertical-align: -0.1em; }
 .caret { transition: transform .15s ease-out; }
@@ -74,14 +78,14 @@ code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .small { font-size: 13px; }
 .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px;
   border-radius: 99px; border: 1px solid var(--line-strong); color: var(--muted); }
-.pill.live { color: var(--ok); border-color: var(--ok); }
+.pill.live { color: var(--ok); border-color: var(--ok-fill); }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
-.dot.crit { background: var(--crit); } .dot.offline { background: var(--offline); }
+.dot.ok { background: var(--ok-fill); } .dot.warn { background: var(--warn-fill); }
+.dot.crit { background: var(--crit-fill); } .dot.offline { background: var(--offline-fill); }
 .risk { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
-.risk.routine { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
-.risk.service { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
-.risk.destructive { background: color-mix(in srgb, var(--crit) 18%, transparent); color: var(--crit); }
+.risk.routine { background: color-mix(in srgb, var(--ok-fill) 18%, transparent); color: var(--ok); }
+.risk.service { background: color-mix(in srgb, var(--warn-fill) 22%, transparent); color: var(--warn); }
+.risk.destructive { background: color-mix(in srgb, var(--crit-fill) 18%, transparent); color: var(--crit); }
 
 /* layout: app/shell.css */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
@@ -100,8 +104,8 @@ h4 { font: 650 15px/1.35 var(--font-head); }
 .node .row { display: flex; align-items: center; gap: 8px; }
 .node .name { font-weight: 700; }
 .node .problem { margin-top: 4px; font-size: 12px; color: var(--muted); }
-.node.crit { border-color: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 15%, transparent); }
-.node.warn { border-color: var(--warn); }
+.node.crit { border-color: var(--crit-fill); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit-fill) 15%, transparent); }
+.node.warn { border-color: var(--warn-fill); }
 .node.offline { opacity: .7; }
 @media (max-width: 700px) { .board { height: auto !important; display: grid; gap: 10px; padding: 10px; }
   .node { position: static; width: auto; } }
@@ -116,9 +120,15 @@ h4 { font: 650 15px/1.35 var(--font-head); }
 /* chat */
 .chat-log { flex: 1; min-height: 0; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
   position: relative; } /* holds its own positioned bits (screen-reader text) so they scroll with it */
-.bubble { padding: 10px 14px; border-radius: 16px; max-width: 92%; white-space: pre-wrap; }
-.bubble.user { align-self: flex-end; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line-strong); border-bottom-right-radius: 4px; }
-.bubble.agent { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+/* The conversation: the person's words in a soft bubble tinted from the ink (its corner points to them); Nightlight
+   answers in plain text on the panel, like a note, so the boxes in the chat are only the things you act on. */
+.bubble { max-width: 85%; padding: 9px 14px; border-radius: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble.user { align-self: flex-end; background: color-mix(in oklab, var(--ink) 8%, var(--panel)); color: var(--ink);
+  border-bottom-right-radius: 6px; }
+.chat-log > .bubble.user:not(:first-child) { margin-top: 12px; } /* a new question starts a new exchange */
+.answer { align-self: stretch; max-width: 62ch; padding: 0 2px; font-size: 15px; line-height: 1.6; color: var(--ink); }
+.answer p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.answer p + p { margin-top: .7em; }
 .steps { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
 .chat-input { display: flex; gap: 8px; padding: 12px 14px 14px; border-top: 1px solid var(--line); }
 
@@ -199,7 +209,7 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .watch-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .watch-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 99px; padding: 5px 12px;
   font-size: 13px; box-shadow: var(--shadow); }
-.watch-chip.crit { border-color: var(--crit); }
+.watch-chip.crit { border-color: var(--crit-fill); }
 .watch-chip.sel { outline: 2px solid var(--accent); }
 .watch-details a { color: var(--accent); word-break: break-all; }
 .watch-form { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -208,7 +218,7 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .away { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   border-color: color-mix(in srgb, var(--glow) 60%, var(--line)); }
 .away .spacer, .needs .spacer { flex: 1; }
-.notify-toggle.on { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.notify-toggle.on { border-color: var(--ok-fill); color: var(--ok); font-weight: 600; }
 
 /* what Nightlight may do on a device */
 .perms { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column;
@@ -248,7 +258,7 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .step { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .step-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok, #3a9a5b); flex: none; transform: translateY(-1px); }
 .step-dot.busy { background: var(--muted); animation: pulse 1s infinite alternate; }
-.step-dot.bad { background: var(--crit); }
+.step-dot.bad { background: var(--crit-fill); }
 .step-result { color: var(--ink); }
 .step-details { flex-basis: 100%; margin-left: 13px; }
 .step-details pre { white-space: pre-wrap; font-size: 11px; max-height: 220px; overflow: auto; margin: 4px 0;
@@ -256,7 +266,7 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
 
 .remove-device { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
-.remove-confirm { padding: 8px 10px; border: 1px solid var(--crit); border-radius: 8px; }
+.remove-confirm { padding: 8px 10px; border: 1px solid var(--crit-fill); border-radius: 8px; }
 button.danger { background: var(--crit); color: var(--on-status); border-color: var(--crit); }
 
 
@@ -264,7 +274,7 @@ button.danger { background: var(--crit); color: var(--on-status); border-color: 
 
 .expert { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .expert-body ol { padding-left: 18px; margin: 6px 0; }
-.risk.read { color: var(--ok); border-color: var(--ok); }
+.risk.read { color: var(--ok); border-color: var(--ok-fill); }
 
 .deep-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 2px; color: var(--muted); }
 

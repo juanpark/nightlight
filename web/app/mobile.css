@@ -7,13 +7,21 @@
 
   /* chat: the input never covered */
   .chat-input textarea { font-size: 16px; } /* below 16px iOS zooms the page on focus */
-  .bubble { max-width: 100%; }
+  .bubble { max-width: 88%; }
 
   /* panels and the device drawer use the full width */
   .drawer { margin: 0; }
   .needs-row { flex-wrap: wrap; }
   .tabs { overflow-x: auto; }
   .vitals { gap: 8px; }
+
+  /* fingers: every control on the home is at least 44px tall */
+  .homebar .chips button, .view-switch button { min-height: 44px; padding-inline: 15px; }
+  .homemap .react-flow__controls-button { width: 44px; height: 44px; }
+  .homemap .react-flow__controls-button svg { max-width: 16px; max-height: 16px; }
+  .firstrun-line .linkish { display: inline-flex; align-items: center; min-height: 44px; }
+  .needs-strip button, .needs-list button { min-height: 44px; }
+  .dtools button { min-height: 46px; } /* the toolbar sits outside the map's zoom, so leave a little room */
 }
 
 /* The map becomes a grid of tiles on phones (the desktop layout positions them by hand). */

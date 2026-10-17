@@ -25,7 +25,7 @@
   align-items: center; gap: 4px 10px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 12px; box-shadow: var(--shadow); }
 .homemap .react-flow { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
-.homemap .react-flow { --xy-edge-stroke-default: var(--offline); --xy-controls-button-background-color-default: var(--panel);
+.homemap .react-flow { --xy-edge-stroke-default: var(--offline-fill); --xy-controls-button-background-color-default: var(--panel);
   --xy-controls-button-color-default: var(--ink); --xy-controls-button-border-color-default: var(--line);
   --xy-minimap-background-color-default: var(--panel); --xy-attribution-background-color-default: transparent;
   --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--bg) 65%, transparent); }
@@ -39,8 +39,8 @@
 .dnode { position: relative; width: 200px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 9px 10px;
   box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: box-shadow .15s; }
 .dnode.sample { border-style: dashed; }
-.dnode.warn { border-color: var(--warn); }
-.dnode.crit { border-color: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 18%, transparent), var(--shadow); }
+.dnode.warn { border-color: var(--warn-fill); }
+.dnode.crit { border-color: var(--crit-fill); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit-fill) 18%, transparent), var(--shadow); }
 .dnode.offline { opacity: .8; }
 .dnode.sel { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent), var(--shadow); }
 .dnode.compact { width: 200px; align-items: center; padding: 14px 10px; }
@@ -49,32 +49,32 @@
 .dhead { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .dicon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; flex: none; color: var(--ink);
-  background: var(--bg); box-shadow: inset 0 0 0 2.5px var(--ok); }
-.dnode.compact .dicon { width: 52px; height: 52px; box-shadow: inset 0 0 0 4px var(--ok); }
-.dicon.warn { box-shadow: inset 0 0 0 2.5px var(--warn); }
-.dicon.crit { box-shadow: inset 0 0 0 2.5px var(--crit); }
-.dicon.offline { box-shadow: inset 0 0 0 2.5px var(--offline); color: var(--muted); }
-.dnode.compact .dicon.warn { box-shadow: inset 0 0 0 4px var(--warn); }
-.dnode.compact .dicon.crit { box-shadow: inset 0 0 0 4px var(--crit); }
-.dnode.compact .dicon.offline { box-shadow: inset 0 0 0 4px var(--offline); }
+  background: var(--bg); box-shadow: inset 0 0 0 2.5px var(--ok-fill); }
+.dnode.compact .dicon { width: 52px; height: 52px; box-shadow: inset 0 0 0 4px var(--ok-fill); }
+.dicon.warn { box-shadow: inset 0 0 0 2.5px var(--warn-fill); }
+.dicon.crit { box-shadow: inset 0 0 0 2.5px var(--crit-fill); }
+.dicon.offline { box-shadow: inset 0 0 0 2.5px var(--offline-fill); color: var(--muted); }
+.dnode.compact .dicon.warn { box-shadow: inset 0 0 0 4px var(--warn-fill); }
+.dnode.compact .dicon.crit { box-shadow: inset 0 0 0 4px var(--crit-fill); }
+.dnode.compact .dicon.offline { box-shadow: inset 0 0 0 4px var(--offline-fill); }
 .dnode .needs-mark { position: absolute; top: -8px; right: -8px; }
 .dgauges { display: flex; justify-content: space-between; }
 .gauge { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); gap: 1px; }
 .gauge text { font-size: 11px; font-weight: 700; fill: var(--ink); }
 .g-track { fill: none; stroke: var(--line); stroke-width: 3.5; }
-.g-arc { fill: none; stroke: var(--ok); stroke-width: 3.5; stroke-linecap: round; }
-.gauge.warn .g-arc { stroke: var(--warn); }
-.gauge.crit .g-arc { stroke: var(--crit); }
+.g-arc { fill: none; stroke: var(--ok-fill); stroke-width: 3.5; stroke-linecap: round; }
+.gauge.warn .g-arc { stroke: var(--warn-fill); }
+.gauge.crit .g-arc { stroke: var(--crit-fill); }
 .gauge.none .g-arc { stroke: none; }
 .dsilent { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; border-radius: 8px;
-  background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--offline) 12%, transparent) 6px 12px); }
+  background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--offline-fill) 12%, transparent) 6px 12px); }
 .dapps { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
   padding-top: 6px; }
 .dapps .dot { width: 7px; height: 7px; }
 /* a watched thing: whether it answers, and who checks it */
 .dnode.watched { gap: 4px; }
 .dnode.watched.router { border-width: 2px; border-color: var(--accent); }
-.dnode.watched.router.crit { border-color: var(--crit); }
+.dnode.watched.router.crit { border-color: var(--crit-fill); }
 .dwatch { font-size: 13px; padding-left: 40px; color: var(--ink); }
 .dwatch.crit { color: var(--crit); font-weight: 600; }
 .dwatch.offline { color: var(--muted); }
@@ -136,9 +136,9 @@
 .dchip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dchip svg { flex: none; }
 .dchip.ok svg { color: var(--ok); }
-.dchip.warn { border-color: var(--warn); }
+.dchip.warn { border-color: var(--warn-fill); }
 .dchip.warn svg { color: var(--warn); }
-.dchip.crit { border-color: var(--crit); }
+.dchip.crit { border-color: var(--crit-fill); }
 .dchip.crit svg { color: var(--crit); }
 .dfavs.hl .dchip { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }
 
@@ -182,3 +182,10 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
   .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--glow) 70%, transparent), var(--shadow); }
   .dchip.lit-app { animation: none; }
 }
+
+/* Touch screens: the map sits still until "Move the map", so swipes scroll the page. */
+.hm-canvas.still .react-flow__pane, .hm-canvas.still .react-flow__node, .hm-canvas.still .react-flow__edge,
+.hm-canvas.still .react-flow__renderer { touch-action: pan-x pan-y pinch-zoom; cursor: default; }
+.hm-move { position: absolute; left: 10px; bottom: 22px; z-index: 5; display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 16px; border-radius: 99px; box-shadow: var(--shadow); font-weight: 600; }
+.hm-move.on { background: var(--primary); color: var(--on-primary); border-color: transparent; }

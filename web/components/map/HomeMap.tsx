@@ -3,7 +3,7 @@
 // how they relate. It opens fitted to whatever screen it is on. Positions and lines are layout only: saving them
 // never touches a device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Trash as Trash2 } from "@/src/components/icons";
+import { MoveMap, Trash as Trash2 } from "@/src/components/icons";
 import {
   Background, BackgroundVariant, ConnectionMode, Controls, MiniMap, Position, ReactFlow, useNodesState,
   type FinalConnectionState, type NodeChange, type ReactFlowInstance,
@@ -93,6 +93,18 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const [focus, setFocus] = useState<{ id: string; by: "tap" | "zoom" | "chat" } | null>(null);
   const [focusH, setFocusH] = useState(0);
   const [sheet, setSheet] = useState<string | null>(null);
+  // On a touch screen the map starts still, so a swipe over it scrolls the page and a tap still opens a device;
+  // "Move the map" hands it panning, pinching and dragging until "Done".
+  const [touch, setTouch] = useState(false);
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia("(pointer: coarse)");
+    setTouch(m.matches);
+    const on = () => setTouch(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  const still = touch && !live;
   const phone = useRef(false);
   useEffect(() => {
     const m = window.matchMedia("(max-width: 700px)");
@@ -306,7 +318,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     }}>
       {/* any hand on the map (a card, the paper, the minimap, the zoom buttons, a pinch, a wheel, a key) keeps the
           chat's camera still until it has been off for a few seconds */}
-      <div className="hm-canvas" ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}
+      <div className={`hm-canvas ${still ? "still" : ""}`} ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}
         onKeyDownCapture={() => { lastHands.current = Date.now(); }}>
       <ReactFlow<DeviceNodeType, LinkEdgeType>
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
@@ -331,15 +343,18 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         onConnect={connect} onConnectEnd={connectEnd} connectionMode={ConnectionMode.Loose} connectionRadius={30}
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
-        panOnScroll zoomOnScroll={false} zoomOnPinch zoomOnDoubleClick={false}
+        panOnDrag={!still} nodesDraggable={!still} nodesConnectable={!still}
+        panOnScroll zoomOnScroll={false} zoomOnPinch={!still} zoomOnDoubleClick={false}
         fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }}>
         {/* graph paper: fine squares, with a stronger line every fifth */}
         <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(128,142,190,.14)" />
         <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(128,142,190,.26)" />
-        <Controls showInteractive={false} position="top-right" />
+        <Controls showInteractive={false} position={touch ? "bottom-right" : "top-right"} /> {/* on touch: clear of the devices */}
         <MiniMap className="hm-minimap" pannable zoomable style={{ width: 140, height: 90 }}
           nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />
       </ReactFlow>
+      {touch && <button className={`hm-move ${live ? "on" : ""}`} aria-pressed={live} onClick={() => setLive(!live)}>
+        {live ? "Done" : <><MoveMap size={18} aria-hidden /> Move the map</>}</button>}
       {chosen && chosenKind && (
         <div className="hm-linkbar" role="group" aria-label="This line">
           <span className="small">{named(chosen.from)} {LINK[chosenKind].verb} {named(chosen.to)}
@@ -361,7 +376,9 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
             <svg width="26" height="8" aria-hidden><line x1="1" y1="4" x2="25" y2="4"
               style={{ stroke: LINK[k].color, strokeWidth: 2, strokeDasharray: LINK[k].dash }} />
             </svg>{LINK[k].verb}</span>))}
-        <span className="hm-hint">Drag from a dot on a device to another to link them · pinch or use the buttons to zoom</span>
+        <span className="hm-hint">{touch
+          ? "Tap a device to open it · Move the map to pan, pinch and link devices"
+          : "Drag from a dot on a device to another to link them · pinch or use the buttons to zoom"}</span>
       </div>
     </div>
   );

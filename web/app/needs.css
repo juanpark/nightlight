@@ -36,8 +36,8 @@
 .role-pick { display: block; margin-bottom: 6px; }
 .avail { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--line); }
 .avail i { display: block; height: 100%; }
-.avail i.ok { background: var(--ok); }
-.avail i.crit { background: var(--crit); }
+.avail i.ok { background: var(--ok-fill); }
+.avail i.crit { background: var(--crit-fill); }
 .avail i.none { background: var(--line); }
 .avail-scale { display: flex; justify-content: space-between; margin-top: 2px; }
 .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
@@ -156,7 +156,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .app-chip { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 10px; text-align: left; min-width: 0;
   font: inherit; font-size: 14px; }
 .app-chip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-chip.warn { border-color: var(--warn); }
-.app-chip.crit { border-color: var(--crit); }
+.app-chip.warn { border-color: var(--warn-fill); }
+.app-chip.crit { border-color: var(--crit-fill); }
 .app-chip .dstar { color: var(--glow); fill: var(--glow); flex: none; }
 @media (max-width: 380px) { .app-grid { grid-template-columns: minmax(0, 1fr); } }
