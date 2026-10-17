@@ -123,3 +123,24 @@ def test_asking_for_mac_folders_four_times_at_once_makes_one_request(client, sta
     with ThreadPoolExecutor(4) as pool:
         ids = list(pool.map(lambda _: real.request_mac_folders(started, mac["deviceId"])["actionId"], range(4)))
     assert len(set(ids)) == 1
+
+
+def test_an_overtaken_setup_attempt_can_never_write(client, started):  # codex release rev3 #1
+    from datetime import datetime, timedelta, timezone
+    import pytest
+    from nightlight_api import real
+    from nightlight_api.errors import ApiError
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "os": "Debian 12"})
+    ref = db.device(started, dev["deviceId"])
+    ref.update({"setup": {"preset": "fix", "autoUpdate": False, "macFolders": False, "state": "applying",
+                          "attempt": "setup_A", "claimedAt": datetime.now(timezone.utc) - timedelta(minutes=5)}})
+    assert client.post(f"/api/devices/{dev['deviceId']}/setup", json={"preset": "fix"}).json()["done"]  # B
+    client.post(f"/api/devices/{dev['deviceId']}/permissions",
+                json={"diagnose": False, "cleanup": False, "updates": False, "logs": [], "restart_container": [],
+                      "restart_service": []})  # the owner restricts it afterwards
+    with pytest.raises(ApiError) as e:  # A wakes up with its old snapshot
+        real.set_permissions(started, dev["deviceId"], {**real.DEFAULT_PERMISSIONS, "cleanup": True},
+                             also={"setup.permsApplied": True}, setup_attempt="setup_A")
+    assert e.value.code == "setup_superseded"
+    assert ref.get().to_dict()["permissions"]["diagnose"] is False

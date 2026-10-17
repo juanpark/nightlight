@@ -1123,6 +1123,7 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
         choice = {k: prior.get(k) for k in ("preset", "autoUpdate", "macFolders", "permsApplied")} if stalled else \
             {"preset": preset, "autoUpdate": auto_update, "macFolders": mac_folders}
         if d.get("manage") == "app":
+            choice["attempt"] = new_id("setup")  # this attempt's identity: only it may write or finish this setup
             tx.update(ref, {"setup": {**choice, "state": "applying", "claimedAt": _now()}})
         return d, choice
 
@@ -1145,10 +1146,14 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
                  "fix": {"diagnose": True, "cleanup": True, "updates": True, "autoUpdate": auto_update,
                          "logs": logs, "restart_container": containers, "restart_service": units},
                  "custom": {**DEFAULT_PERMISSIONS, **current, "autoUpdate": auto_update}}[preset]
-        if choice.get("permsApplied"):
-            pass  # an earlier attempt already applied them (and the owner may have changed them since): leave them
-        else:  # recorded in the same transaction as the permissions, so a resumed setup never applies them twice
-            set_permissions(uid, device_id, perms, also={"setup.permsApplied": True})
+        if not choice.get("permsApplied"):  # an earlier attempt that already applied them: leave them
+            try:  # recorded in the same transaction as the permissions, and only while this attempt owns the setup
+                set_permissions(uid, device_id, perms, also={"setup.permsApplied": True},
+                                setup_attempt=choice.get("attempt"))
+            except ApiError as e:
+                if e.code != "setup_superseded":
+                    raise
+                return {"ok": True, **((ref.get().to_dict() or {}).get("setup") or {}), "already": True}
         out["applied"] = True
     else:
         why = "strict_device" if d.get("manage") == "strict" else "update_helper"
@@ -1167,11 +1172,21 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
     done = out["applied"] or d.get("manage") == "strict"
     # Done once chosen: applied, or a strict device (its choices are made on the device). A helper too old to take
     # the choice keeps its card until it is updated.
-    if done:
-        ref.update({"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset,
-                    "setup": {**out, "state": "done", **({"why": why} if why else {})}})
-    else:
-        ref.update({"setup": firestore.DELETE_FIELD})
+    @firestore.transactional
+    def finish(tx):  # only the attempt that owns the setup finishes it
+        cur = ((ref.get(transaction=tx).to_dict() or {}).get("setup") or {})
+        if d.get("manage") == "app" and cur.get("attempt") != choice.get("attempt"):
+            return False
+        if done:
+            tx.update(ref, {"setupAt": firestore.SERVER_TIMESTAMP, "setupPreset": preset,
+                            "setup": {**out, "state": "done", "attempt": choice.get("attempt"),
+                                      **({"why": why} if why else {})}})
+        else:
+            tx.update(ref, {"setup": firestore.DELETE_FIELD})
+        return True
+
+    if not db.run_transaction(finish):
+        return {"ok": True, **((ref.get().to_dict() or {}).get("setup") or {}), "already": True}
     return {"ok": True, **out, "done": done, **({"why": why} if why else {})}
 
 
@@ -1193,7 +1208,8 @@ def request_mac_folders(uid: str, device_id: str) -> dict:
     a = _numbered_request(uid, device_id, "mac_folders")
     return {"actionId": a["id"], "status": a["status"]}
 
-def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = None) -> dict:
+def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = None,
+                    setup_attempt: str | None = None) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device
     reported. The helper applies them on its next report (and still checks each action itself)."""
     ref = db.device(uid, device_id)
@@ -1206,6 +1222,10 @@ def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = N
             raise not_found()
         if d.get("manage") != "app":
             raise ApiError(409, "strict_device" if d.get("manage") == "strict" else "update_helper")
+        if setup_attempt is not None:  # a setup attempt writes only while it still owns an unfinished setup
+            st = d.get("setup") or {}
+            if st.get("attempt") != setup_attempt or st.get("state") != "applying" or st.get("permsApplied"):
+                raise ApiError(409, "setup_superseded")
         services = {s.id: s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)}
         containers = {s.get("name") for s in services.values() if s.get("kind") == "container"}
         units = {s.get("unit") for s in services.values() if s.get("kind") == "system" and s.get("unit")}
