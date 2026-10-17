@@ -494,7 +494,8 @@ def checks(facts: dict) -> list[dict]:
     pending = facts.get("updatesPending")
     if pending:
         out.append({"id": "f_updates", "check": "updates_pending", "severity": "info",
-                    "message": f"{pending} software updates are waiting.", "evidence": f"{pending} upgradable packages"})
+                    "message": f"{pending} system updates are waiting (the operating system and installed programs, "
+                               "not Nightlight).", "evidence": f"{pending} upgradable packages"})
     uptime = facts.get("uptimeSec")
     if uptime and uptime > 180 * 86400:
         weeks = int(uptime // (7 * 86400))
