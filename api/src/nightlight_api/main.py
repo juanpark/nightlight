@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from . import __version__, actions, archive, db, expert, demo, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
+from . import __version__, actions, archive, db, expert, demo, links, memory, notebook, playbooks, quota, release, real, sim, trust as trustlib, turns, watch
 from .auth import current_uid, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
@@ -34,8 +34,8 @@ class StartBody(Strict):
 
 
 class LayoutBody(Strict):
-    x: int | None = Field(default=None, ge=0, le=2000)
-    y: int | None = Field(default=None, ge=0, le=2000)
+    x: int | None = Field(default=None, ge=-5000, le=5000)  # the map is a canvas: anywhere within reach
+    y: int | None = Field(default=None, ge=-5000, le=5000)
     name: str | None = Field(default=None, min_length=1, max_length=40)
     tags: list[str] | None = Field(default=None, max_length=6)
 
@@ -168,6 +168,27 @@ def device_layout(device_id: str, body: LayoutBody, uid: str = Depends(current_u
         return update
 
     return {"ok": True, **db.run_transaction(run)}
+
+
+class LinkBody(Strict):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    src: str = Field(alias="from", pattern=r"^[a-z0-9_-]{2,40}$")
+    dst: str = Field(alias="to", pattern=r"^[a-z0-9_-]{2,40}$")
+    kind: Literal["network", "backup", "depends", "power"]
+
+
+@app.post("/api/links", status_code=201)
+def link_put(body: LinkBody, uid: str = Depends(current_uid)):
+    """Draw (or change the kind of) a line between two devices on the map. Layout only: no device is touched."""
+    return links.put(uid, body.src, body.dst, body.kind)
+
+
+@app.delete("/api/links/{link_id}")
+def link_delete(link_id: str, uid: str = Depends(current_uid)):
+    if not re.fullmatch(r"[a-z0-9_-]{2,40}__[a-z0-9_-]{2,40}", link_id):
+        raise not_found()
+    links.remove(uid, link_id)
+    return {"ok": True}
 
 
 @app.post("/api/devices/{device_id}/permissions")

@@ -6,7 +6,7 @@ HOME_PI = {
         {
             "id": "pi-1", "name": "Raspberry Pi", "kind": "pi", "os": "Debian 12 (simulated)",
             "purpose": "Runs your home VPN and your car's data logger.",
-            "health": "verified", "x": 120, "y": 80, "diskGb": 6.4, "baseUsedGb": 1.6,
+            "health": "verified", "x": 40, "y": 40, "diskGb": 6.4, "baseUsedGb": 1.6,
             "diskConsumers": [
                 {"id": "logs", "what": "old log files", "sizeGb": 2.1},
                 {"id": "db_backup", "what": "car logger database backup", "sizeGb": 1.4},
@@ -22,7 +22,7 @@ HOME_PI = {
         },
         {
             "id": "mac-1", "name": "Mac Mini", "kind": "mac", "os": "macOS 15 (simulated)",
-            "purpose": "Runs your home automation.", "health": "verified", "x": 320, "y": 80,
+            "purpose": "Runs your home automation.", "health": "verified", "x": 320, "y": 40,
             "diskGb": 256, "baseUsedGb": 133, "diskConsumers": [],
             "vitals": {"cpu": 9, "mem": 48, "uptime": 604800},
             "services": [{"id": "home-assistant", "name": "Home Assistant", "category": "home", "status": "ok",
@@ -30,7 +30,7 @@ HOME_PI = {
         },
         {
             "id": "nas-1", "name": "NAS", "kind": "nas", "os": "NAS OS (simulated)",
-            "purpose": "Stores family photos and runs the nightly backup.", "health": "verified", "x": 220, "y": 220,
+            "purpose": "Stores family photos and runs the nightly backup.", "health": "verified", "x": 320, "y": 320,
             "diskGb": 4000, "baseUsedGb": 2840, "diskConsumers": [],
             "vitals": {"cpu": 4, "mem": 33, "uptime": 2592000},
             "services": [
@@ -45,7 +45,7 @@ HOME_PI = {
         },
         {
             "id": "game-1", "name": "Game server", "kind": "gameserver", "os": "Ubuntu 24.04 (simulated)",
-            "purpose": "Hosts your family's Minecraft world.", "health": "verified", "x": 120, "y": 360,
+            "purpose": "Hosts your family's Minecraft world.", "health": "verified", "x": 40, "y": 320,
             "diskGb": 120, "baseUsedGb": 40,
             "diskConsumers": [
                 {"id": "world", "what": "Minecraft world", "sizeGb": 6.2},
@@ -61,22 +61,28 @@ HOME_PI = {
         },
         {
             "id": "nvr-1", "name": "Camera recorder", "kind": "camera", "os": "Recorder firmware (simulated)",
-            "purpose": "Records the front-door camera.", "health": "unknown", "x": 420, "y": 220,
+            "purpose": "Records the front-door camera.", "health": "unknown", "x": 600, "y": 40,
             "diskGb": 1000, "baseUsedGb": 630, "diskConsumers": [],
             "vitals": {"cpu": None, "mem": None, "uptime": None}, "services": [],
         },
         {
             "id": "router-1", "name": "Router", "kind": "router", "os": "Router firmware (simulated)",
-            "purpose": "Connects everything to the internet.", "health": "verified", "x": 270, "y": 360,
+            "purpose": "Connects everything to the internet.", "health": "verified", "x": 600, "y": 320,
             "diskGb": None, "baseUsedGb": None, "diskConsumers": [],
             "vitals": {"cpu": 7, "mem": 40, "uptime": 5184000}, "services": [],
         },
+    ],
+    # How the sample home hangs together (drawn as lines on the map): (from, to, kind).
+    "links": [
+        ("pi-1", "router-1", "network"), ("mac-1", "router-1", "network"), ("nas-1", "router-1", "network"),
+        ("game-1", "router-1", "network"), ("nvr-1", "router-1", "network"),
+        ("game-1", "nas-1", "backup"), ("pi-1", "nas-1", "backup"), ("mac-1", "nvr-1", "depends"),
     ],
     # The story starts with the Pi's disk nearly full.
     "initial_incident": {"deviceId": "pi-1", "kind": "disk_full"},
 }
 
 # A signed-in owner starts with only their own (real) devices; the sample home can be switched on and off.
-EMPTY = {"devices": [], "initial_incident": None}
+EMPTY = {"devices": [], "links": [], "initial_incident": None}
 
 TEMPLATES = {"home-pi": HOME_PI, "empty": EMPTY}

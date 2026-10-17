@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, memory, sim, trust as trustlib
+from . import db, links, memory, sim, trust as trustlib
 from .config import settings
 from .errors import ApiError, conflict, invalid, not_found
 from .ids import new_id
@@ -133,6 +133,7 @@ def _seed(uid: str, op: str, generation: int, template: str, hook) -> int:
             tx.set(db.device(uid, device_id), device)
             for svc_id, svc in services.items():
                 tx.set(db.services(uid, device_id).document(svc_id), {**svc, "demoGeneration": generation})
+        links.seed(tx, uid, generation, t.get("links", []))
         for action_type in sim.ACTIONS:
             tx.set(db.trust_doc(uid, "sim", action_type), trustlib.new_doc(action_type, generation))
 
@@ -161,6 +162,8 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
                     for s in d.collection(sub).get()]
     _delete_older(uid, op, generation, service_refs, hook)
     _delete_older(uid, op, generation, old_devices, hook)
+    _delete_older(uid, op, generation, [s.reference for s in db.links(uid).get()
+                                        if s.to_dict().get("realm") != "real"], hook)  # links between real devices stay
     _delete_older(uid, op, generation, [s.reference for s in db.events(uid).get()
                                         if s.to_dict().get("realm") != "real"], hook)  # real history stays
     old_sessions = [s.reference for s in db.sessions(uid).get()]

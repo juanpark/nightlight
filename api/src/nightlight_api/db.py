@@ -28,6 +28,10 @@ def device(uid: str, device_id: str):
     return devices(uid).document(device_id)
 
 
+def links(uid: str):
+    return user(uid).collection("links")
+
+
 def services(uid: str, device_id: str):
     return device(uid, device_id).collection("services")
 
