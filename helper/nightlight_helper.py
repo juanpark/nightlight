@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.28"
+VERSION = "0.9.29"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
