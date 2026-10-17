@@ -275,3 +275,13 @@ def test_signing_the_investigation_card_resumes_the_chat(client, owner):
     turn = db.turns(uid, "sess_test").document(r["continuationTurnId"]).get().to_dict()
     assert turn["mode"] == "investigate" and turn["kind"] == "event" and turn["event"] == "investigation_approved"
     assert turn["policy"] == "continue" and "why it crashed" in turn["input"]
+
+
+def test_passkeys_are_made_for_the_app_never_a_preview(started, monkeypatch):
+    preview = "https://fe-preview---nightlight-web.example.run.app"
+    monkeypatch.setattr(expert.settings, "web_origins", ["http://localhost:3000", "https://app.example", preview])
+    monkeypatch.setattr(expert.settings, "app_url", "https://app.example")
+    assert expert._origin(preview) == "https://app.example"  # a preview may call the API, not own a passkey
+    assert expert._origin("http://localhost:3000") == "http://localhost:3000"  # local development
+    assert expert._origin(None) == "https://app.example"
+    assert expert._origin("https://evil.example") == "https://app.example"

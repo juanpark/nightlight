@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from google.cloud import firestore
 
 from . import db
-from .config import settings
+from .config import passkey_origin_ok, settings
 from .errors import ApiError, not_found
 
 COMMAND_TTL = 15 * 60  # seconds a signed command stays valid
@@ -40,11 +40,11 @@ def challenge_for(payload: dict) -> str:
 
 
 def _origin(request_origin: str | None) -> str:
-    """The web origin the passkey belongs to: the request's, if it is one of ours."""
-    if request_origin and request_origin in settings.web_origins:
+    """The web origin the passkey belongs to: the app itself, or a local dev server making the request. Preview
+    deploys may call the API but never create or use expert passkeys."""
+    if request_origin and request_origin in settings.web_origins and passkey_origin_ok(request_origin):
         return request_origin
-    https = [o for o in settings.web_origins if o.startswith("https://")]
-    return (https or settings.web_origins)[-1]
+    return settings.app_url
 
 
 def _fingerprint(der: bytes) -> str:

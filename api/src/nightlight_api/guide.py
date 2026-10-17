@@ -9,8 +9,7 @@ from .config import settings
 
 
 def _web() -> str:
-    https = [o for o in settings.web_origins if o.startswith("https://")]
-    return (https or settings.web_origins or ["the Nightlight app"])[-1]
+    return settings.app_url
 
 
 @lru_cache(maxsize=1)

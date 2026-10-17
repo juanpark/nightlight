@@ -9,11 +9,18 @@ def _list(name: str, default: str = "") -> list[str]:
     return [v for v in re.split(r"[,\s]+", os.environ.get(name, default)) if v]
 
 
+def passkey_origin_ok(origin: str) -> bool:
+    return origin == settings.app_url or origin.startswith(("http://localhost:", "http://127.0.0.1:"))
+
+
 @dataclass
 class Settings:
     project_id: str = os.environ.get("GOOGLE_CLOUD_PROJECT", "demo-nightlight")
     port: int = int(os.environ.get("PORT", "8080"))
     web_origins: list[str] = field(default_factory=lambda: _list("WEB_ORIGINS", "http://localhost:3000"))
+    # The app people use (install lines, links in answers). Other web origins (local dev, previews) may call the API
+    # but are never handed out, and passkeys for expert sessions are made only here or on a local dev server.
+    app_url: str = os.environ.get("APP_URL", "http://localhost:3000")
     # Reset barrier lease and batch size.
     reset_lease_seconds: int = int(os.environ.get("RESET_LEASE_SECONDS", "60"))
     reset_batch_size: int = int(os.environ.get("RESET_BATCH_SIZE", "20"))
