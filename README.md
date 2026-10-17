@@ -232,7 +232,7 @@ It changes nothing by default. What it can do, and only after you allow it:
 | `diagnose NAME` (or the "look into" switch) | read why a container or service is down, read-only, no card |
 | `logs NAME` (on in both setup presets) | include its last 30 log lines, scrubbed on the device |
 | `inspect` (or the "check why" switch) | run fixed read-only checks: biggest known folders, busiest programs, waiting updates, Docker disk use, DNS and internet, load, failing services |
-| `restart_container NAME` / `restart_service UNIT` | restart that one target, after your tap, only if it is stopped or failed |
+| `restart_container NAME` / `restart_service UNIT` | start that one target again after your tap if it stopped or failed; a container that runs but fails its own health check gets a restart card instead (helper 0.9.27+) |
 | `fix` (or the "clean up space" switch) | one clean-up from a fixed list (Trash, Homebrew / npm caches, Xcode build data, Docker's untagged images, apt cache, system journal), after your tap |
 | `update` (or the "updates" switch) | install a signed, newer helper after your tap (or automatically if you say so) |
 | `nightlight expert` at the device | pin your passkey so expert sessions can run commands you sign |
@@ -246,8 +246,6 @@ Removing a device is a card too: the helper uninstalls itself and the device lea
 - The trust ladder (jobs running on their own) applies to the sample home only.
 - The helper supports Linux (systemd) and macOS (launchd). **Windows is not supported**; a Windows PC can only be
   watched from another device (does it answer on the network).
-- On a real device, a container that is running but failing its own health check is not flagged yet, and a restart
-  is offered only for a stopped container (the sample home shows the planned behaviour).
 - Adding a Linux device needs one line in a terminal. Only the Mac has an installer, and macOS opens it only once it
   is notarized with a Developer ID.
 - Lines are drawn automatically only for what helpers can see: the router, backups, mounted shared folders and a
@@ -272,7 +270,6 @@ Removing a device is a card too: the helper uninstalls itself and the device lea
   a Docker package for NAS boxes, then Windows.
 - Recent logs on by default for apps that appear after setup, not only those present at setup.
 - A backup before any clean-up, so even a clean-up that can't be undone can be.
-- Health checks of running containers on real devices, with a restart for unhealthy ones.
 - Device token rotation and expiry; release signing in a hardware security module or CI outside the cloud.
 - Retention you choose per account, and account deletion that purges everything at once.
 - A local-first mode: the helper keeps watching and answering on the home network when the cloud is away.
