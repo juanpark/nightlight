@@ -381,6 +381,13 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 if part.function_response:
                     resp = dict(part.function_response.response or {})
                     line, details = _commentary(part.function_response.name, resp)
+                    # The stored message keeps each step's outcome too, so a reloaded chat shows the same work log.
+                    step = next((t for t in tool_calls if t["name"] == part.function_response.name
+                                 and "summary" not in t), None)
+                    if step is not None:
+                        step["summary"] = line
+                        if details:
+                            step["details"] = details[:DETAILS_CHARS]
                     yield out({"type": "tool_result", "name": part.function_response.name,
                                "summary": line, "details": details, "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":

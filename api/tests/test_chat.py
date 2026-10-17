@@ -164,3 +164,10 @@ def test_conversations_are_kept_for_30_days_and_readable_in_order(client, starte
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     soon = datetime.now(timezone.utc) + timedelta(days=29)
     assert all(m["expiresAt"] > soon for m in msgs) and "actionIds" in msgs[1]
+
+
+def test_stored_messages_keep_each_steps_outcome(client, started):
+    sid = new_session(client)
+    events(ask(client, sid))
+    msg = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    assert msg["toolCalls"] and all("summary" in t for t in msg["toolCalls"])
