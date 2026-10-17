@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, PlaceDoc, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, PlaceDoc, Runbook, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -104,6 +104,13 @@ export function useExpertStatus(tick = 0): { enabled: boolean } | null {
 export function useProfile(uid: string | null, deviceId: string | null) {
   return useCollection<{ id: string; text: string; by: string; updatedAt: Date | null }>(
     uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "profile"]).find((p) => p.id === "main");
+}
+
+/** A device's saved fixes, most used first (a sample device's only from the current sample home). */
+export function useRunbooks(uid: string | null, deviceId: string | null, gen: number | undefined): Runbook[] {
+  return useCollection<Runbook>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "runbooks"])
+    .filter((r) => r.demoGeneration == null || r.demoGeneration === gen)
+    .sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0));
 }
 
 /** A device's notebook, newest first. */

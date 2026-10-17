@@ -155,6 +155,20 @@ export interface Note {
   text: string;
   by: "nightlight" | "you";
   at: Date | null;
+  service?: string | null; // a note about one container or service on the device
+}
+
+/** A fix that worked on a device, as steps (`users/{uid}/devices/{id}/runbooks/{runbookId}`); never runs by itself. */
+export interface Runbook {
+  id: string; title: string; when: string; service?: string | null; uses?: number; lastUsedAt?: Date | null;
+  steps: { say: string; job?: { type: string; params?: Record<string, unknown> }; command?: string }[];
+  createdAt?: Date | null; demoGeneration?: number;
+}
+
+/** One finished job on a device (`GET /api/devices/{id}/log`). */
+export interface LogJob {
+  at: string; kind: string; title: string; ok: boolean; summary?: string; by: "you" | "nightlight" | "device";
+  actionId: string; service?: string | null; output?: string | null; command?: string | null;
 }
 
 export interface HistoryPoint {

@@ -1,6 +1,7 @@
 "use client";
 // One device, with progressive disclosure: a status sentence and what needs the person first, then three tabs
-// (Overview: how it is and what runs there; About: what Nightlight knows about it; Settings: what it may do).
+// (Overview: how it is and what runs there; Knowledge: what Nightlight knows about it, fixes that worked there and
+// what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
@@ -11,6 +12,8 @@ import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
 import HelperUpdate from "./HelperUpdate";
 import Notebook from "./Notebook";
+import Runbooks from "./Runbooks";
+import JobLog from "./JobLog";
 import DeviceProfile from "./DeviceProfile";
 import RemoveDevice from "./RemoveDevice";
 import ExpertSessions from "./ExpertSessions";
@@ -97,7 +100,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         <div className="tabs" role="tablist">
           {tabs.map((t) => (
             <button key={t} role="tab" aria-selected={current === t} className={current === t ? "on" : ""}
-              onClick={() => onTab(t)}>{t === "overview" ? "Overview" : t === "about" ? "About" : "Settings"}</button>
+              onClick={() => onTab(t)}>{t === "overview" ? "Overview" : t === "about" ? "Knowledge" : "Settings"}</button>
           ))}
         </div>
       )}
@@ -140,11 +143,15 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
         {real && <DeviceHistory uid={uid} deviceId={device.id} />}
         {!real && <DeviceProfile uid={uid} deviceId={device.id} />}
         {!real && <Notebook uid={uid} deviceId={device.id} />}
+        {!real && <Runbooks uid={uid} generation={generation} device={device} onAsk={onAsk} />}
+        {!real && <JobLog deviceId={device.id} actions={actions} />}
       </>}
 
       {current === "about" && <>
         <DeviceProfile uid={uid} deviceId={device.id} />
         <Notebook uid={uid} deviceId={device.id} />
+        <Runbooks uid={uid} generation={generation} device={device} onAsk={onAsk} />
+        <JobLog deviceId={device.id} actions={actions} />
         <Tags device={device} />
         <section className="drawer-section">
           <h4>Details</h4>
