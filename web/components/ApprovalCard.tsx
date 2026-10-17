@@ -18,7 +18,6 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const followed = useRef(false);
-  const decidedHere = useRef(false); // decided in this tab (its follow-up is this tab's to show)
   const appHost = useAppHost();
   const now = useNow(5000);
   const payload0 = (action?.params as { payload?: Record<string, unknown> } | undefined)?.payload;
@@ -56,10 +55,8 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
 
   // A real-device job finishes later (the helper runs it); its follow-up turn appears on the action when it does.
   useEffect(() => {
-    // only a card decided in this tab, or in the last couple of minutes: a reload doesn't replay old follow-ups
-    const at = (action?.decision as { at?: Date } | undefined)?.at;
-    const recent = decidedHere.current || (at instanceof Date && Date.now() - at.getTime() < 2 * 60 * 1000);
-    if (action?.continuationTurnId && !followed.current && action.decision?.by === "user" && recent
+    // (the chat runs it only if its answer isn't already in the saved conversation, so a reload never repeats it)
+    if (action?.continuationTurnId && !followed.current && action.decision?.by === "user"
         && ["done", "failed"].includes(action.status) && action.realm === "real") {
       followed.current = true;
       onFollowUp(action.continuationTurnId);
@@ -72,7 +69,6 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
     try {
       const r = await api<{ status: string; continuationTurnId?: string }>("POST", `/api/actions/${action!.id}/decide`,
         { decision });
-      decidedHere.current = true;
       if (r.continuationTurnId) { followed.current = true; onFollowUp(r.continuationTurnId); }
     } catch (e) {
       setErr(passkeyProblem(e));
@@ -88,7 +84,6 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
     try {
       const signed = await signWithPasskey(prep.challenge, prep.credentialId, prep.rpId);
       const r = await api<{ continuationTurnId?: string }>("POST", `/api/actions/${action!.id}/sign`, signed);
-      decidedHere.current = true;
       if (r.continuationTurnId) { followed.current = true; onFollowUp(r.continuationTurnId); } // it carries on
     } catch (e) {
       setErr(passkeyProblem(e, appHost?.host));

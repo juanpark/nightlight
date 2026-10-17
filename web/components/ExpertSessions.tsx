@@ -27,12 +27,14 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
   // Safari only lets a tap open the passkey prompt if nothing slow happens first: the registration options are
   // fetched when this opens (and again before they go stale), so the tap's first wait is the prompt itself.
   const appHost = useAppHost();
-  const canMake = open && key !== null && !key.enabled && passkeysSupported() && !!appHost?.here;
+  // never while a passkey is being made: the server keeps one challenge per account, and a new one would void it
+  const canMake = open && key !== null && !key.enabled && passkeysSupported() && !!appHost?.here && !busy;
   const [options, setOptions] = useState<{ value: Parameters<typeof createPasskey>[0]; at: number } | null>(null);
   const [round, setRound] = useState(0);
   useEffect(() => {
     if (!canMake) return;
     let live = true;
+    setOptions(null); // a challenge is used once: what was fetched before is spent or about to be replaced
     api<Parameters<typeof createPasskey>[0]>("POST", "/api/expert/register/options", {})
       .then((value) => { if (live) setOptions({ value, at: Date.now() }); })
       .catch((e) => { if (live) setErr(passkeyProblem(e, appHost?.host)); });
@@ -51,8 +53,7 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
       setMine(code);
       setKey({ enabled: true, ...saved });
     } catch (e) {
-      setErr(passkeyProblem(e, appHost?.host));
-      setOptions(null); setRound((n) => n + 1); // each challenge is used once: get a fresh one for the next tap
+      setErr(passkeyProblem(e, appHost?.host)); // the next challenge is fetched when this one is done (busy ends)
     } finally {
       setBusy(false);
     }
