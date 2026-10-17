@@ -92,3 +92,15 @@ def test_profile_is_kept_scrubbed_read_by_the_agent_and_gone_with_the_sample_hom
     assert "update_profile" in {t.__name__ for t in agent.make_tools(ctx, read_only=True)}
     demo.reset(started)
     assert notebook.profile(started, dev) is None
+
+
+def test_rev2_profile_write_from_an_old_turn_is_refused(client, started):  # rev2 #5
+    import pytest
+    from nightlight_api.errors import ApiError
+    dev = _sample_id(started)
+
+    def stale(tx):
+        raise ApiError(409, "stale")
+    with pytest.raises(ApiError):
+        notebook.set_profile(started, dev, "old attempt", "nightlight", generation(started), fence=stale)
+    assert notebook.profile(started, dev) is None

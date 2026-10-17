@@ -103,7 +103,7 @@ def profile(uid: str, device_id: str) -> dict | None:
     return {"text": p["text"], "by": p.get("by"), "updatedAt": p.get("updatedAt")} if p else None
 
 
-def set_profile(uid: str, device_id: str, text: str, by: str, generation: int | None) -> dict:
+def set_profile(uid: str, device_id: str, text: str, by: str, generation: int | None, fence=None) -> dict:
     """Replace the profile (scrubbed; something that looks like a secret is refused, not stored)."""
     clean, hidden = scrub(text or "")
     clean = clean.strip()[:PROFILE_CHARS]
@@ -114,6 +114,8 @@ def set_profile(uid: str, device_id: str, text: str, by: str, generation: int | 
 
     @firestore.transactional
     def run(tx):
+        if fence:
+            fence(tx)
         user = db.user(uid).get(transaction=tx).to_dict()
         from .actions import _require_ready
         _require_ready(user, generation)

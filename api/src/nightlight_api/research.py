@@ -38,11 +38,38 @@ def _count(uid: str) -> None:
     db.run_transaction(run)
 
 
-def search(uid: str, ip: str, question: str, fence=None, client=None) -> dict:
+_LOCAL_HOST = re.compile(r"\b[\w-]+\.(?:local|lan|home|internal|localdomain|home\.arpa|corp|intranet)\b", re.I)
+
+
+def home_names(uid: str, generation: int | None) -> list[str]:
+    """Words that identify this person's home: device names, tags, container and service names, their name hint."""
+    from . import real
+    names = set()
+    for snap in db.devices(uid).stream():
+        d = snap.to_dict() or {}
+        if not real.is_current(d, generation):
+            continue
+        names.update(x for x in [d.get("name")] + list(d.get("tags") or []) if x)
+        names.update(s.to_dict().get("name") for s in db.services(uid, snap.id).stream() if s.to_dict().get("name"))
+    hint = (db.user(uid).get().to_dict() or {}).get("ownerHint") or ""
+    names.update(w for w in re.split(r"[^A-Za-z]+", hint.split("@")[0]) if len(w) > 1)
+    return sorted((n for n in names if isinstance(n, str) and len(n) >= 3), key=len, reverse=True)
+
+
+def anonymise(question: str, private_names=()) -> str:
+    """Strip what identifies the person's home or network before a question leaves for a search engine: secrets,
+    addresses, local host names, and the home's own names (devices, tags, apps, the person's name)."""
     clean, _ = scrub(question or "")
-    for pattern, word in _PRIVATE:  # nothing that identifies the person's network goes to a search engine
+    for pattern, word in _PRIVATE:
         clean = pattern.sub(word, clean)
-    clean = " ".join(clean.split())[:500]
+    clean = _LOCAL_HOST.sub("[a local computer]", clean)
+    for n in private_names:
+        clean = re.sub(rf"(?<![\w]){re.escape(n)}(?![\w])", "[a name]", clean, flags=re.I)
+    return " ".join(clean.split())[:500]
+
+
+def search(uid: str, ip: str, question: str, fence=None, client=None, private_names=()) -> dict:
+    clean = anonymise(question, private_names)
     if not clean:
         return {"status": "error", "reason": "nothing to search for"}
     try:
@@ -63,7 +90,8 @@ def search(uid: str, ip: str, question: str, fence=None, client=None) -> dict:
         sources = [{"title": c.web.title, "url": c.web.uri} for c in (gm.grounding_chunks or [])
                    if getattr(c, "web", None)][:5] if gm else []
         answer, _ = scrub(r.text or "")
-        return {"status": "done", "question": clean, "answer": answer[:2500], "sources": sources}
+        return {"status": "done", "question": clean, "answer": answer[:2500], "sources": sources,
+                "costUsd": actual or 0.0}
     except Exception as e:  # research never breaks a turn
         return {"status": "error", "reason": f"the search didn't work ({type(e).__name__})"}
     finally:

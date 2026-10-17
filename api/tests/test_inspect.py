@@ -219,7 +219,8 @@ def test_restarts_check_tells_a_crash_from_a_clean_restart(helper, monkeypatch):
     helper._inspect_until[0] = time.time() + 30
     monkeypatch.setattr(helper.sys, "platform", "linux")
     monkeypatch.setattr(helper.shutil, "which", lambda n: None)
-    crash = "reboot   system boot  6.1.0 Sat Oct 17 03:43   still running\nreboot   system boot  6.1.0 Sat Oct  3 18:50\n"
+    crash = ("reboot   system boot  6.1.0 Sat Oct 17 03:43   still running\nreboot   system boot  6.1.0 Sat Oct  3 18:50\n"
+             "shutdown system down  6.1.0 Thu Oct  1 09:00\n")  # shutdowns are recorded here; none before 03:43
     clean = "reboot   system boot  6.1.0 Sat Oct 17 03:43   still running\nshutdown system down  6.1.0 Sat Oct 17 03:40\n"
     monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: crash)
     assert "NOT clean" in helper._inspect_restarts()
@@ -239,3 +240,16 @@ def test_restarts_unknown_without_history_and_clean_after_any_shutdown(helper, m
     long_ago = "reboot   system boot  6.1.0 Sat Oct 17 03:43\nshutdown system down  6.1.0 Fri Oct 16 22:00\n"
     monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: long_ago)
     assert "The last start was clean" in helper._inspect_restarts()
+
+
+def test_restarts_on_a_mac_without_shutdown_records_is_unknown(helper, monkeypatch):  # rev2 #4
+    import time
+    helper._inspect_until[0] = time.time() + 30
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    monkeypatch.setattr(helper.os, "listdir", lambda d: [])
+    boots = "reboot time                                Sat Oct 17 03:43\nreboot time                                Sat Oct  3 18:50\n"
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: boots if cmd[:2] == ["last", "reboot"] else "")
+    assert "NOT clean" not in helper._inspect_restarts()
+    both = boots + "shutdown time                              Sat Oct  3 18:45\n"
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: both)
+    assert "NOT clean" in helper._inspect_restarts()  # shutdowns are recorded here, and none came before 03:43

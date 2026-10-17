@@ -651,7 +651,8 @@ def make_tools(ctx: TurnContext, read_only: bool):
             profile: the whole new profile text.
         """
         try:
-            notebook.set_profile(ctx.uid, device_id, profile, "nightlight", ctx.generation)
+            notebook.set_profile(ctx.uid, device_id, profile, "nightlight", ctx.generation,
+                                 fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
         except ApiError as e:
             if e.code == "stale":
                 raise
@@ -674,10 +675,13 @@ def make_tools(ctx: TurnContext, read_only: bool):
             question: the error or symptom, e.g. "macOS kernel panic watchdog timeout no checkins from watchdogd".
         """
         from . import research
+        if ctx.metrics["modelCalls"] >= ctx.max_calls:
+            return {"status": "error", "reason": "no steps left in this answer for a web search"}
+        ctx.metrics["modelCalls"] += 1  # admitted and counted before it runs, like every model call
         out = research.search(ctx.uid, ctx.ip, question,
-                              turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
-        if out.get("status") == "done":
-            ctx.metrics["modelCalls"] += 1
+                              turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation),
+                              private_names=research.home_names(ctx.uid, ctx.generation))
+        ctx.metrics["costUsd"] += out.pop("costUsd", 0.0) or 0.0
         return _bounded(out, ctx)
 
     async def research(question: str, tool_context: ToolContext) -> dict:

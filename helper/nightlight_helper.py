@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.9"
+VERSION = "0.9.10"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -761,9 +761,14 @@ def _inspect_home():
 def _restart_lines():
     """(last start, the event just before it) from `last` (newest first): each a (kind, datetime), or None."""
     from datetime import datetime
-    cmd = ["last", "reboot"] if sys.platform == "darwin" else ["last", "-x", "reboot", "shutdown"]
+    cmds = [["last", "reboot"], ["last", "shutdown"]] if sys.platform == "darwin" else \
+        [["last", "-x", "reboot", "shutdown"]]
+    lines_seen = set()
     events = []
-    for line in _run(cmd, timeout=_left(10)).splitlines():
+    for line in (ln for c in cmds for ln in _run(c, timeout=_left(10)).splitlines()):
+        if line in lines_seen:
+            continue
+        lines_seen.add(line)
         kind = "reboot" if line.startswith("reboot") else "shutdown" if line.startswith("shutdown") else None
         m = re.search(r"([A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d)", line)
         if not kind or not m:
@@ -773,10 +778,14 @@ def _restart_lines():
         except ValueError:
             continue
         events.append((kind, when if when <= datetime.now() else when.replace(year=when.year - 1)))
+    events.sort(key=lambda e: e[1], reverse=True)  # newest first, both kinds together
     i = next((n for n, e in enumerate(events) if e[0] == "reboot"), None)
     if i is None:
         return None, None
-    return events[i][1], (events[i + 1] if i + 1 < len(events) else None)
+    before = events[i + 1] if i + 1 < len(events) else None
+    if before and before[0] == "reboot" and not any(k == "shutdown" for k, _ in events):
+        before = None  # shutdowns aren't recorded here at all: a missing one proves nothing
+    return events[i][1], before
 
 
 def _inspect_restarts():
@@ -1230,6 +1239,8 @@ def expert_check(payload, signed, cfg, now=None, reusable=False):
         return "the command was signed for another device"
     if not isinstance(payload.get("expires"), int) or payload["expires"] < (now or time.time()):
         return "the signature has expired"
+    if payload["expires"] > (now or time.time()) + 16 * 60:
+        return "the signature is valid for too long (15 minutes at most)"
     if not reusable and payload.get("nonce") in (cfg.get("usedNonces") or {}):
         return "this signed command was already used"
     try:
@@ -1280,7 +1291,9 @@ _RO_RULES = {
     "lsblk": {"flags": {"-f"}},
     "df": {"flags": {"-h", "-k", "-H", "-i", "-l", "-P"}, "args": "path", "max": 3},
     "du": {"flags": {"-s", "-h", "-k", "-x"}, "values": {"-d": "int"}, "args": "path", "max": 3},
-    "ps": {"flags": {"-e", "-f", "-A", "-x", "aux", "-ax"}, "values": {"-o": "name"}},
+    # processes by name only (command lines can carry secrets): ps -axo pid,pcpu,pmem,comm
+    "ps": {"flags": {"-e", "-A", "-x", "-ax"}, "values": {"-o": "fields", "-axo": "fields", "-eo": "fields",
+                                                          "-Ao": "fields"}, "need_any": {"-o", "-axo", "-eo", "-Ao"}},
     "last": {"flags": {"-x", "-F"}, "values": {"-n": "int"}, "args": "choice:reboot|shutdown", "max": 2},
     "sysctl": {"flags": {"-n"}, "args": "name", "max": 6},
     "pmset": {"subs": {"-g"}, "args": "choice:batt|custom|assertions|log|sched|ps|therm|sysload|stats|live", "max": 1},
@@ -1290,11 +1303,11 @@ _RO_RULES = {
     "journalctl": {"flags": {"--no-pager", "-k", "--list-boots", "-r", "-q", "-x"},
                    "values": {"-n": "int", "-p": "name", "-u": "name", "-b": "since", "--since": "since",
                               "--until": "since"}},
-    "systemctl": {"subs": {"status", "list-units", "list-timers", "show", "is-active", "is-failed", "is-enabled"},
+    "systemctl": {"subs": {"status", "list-units", "list-timers", "is-active", "is-failed", "is-enabled"},
                   "flags": {"--failed", "--no-pager", "--all"}, "values": {"--type": "name", "--state": "name"},
                   "args": "name", "max": 5},
-    "launchctl": {"subs": {"list", "print"}, "args": "name", "max": 1},
-    "docker": {"subs": {"ps", "logs", "inspect", "stats", "images", "info", "version", "system"},
+    "launchctl": {"subs": {"list"}, "args": "name", "max": 1},
+    "docker": {"subs": {"ps", "logs", "stats", "images", "version", "system"},
                "then": {"system": {"df"}}, "flags": {"-a", "--no-stream", "--no-trunc", "-t"},
                "values": {"--tail": "int", "--since": "since"}, "args": "name", "max": 3},
     "ip": {"subs": {"addr", "address", "route", "link"}, "then": {"link": {"show"}, "addr": {"show"},
@@ -1341,6 +1354,9 @@ def _ro_value_ok(kind, v):
         return len(v) <= 300
     if kind.startswith("choice:"):
         return v in kind[7:].split("|")
+    if kind == "fields":
+        return all(f in ("pid", "ppid", "pcpu", "pmem", "rss", "vsz", "comm", "etime", "stat", "user", "lstart")
+                   for f in v.split(","))
     if kind == "sp":
         return bool(re.match(r"^SP[A-Za-z]+DataType$", v))
     return False
@@ -1424,6 +1440,8 @@ def readonly_command(command):
     for need in rule.get("need", ()):
         if need not in seen:
             return None, f"{prog} needs {need}"
+    if rule.get("need_any") and not seen & rule["need_any"]:
+        return None, f"{prog} needs one of {', '.join(sorted(rule['need_any']))} (fields to show)"
     if rule.get("pattern"):
         if not plain or len(plain[0]) > 200:
             return None, f"{prog} needs a pattern"
@@ -1474,8 +1492,10 @@ def run_expert(params):
     taken = []
 
     def consume(c):  # under the config lock: check and record in one step, so a signature runs at most once
-        used = {n: e for n, e in (c.get("usedNonces") or {}).items() if e > time.time()} \
-            if isinstance(c.get("usedNonces"), dict) else {}
+        old = c.get("usedNonces") or {}
+        if isinstance(old, list):  # from 0.9.8: no expiry recorded, so keep each for the longest possible lifetime
+            old = {n: int(time.time()) + 16 * 60 for n in old}
+        used = {n: e for n, e in old.items() if e > time.time()}
         if payload["nonce"] in used:
             return
         used[payload["nonce"]] = payload["expires"]

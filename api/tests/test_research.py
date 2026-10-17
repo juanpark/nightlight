@@ -23,3 +23,8 @@ def test_research_scrubs_cites_and_caps(client, started, monkeypatch):
     assert "192.168.1.20" not in fake.models.asked[0] and "abcdef0123456789abcdef" not in fake.models.asked[0]
     monkeypatch.setattr(research, "PER_DAY", 1)
     assert "daily limit" in research.search(started, "1.2.3.4", "again", client=fake)["reason"]
+
+
+def test_rev2_names_and_local_hosts_never_leave(client, started):  # rev2 #7
+    q = research.anonymise("Juan says my-nas.internal and plex.local crash on Mac mini", ["Mac mini", "Juan"])
+    assert "Juan" not in q and "my-nas" not in q and "plex.local" not in q and "Mac mini" not in q

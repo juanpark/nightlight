@@ -212,3 +212,27 @@ def test_the_card_signs_exactly_the_payload_it_shows(client, owner):  # review e
     db.action(uid, a["id"]).update({"params.challenge": "forged"})  # a server lying about the challenge changes nothing
     signed = pk.sign(expert.challenge_for(a["params"]["payload"]))
     assert client.post(f"/api/actions/{a['id']}/sign", json=signed).json()["status"] == "approved"
+
+
+def test_rev2_reads_without_environment_dumps(helper):  # rev2 #1
+    for bad in ("docker inspect app", "systemctl show ssh", "launchctl print gui/501/x", "ps aux", "ps -ef"):
+        assert helper.readonly_ok(bad) is not None, bad
+    assert helper.readonly_ok("ps -axo pid,pcpu,pmem,comm") is None
+
+
+def test_rev2_a_grant_can_not_be_stretched(helper):  # rev2 #2
+    pk = Passkey()
+    _pinned(helper, pk)
+    long = {"device": "dev_x", "mode": "read-only", "expires": int(time.time()) + 365 * 86400, "nonce": "g"}
+    assert "too long" in helper.expert_check(long, pk.sign(expert.challenge_for(long)), helper._load(), reusable=True)
+
+
+def test_rev2_old_nonce_lists_are_kept(helper):  # rev2 #3
+    pk = Passkey()
+    _pinned(helper, pk)
+    payload, signed = _signed_command(pk)
+    helper._update_config(lambda c: c.__setitem__("usedNonces", [payload["nonce"]]))  # consumed under 0.9.8
+    p2, s2 = _signed_command(pk)
+    assert helper.run_job({"type": "expert_command", "params": {"payload": p2, "signed": s2}})[0]  # migrates
+    again = helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})
+    assert not again[0] and "already used" in again[1]

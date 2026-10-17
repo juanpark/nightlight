@@ -48,6 +48,12 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       // The challenge is computed HERE from the payload this card displays, never taken from the server as is.
       const payload = (action!.params as { payload?: Record<string, unknown> } | undefined)?.payload;
       if (!payload) throw new Error("This card has nothing to sign.");
+      if (payload.device !== action!.deviceId || payload.device !== device?.id) {
+        throw new Error("This card's signed device doesn't match the device it shows. Not signed.");
+      }
+      if (typeof payload.expires !== "number" || payload.expires * 1000 - Date.now() > 16 * 60 * 1000) {
+        throw new Error("This card asks for more than 15 minutes. Not signed.");
+      }
       const signed = await signWithPasskey(await challengeFor(payload), k.credentialId, k.rpId);
       await api("POST", `/api/actions/${action!.id}/sign`, signed);
     } catch (e) {
@@ -60,8 +66,10 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   // What is shown is what gets signed: the command (or the grant) comes from the signed payload itself.
   const payload = (action.params as { payload?: { command?: string; mode?: string; expires?: number; device?: string } }
     | undefined)?.payload;
-  const command = payload?.command ?? (payload?.mode ? `${payload.mode} commands until ${new Date((payload.expires ?? 0) * 1000).toLocaleTimeString()}`
-    : (action.params as { command?: string } | undefined)?.command);
+  const until = payload?.expires ? new Date(payload.expires * 1000).toLocaleString() : "";
+  const command = payload?.command ? `${payload.command}   (valid until ${until})`
+    : payload?.mode ? `${payload.mode} commands until ${until}`
+    : (action.params as { command?: string } | undefined)?.command;
   const signedCard = SIGNED.has(action.type);
   return (
     <div className="card">
@@ -72,7 +80,8 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       <dl>
         {command && <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>}
         <dt>What happens</dt><dd>{action.dryRun}</dd>
-        <dt>Touches</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (live device)" : " (sample)"}</dd>
+        <dt>Touches</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (live device)" : " (sample)"}
+          {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit)" }}> (signed for a different device!)</strong> : null}</dd>
         <dt>Undo</dt><dd>{action.rollback}</dd>
         <dt>Status</dt><dd>{STATUS[action.status]}{action.decision?.by === "auto" ? " (handled on its own, as you allowed)" : ""}</dd>
         {action.result && <><dt>Result</dt><dd>{action.result.summary}</dd></>}
