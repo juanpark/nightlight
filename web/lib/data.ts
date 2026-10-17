@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, Service, TrustDoc, UserDoc, Watch } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -49,6 +49,11 @@ const current = (gen: number | undefined) => (d: { realm?: string; demoGeneratio
 
 export function useDevices(uid: string | null, gen: number | undefined): Device[] {
   return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived).filter(current(gen));
+}
+
+/** Lines between devices on the map (the sample home's go away with it). */
+export function useLinks(uid: string | null, gen: number | undefined): Link[] {
+  return useCollection<Link>(uid, ["links"]).filter(current(gen));
 }
 
 export function useServices(uid: string | null, deviceId: string | null): Service[] {
