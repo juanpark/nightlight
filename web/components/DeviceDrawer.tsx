@@ -34,6 +34,15 @@ function ago(d?: Date | null) {
   return s < 90 ? `${s} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : d.toLocaleString();
 }
 
+/** How this device gets helper updates, in plain words (the switches live under "What Nightlight may do here"). */
+function updateMode(d: Device) {
+  if (d.manage === "app") {
+    if (d.permissions?.updates === false) return "updates from the app are off";
+    return d.permissions?.autoUpdate ? "updates automatically" : "updates when you tap Update";
+  }
+  return (d.allowedJobs?.update ?? []).includes("signed") ? "updates when you tap Update" : "updates only on the device";
+}
+
 export default function DeviceDrawer({ uid, generation, device, actions, onAsk, onClose }: {
   uid: string; generation?: number; device: Device; actions: Action[]; onAsk: (q: string) => void; onClose: () => void;
 }) {
@@ -79,7 +88,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, onAsk, 
           <div><span className="muted">Updates waiting</span>{device.updatesPending ?? "–"}</div>
           <div><span className="muted">Containers</span>{device.containerCount != null
             ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
-          <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}</div>
+          <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}
+            {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
         </div>
       )}
       <div className="vitals">
