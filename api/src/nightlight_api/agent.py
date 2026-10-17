@@ -225,7 +225,12 @@ def fleet_summary(uid: str, generation: int) -> str:
                 if "on" in s["allowedJobs"].get("expert", []) else "off"
             books = ", ".join(b["id"] + ("(suggested)" if b["suggested"] else "")
                               for b in playbooks.offered(d)) or "none"
-            kind = (f"REAL device, can restart: {allowed}; can restart services: {units}; can look into: {look}; "
+            from . import release
+            offer = release.latest()
+            helper = d.get("helperVersion") or "?"
+            if offer and release.newer(offer["version"], d.get("helperVersion")):
+                helper += f" (update {offer['version']} available: update_helper)"
+            kind = (f"REAL device, helper {helper}; can restart: {allowed}; can restart services: {units}; can look into: {look}; "
                     f"can look around: {around}; can clean up: {cleans}; playbooks: {books}; expert sessions: {xs}; ") + (
                 f"{why}, health unknown{_silence(d, s, everyone)}" if s["stale"] else f"last report {s['lastReport']}"
                 + ("" if gap.get("restarted") is None else
@@ -304,7 +309,11 @@ def make_tools(ctx: TurnContext, read_only: bool):
         except ValueError as e:
             reason = {"not_allowed_on_device": "the owner hasn't allowed this on the device",
                       "already_running": "it is already running",
-                      "device_not_reporting": "the device isn't reporting right now"}.get(str(e))
+                      "device_not_reporting": "the device isn't reporting right now",
+                      "up_to_date": "its helper is already up to date",
+                      "update_by_hand": "its helper is too old to update itself: run the install line on it once",
+                      "updates_off": "updates from the app are switched off for this device",
+                      "no_release": "there is no helper release on offer"}.get(str(e))
             return {"status": "error", "reason": reason or "not applicable to this device"}
         ctx.actions.append(a)
         out = {"status": a["status"], "actionId": a["id"], "plan": a["plan"], "dryRun": a["dryRun"],
@@ -549,6 +558,21 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     remove_device = _wrap(_remove_device_sync)
     action_tools.append(remove_device)
+
+    def _update_helper_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose updating the Nightlight helper on a REAL device to the signed release on offer (an approval card;
+        the device installs it only if Nightlight's signature checks out). For "update all devices", call it once per
+        device whose summary says an update is available.
+
+        Args:
+            device_id: the real device's id from list_fleet.
+        """
+        from . import release
+        offer = release.latest()
+        return _propose("update_helper", device_id, {"version": offer["version"]} if offer else {})
+
+    update_helper = _wrap(_update_helper_sync)
+    action_tools.append(update_helper)
 
     def _start_investigation_sync(device_id: str, reason: str, tool_context: ToolContext) -> dict:
         """Ask to investigate a REAL device with read-only commands for 15 minutes (the owner approves once with

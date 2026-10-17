@@ -29,6 +29,7 @@ function step(e: Extract<StreamEvent, { type: "tool_call" }>, devices: Device[])
     inspect: `Looking around the ${name}…`, run_playbook: `Running a checkup on the ${name}…`,
     write_note: `Noting what I learned about the ${name}…`, how_nightlight_works: "Checking how Nightlight does this…",
     remove_device: `Preparing to remove the ${name}…`,
+    update_helper: `Preparing the helper update for the ${name}…`,
     start_investigation: `Asking to investigate the ${name}…`,
     run_command: `$ ${(e.args?.command as string) ?? ""}`,
     propose_command: `Preparing a command for the ${name}…`,

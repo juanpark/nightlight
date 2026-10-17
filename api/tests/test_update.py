@@ -242,3 +242,17 @@ def test_mac_private_folders_are_never_read_unless_allowed_at_the_mac(helper, mo
     read.clear()
     helper._inspect_disk()
     assert private <= set(read)
+
+
+def test_the_chat_can_propose_an_update_card(client, started, offer):
+    from nightlight_api import actions, agent
+    from conftest import generation
+    dev = enrolled(client)
+    beat(client, dev["token"], {**FACTS, "helperVersion": "0.9.0", "allowedJobs": {"update": ["signed"]}})
+    a = actions.propose(started, session_id="sess_test", turn_id="tu", generation=generation(started),
+                        action_type="update_helper", device_id=dev["deviceId"], params={"version": "9.9.9"})
+    assert a["status"] == "pending" and "to 9.9.9" in a["plan"]  # a card: the tap is the approval
+    assert client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"}).json()["status"] == "approved"
+    assert "update 9.9.9 available" in agent.fleet_summary(started, generation(started))
+    ctx = agent.TurnContext.__new__(agent.TurnContext)
+    assert "update_helper" in {t.__name__ for t in agent.make_tools(ctx, read_only=False)}

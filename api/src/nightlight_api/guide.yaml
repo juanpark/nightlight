@@ -36,8 +36,9 @@ update_helper:
     When a new helper is released, the device shows "Update available" in the app; tap Update. The device downloads
     it, installs it only if it carries Nightlight's signature (checked on the device), is newer and passes a
     self-test, then restarts itself. The previous version is kept: on the device, `nightlight rollback` goes back.
-    You can let a device install signed updates automatically (device settings in the app). Helpers older than 0.9
-    can't update themselves: run the add-device line on them once.
+    You can also ask in the chat ("update the helper on all my devices"): you get one approval card per device that
+    has an update waiting. You can let a device install signed updates automatically (device settings in the app).
+    Helpers older than 0.9 can't update themselves: run the add-device line on them once.
 
 what_the_helper_does:
   title: What the helper can and can't do
