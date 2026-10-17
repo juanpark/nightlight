@@ -94,7 +94,8 @@ export function needsYou(i: NeedsInput): Need[] {
     const twin = tag ? own.find((h) => h.net?.self === tag || (h.net?.selves ?? []).includes(tag)) : undefined;
     if (!twin || i.dismissed?.includes(`duplicate:${d.id}`)) continue;
     out.push({ id: `duplicate:${d.id}`, kind: "duplicate", priority: 2, deviceId: d.id,
-      title: `"${d.name}" is your ${twin.name}`, detail: `It's on your map twice. Stop watching "${d.name}" to remove the extra; your ${twin.name} stays.`,
+      title: `Another address of your ${twin.name}`,
+      detail: `"${d.name}" is your ${twin.name} again, so it's on your map twice. Stop watching "${d.name}" to remove the extra; your ${twin.name} stays.`,
       cta: { label: "Review", go: { to: "drawer", deviceId: d.id } }, at: d.createdAt?.getTime() ?? i.now });
   }
   for (const d of i.devices) {
