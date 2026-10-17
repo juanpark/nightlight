@@ -108,6 +108,22 @@ export function HomeLanding() {
         // Close: the wordmark's letters rise.
         revealChars(q("[data-wordmark]")[0], { start: "top 95%" });
       });
+
+      // The scroll cue has done its job once the visitor scrolls: it fades out,
+      // and comes back only at the very top. Instant when motion is reduced.
+      const cue = q("[data-scroll-cue]")[0];
+      ScrollTrigger.create({
+        start: 80,
+        end: "max",
+        onToggle: ({ isActive }) =>
+          gsap.to(cue, {
+            autoAlpha: isActive ? 0 : 1,
+            y: isActive ? 12 : 0,
+            duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.5,
+            ease: "power2.out",
+            overwrite: "auto",
+          }),
+      });
     },
     { scope: root },
   );
@@ -161,7 +177,7 @@ export function HomeLanding() {
                 </div>
               </div>
             </div>
-            <button type="button" className={s.scrollCue} onClick={() => scrollToTarget("#watch-intro")} data-hero-rise>
+            <button type="button" className={s.scrollCue} onClick={() => scrollToTarget("#watch-intro")} data-hero-rise data-scroll-cue>
               <Roll text="Scroll" />
               <span className={s.scrollTrack} aria-hidden="true">
                 <span className={s.scrollDot} />
