@@ -630,3 +630,28 @@ def test_after_running_a_job_the_helper_reports_at_once(helper, monkeypatch):
     monkeypatch.setattr(helper, "_do_job", lambda api, token, job: None)
     helper._wait_and_claim(600)
     assert len(calls) == 1  # returned right after the job instead of holding the channel again
+
+
+def test_installing_on_a_mac_settles_the_folder_prompts_once(helper, monkeypatch, tmp_path):
+    # The person is at the terminal only during install: ask about the private folders then (and raise macOS's own
+    # prompts), so they never have to come back to run `nightlight settings` for it. A recorded answer isn't asked again.
+    import subprocess
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(helper, "APP_DIR", str(tmp_path / "app"))
+    monkeypatch.setattr(helper, "PLIST", str(tmp_path / "LaunchAgents" / "x.plist"))
+    monkeypatch.setattr(helper, "_link_command", lambda *a: None)
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    measured, asked = [], []
+    monkeypatch.setattr(helper, "_du", lambda path: measured.append(path))
+    monkeypatch.setattr(helper, "_ask", lambda q, default: asked.append(q) or ("Downloads" not in q))
+    helper.install()
+    assert any("Downloads" in q for q in asked) and helper._load()["macPrivateFolders"] is False and not measured
+    asked.clear()
+    helper.install()  # installing again (e.g. the line run twice) doesn't ask again
+    assert not any("Downloads" in q for q in asked)
+    helper._update_config(lambda c: c.pop("macPrivateFolders"))
+    monkeypatch.setattr(helper, "_ask", lambda q, default: True)
+    helper.install()
+    assert helper._load()["macPrivateFolders"] is True and measured  # yes: macOS's prompts raised right away

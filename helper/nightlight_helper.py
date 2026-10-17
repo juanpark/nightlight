@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.17"
+VERSION = "0.9.18"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2236,6 +2236,9 @@ def install(every=60):
                                    "only on this device)", True)
         _update_config(lambda c: c.setdefault("manage", "app" if app else "strict"))
         print("Managed from the app." if app else "Strict: change permissions here with `nightlight settings`.")
+    # The one moment someone is at this Mac's terminal: settle macOS's folder prompts now, not in a later visit.
+    if sys.platform == "darwin" and sys.stdin.isatty() and "macPrivateFolders" not in _load():
+        _ask_mac_private(True)
     script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
     _link_command(script, py)
     every = max(int(every), 30)
@@ -2449,6 +2452,19 @@ def status():
                                   or "nothing yet"))
 
 
+def _ask_mac_private(default_yes):
+    """Ask (in a terminal, with someone there) whether the Mac's private folders may be measured, and raise macOS's
+    own Allow prompts right away, so nobody has to come back to the terminal for this later."""
+    if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
+            "ask you to allow each one now; click Allow.", default_yes):
+        _inspect_until[0] = time.time() + 120
+        for _label, path in _mac_private_places():
+            _du(path)  # raises macOS's prompts now, while you're here to answer them
+        _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
+    else:
+        _update_config(lambda c: c.__setitem__("macPrivateFolders", False))  # a recorded no: not asked again
+
+
 def settings():
     """Change, on this device, whether the app manages permissions, and (strict mode) what is allowed."""
     if not sys.stdin.isatty():
@@ -2456,14 +2472,7 @@ def settings():
     cfg = _load()
     print(f"Permissions are now {'managed from the app' if cfg.get('manage') == 'app' else 'strict'}.")
     if sys.platform == "darwin":
-        if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
-                "ask you to allow each one now; click Allow.", cfg.get("macPrivateFolders") is True):
-            _inspect_until[0] = time.time() + 120
-            for _label, path in _mac_private_places():
-                _du(path)  # raises macOS's prompts now, while you're here to answer them
-            _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
-        else:
-            _update_config(lambda c: c.pop("macPrivateFolders", None))
+        _ask_mac_private(cfg.get("macPrivateFolders") is True)
     app = _ask("Let the Nightlight app manage what it may do on this device?", cfg.get("manage") == "app")
     cfg["manage"] = "app" if app else "strict"
     if not app:
