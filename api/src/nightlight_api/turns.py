@@ -390,15 +390,18 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 if part.function_call and not ev.partial:
                     args, _ = scrub_value(dict(part.function_call.args or {}))
                     # Where the step falls in the text (to rebuild reason → act → result after a reload) and when it began.
+                    call_id = {"callId": part.function_call.id} if part.function_call.id else {}
                     tool_calls.append({"name": part.function_call.name, "args": args, "textOffset": _u16(shown),
-                                       "_t": time.monotonic()})
-                    yield out({"type": "tool_call", "name": part.function_call.name, "args": args})
+                                       "_t": time.monotonic(), **call_id})
+                    yield out({"type": "tool_call", "name": part.function_call.name, "args": args, **call_id})
                 if part.function_response:
                     resp = dict(part.function_response.response or {})
                     line, details = _commentary(part.function_response.name, resp)
                     # The stored message keeps each step's outcome too, so a reloaded chat shows the same work log.
-                    step = next((t for t in tool_calls if t["name"] == part.function_response.name
-                                 and "summary" not in t), None)
+                    # Paired by the call's id: two parallel calls of one tool (several devices at once) stay apart.
+                    rid = part.function_response.id
+                    step = next((t for t in tool_calls if "summary" not in t and (
+                        t.get("callId") == rid if rid else t["name"] == part.function_response.name)), None)
                     ok, ms = _ok(resp), None
                     if step is not None:
                         step["summary"], step["ok"] = line, ok
@@ -406,6 +409,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         if details:
                             step["details"] = details[:DETAILS_CHARS]
                     yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
+                               **({"callId": rid} if rid else {}),
                                "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
                     if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
                         ids = resp.get("actionIds") or [resp.get("actionId")]  # a runbook can put up several

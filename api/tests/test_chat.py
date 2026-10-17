@@ -202,6 +202,34 @@ def test_step_offsets_count_utf16_units_like_the_browser(client, started):
     assert before.strip() == "Night \U0001F319 check."
 
 
+def _two_devices_at_once(llm_request, stream):
+    """Reads two devices with the same tool in one response (parallel calls); then answers."""
+    async def gen():
+        asked = any(p.function_response for c in llm_request.contents for p in (c.parts or []))
+        parts = [types.Part(text="Both read.")] if asked else [
+            types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"})),
+            types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "nas-1"}))]
+        yield LlmResponse(content=types.Content(role="model", parts=parts), partial=False, turn_complete=True)
+    return gen()
+
+
+def test_parallel_calls_of_one_tool_pair_with_their_own_results(client, started):
+    FakeLlm.behavior = _two_devices_at_once
+    sid = new_session(client)
+    ev = events(ask(client, sid))
+    calls = [e for e in ev if e["type"] == "tool_call"]
+    results = [e for e in ev if e["type"] == "tool_result"]
+    assert len(calls) == 2 and len({c["callId"] for c in calls}) == 2
+    assert sorted(r["callId"] for r in results) == sorted(c["callId"] for c in calls)
+    msg = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    by_id = {t["callId"]: t for t in msg["toolCalls"]}
+    for r in results:  # each stored step holds its own result, whichever answered first
+        assert by_id[r["callId"]]["summary"] == r["summary"]
+    assert {t["args"]["device_id"] for t in msg["toolCalls"]} == {"pi-1", "nas-1"}
+    names = {t["args"]["device_id"]: t["summary"] for t in msg["toolCalls"]}
+    assert names["pi-1"] != names["nas-1"]
+
+
 def test_a_dropped_stream_stops_the_turn_and_frees_the_chat(client, started):
     # Stop in the browser (or a closed page) ends the reading; the turn then ends as "stopped" at once, keeps what was
     # already done, and the next question isn't refused with turn_in_progress while a lease runs out.
