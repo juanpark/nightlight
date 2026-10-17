@@ -9,7 +9,10 @@ const OTHER_HOSTS = new Set(["nightlight-web-5bum5nvvpq-du.a.run.app"]);
 export function middleware(req: NextRequest) {
   const host = (req.headers.get("host") ?? "").toLowerCase().split(":")[0];
   if (!OTHER_HOSTS.has(host)) return NextResponse.next();
-  const to = new URL(req.nextUrl.pathname + req.nextUrl.search, APP_URL);
+  // the path is set on the app's address, never resolved against it ("//elsewhere" would leave the site)
+  const to = new URL(APP_URL);
+  to.pathname = req.nextUrl.pathname;
+  to.search = req.nextUrl.search;
   return NextResponse.redirect(to, 308); // 308 keeps the method and body (a POST stays a POST)
 }
 
