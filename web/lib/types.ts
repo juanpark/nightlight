@@ -27,6 +27,9 @@ export interface Service {
   lastBackupDaysAgo?: number;
   detail?: string | null;
   findings?: Finding[];
+  /** What it is, in a line, and which icon it gets (a key from a fixed set; see components/map/kinds.ts). */
+  about?: { icon?: string; oneLiner?: string; source?: "catalog" | "agent" } | null;
+  ports?: number[];
   /** For a failed system service (kind "system"): the exact unit name, e.g. "nginx.service". */
   unit?: string;
 }
@@ -79,6 +82,8 @@ export interface Device {
   role?: Role; roleSetBy?: "auto" | "user"; guess?: string; services?: string[]; ports?: number[];
   vendor?: string | null; maker?: string | null; model?: string | null; seenName?: string | null;
   nameFromSeen?: boolean;
+  /** Starred by the owner: the device itself, and its apps by Service.id (at most 20). */
+  favorite?: boolean; favoriteApps?: string[];
   checkPort?: number | null; watchedBy?: string | null; cid?: string;
   lastAnswerAt?: Date | null; // a watched thing's last successful check (lastSeen is the last check of any kind)
   net?: { self?: string | null; selves?: string[]; gateway?: string | null; hw?: string } | null; // keyed fingerprints, never addresses
@@ -158,11 +163,12 @@ export interface Note {
   by: "nightlight" | "you";
   at: Date | null;
   service?: string | null; // a note about one container or service on the device
+  svcId?: string | null; // that app's Service.id, when known
 }
 
 /** A fix that worked on a device, as steps (`users/{uid}/devices/{id}/runbooks/{runbookId}`); never runs by itself. */
 export interface Runbook {
-  id: string; title: string; when: string; service?: string | null; uses?: number; lastUsedAt?: Date | null;
+  id: string; title: string; when: string; service?: string | null; svcId?: string | null; uses?: number; lastUsedAt?: Date | null;
   steps: { say: string; job?: { type: string; params?: Record<string, unknown> }; command?: string }[];
   createdAt?: Date | null; demoGeneration?: number;
 }

@@ -10,7 +10,7 @@ export type NeedKind = "approve" | "critical" | "silent" | "update" | "removing"
 export type Priority = 1 | 2 | 3; // 1 act now (red), 2 decide (orange), 3 finish setting up (grey)
 export type Go =
   | { to: "card"; actionId: string }
-  | { to: "drawer"; deviceId: string; tab?: "overview" | "about" | "settings" }
+  | { to: "drawer"; deviceId: string; tab?: "overview" | "about" | "settings"; app?: string }
   | { to: "panel"; panel: "found" | "add" }
   | { to: "chat"; ask: string }
   | { to: "offer"; actionType: string; offerId: string }

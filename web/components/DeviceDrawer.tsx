@@ -4,8 +4,10 @@
 // what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
+import { Star } from "lucide-react";
 import { api } from "@/lib/api";
-import { useServices } from "@/lib/data";
+import { useServicesState } from "@/lib/data";
+import { useFavorites } from "@/lib/favorites";
 import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
@@ -20,6 +22,7 @@ import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
 import NeedsList from "./NeedsList";
 import WatchedPanel from "./WatchedPanel";
+import AppDetail from "./AppDetail";
 import SetupCard from "./SetupCard";
 import MacFolders, { FOLDERS_FROM } from "./MacFolders";
 import { deviceIcon } from "./map/kinds";
@@ -52,12 +55,14 @@ function updateMode(d: Device) {
 }
 
 export default function DeviceDrawer({ uid, generation, device, actions, devices, needs, release, tab, onTab, onGo,
-  onFollowUp, onAsk, onClose }: {
+  onFollowUp, onAsk, onClose, app, onApp }: {
   uid: string; generation?: number; device: Device; actions: Action[]; devices: Device[]; needs: Need[];
   release: { version: string } | null; tab: Tab; onTab: (t: Tab) => void; onGo: (g: Go) => void;
   onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
+  app?: string | null; onApp?: (svcId: string | null) => void; // one app opened on its own
 }) {
-  const services = useServices(uid, device.id);
+  const { rows: services, loaded } = useServicesState(uid, device.id);
+  const fav = useFavorites(uid, device);
   const [allServices, setAllServices] = useState(false);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
@@ -67,7 +72,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   useEffect(() => {
     const top = box.current?.getBoundingClientRect().top ?? 0;
     if (top > window.innerHeight * 0.6) box.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [device.id]);
+  }, [device.id, app]);
   // Each problem is said once: the urgent one as a row under the status sentence (with its "What should I do?"),
   // the rest under Problems.
   const listed = (f: Finding) => needs.some((n) => n.id === `critical:${device.id}:${f.id ?? f.message}`);
@@ -75,10 +80,30 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const brief = !removing && !(real && device.status === "offline") && (device.status === "crit" || device.status === "warn");
   const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
   const current: Tab = tabs.includes(tab) ? tab : "overview";
-  if (watched) {
+  const opened = app ? services.find((s) => s.id === app) : undefined;
+  // an app that isn't on this device (any more) closes, so it can't come back by itself later
+  useEffect(() => { if (app && loaded && !opened) onApp?.(null); }, [app, loaded, opened, onApp]);
+  if (app && !watched && !opened) {
     return (
       <div className="panel drawer" ref={box}>
         <Head key={device.id} device={device} onClose={onClose} />
+        <p className="small muted">{loaded ? "That app isn't on this device any more." : "Loading…"}</p>
+      </div>
+    );
+  }
+  if (opened && !watched) {
+    return (
+      <div className="panel drawer" ref={box}>
+        <Head key={device.id} device={device} onClose={onClose} />
+        <AppDetail key={`app:${device.id}:${opened.id}`} uid={uid} generation={generation} device={device} app={opened}
+          actions={actions} fav={fav} onBack={() => onApp?.(null)} onAsk={onAsk} />
+      </div>
+    );
+  }
+  if (watched) {
+    return (
+      <div className="panel drawer" ref={box}>
+        <Head key={device.id} device={device} fav={fav} onClose={onClose} />
         <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
         <WatchedPanel key={`watched:${device.id}`} uid={uid} generation={generation} device={device} devices={devices} onAsk={onAsk} onGo={onGo}
           onClose={onClose} />
@@ -87,7 +112,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   }
   return (
     <div className="panel drawer" ref={box}>
-      <Head key={device.id} device={device} onClose={onClose} />
+      <Head key={device.id} device={device} fav={fav} onClose={onClose} />
       <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
       <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
         : statusSentence(device, Date.now(), removing)}</p>
@@ -125,7 +150,10 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
             <div key={s.id} className="svc">
               <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
               <div style={{ flex: 1 }}>
-                <div><strong>{s.name}</strong> {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
+                <div><StarButton on={fav.isFavoriteApp(s.id)} label={`${s.name} as a favorite`} small
+                  onClick={() => fav.toggleApp(s.id)} />{" "}
+                  {onApp ? <button className="linkish app-link" onClick={() => onApp(s.id)}><strong>{s.name}</strong></button>
+                    : <strong>{s.name}</strong>} {s.version && s.version !== "n/a" && <span className="small muted">v{s.version}</span>}
                   {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
                 {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
                 {s.detail && <div className="small muted">{s.detail}</div>}
@@ -193,7 +221,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 type Finding = NonNullable<Device["findings"]>[number];
 
 /** Name (renamable on real devices), what kind of thing it is, Live or Sample, Close. */
-function Head({ device, onClose }: { device: Device; onClose: () => void }) {
+function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClose: () => void }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
   const real = device.realm === "real";
@@ -218,7 +246,9 @@ function Head({ device, onClose }: { device: Device; onClose: () => void }) {
         Rename</button>}
       <span className={`pill ${real ? "live" : ""}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Sample"}</span>
       <span style={{ flex: 1 }} />
+      {fav && <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />}
       <button onClick={onClose}>Close</button>
+      {fav?.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
     </div>
   );
 }
@@ -284,5 +314,17 @@ function Tags({ device }: { device: Device }) {
             placeholder="Add a tag (e.g. Parents)" style={{ padding: "3px 8px" }} />
         </form>)}
     </section>
+  );
+}
+
+type Favorites = ReturnType<typeof useFavorites>;
+
+/** A star that says what it does: "Star …" / "Unstar …" for screen readers, filled when on. */
+function StarButton({ on, label, small, onClick }: { on: boolean; label: string; small?: boolean; onClick: () => void }) {
+  return (
+    <button className={`star-btn ${on ? "on" : ""} ${small ? "small" : ""}`} aria-pressed={on}
+      aria-label={`${on ? "Unstar" : "Star"} ${label}`} title={on ? "Starred: tap to unstar" : "Star it"} onClick={onClick}>
+      <Star size={small ? 14 : 16} />
+    </button>
   );
 }
