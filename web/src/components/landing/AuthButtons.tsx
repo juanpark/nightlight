@@ -6,7 +6,6 @@ import { firebase } from "@/lib/firebase";
 import { Icon } from "./Icon";
 import { Magnetic } from "./motion/Magnetic";
 import { Roll } from "./motion/Roll";
-import landing from "./Landing.module.css";
 
 type Kind = "demo" | "google";
 
@@ -15,12 +14,12 @@ type Kind = "demo" | "google";
 export function AuthButtons({
   size = "large",
   demoOnly = false,
-  styles: s = landing,
+  styles: s,
   magnetic = false,
 }: {
   size?: "large" | "small";
   demoOnly?: boolean;
-  styles?: Record<string, string>; // the day hero passes its own
+  styles: Record<string, string>; // the page passes its own button styles
   magnetic?: boolean; // buttons lean toward the pointer, labels roll on hover
 }) {
   const [busy, setBusy] = useState<Kind | null>(null);

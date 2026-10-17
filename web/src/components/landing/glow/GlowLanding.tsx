@@ -103,7 +103,7 @@ const KEYS: Partial<View>[] = [
   { tx: 1.1, ty: 6.5, tz: -1.5, zoom: 3, az: 46, el: 42, ox: -0.1, oy: 0.22, rings: 0 },
   { tx: 0, ty: 5.4, tz: 0, zoom: 1.12, az: 28, el: 20, ox: -0.12, oy: 0.18, lit: 1, orb: 1 },
   { tx: 0, ty: 0.5, tz: 0, zoom: 0.6, az: 42, el: 48, ox: 0.2, oy: -0.15, lift: 0.08 },
-  { tx: -0.5, ty: 3.4, tz: 1.5, zoom: 0.92, az: 6, el: 5, ox: 0, oy: 0.2, lift: -0.25 },
+  { tx: -0.5, ty: 3.4, tz: 1.5, zoom: 0.92, az: 6, el: 5, ox: 0, oy: 0.02, lift: -0.25 },
   { tx: 0, ty: 3, tz: 0, zoom: 0.44, az: 12, el: 26, ox: 0, oy: 0.19, lift: -0.12, fit: 26 },
 ];
 const BEATS = KEYS.length - 1;
@@ -135,6 +135,7 @@ export function GlowLanding() {
   const [step, setStep] = useState(0);
   const shown = useRef(0); // the step on screen, so scrolling only re-renders when it changes
   const at = useRef(0); // the beat the camera is at right now, between whole beats while it travels
+  const busy = useRef(0); // when the camera or the pointer last moved (ticker seconds)
   const cleared = useRef(false);
   const tag = useRef<HTMLParagraphElement>(null);
   const link = useRef<SVGSVGElement>(null);
@@ -152,7 +153,9 @@ export function GlowLanding() {
     let api: { draw: (v: View, t: number) => Probe; point: (x: number | null, y?: number) => void; dispose: () => void } | undefined;
     // Pointing at a building on the street names it: hover with a mouse, tap on touch.
     const aim = (e: PointerEvent) => {
-      if ((e.type === "pointermove") === (e.pointerType === "mouse")) api?.point(e.clientX, e.clientY);
+      if ((e.type === "pointermove") !== (e.pointerType === "mouse")) return;
+      api?.point(e.clientX, e.clientY);
+      busy.current = gsap.ticker.time;
     };
     const away = () => api?.point(null);
     window.addEventListener("pointermove", aim, { passive: true });
@@ -160,6 +163,30 @@ export function GlowLanding() {
     document.documentElement.addEventListener("mouseleave", away);
     let live = true;
     let said = "";
+    // Where each card sits on the page, kept so nothing is measured per frame. Offsets
+    // ignore the cards' entrance transform, which has settled by the time the line shows.
+    let boxes: { top: number; left: number; height: number }[] = [];
+    const measureCards = () => {
+      boxes = cards.current.map((el) => {
+        let top = 0;
+        let left = 0;
+        for (let n: HTMLElement | null = el; n; n = n.offsetParent as HTMLElement | null) {
+          top += n.offsetTop;
+          left += n.offsetLeft;
+        }
+        return { top, left, height: el?.offsetHeight ?? 0 };
+      });
+    };
+    measureCards();
+    const sized = new ResizeObserver(measureCards);
+    cards.current.forEach((el) => el && sized.observe(el));
+    window.addEventListener("resize", measureCards);
+    // The line's parts, found once; and what was last written, so unchanged values are not rewritten.
+    const path = link.current?.querySelector("path");
+    const [dotA, dotB] = Array.from(link.current?.querySelectorAll("circle") ?? []);
+    let lastD = "";
+    let lastLine = "";
+    let lastTag = "";
     // A small label rides on whatever the camera is looking at, and on wide
     // screens a thin line runs from it to the step's card, like a callout.
     const pin = (p: Probe) => {
@@ -192,32 +219,47 @@ export function GlowLanding() {
           said = words;
           t.textContent = words;
         }
-        t.dataset.tone = tone;
-        t.style.opacity = String(show);
-        t.style.transform = `translate3d(${spot.x}px, ${spot.y}px, 0)`;
+        const next = `${tone}|${show.toFixed(3)}|${spot.x.toFixed(1)}|${spot.y.toFixed(1)}`;
+        if (next !== lastTag) {
+          lastTag = next;
+          t.dataset.tone = tone;
+          t.style.opacity = String(show);
+          t.style.transform = `translate3d(${spot.x}px, ${spot.y}px, 0)`;
+        }
       }
 
       const svg = link.current;
-      const card = i >= 1 && i <= 4 ? cards.current[i - 1] : null;
-      if (!svg) return;
-      const r = card?.getBoundingClientRect();
-      if (!r || window.innerWidth < 820 || r.left < spot.x + 60 || r.bottom < 0 || r.top > window.innerHeight) {
-        svg.style.opacity = "0";
-        return;
+      const box = i >= 1 && i <= 4 ? boxes[i - 1] : undefined;
+      if (!svg || !path) return;
+      // The card's place on screen, from the kept offsets and the scroll: no layout read.
+      const top = box ? box.top - window.scrollY : 0;
+      const off = !box || window.innerWidth < 820 || (window.innerHeight < 520 && window.innerWidth > window.innerHeight) || box.left < spot.x + 60 || top + box.height < 0 || top > window.innerHeight;
+      const opacity = off ? "0" : String(+(still * (i === 1 ? sm(0.8, 1, b) : 1)).toFixed(3));
+      if (opacity !== lastLine) {
+        lastLine = opacity;
+        svg.style.opacity = opacity;
       }
-      const ex = r.left;
-      const ey = Math.min(r.bottom - 32, Math.max(r.top + 32, spot.y));
+      if (off || opacity === "0") return;
+      const ex = box.left;
+      const ey = Math.min(top + box.height - 32, Math.max(top + 32, spot.y));
       const mx = spot.x + (ex - spot.x) * 0.55;
-      svg.querySelector("path")?.setAttribute("d", `M${spot.x} ${spot.y} C${mx} ${spot.y} ${mx} ${ey} ${ex} ${ey}`);
-      const dots = svg.querySelectorAll("circle");
-      dots[0]?.setAttribute("cx", String(spot.x));
-      dots[0]?.setAttribute("cy", String(spot.y));
-      dots[1]?.setAttribute("cx", String(ex));
-      dots[1]?.setAttribute("cy", String(ey));
-      svg.style.opacity = String(still * (i === 1 ? sm(0.8, 1, b) : 1));
+      const d = `M${spot.x.toFixed(1)} ${spot.y.toFixed(1)} C${mx.toFixed(1)} ${spot.y.toFixed(1)} ${mx.toFixed(1)} ${ey.toFixed(1)} ${ex} ${ey.toFixed(1)}`;
+      if (d === lastD) return;
+      lastD = d;
+      path.setAttribute("d", d);
+      dotA?.setAttribute("cx", spot.x.toFixed(1));
+      dotA?.setAttribute("cy", spot.y.toFixed(1));
+      dotB?.setAttribute("cx", String(ex));
+      dotB?.setAttribute("cy", ey.toFixed(1));
     };
+    // When nothing is moving (the camera has landed, the pointer is still) the scene only
+    // drifts, so it is drawn at half rate: half the GPU work, and every glass panel above
+    // it is re-blurred half as often.
+    let drawn = -1;
     const frame = (time: number) => {
       if (!api) return;
+      if (time - busy.current > 1 && time - drawn < 1 / 31) return;
+      drawn = time;
       pin(api.draw({ ...view.current, done: Math.max(view.current.done, fixed.current.done) }, time));
     };
     import("./scene")
@@ -230,6 +272,8 @@ export function GlowLanding() {
       .catch(() => live && setGl("off"));
     return () => {
       live = false;
+      sized.disconnect();
+      window.removeEventListener("resize", measureCards);
       window.removeEventListener("pointermove", aim);
       window.removeEventListener("pointerdown", aim);
       document.documentElement.removeEventListener("mouseleave", away);
@@ -318,12 +362,13 @@ export function GlowLanding() {
             setStep(i);
           }
         };
-        const damp = (_t: number, dtMs: number) => {
+        const damp = (t: number, dtMs: number) => {
           const p = tl.progress();
           if (p !== want) {
             const next = p + (want - p) * (1 - Math.exp(-(dtMs / 1000) * 5));
             tl.progress(Math.abs(want - next) < 1e-5 ? want : next);
           }
+          if (p !== want) busy.current = t;
           at.current = tl.progress() * BEATS;
         };
         gsap.ticker.add(damp);
@@ -420,7 +465,7 @@ export function GlowLanding() {
 
         <section id="story" className={s.story} aria-label="How a night goes">
           <div className={s.railWrap}>
-            <nav className={s.rail} data-show={step > 0 && step <= STEPS.length} aria-label="How a night goes">
+            <nav className={s.rail} data-show={step > 0 && step <= STEPS.length} aria-label="Steps">
               <p className={s.railHead} aria-hidden="true">
                 How a night goes
               </p>

@@ -1,22 +1,42 @@
-/* Glow variant: a 3D night scene behind the page. Night tokens, same as "/". */
+/* "/": one night in a clay house, told on scroll over a 3D scene.
+   Three colours carry the page: steps of navy for the ground and every
+   surface, cream for the words, and star yellow for the light (the action,
+   the wire, anything that needs you). Two status colours sit outside the
+   three and are kept for status only, each always paired with a word:
+   green for "fine", amber for "needs a look". The 3D scene reads its colours
+   from these same tokens. */
 .page {
-  --night: #11141f;
-  --surface: #1b2030;
-  --surface-2: #232940;
-  --line: #2c3349;
-  --line-strong: #3d4563;
-  --text: #f3efe6;
-  --muted: #aeb2c2;
+  --night: #0b1430;
+  --surface: #111c3d;
+  --surface-2: #18254b;
+  --line: #22305c;
+  --line-strong: #33457a;
+  --text: #f4efe4;
+  --muted: #aab3cf;
   --star: #fdd83a;
-  --star-ink: #1c1600;
+  --star-hover: #ffe36a;
+  --star-ink: #15224a;
   --ok: #8fd6a8;
   --warn: #f5b84a;
+  --error: #ffb4a3;
+  --logo-light: #fdd83a;
+  /* The same colours as channels, for see-through glass and glows. */
+  --night-rgb: 11 20 48;
+  --surface-rgb: 17 28 61;
+  --surface-2-rgb: 24 37 75;
+  --line-rgb: 51 69 122;
+  --star-rgb: 253 216 58;
+  --ok-rgb: 143 214 168;
+  --warn-rgb: 245 184 74;
+  --shadow-rgb: 3 7 20;
+  /* The 3D scene's clear colour: tone mapping darkens it, so it is set a
+     step lighter than --night in order to land on it on screen. */
+  --scene-ground: #1b233c;
   --gutter: clamp(16px, 3.4vw, 48px);
   --col: 30rem;
-  --logo-light: #fdd83a;
 
   position: relative;
-  min-height: 100vh;
+  min-height: 100svh;
   background: var(--night);
   color: var(--text);
   font-family: var(--font-sans), system-ui, sans-serif;
@@ -28,10 +48,10 @@
 
 :global(html):has(.page),
 :global(html):has(.page) :global(body) {
-  background: #11141f;
+  background: #0b1430; /* --night; the html element sits outside .page */
 }
 
-.page ::selection { background: rgb(253 216 58 / 0.85); color: var(--star-ink); }
+.page ::selection { background: rgb(var(--star-rgb) / 0.85); color: var(--star-ink); }
 .page :focus-visible { outline: 2px solid var(--star); outline-offset: 3px; border-radius: 6px; }
 .page a { color: inherit; }
 
@@ -66,7 +86,7 @@
   content: "";
   position: fixed;
   inset: 0;
-  background: radial-gradient(60% 45% at 50% 72%, rgb(255 198 90 / 0.16), transparent 70%);
+  background: radial-gradient(60% 45% at 50% 72%, rgb(var(--star-rgb) / 0.16), transparent 70%);
 }
 /* Keeps the top copy and the edges readable over the scene. */
 .vignette {
@@ -74,8 +94,8 @@
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(70% 38% at 50% 0%, rgb(17 20 31 / 0.8), transparent 75%),
-    radial-gradient(120% 90% at 50% 50%, transparent 55%, rgb(17 20 31 / 0.55));
+    radial-gradient(70% 38% at 50% 0%, rgb(var(--night-rgb) / 0.8), transparent 75%),
+    radial-gradient(120% 90% at 50% 50%, transparent 55%, rgb(var(--night-rgb) / 0.55));
 }
 
 /* ---------- Callouts pinned to the scene: a label, and a line to the card ---------- */
@@ -93,7 +113,7 @@
   stroke: var(--star);
   stroke-width: 1.25;
   stroke-opacity: 0.7;
-  filter: drop-shadow(0 0 6px rgb(253 216 58 / 0.55));
+  filter: drop-shadow(0 0 6px rgb(var(--star-rgb) / 0.55));
 }
 .link circle { fill: var(--night); stroke: var(--star); stroke-width: 1.5; }
 .link circle + circle { fill: var(--star); stroke: none; }
@@ -111,8 +131,8 @@
   align-items: center;
   gap: 8px;
   border-radius: 999px;
-  background: rgb(17 20 31 / 0.78);
-  border: 1px solid rgb(245 184 74 / 0.5);
+  background: rgb(var(--night-rgb) / 0.78);
+  border: 1px solid rgb(var(--warn-rgb) / 0.5);
   backdrop-filter: blur(10px);
   color: var(--text);
   font-size: 0.75rem;
@@ -130,9 +150,9 @@
   background: var(--warn);
   box-shadow: 0 0 10px var(--warn);
 }
-.tag[data-tone="live"] { border-color: rgb(253 216 58 / 0.5); }
+.tag[data-tone="live"] { border-color: rgb(var(--star-rgb) / 0.5); }
 .tag[data-tone="live"]::before { background: var(--star); box-shadow: 0 0 10px var(--star); animation: blink 1.1s ease-in-out infinite; }
-.tag[data-tone="ok"] { border-color: rgb(143 214 168 / 0.5); }
+.tag[data-tone="ok"] { border-color: rgb(var(--ok-rgb) / 0.5); }
 .tag[data-tone="ok"]::before { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
 @keyframes blink { 50% { opacity: 0.35; } }
 
@@ -157,14 +177,14 @@
   align-items: center;
   gap: 16px;
   border-radius: 999px;
-  background: rgb(17 20 31 / 0.55);
-  border: 1px solid rgb(61 69 99 / 0.55);
+  background: rgb(var(--night-rgb) / 0.55);
+  border: 1px solid rgb(var(--line-rgb) / 0.55);
   backdrop-filter: blur(18px) saturate(1.3);
-  box-shadow: 0 18px 40px -18px rgb(3 4 10 / 0.8);
+  box-shadow: 0 18px 40px -18px rgb(var(--shadow-rgb) / 0.8);
 }
 .bar .actionsSmall .error { right: 0; top: 70px; }
 /* Links on the left, the logo in the middle, the actions on the right. */
-.brand { grid-area: brand; display: inline-flex; color: var(--text); padding: 6px 0; }
+.brand { grid-area: brand; display: inline-flex; align-items: center; min-height: 44px; color: var(--text); }
 .links {
   grid-area: links;
   position: relative;
@@ -173,7 +193,10 @@
   gap: 4px;
 }
 .links a {
-  padding: 9px 14px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
   border-radius: 999px;
   font-size: 0.875rem;
   font-weight: 500;
@@ -181,7 +204,7 @@
   color: var(--muted);
   transition: color 0.25s ease, background-color 0.25s ease;
 }
-.links a:hover { color: var(--text); background: rgb(61 69 99 / 0.35); }
+.links a:hover { color: var(--text); background: rgb(var(--line-rgb) / 0.35); }
 .links a[aria-current] { color: var(--text); }
 /* The small warm light that marks where you are. */
 .navDot {
@@ -192,7 +215,7 @@
   height: 5px;
   border-radius: 50%;
   background: var(--star);
-  box-shadow: 0 0 10px 2px rgb(253 216 58 / 0.55);
+  box-shadow: 0 0 10px 2px rgb(var(--star-rgb) / 0.55);
   translate: calc(var(--dot-x, 0px) - 2.5px) 0;
   opacity: 0;
   transition: translate 0.7s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease;
@@ -207,7 +230,7 @@
   bottom: 0;
   height: 1.5px;
   border-radius: 2px;
-  background: linear-gradient(90deg, rgb(253 216 58 / 0), rgb(253 216 58 / 0.55) 70%, var(--star));
+  background: linear-gradient(90deg, rgb(var(--star-rgb) / 0), rgb(var(--star-rgb) / 0.55) 70%, var(--star));
   transform-origin: left;
   transform: scaleX(0);
   pointer-events: none;
@@ -222,7 +245,7 @@
   padding: 0;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
-  background: rgb(35 41 64 / 0.6);
+  background: rgb(var(--surface-2-rgb) / 0.6);
   color: var(--text);
   cursor: pointer;
   transition: border-color 0.25s ease;
@@ -245,10 +268,10 @@
   padding: 8px;
   display: none;
   border-radius: 24px;
-  background: rgb(17 20 31 / 0.8);
-  border: 1px solid rgb(61 69 99 / 0.55);
+  background: rgb(var(--night-rgb) / 0.8);
+  border: 1px solid rgb(var(--line-rgb) / 0.55);
   backdrop-filter: blur(18px) saturate(1.3);
-  box-shadow: 0 24px 48px -18px rgb(3 4 10 / 0.8);
+  box-shadow: 0 24px 48px -18px rgb(var(--shadow-rgb) / 0.8);
   opacity: 0;
   translate: 0 -8px;
   transition: opacity 0.3s ease, translate 0.45s cubic-bezier(0.16, 1, 0.3, 1);
@@ -266,7 +289,7 @@
   text-decoration: none;
   color: var(--text);
 }
-.menu a:hover { background: rgb(61 69 99 / 0.35); }
+.menu a:hover { background: rgb(var(--line-rgb) / 0.35); }
 .menu a::before {
   content: "";
   width: 6px;
@@ -274,7 +297,7 @@
   border-radius: 50%;
   background: var(--line-strong);
 }
-.menu a[aria-current]::before { background: var(--star); box-shadow: 0 0 10px rgb(253 216 58 / 0.6); }
+.menu a[aria-current]::before { background: var(--star); box-shadow: 0 0 10px rgb(var(--star-rgb) / 0.6); }
 @media (max-width: 440px) {
   .navActions .primary { padding-inline: 14px; }
   .navActions .primary svg { display: none; }
@@ -296,6 +319,8 @@
 .primary,
 .secondary {
   font: inherit;
+  min-height: 44px;
+  justify-content: center;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -312,15 +337,15 @@
   background: var(--star);
   color: var(--star-ink);
   border: 1px solid var(--star);
-  box-shadow: 0 0 0 0 rgb(253 216 58 / 0);
+  box-shadow: 0 0 0 0 rgb(var(--star-rgb) / 0);
 }
-.primary:hover { box-shadow: 0 0 28px 2px rgb(253 216 58 / 0.35); }
+.primary:hover { box-shadow: 0 0 28px 2px rgb(var(--star-rgb) / 0.35); }
 .primary svg { transition: transform 0.2s ease; }
 .primary:hover svg { transform: translateX(2px); }
 .primary:active,
 .secondary:active { transform: translateY(1px); }
 .secondary {
-  background: rgb(35 41 64 / 0.7);
+  background: rgb(var(--surface-2-rgb) / 0.7);
   color: var(--text);
   border: 1px solid var(--line-strong);
   backdrop-filter: blur(8px);
@@ -328,7 +353,7 @@
 .secondary:hover { border-color: var(--muted); }
 .primary:disabled,
 .secondary:disabled { cursor: progress; opacity: 0.7; }
-.error { margin: 0; font-size: 0.875rem; color: #ffb4a3; max-width: 26rem; text-align: center; }
+.error { margin: 0; font-size: 0.875rem; color: var(--error); max-width: 26rem; text-align: center; }
 .actionsSmall .error {
   position: absolute;
   right: var(--gutter);
@@ -379,7 +404,8 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   text-decoration: none;
-  padding-bottom: 6px;
+  /* The top padding only grows the tap area to 44px; the underline stays where it was. */
+  padding: 19px 4px 6px;
   border-bottom: 1px solid var(--line-strong);
   color: var(--text);
   white-space: nowrap;
@@ -417,10 +443,10 @@
   width: min(26rem, 34vw);
   padding: 14px 20px 14px 14px;
   border-radius: 22px;
-  background: rgb(27 32 48 / 0.55);
-  border: 1px solid rgb(61 69 99 / 0.6);
+  background: rgb(var(--surface-rgb) / 0.55);
+  border: 1px solid rgb(var(--line-rgb) / 0.6);
   backdrop-filter: blur(16px) saturate(1.2);
-  box-shadow: 0 24px 48px -16px rgb(3 4 10 / 0.6);
+  box-shadow: 0 24px 48px -16px rgb(var(--shadow-rgb) / 0.6);
   opacity: 0;
   translate: 0 16px;
   transition: opacity 0.5s ease, translate 0.5s ease;
@@ -454,7 +480,7 @@
   background: var(--star);
   color: var(--star-ink);
   font-weight: 650;
-  box-shadow: 0 0 24px rgb(253 216 58 / 0.35);
+  box-shadow: 0 0 24px rgb(var(--star-rgb) / 0.35);
 }
 .rail li[data-active] .railTitle {
   font-family: var(--font-display), system-ui, sans-serif;
@@ -479,7 +505,7 @@
 
 .step {
   position: relative;
-  min-height: 100vh;
+  min-height: 100svh;
   display: grid;
   grid-template-columns: 1fr var(--col);
   align-items: center;
@@ -502,9 +528,11 @@
   transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), translate 0.9s cubic-bezier(0.16, 1, 0.3, 1), filter 0.7s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .step[data-active] .cardSlot { opacity: 1; translate: 0 0; filter: none; }
+/* The cards' own buttons (Approve, Not now, the trust choices) get full-size tap areas here. */
+.cardSlot button { min-height: 44px; }
 /* The cards are glass here, so the house stays visible behind them. */
 .cardSlot > :first-child {
-  background: rgb(27 32 48 / 0.72);
+  background: rgb(var(--surface-rgb) / 0.72);
   backdrop-filter: blur(18px) saturate(1.25);
 }
 
@@ -514,11 +542,11 @@
 .watchGrid,
 .whoList,
 .privacyCols {
-  background: rgb(27 32 48 / 0.58);
-  border: 1px solid rgb(61 69 99 / 0.6);
+  background: rgb(var(--surface-rgb) / 0.58);
+  border: 1px solid rgb(var(--line-rgb) / 0.6);
   border-radius: 24px;
   backdrop-filter: blur(18px) saturate(1.2);
-  box-shadow: 0 30px 60px -24px rgb(3 4 10 / 0.7);
+  box-shadow: 0 30px 60px -24px rgb(var(--shadow-rgb) / 0.7);
 }
 .h2 {
   margin: 0 0 clamp(32px, 4vw, 56px);
@@ -527,13 +555,13 @@
   font-weight: 700;
   line-height: 0.98;
   letter-spacing: -0.04em;
-  text-shadow: 0 2px 30px rgb(17 20 31 / 0.8);
+  text-shadow: 0 2px 30px rgb(var(--night-rgb) / 0.8);
 }
 
 /* While the light makes its rounds: one statement, left, the house on the right. */
 .intro {
   position: relative;
-  min-height: 130vh;
+  min-height: 130svh;
   display: grid;
   align-items: center;
   padding: 0 var(--gutter);
@@ -547,13 +575,13 @@
   line-height: 1.18;
   letter-spacing: -0.02em;
   text-wrap: pretty;
-  text-shadow: 0 2px 24px rgb(17 20 31 / 0.9), 0 0 2px rgb(17 20 31 / 0.6);
+  text-shadow: 0 2px 24px rgb(var(--night-rgb) / 0.9), 0 0 2px rgb(var(--night-rgb) / 0.6);
 }
 .statement strong { font-weight: 700; color: var(--star); }
 
 /* High above the house: four things it watches, in one glass panel. */
 .watch {
-  min-height: 100vh;
+  min-height: 100svh;
   display: grid;
   align-content: center;
   padding: clamp(96px, 14vh, 160px) var(--gutter);
@@ -570,8 +598,8 @@
   padding: clamp(22px, 2.4vw, 34px);
   transition: background-color 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.watchBlock + .watchBlock { border-left: 1px solid rgb(61 69 99 / 0.6); }
-.watchBlock:hover { background: rgb(35 41 64 / 0.6); }
+.watchBlock + .watchBlock { border-left: 1px solid rgb(var(--line-rgb) / 0.6); }
+.watchBlock:hover { background: rgb(var(--surface-2-rgb) / 0.6); }
 .watchTitle {
   margin: 0;
   font-family: var(--font-display), system-ui, sans-serif;
@@ -607,8 +635,8 @@
   padding: clamp(18px, 2.2vw, 28px) clamp(20px, 2.6vw, 36px);
   transition: background-color 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.whoRow + .whoRow { border-top: 1px solid rgb(61 69 99 / 0.6); }
-.whoRow:hover { background: rgb(35 41 64 / 0.6); }
+.whoRow + .whoRow { border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
+.whoRow:hover { background: rgb(var(--surface-2-rgb) / 0.6); }
 .whoName {
   font-family: var(--font-display), system-ui, sans-serif;
   font-size: clamp(1.25rem, 2.4vw, 2rem);
@@ -651,7 +679,7 @@
 /* The reveal: the words hold still while the street rises behind them. */
 .beyond {
   position: relative;
-  height: 240vh;
+  height: 240svh;
   padding: 0 var(--gutter);
 }
 .beyondPin {
@@ -665,7 +693,7 @@
   font-size: clamp(1.0625rem, 1.3vw, 1.25rem);
   color: var(--text);
   text-wrap: pretty;
-  text-shadow: 0 1px 18px rgb(17 20 31 / 0.95);
+  text-shadow: 0 1px 18px rgb(var(--night-rgb) / 0.95);
 }
 
 .hint {
@@ -675,7 +703,7 @@
   gap: 10px;
   font-size: 0.875rem;
   color: var(--muted);
-  text-shadow: 0 1px 14px rgb(17 20 31 / 0.95), 0 0 2px rgb(17 20 31 / 0.8);
+  text-shadow: 0 1px 14px rgb(var(--night-rgb) / 0.95), 0 0 2px rgb(var(--night-rgb) / 0.8);
 }
 .hint::before {
   content: "";
@@ -694,7 +722,7 @@
 /* Pulled back over the whole street, under the last words. */
 .closing {
   position: relative;
-  min-height: 100vh;
+  min-height: 100svh;
   display: grid;
   align-content: start;
   justify-items: center;
@@ -709,16 +737,16 @@
   font-weight: 700;
   line-height: 0.92;
   letter-spacing: -0.04em;
-  text-shadow: 0 2px 30px rgb(17 20 31 / 0.8);
+  text-shadow: 0 2px 30px rgb(var(--night-rgb) / 0.8);
 }
 .fine { margin: 0; max-width: 30rem; color: var(--muted); text-wrap: balance; }
 
 .footer {
   position: relative;
   z-index: 1;
-  background: rgb(17 20 31 / 0.6);
+  background: rgb(var(--night-rgb) / 0.6);
   backdrop-filter: blur(16px);
-  border-top: 1px solid rgb(61 69 99 / 0.5);
+  border-top: 1px solid rgb(var(--line-rgb) / 0.5);
   padding: 28px var(--gutter);
   display: flex;
   flex-wrap: wrap;
@@ -727,15 +755,20 @@
   color: var(--muted);
   font-size: 0.875rem;
 }
-.footer nav { display: flex; flex-wrap: wrap; gap: 8px 20px; }
-.footer nav a { text-decoration: none; }
+.footer nav { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.footer nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}
 .footer nav a:hover { color: var(--text); }
 .footer > p { margin: 0 0 0 auto; max-width: 30rem; }
 .footer .footerBase {
   flex-basis: 100%;
   margin: 0;
   padding-top: 16px;
-  border-top: 1px solid rgb(61 69 99 / 0.4);
+  border-top: 1px solid rgb(var(--line-rgb) / 0.4);
   display: flex;
   flex-wrap: wrap;
   gap: 8px 28px;
@@ -755,11 +788,11 @@
 @media (max-width: 1080px) {
   .watchGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .watchBlock:nth-child(3) { border-left: 0; }
-  .watchBlock:nth-child(n + 3) { border-top: 1px solid rgb(61 69 99 / 0.6); }
+  .watchBlock:nth-child(n + 3) { border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
   .privacyCols { grid-template-columns: 1fr 1fr; }
   .privacyNote { grid-column: 1 / -1; }
 }
-@media (max-width: 820px) {
+@media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
   .hero { padding-top: 104px; }
   .sample { right: auto; left: 50%; translate: -50% 0; bottom: 80px; }
   .railWrap { display: none; }
@@ -767,7 +800,7 @@
     grid-template-columns: 1fr;
     align-items: end;
     gap: 18px;
-    padding-top: 46vh;
+    padding-top: 46svh;
   }
   .stepCopy {
     position: static;
@@ -795,19 +828,73 @@
   .step::before {
     content: "";
     position: absolute;
-    inset: 38vh 0 0;
-    background: linear-gradient(transparent, rgb(17 20 31 / 0.92) 22%);
+    inset: 38svh 0 0;
+    background: linear-gradient(transparent, rgb(var(--night-rgb) / 0.92) 22%);
     pointer-events: none;
   }
   .cardSlot { grid-column: 1; }
-  .intro { min-height: 110vh; align-items: end; padding-bottom: 18vh; }
+  .intro { min-height: 110svh; align-items: end; padding-bottom: 18svh; }
   .watchGrid, .privacyCols { grid-template-columns: 1fr; }
-  .watchBlock + .watchBlock { border-left: 0; border-top: 1px solid rgb(61 69 99 / 0.6); }
+  .watchBlock + .watchBlock { border-left: 0; border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
   .footer > p { margin-left: 0; }
+}
+
+/* Phones on their side: the hero, and the reveal's words, fit a short screen. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .hero { gap: 14px; padding-top: 84px; padding-bottom: 24px; min-height: auto; }
+  .h1 { font-size: clamp(2rem, 10svh, 3.25rem); }
+  .lede { font-size: 1rem; max-width: 40rem; }
+  .cue { display: none; }
+  .sample { position: static; translate: none; }
+  .beyondPin { padding-top: 84px; }
+  .beyondPin .h2 { font-size: clamp(1.75rem, 9svh, 2.5rem); margin-bottom: 14px; }
+  .beyondText { max-width: 26rem; font-size: 0.9375rem; }
+}
+
+/* Phones: the big panels drop the live blur (re-blurring a moving 3D scene behind
+   each of them is the heaviest thing on the page) and turn more opaque instead.
+   The nav, menu and small tags keep their glass. */
+@media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
+  .cardSlot > :first-child,
+  .watchGrid,
+  .whoList,
+  .privacyCols,
+  .footer,
+  .secondary {
+    backdrop-filter: none;
+  }
+  .cardSlot > :first-child { background: rgb(var(--surface-rgb) / 0.94); }
+  .watchGrid,
+  .whoList,
+  .privacyCols { background: rgb(var(--surface-rgb) / 0.9); }
+  .watchBlock:hover,
+  .whoRow:hover { background: rgb(var(--surface-2-rgb) / 0.9); }
+  .footer { background: rgb(var(--night-rgb) / 0.92); }
+  .secondary { background: rgb(var(--surface-2-rgb) / 0.92); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
   .tag[data-tone="live"]::before { animation: none; }
   .navDot, .menu, .menuIcon span { transition: none; }
+}
+
+/* On phones the reveal's words sit straight on the moving street, so they get
+   a soft wash of night behind them: from above when upright (the street is
+   below the words), from the left on a phone on its side (it is to the right). */
+@media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
+  .beyondPin {
+    margin-inline: calc(-1 * var(--gutter));
+    padding-inline: var(--gutter);
+    padding-bottom: 48px;
+    background: linear-gradient(rgb(var(--night-rgb) / 0.92) 0, rgb(var(--night-rgb) / 0.86) calc(100% - 48px), rgb(var(--night-rgb) / 0));
+  }
+  .hint { color: var(--text); }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .beyondPin {
+    padding-bottom: 0;
+    min-height: 100svh;
+    background: linear-gradient(90deg, rgb(var(--night-rgb) / 0.9) 0, rgb(var(--night-rgb) / 0.7) 42%, rgb(var(--night-rgb) / 0) 62%);
+  }
 }

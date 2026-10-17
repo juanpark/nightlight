@@ -41,25 +41,31 @@ export type Probe = {
   checked: number; // machines the light has reached
 };
 
-// The night's colours: the ground, the warm lights, and the status lights.
-const P = { BG: 0x0d1019, WARM: 0xffc65a, OK: 0x8fd6a8, WARN: 0xf5a83a };
-// Night clay: low-saturation greys, so the colour comes from the light (cool
-// moon outside, warm lamps inside) rather than from the paint.
+// Night clay: greys with a little of the page's navy in them, so the colour
+// comes from the light (cool moon outside, star-yellow lamps inside) rather
+// than from the paint.
 const CLAY = {
-  ground: 0x1b1f2b,
-  wall: 0x5b5e6c,
-  floor: 0x6c6c76,
-  thing: 0x77767f,
-  soft: 0x8c8a92,
+  ground: 0x18203a,
+  wall: 0x575e78,
+  floor: 0x676b80,
+  thing: 0x71758a,
+  soft: 0x878a9c,
 };
 const COOL_PANE = new THREE.Color(0x2a3a6a);
-const OFF = new THREE.Color(0x232a40);
+const OFF = new THREE.Color(0x1e2a50);
 
 export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) {
-  const BG = P.BG;
-  const WARM = new THREE.Color(P.WARM);
-  const OK = new THREE.Color(P.OK);
-  const WARN = new THREE.Color(P.WARN);
+  // The colours come from the page's own tokens (Glow.module.css), so the
+  // scene and the page can never drift apart.
+  const css = getComputedStyle(canvas);
+  const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  const BG = new THREE.Color(token("--scene-ground", "#1b233c"));
+  const WARM = new THREE.Color(token("--star", "#fdd83a"));
+  const OK = new THREE.Color(token("--ok", "#8fd6a8"));
+  const WARN = new THREE.Color(token("--warn", "#f5b84a"));
+  const NIGHT_RGB = token("--night-rgb", "11 20 48").split(/\s+/).join(", ");
+  const OK_RGB = token("--ok-rgb", "143 214 168").split(/\s+/).join(", ");
+  const TEXT = token("--text", "#f4efe4");
   // Antialiasing happens in the post target (MSAA), so the canvas itself needs none.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
   // Quality steps down on its own if frames run slow: pixel ratio first, then bloom.
@@ -89,7 +95,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environment = envTex;
   scene.environmentIntensity = 0.16;
-  scene.add(new THREE.HemisphereLight(0x5f6d9e, 0x0a0c12, 0.55));
+  scene.add(new THREE.HemisphereLight(0x5f6d9e, 0x070b18, 0.55));
   const moon = new THREE.DirectionalLight(0xaebcea, 1.9);
   moon.position.set(-12, 24, 16);
   moon.castShadow = true;
@@ -180,7 +186,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   box(0.8, 2.2, 0.8, 3.6, 7.6, -1.9, mats.wall, 0.05); // chimney
 
   // Windows on the back wall: moonlit panes.
-  const paneMat = new THREE.MeshStandardMaterial({ color: 0x141a2c, emissive: COOL_PANE.clone(), emissiveIntensity: 0.6, roughness: 0.3 });
+  const paneMat = new THREE.MeshStandardMaterial({ color: 0x111a36, emissive: COOL_PANE.clone(), emissiveIntensity: 0.6, roughness: 0.3 });
   for (const [x, y, w] of [
     [-4.3, 0.9, 1.6], [-1, 1.1, 0.9], [3.2, 0.9, 2.2], [-3.6, 3.9, 1.8], [3.4, 3.9, 1.8],
   ] as const) {
@@ -247,7 +253,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     l.position.set(...led);
     scene.add(l);
     // A small table lamp: its shade glows when the room is checked.
-    const shade = new THREE.MeshStandardMaterial({ color: 0x4a4a52, emissive: WARM.clone(), emissiveIntensity: 0, roughness: 0.8 });
+    const shade = new THREE.MeshStandardMaterial({ color: 0x474b5e, emissive: WARM.clone(), emissiveIntensity: 0, roughness: 0.8 });
     cyl(0.03, 0.03, 0.55, lamp[0], lamp[1], lamp[2], mats.wall, 8);
     const sh = cyl(0.14, 0.26, 0.3, lamp[0], lamp[1] + 0.5, lamp[2], shade, 20);
     sh.castShadow = false;
@@ -372,7 +378,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const RAD = 6;
   const cableGeo = new THREE.TubeGeometry(wire, SEG, 0.028, RAD, false);
   geos.push(cableGeo);
-  const cable = new THREE.Mesh(cableGeo, clay(0x1c2131));
+  const cable = new THREE.Mesh(cableGeo, clay(0x1a2444));
   cable.castShadow = true;
   scene.add(cable);
   const tubeGeo = new THREE.TubeGeometry(wire, SEG, 0.034, RAD, false);
@@ -396,7 +402,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   // The nightlight itself: a small bright bead on the wire
   const headGeo = new THREE.SphereGeometry(0.11, 24, 16);
   geos.push(headGeo);
-  const head = new THREE.Mesh(headGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(0xfff1c4).multiplyScalar(1.4), toneMapped: false }));
+  const head = new THREE.Mesh(headGeo, new THREE.MeshBasicMaterial({ color: WARM.clone().lerp(new THREE.Color(0xffffff), 0.65).multiplyScalar(1.4), toneMapped: false }));
   scene.add(head);
   const haloGeo = new THREE.SphereGeometry(0.22, 24, 16);
   geos.push(haloGeo);
@@ -446,7 +452,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     return m;
   }
   function pane(g: THREE.Group, w: number, h: number, x: number, y: number, z: number, at: number, list: Place["panes"]) {
-    const mat = new THREE.MeshStandardMaterial({ color: 0x141a2c, emissive: COOL_PANE.clone(), emissiveIntensity: 0.5, roughness: 0.3 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0x111a36, emissive: COOL_PANE.clone(), emissiveIntensity: 0.5, roughness: 0.3 });
     placeBox(g, w, h, 0.05, x, y, z, mat, 0.015);
     list.push({ mat, at });
   }
@@ -482,16 +488,16 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
       const r = H / 2 - 4;
       ctx.beginPath();
       ctx.roundRect(3, 3, W - 6, H - 6, r);
-      ctx.fillStyle = "rgba(17, 20, 31, 0.82)";
+      ctx.fillStyle = `rgba(${NIGHT_RGB}, 0.82)`;
       ctx.fill();
       ctx.lineWidth = 3;
-      ctx.strokeStyle = "rgba(143, 214, 168, 0.55)";
+      ctx.strokeStyle = `rgba(${OK_RGB}, 0.55)`;
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(H * 0.48, H / 2, H * 0.085, 0, Math.PI * 2);
-      ctx.fillStyle = "#8fd6a8";
+      ctx.fillStyle = `rgb(${OK_RGB})`;
       ctx.fill();
-      ctx.fillStyle = "#e9e5da";
+      ctx.fillStyle = TEXT;
       ctx.textBaseline = "middle";
       ctx.fillText(text, H * 0.72, H / 2 + 2);
       tex.needsUpdate = true;
@@ -748,7 +754,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   };
 
   function draw(v: View, time: number) {
-    const narrow = W < 820;
+    const sideways = H < 520 && W > H; // a phone on its side
+    const narrow = W < 820 || sideways; // phones, upright or on their side
     const dt = last < 0 ? 0 : Math.min(0.1, time - last);
     last = time;
     if (dt > 0 && settle-- <= 0) {
@@ -841,7 +848,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
       pl.panes.forEach((pn) => {
         const on = sm(pn.at - 0.1, pn.at + 0.05, lit);
         pn.mat.emissive.copy(COOL_PANE).lerp(WARM, on);
-        pn.mat.emissiveIntensity = 0.5 + on * 0.9;
+        // Star yellow is bright: lit windows stay just under a full glow so the street doesn't blur.
+        pn.mat.emissiveIntensity = 0.5 + on * 0.45;
       });
       if (k === 2) {
         rackLeds.forEach((l) => {
@@ -897,7 +905,9 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     let half = Math.max(11, (narrow ? 8.5 : 0) / aspect) / v.zoom;
     if (v.fit) half = Math.max(half, v.fit / aspect);
     const halfW = half * aspect;
-    const ox = narrow ? 0 : v.ox;
+    // Upright phones keep the subject centred; on their side it moves to the right half,
+    // since the words sit on the left.
+    const ox = sideways ? 0.18 : narrow ? 0 : v.ox;
     const oy = (narrow ? v.oy : 0) + (v.lift ?? 0);
     camera.left = -halfW - ox * 2 * halfW;
     camera.right = halfW - ox * 2 * halfW;

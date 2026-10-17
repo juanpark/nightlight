@@ -45,24 +45,32 @@ export function GlowNav({ links, menuLinks }: { links: NavLink[]; menuLinks: Nav
     if (a) setDot(a.offsetLeft + a.offsetWidth / 2);
   }, [active]);
 
-  // How far through the page, drawn as the line along the bar.
+  // How far through the page, drawn as the line along the bar. The page's height is
+  // kept and refreshed only when something resizes, so scrolling never measures layout.
   useEffect(() => {
     let raf = 0;
+    let max = 1;
+    const measure = () => {
+      max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+      onScroll();
+    };
     const paint = () => {
       raf = 0;
-      const max = document.documentElement.scrollHeight - window.innerHeight;
-      if (line.current) line.current.style.transform = `scaleX(${max > 0 ? Math.min(1, window.scrollY / max) : 0})`;
+      if (line.current) line.current.style.transform = `scaleX(${Math.min(1, window.scrollY / max)})`;
     };
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(paint);
     };
-    paint();
+    const sized = new ResizeObserver(measure);
+    sized.observe(document.body);
+    measure();
     window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
+    window.addEventListener("resize", measure);
     return () => {
       cancelAnimationFrame(raf);
+      sized.disconnect();
       window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+      window.removeEventListener("resize", measure);
     };
   }, []);
 
