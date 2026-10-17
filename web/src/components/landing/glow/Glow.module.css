@@ -208,36 +208,9 @@
   transition: color 0.25s ease, background-color 0.25s ease;
 }
 .links a:hover { color: var(--text); background: rgb(var(--line-rgb) / 0.35); }
-.links a[aria-current] { color: var(--text); }
-/* The small warm light that marks where you are. */
-.navDot {
-  position: absolute;
-  left: 0;
-  bottom: -1px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--star);
-  box-shadow: 0 0 10px 2px rgb(var(--star-rgb) / 0.55);
-  translate: calc(var(--dot-x, 0px) - 2.5px) 0;
-  opacity: 0;
-  transition: translate 0.7s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease;
-}
-.links[data-dot] .navDot { opacity: 1; }
+.links a[aria-current],
+.links a[aria-current]:hover { color: var(--star); }
 .navActions { grid-area: end; justify-self: end; }
-/* How far through the night: a glowing line, brightest at its head. */
-.navLine {
-  position: absolute;
-  left: 22px;
-  right: 22px;
-  bottom: 0;
-  height: 1.5px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, rgb(var(--star-rgb) / 0), rgb(var(--star-rgb) / 0.55) 70%, var(--star));
-  transform-origin: left;
-  transform: scaleX(0);
-  pointer-events: none;
-}
 .menuButton {
   grid-area: links;
   justify-self: start;
@@ -300,7 +273,7 @@
   border-radius: 50%;
   background: var(--line-strong);
 }
-.menu a[aria-current]::before { background: var(--star); box-shadow: 0 0 10px rgb(var(--star-rgb) / 0.6); }
+.menu a[aria-current] { color: var(--star); }
 @media (max-width: 440px) {
   .navActions .primary { padding-inline: 14px; }
   .navActions .primary svg { display: none; }
@@ -925,5 +898,5 @@
 @media (prefers-reduced-motion: reduce) {
   .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
   .tag[data-tone="live"]::before { animation: none; }
-  .navDot, .menu, .menuIcon span { transition: none; }
+  .menu, .menuIcon span { transition: none; }
 }
