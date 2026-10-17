@@ -1,0 +1,37 @@
+/* Each letter has a copy of itself parked one line below (the ::after). On
+   hover of any ancestor link or button the pair slides up, staggered. */
+.roll {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+  vertical-align: bottom;
+  line-height: 1.15;
+}
+/* The words for screen readers; the letters are aria-hidden. */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.char {
+  position: relative;
+  display: inline-block;
+  transition: transform 0.55s cubic-bezier(0.7, 0, 0.2, 1);
+  transition-delay: calc(var(--i) * 14ms);
+}
+.char::after {
+  content: attr(data-c);
+  position: absolute;
+  left: 0;
+  top: 100%;
+}
+:is(a, button, [data-roll]):hover .roll .char,
+:is(a, button, [data-roll]):focus-visible .roll .char {
+  transform: translateY(-100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .char { transition: none; }
+}

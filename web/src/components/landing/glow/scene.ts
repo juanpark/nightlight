@@ -4,6 +4,7 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 // The glow hero's 3D world: a clay dollhouse at night, cut open at the front,
 // with the six machines of the sample home in their rooms. A small warm light
@@ -25,14 +26,17 @@ export type View = {
   orb: number; // 0..1: pulses flow along the whole wire
 };
 
-const BG = 0x11141f;
+const BG = 0x0d1019;
+// Night clay: low-saturation greys, so the colour comes from the light (cool
+// moon outside, warm lamps inside) rather than from the paint.
 const CLAY = {
-  ground: 0x232838,
-  wall: 0x535a73,
-  floor: 0x646b85,
-  thing: 0x737a94,
-  soft: 0x8a90a8,
+  ground: 0x1b1f2b,
+  wall: 0x5b5e6c,
+  floor: 0x6c6c76,
+  thing: 0x77767f,
+  soft: 0x8c8a92,
 };
+const COOL_PANE = new THREE.Color(0x2a3a6a);
 const WARM = new THREE.Color(0xffc65a);
 const OK = new THREE.Color(0x8fd6a8);
 const WARN = new THREE.Color(0xf5a83a);
@@ -46,12 +50,12 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   let level = 0;
   renderer.setPixelRatio(LEVELS[0]);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // Nothing that casts a shadow ever moves, so the shadow map is drawn once.
   renderer.shadowMap.autoUpdate = false;
   renderer.shadowMap.needsUpdate = true;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 1.15;
   renderer.setClearColor(BG, 1);
 
   const scene = new THREE.Scene();
@@ -61,21 +65,28 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 300);
 
   // ---------- Light: moon, sky, and the warm ones that come on ----------
-  scene.add(new THREE.HemisphereLight(0x8d97c2, 0x1a1c26, 1.25));
-  const moon = new THREE.DirectionalLight(0xc4cdf2, 1.9);
-  moon.position.set(14, 22, 12);
+  // A dim studio environment gives the clay soft shading on every face; the sky
+  // only tints it, and the moon is the one hard light, from the front left so
+  // roof, walls and floors each read at their own value.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environment = envTex;
+  scene.environmentIntensity = 0.16;
+  scene.add(new THREE.HemisphereLight(0x5f6d9e, 0x0a0c12, 0.55));
+  const moon = new THREE.DirectionalLight(0xaebcea, 1.9);
+  moon.position.set(-12, 24, 16);
   moon.castShadow = true;
   moon.shadow.mapSize.set(2048, 2048);
   moon.shadow.camera.left = -18;
   moon.shadow.camera.right = 18;
   moon.shadow.camera.top = 18;
   moon.shadow.camera.bottom = -18;
-  moon.shadow.bias = -0.0006;
-  moon.shadow.radius = 4;
+  moon.shadow.bias = -0.0004;
+  moon.shadow.normalBias = 0.02;
   scene.add(moon);
 
-  // Matte clay: Lambert reads the same as a rough standard material at a fraction of the cost.
-  const clay = (color: number) => new THREE.MeshLambertMaterial({ color });
+  // Matte clay: rough, non-metal, lit by the environment as well as the lights.
+  const clay = (color: number) => new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0 });
   const mats = {
     ground: clay(CLAY.ground),
     wall: clay(CLAY.wall),
@@ -151,7 +162,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   box(0.8, 2.2, 0.8, 3.6, 7.6, -1.9, mats.wall, 0.05); // chimney
 
   // Windows on the back wall: moonlit panes.
-  const paneMat = new THREE.MeshLambertMaterial({ color: 0x1d2440, emissive: 0x3b4d8f, emissiveIntensity: 0.35 });
+  const paneMat = new THREE.MeshStandardMaterial({ color: 0x141a2c, emissive: COOL_PANE.clone(), emissiveIntensity: 0.6, roughness: 0.3 });
   for (const [x, y, w] of [
     [-4.3, 0.9, 1.6], [-1, 1.1, 0.9], [3.2, 0.9, 2.2], [-3.6, 3.9, 1.8], [3.4, 3.9, 1.8],
   ] as const) {
@@ -208,7 +219,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   box(7.4, 0.08, 0.06, 5.1, 0.45, 5, mats.wall, 0);
 
   // ---------- The machines, each with a status light and a lamp in its room ----------
-  type Device = { led: THREE.Mesh; at: THREE.Vector3; lamp: THREE.PointLight; shade: THREE.MeshLambertMaterial; t: number };
+  type Device = { led: THREE.Mesh; at: THREE.Vector3; lamp: THREE.PointLight; shade: THREE.MeshStandardMaterial; t: number; glow: number };
   const ledGeo = new THREE.SphereGeometry(0.07, 16, 12);
   geos.push(ledGeo);
   function device(build: () => void, led: [number, number, number], lamp: [number, number, number]): Device {
@@ -218,14 +229,14 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     l.position.set(...led);
     scene.add(l);
     // A small table lamp: its shade glows when the room is checked.
-    const shade = new THREE.MeshLambertMaterial({ color: 0x4a4a52, emissive: WARM.clone(), emissiveIntensity: 0 });
+    const shade = new THREE.MeshStandardMaterial({ color: 0x4a4a52, emissive: WARM.clone(), emissiveIntensity: 0, roughness: 0.8 });
     cyl(0.03, 0.03, 0.55, lamp[0], lamp[1], lamp[2], mats.wall, 8);
     const sh = cyl(0.14, 0.26, 0.3, lamp[0], lamp[1] + 0.5, lamp[2], shade, 20);
     sh.castShadow = false;
-    const p = new THREE.PointLight(WARM, 0, 7, 1.6);
+    const p = new THREE.PointLight(WARM, 0, 9, 2);
     p.position.set(lamp[0], lamp[1] + 0.9, lamp[2] + 0.4);
     scene.add(p);
-    return { led: l, at: new THREE.Vector3(...led), lamp: p, shade, t: 0 };
+    return { led: l, at: new THREE.Vector3(...led), lamp: p, shade, t: 0, glow: 0 };
   }
 
   const devices: Device[] = [
@@ -252,6 +263,14 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
       box(0.18, 0.08, 0.18, -0.12, 6.67, -1.62, mats.ground, 0.02);
     }, [0.22, 6.72, -1.4], [-0.9, 6, -1.9]),
   ];
+
+  // A soft warm fill on each storey, for when the whole house is lit.
+  const fills = [1.6, 4.6, 7.2].map((y) => {
+    const f = new THREE.PointLight(WARM, 0, 14, 2);
+    f.position.set(0, y, 1.2);
+    scene.add(f);
+    return f;
+  });
 
   // ---------- The wire: one cable routed through the house like real wiring ----------
   // It runs along each floor in front of the furniture, goes up to every machine and
@@ -320,7 +339,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
   const haloGeo = new THREE.SphereGeometry(0.22, 24, 16);
   geos.push(haloGeo);
   head.add(new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0.12, toneMapped: false, depthWrite: false })));
-  const headLight = new THREE.PointLight(WARM, 3, 4, 1.6);
+  const headLight = new THREE.PointLight(WARM, 7, 5, 2);
   head.add(headLight);
 
   // Once all is well, small pulses keep flowing along the wire.
@@ -404,7 +423,7 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
     new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }),
   );
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.4, 0.4, 0.9);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.6, 0.88);
   // The glow is soft anyway, so its blur runs at a quarter of the size.
   const bloomSize = bloom.setSize.bind(bloom);
   bloom.setSize = (w: number, h: number) => bloomSize(w / 2, h / 2);
@@ -484,10 +503,17 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
       mat.color.copy(OFF).lerp(state, reached).multiplyScalar(1 + reached * 0.5);
       const pulse = isPi && !opts.calm ? 1 + (1 - v.done) * 0.35 * Math.sin(time * 4) : 1;
       d.led.scale.setScalar((1 + reached * 0.4) * pulse);
+      // A lamp warms up over half a second instead of switching on.
       const on = Math.max(reached, v.lit);
-      d.lamp.intensity = on * 3.5;
-      d.shade.emissiveIntensity = on * 0.9;
+      d.glow += (on - d.glow) * (dt === 0 || opts.calm ? 1 : 1 - Math.exp(-dt * 4));
+      d.lamp.intensity = d.glow * 13;
+      d.shade.emissiveIntensity = d.glow * 1.2;
     });
+    fills.forEach((f) => (f.intensity = v.lit * 9));
+    // Windows go from moonlit blue to lamplight as the house wakes up.
+    const warmth = Math.max(v.lit, tr * 0.55);
+    paneMat.emissive.copy(COOL_PANE).lerp(WARM, warmth);
+    paneMat.emissiveIntensity = 0.6 + warmth * 0.5;
 
     // Checking rings, expanding from the light
     rings.forEach((r, i) => {
@@ -507,8 +533,10 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
 
     // Camera: orthographic, looking at (tx,ty,tz) or at the light
     target.set(v.tx, v.ty, v.tz).lerp(camHead, v.follow);
-    const az = THREE.MathUtils.degToRad(v.az);
-    const el = THREE.MathUtils.degToRad(v.el);
+    // A slow drift keeps the house alive when nobody is scrolling.
+    const drift = opts.calm ? 0 : Math.sin(time * 0.13) * 1.4;
+    const az = THREE.MathUtils.degToRad(v.az + drift);
+    const el = THREE.MathUtils.degToRad(v.el + (opts.calm ? 0 : Math.sin(time * 0.09) * 0.6));
     camera.position.set(
       target.x + Math.cos(el) * Math.sin(az) * 60,
       target.y + Math.sin(el) * 60,
@@ -543,6 +571,8 @@ export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) 
         if (m) (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
       });
       composer.dispose();
+      envTex.dispose();
+      pmrem.dispose();
       renderer.dispose();
     },
   };

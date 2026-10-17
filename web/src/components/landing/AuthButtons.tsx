@@ -4,6 +4,8 @@ import { useState } from "react";
 import { GoogleAuthProvider, signInAnonymously, signInWithPopup } from "firebase/auth";
 import { firebase } from "@/lib/firebase";
 import { Icon } from "./Icon";
+import { Magnetic } from "./motion/Magnetic";
+import { Roll } from "./motion/Roll";
 import landing from "./Landing.module.css";
 
 type Kind = "demo" | "google";
@@ -14,10 +16,12 @@ export function AuthButtons({
   size = "large",
   demoOnly = false,
   styles: s = landing,
+  magnetic = false,
 }: {
   size?: "large" | "small";
   demoOnly?: boolean;
   styles?: Record<string, string>; // the day hero passes its own
+  magnetic?: boolean; // buttons lean toward the pointer, labels roll on hover
 }) {
   const [busy, setBusy] = useState<Kind | null>(null);
   const [err, setErr] = useState("");
@@ -42,18 +46,24 @@ export function AuthButtons({
     }
   }
 
+  const label = (text: string) => (magnetic ? <Roll text={text} /> : text);
+  const wrap = (node: React.ReactNode) => (magnetic ? <Magnetic strength={0.3}>{node}</Magnetic> : node);
+
   return (
     <div className={size === "large" ? s.actions : s.actionsSmall}>
       <div className={s.actionRow}>
-        <button type="button" className={s.primary} disabled={busy !== null} onClick={() => go("demo")}>
-          {busy === "demo" ? "Starting the demo…" : "Try the demo"}
-          {busy !== "demo" && <Icon name="arrow" size={size === "large" ? 18 : 16} />}
-        </button>
-        {!demoOnly && (
-          <button type="button" className={s.secondary} disabled={busy !== null} onClick={() => go("google")}>
-            {busy === "google" ? "Opening Google…" : "Sign in with Google"}
-          </button>
+        {wrap(
+          <button type="button" className={s.primary} disabled={busy !== null} onClick={() => go("demo")}>
+            {busy === "demo" ? "Starting the demo…" : label("Try the demo")}
+            {busy !== "demo" && <Icon name="arrow" size={size === "large" ? 18 : 16} />}
+          </button>,
         )}
+        {!demoOnly &&
+          wrap(
+            <button type="button" className={s.secondary} disabled={busy !== null} onClick={() => go("google")}>
+              {busy === "google" ? "Opening Google…" : label("Sign in with Google")}
+            </button>,
+          )}
       </div>
       {err && (
         <p className={s.error} role="alert">
