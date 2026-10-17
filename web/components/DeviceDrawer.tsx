@@ -1,7 +1,11 @@
 "use client";
+// One device, with progressive disclosure: a status sentence and what needs the person first, then three tabs
+// (Overview: how it is and what runs there; About: what Nightlight knows about it; Settings: what it may do).
+// UX spec 2026-10-17 §2.
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
+import { statusSentence, type Go, type Need } from "@/lib/needsYou";
 import type { Action, Device } from "@/lib/types";
 import DeviceHistory from "./DeviceHistory";
 import Checkups from "./Checkups";
@@ -11,6 +15,9 @@ import DeviceProfile from "./DeviceProfile";
 import RemoveDevice from "./RemoveDevice";
 import ExpertSessions from "./ExpertSessions";
 import Permissions from "./Permissions";
+import NeedsList from "./NeedsList";
+
+type Tab = "overview" | "about" | "settings";
 
 function Vital({ label, value }: { label: string; value?: number | null }) {
   return (
@@ -28,13 +35,7 @@ function uptime(sec?: number | null) {
   return d >= 14 ? `${Math.floor(d / 7)} weeks` : d >= 1 ? `${d} days` : `${Math.max(1, Math.round(sec / 3600))} hours`;
 }
 
-function ago(d?: Date | null) {
-  if (!d) return "never";
-  const s = Math.round((Date.now() - d.getTime()) / 1000);
-  return s < 90 ? `${s} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : d.toLocaleString();
-}
-
-/** How this device gets helper updates, in plain words (the switches live under "What Nightlight may do here"). */
+/** How this device gets helper updates, in plain words (the switches are in Settings). */
 function updateMode(d: Device) {
   if (d.manage === "app") {
     if (d.permissions?.updates === false) return "updates from the app are off";
@@ -43,24 +44,28 @@ function updateMode(d: Device) {
   return (d.allowedJobs?.update ?? []).includes("signed") ? "updates when you tap Update" : "updates only on the device";
 }
 
-export default function DeviceDrawer({ uid, generation, device, actions, onAsk, onClose }: {
-  uid: string; generation?: number; device: Device; actions: Action[]; onAsk: (q: string) => void; onClose: () => void;
+export default function DeviceDrawer({ uid, generation, device, actions, devices, needs, release, tab, onTab, onGo,
+  onFollowUp, onAsk, onClose }: {
+  uid: string; generation?: number; device: Device; actions: Action[]; devices: Device[]; needs: Need[];
+  release: { version: string } | null; tab: Tab; onTab: (t: Tab) => void; onGo: (g: Go) => void;
+  onFollowUp: (turnId: string) => void; onAsk: (q: string) => void; onClose: () => void;
 }) {
   const services = useServices(uid, device.id);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
-  const [tag, setTag] = useState("");
-  const saveTags = (tags: string[]) => api("POST", `/api/devices/${device.id}/layout`, { tags }).catch(() => {});
-  const mark = (id: string, state: "new" | "known" | "snoozed", days?: number) =>
-    api("POST", `/api/devices/${device.id}/issues/${encodeURIComponent(id)}`, { state, ...(days ? { days } : {}) })
-      .catch(() => {});
+  const [allServices, setAllServices] = useState(false);
+  const real = device.realm === "real";
+  const watched = device.kind === "watched";
+  const removing = needs.some((n) => n.kind === "removing");
   async function rename() {
     if (name.trim() && name.trim() !== device.name) {
       await api("POST", `/api/devices/${device.id}/layout`, { name: name.trim() }).catch(() => {});
     }
     setEditing(false);
   }
-  const real = device.realm === "real";
+  const newFinding = (device.findings ?? []).find((f) => (f.state ?? "new") === "new");
+  const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
+  const current: Tab = tabs.includes(tab) ? tab : "overview";
   return (
     <div className="panel drawer">
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -74,87 +79,152 @@ export default function DeviceDrawer({ uid, generation, device, actions, onAsk, 
           : <strong style={{ fontSize: 18 }}>{device.name}</strong>}
         {real && !editing && <button className="linkish small" onClick={() => { setName(device.name); setEditing(true); }}>
           Rename</button>}
-        <span className={`pill ${real ? "live" : ""}`}>{real ? "Live device" : "Sample (simulated)"}</span>
+        <span className={`pill ${real ? "live" : ""}`}>{real ? "Live" : "Sample"}</span>
         <span style={{ flex: 1 }} />
         <button onClick={onClose}>Close</button>
       </div>
-      <p className="muted" style={{ margin: "6px 0" }}>{device.purpose}</p>
-      {real && (
-        <div className="details small">
-          <div><span className="muted">Last report</span>{ago(device.lastSeen)}</div>
-          <div><span className="muted">Running for</span>{uptime(device.vitals?.uptime)}</div>
-          <div><span className="muted">System</span>{device.os ?? "–"}</div>
-          <div><span className="muted">Chip</span>{device.arch ?? "–"}</div>
-          <div><span className="muted">Updates waiting</span>{device.updatesPending ?? "–"}</div>
-          <div><span className="muted">Containers</span>{device.containerCount != null
-            ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
-          <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}
-            {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
-        </div>
-      )}
-      <div className="vitals">
-        <Vital label="Disk" value={device.vitals?.diskPct} />
-        <Vital label="Memory" value={device.vitals?.mem} />
-        <Vital label="CPU" value={device.vitals?.cpu} />
-      </div>
-      {real && device.kind !== "watched" && <HelperUpdate device={device} actions={actions}
-        origin={typeof window === "undefined" ? "" : window.location.origin} />}
-      {real && <DeviceHistory uid={uid} deviceId={device.id} />}
-      {(device.findings ?? []).map((f, i) => {
-        const state = f.state ?? "new";
-        return (
-          <div key={f.id ?? i} className={`finding ${state !== "new" ? "is-known" : ""}`}>
-            <span className={`dot ${state !== "new" ? "offline" : f.severity === "info" ? "ok" : f.severity}`} />{" "}
-            {f.message} <span className="muted small">({f.evidence})</span>
-            {state !== "new" && <span className="pill" style={{ marginLeft: 6 }}>{state === "known" ? "Known" : "Snoozed"}</span>}
-            {real && f.id && (state === "new"
-              ? <span className="issue-actions">
-                  <button className="linkish small" onClick={() => mark(f.id!, "known")}>I know, leave it</button>
-                  <button className="linkish small" onClick={() => mark(f.id!, "snoozed", 7)}>Snooze a week</button>
-                </span>
-              : <button className="linkish small issue-actions" onClick={() => mark(f.id!, "new")}>Needs a look again</button>)}
-          </div>
-        );
-      })}
-      {real && (
-        <div className="tags-edit small">
-          <span className="muted">Tags:</span>
-          {(device.tags ?? []).map((t) => (
-            <span key={t} className="pill">{t} <button className="linkish" aria-label={`Remove ${t}`}
-              onClick={() => saveTags((device.tags ?? []).filter((x) => x !== t))}>×</button></span>))}
-          {(device.tags ?? []).length < 6 && (
-            <form onSubmit={(e) => { e.preventDefault(); if (tag.trim()) { saveTags([...(device.tags ?? []), tag.trim()]); setTag(""); } }}>
-              <input value={tag} onChange={(e) => setTag(e.target.value)} maxLength={20} placeholder="Add a tag (e.g. Parents)"
-                style={{ padding: "3px 8px" }} />
-            </form>)}
-        </div>
-      )}
-      <div style={{ marginTop: 8 }}>
-        {services.map((s) => (
-          <div key={s.id} className="svc">
-            <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
-            <div style={{ flex: 1 }}>
-              <div><strong>{s.name}</strong> {s.version && <span className="small muted">v{s.version}</span>}
-                {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
-              {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
-              {s.detail && <div className="small muted">{s.detail}</div>}
-              {(s.findings ?? []).map((f, i) => <div key={i} className="finding small">{f.message}</div>)}
-            </div>
-          </div>
-        ))}
-      </div>
-      {real && device.kind !== "watched" && <Checkups uid={uid} generation={generation} deviceId={device.id}
-        actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
-      {device.kind !== "watched" && <DeviceProfile uid={uid} deviceId={device.id} />}
-      {device.kind !== "watched" && <Notebook uid={uid} deviceId={device.id} />}
-      {real && device.kind !== "watched" && <Permissions device={device} services={services} />}
-      {real && device.kind !== "watched" && <ExpertSessions uid={uid} device={device} />}
-      {real && device.kind !== "watched" && <RemoveDevice device={device} onRemoved={onClose} />}
-      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+      <p className="drawer-status">{statusSentence(device, Date.now(), removing)}</p>
+      <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} />
+      <div className="drawer-actions">
         <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
-        {device.findings?.[0] && <button onClick={() => onAsk(`What should I do about this on my ${device.name}: ${device.findings![0].message}`)}>
+        {newFinding && <button onClick={() => onAsk(`What should I do about this on my ${device.name}: ${newFinding.message}`)}>
           What should I do?</button>}
       </div>
+      {tabs.length > 0 && (
+        <div className="tabs" role="tablist">
+          {tabs.map((t) => (
+            <button key={t} role="tab" aria-selected={current === t} className={current === t ? "on" : ""}
+              onClick={() => onTab(t)}>{t === "overview" ? "Overview" : t === "about" ? "About" : "Settings"}</button>
+          ))}
+        </div>
+      )}
+
+      {current === "overview" && <>
+        {real && device.status === "offline"
+          ? <p className="muted small">Last report {device.lastSeen ? device.lastSeen.toLocaleString() : "never"}: Nightlight
+              will check what happened when it&apos;s back.</p>
+          : <div className="vitals">
+              <Vital label="Disk" value={device.vitals?.diskPct} />
+              <Vital label="Memory" value={device.vitals?.mem} />
+              <Vital label="CPU" value={device.vitals?.cpu} />
+            </div>}
+        <Problems device={device} />
+        {real && !watched && <Checkups uid={uid} generation={generation} deviceId={device.id}
+          actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
+        <section className="drawer-section">
+          <h4>What runs here</h4>
+          {services.length === 0 && <p className="muted small">{real ? "Nothing running that Nightlight recognises yet. It "
+            + "lists Docker containers and failed system services." : "Nothing listed."}</p>}
+          {services.filter((s) => allServices || (s.status ?? "ok") !== "ok").map((s) => (
+            <div key={s.id} className="svc">
+              <span className={`dot ${s.status ?? "ok"}`} style={{ marginTop: 5 }} />
+              <div style={{ flex: 1 }}>
+                <div><strong>{s.name}</strong> {s.version && <span className="small muted">v{s.version}</span>}
+                  {s.category && <span className="pill" style={{ marginLeft: 6 }}>{s.category}</span>}</div>
+                {s.players && <div className="small muted">{s.players.online} of {s.players.max} players online</div>}
+                {s.detail && <div className="small muted">{s.detail}</div>}
+                {(s.findings ?? []).map((f, i) => <div key={i} className="finding small">{f.message}</div>)}
+              </div>
+            </div>
+          ))}
+          {services.some((s) => (s.status ?? "ok") === "ok") && (
+            <button className="linkish small" onClick={() => setAllServices(!allServices)}>
+              {allServices ? "Show only what needs a look"
+                : `Show all ${services.length} (${services.filter((s) => (s.status ?? "ok") === "ok").length} running fine)`}
+            </button>)}
+        </section>
+        {real && <DeviceHistory uid={uid} deviceId={device.id} />}
+        {!real && <DeviceProfile uid={uid} deviceId={device.id} />}
+        {!real && <Notebook uid={uid} deviceId={device.id} />}
+      </>}
+
+      {current === "about" && <>
+        <DeviceProfile uid={uid} deviceId={device.id} />
+        <Notebook uid={uid} deviceId={device.id} />
+        <Tags device={device} />
+        <section className="drawer-section">
+          <h4>Details</h4>
+          <div className="details small">
+            <div><span className="muted">System</span>{device.os ?? "–"}</div>
+            <div><span className="muted">Chip</span>{device.arch ?? "–"}</div>
+            <div><span className="muted">Running for</span>{uptime(device.vitals?.uptime)}</div>
+            <div><span className="muted">Containers</span>{device.containerCount != null
+              ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
+            <div><span className="muted">System updates</span>{device.updatesPending ?? "–"}</div>
+            <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}
+              {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
+          </div>
+          {device.purpose && <p className="muted small">{device.purpose}</p>}
+        </section>
+      </>}
+
+      {current === "settings" && <>
+        <Permissions device={device} services={services} />
+        <section className="drawer-section">
+          <h4>Updates</h4>
+          <HelperUpdate device={device} actions={actions} latest={release?.version}
+            origin={typeof window === "undefined" ? "" : window.location.origin} />
+          {!(release && device.helperVersion && release.version !== device.helperVersion) &&
+            <p className="muted small">Up to date (v{device.helperVersion ?? "?"}) · {updateMode(device)}.</p>}
+        </section>
+        <ExpertSessions uid={uid} device={device} open={needs.some((n) => n.kind === "expertHalf")} />
+        <RemoveDevice device={device} onRemoved={onClose} />
+      </>}
     </div>
+  );
+}
+
+function Problems({ device }: { device: Device }) {
+  const [showKnown, setShowKnown] = useState(false);
+  const real = device.realm === "real";
+  const all = device.findings ?? [];
+  const open = all.filter((f) => (f.state ?? "new") === "new");
+  const known = all.filter((f) => (f.state ?? "new") !== "new");
+  const mark = (id: string, state: "new" | "known" | "snoozed", days?: number) =>
+    api("POST", `/api/devices/${device.id}/issues/${encodeURIComponent(id)}`, { state, ...(days ? { days } : {}) })
+      .catch(() => {});
+  const row = (f: (typeof all)[number], i: number) => {
+    const state = f.state ?? "new";
+    return (
+      <div key={f.id ?? i} className={`finding ${state !== "new" ? "is-known" : ""}`}>
+        <span className={`dot ${state !== "new" ? "offline" : f.severity === "info" ? "ok" : f.severity}`} />{" "}
+        {f.message} <span className="muted small">({f.evidence})</span>
+        {state !== "new" && <span className="pill" style={{ marginLeft: 6 }}>{state === "known" ? "Known" : "Snoozed"}</span>}
+        {real && f.id && (state === "new"
+          ? <span className="issue-actions">
+              <button className="linkish small" onClick={() => mark(f.id!, "known")}>I know, leave it</button>
+              <button className="linkish small" onClick={() => mark(f.id!, "snoozed", 7)}>Snooze a week</button>
+            </span>
+          : <button className="linkish small issue-actions" onClick={() => mark(f.id!, "new")}>Needs a look again</button>)}
+      </div>
+    );
+  };
+  return (
+    <section className="drawer-section">
+      <h4>Problems</h4>
+      {open.length === 0 && <p className="muted small">Nothing needs a look.</p>}
+      {open.map(row)}
+      {known.length > 0 && <button className="linkish small" onClick={() => setShowKnown(!showKnown)}>
+        {showKnown ? "Hide" : `${known.length} known or snoozed`}</button>}
+      {showKnown && known.map(row)}
+    </section>
+  );
+}
+
+function Tags({ device }: { device: Device }) {
+  const [tag, setTag] = useState("");
+  const save = (tags: string[]) => api("POST", `/api/devices/${device.id}/layout`, { tags }).catch(() => {});
+  return (
+    <section className="drawer-section tags-edit small">
+      <h4>Tags</h4>
+      {(device.tags ?? []).map((t) => (
+        <span key={t} className="pill">{t} <button className="linkish" aria-label={`Remove ${t}`}
+          onClick={() => save((device.tags ?? []).filter((x) => x !== t))}>×</button></span>))}
+      {(device.tags ?? []).length < 6 && (
+        <form onSubmit={(e) => { e.preventDefault(); if (tag.trim()) { save([...(device.tags ?? []), tag.trim()]); setTag(""); } }}>
+          <input value={tag} onChange={(e) => setTag(e.target.value)} maxLength={20}
+            placeholder="Add a tag (e.g. Parents)" style={{ padding: "3px 8px" }} />
+        </form>)}
+    </section>
   );
 }

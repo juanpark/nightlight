@@ -1,0 +1,20 @@
+/* "Needs you" marks and lists, the calmer device panel, first-run and the chat work log (UX spec 2026-10-17).
+   Colours only through the theme tokens in globals.css. */
+.needs-mark { position: absolute; top: -7px; right: -7px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: #fff;
+  background: var(--offline, #9aa3b5); box-shadow: 0 0 0 2px var(--panel); }
+.needs-mark.crit { background: var(--crit); }
+.needs-mark.warn { background: var(--warn); }
+.needs-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.needs-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.needs-text { flex: 1; min-width: 160px; }
+.needs-strip .verdict { font-weight: 600; }
+
+.drawer-status { margin: 6px 0 4px; font-size: 15px; }
+.drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 10px 0 8px; }
+.tabs button { border: none; background: none; padding: 6px 12px; border-bottom: 2px solid transparent;
+  border-radius: 0; color: var(--muted); }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--accent, var(--ink)); font-weight: 600; }
+.drawer-section { margin-top: 12px; }
+.drawer-section h4 { margin: 0 0 6px; }

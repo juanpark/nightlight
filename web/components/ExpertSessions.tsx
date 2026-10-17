@@ -9,11 +9,13 @@ import { createPasskey, passkeysSupported } from "@/lib/passkey";
 const localKey = (uid: string) => `nl_passkey_fp_${uid}`;
 import type { Device } from "@/lib/types";
 
-export default function ExpertSessions({ uid, device }: { uid: string; device: Device }) {
+export default function ExpertSessions({ uid, device, open: openFirst = false }: {
+  uid: string; device: Device; open?: boolean;
+}) {
   const [key, setKey] = useState<{ enabled: boolean; fingerprint?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(openFirst);
   useEffect(() => { api<{ enabled: boolean; fingerprint?: string }>("GET", "/api/expert").then(setKey).catch(() => {}); }, []);
   const on = (device.allowedJobs?.expert ?? []).includes("on");
   // The code worked out in THIS browser when the passkey was made (not taken from the server).

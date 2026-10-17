@@ -55,8 +55,11 @@ export function useServices(uid: string | null, deviceId: string | null): Servic
   return useCollection<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
 }
 
+/** A stored step: older messages have only name and args; textOffset/ok/ms arrived with the layered chat. */
+export interface PastStep { name: string; args?: Record<string, unknown>; summary?: string; details?: string;
+  textOffset?: number; ok?: boolean; ms?: number }
 export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number;
-  toolCalls?: { name: string; args?: Record<string, unknown> }[]; actionIds?: string[] }
+  mode?: "quick" | "investigate"; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
 
 /** A chat's saved messages, oldest first (read once when the chat opens). */
 export async function loadMessages(uid: string, sessionId: string): Promise<PastMessage[]> {
@@ -65,6 +68,24 @@ export async function loadMessages(uid: string, sessionId: string): Promise<Past
   const snap = await getDocs(query(collection(db, "users", uid, "sessions", sessionId, "messages"), orderBy("seq"),
     limit(200)));
   return snap.docs.map((d) => plain<PastMessage>(d.id, d.data()));
+}
+
+/** The signed helper release on offer (fetched once for the whole app). */
+export function useRelease(): { version: string } | null {
+  const [r, setR] = useState<{ version: string } | null>(null);
+  useEffect(() => {
+    import("./api").then(({ api }) => api<{ version: string }>("GET", "/helper/release").then(setR).catch(() => setR(null)));
+  }, []);
+  return r;
+}
+
+/** Whether the owner has a passkey for expert sessions (refreshed when `tick` changes). */
+export function useExpertStatus(tick = 0): { enabled: boolean } | null {
+  const [r, setR] = useState<{ enabled: boolean } | null>(null);
+  useEffect(() => {
+    import("./api").then(({ api }) => api<{ enabled: boolean }>("GET", "/api/expert").then(setR).catch(() => setR(null)));
+  }, [tick]);
+  return r;
 }
 
 /** A device's profile (the notes Nightlight keeps about the machine), or undefined. */
