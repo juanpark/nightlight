@@ -13,6 +13,7 @@ import "@/app/map.css";
 import { api } from "@/lib/api";
 import type { Need } from "@/lib/needsYou";
 import type { Device, Link, LinkKind } from "@/lib/types";
+import { litApps, mainDevice, useFollowed } from "@/lib/follow";
 import AppSheet from "./AppSheet";
 import DeviceNode, { type DeviceNodeType } from "./DeviceNode";
 import LinkEdge, { type LinkEdgeType } from "./LinkEdge";
@@ -49,6 +50,7 @@ function sides(a: { x: number; y: number }, b: { x: number; y: number }): [Posit
   return dy >= 0 ? [Position.Bottom, Position.Top] : [Position.Top, Position.Bottom];
 }
 
+const HANDS_OFF_MS = 3000; // the chat leaves the view alone this long after the person last moved it
 const FOCUS_ZOOM = 1.3, UNFOCUS_ZOOM = 1.2; // zoomed in this far, the card in the middle opens; a bit less, it closes
 
 /** An opened card grows downward: the cards below it, in its column, move down together to make room. Display only;
@@ -88,7 +90,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   const app = useCallback((id: string, svcId: string) => (cb.current.onApp ?? ((d: string) => cb.current.onSelect(d)))(id, svcId), []);
   // One card at a time opens in place to show every app: by its Open button, or by zooming in on it. On a phone the
   // apps come up in a sheet instead.
-  const [focus, setFocus] = useState<{ id: string; by: "tap" | "zoom" } | null>(null);
+  const [focus, setFocus] = useState<{ id: string; by: "tap" | "zoom" | "chat" } | null>(null);
   const [focusH, setFocusH] = useState(0);
   const [sheet, setSheet] = useState<string | null>(null);
   const phone = useRef(false);
@@ -108,6 +110,39 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [focus]);
+  // The chat's answer lights up the devices its steps touch; when it is done, the main one opens with the apps it named
+  // pulsing. Never the device panel, never on a phone (the chat covers the map there), and never a camera move while
+  // the person's hands are on the map. A tap on empty map puts the lights out.
+  const followed = useFollowed();
+  const [dimmed, setDimmed] = useState(0);
+  const busyHands = useRef(false), lastHands = useRef(0);
+  const lit = useCallback((id: string): "working" | "done" | undefined => followed.seq === dimmed
+    || !followed.devices.includes(id) ? undefined : followed.done ? "done" : "working", [followed, dimmed]);
+  const fingers = useRef(new Set<number>()); // pointers down on the map (two for a pinch)
+  const hands = useCallback((e: React.PointerEvent) => {
+    const id = e.pointerId;
+    fingers.current.add(id);
+    busyHands.current = true;
+    const up = (u: PointerEvent) => {
+      if (u.pointerId !== id) return;
+      fingers.current.delete(id);
+      if (fingers.current.size === 0) { busyHands.current = false; lastHands.current = Date.now(); }
+      window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+  }, []);
+  const opened = useRef(0);
+  useEffect(() => {
+    if (!followed.done || opened.current === followed.seq || followed.seq === dimmed) return;
+    opened.current = followed.seq;
+    const main = mainDevice(followed);
+    if (!main || phone.current || !devices.some((d) => d.id === main && d.kind !== "watched")) return;
+    if (focus?.id === main) return;
+    shown.current = null;
+    setFocusH(0);
+    setFocus({ id: main, by: "chat" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed]);
   const sized = useCallback((id: string, h: number) => setFocusH((x) => (x === h ? x : h)), []);
 
   // Devices from the database become nodes. A node being dragged keeps its place, and a dropped one stays where it
@@ -134,10 +169,11 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         position: old?.dragging ? old.position : spots.get(d.id)!,
         data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask, favorites,
           focused: d.id === focusId, onFocus: focusOn, onApp: app, onSize: sized,
+          lit: lit(d.id), litApps: lit(d.id) ? litApps(followed, d.id) : undefined,
           by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
-  }, [devices, spots, marks, selected, uid, now, open, ask, favorites, focusId, focusOn, app, sized, setNodes]);
+  }, [devices, spots, marks, selected, uid, now, open, ask, favorites, focusId, focusOn, app, sized, lit, followed, setNodes]);
   // A removed line's marker goes once the database no longer has that line (gone, or written again since).
   const hidden = useCallback((l: Link) => removed[l.id] === stamp(l), [removed]);
   useEffect(() => setRemoved((m) => {
@@ -199,13 +235,16 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     if (to) connect({ source: s.fromNode.id, target: to });
   }
 
-  // A card opened by its button slides into view once it knows how tall it is (zoom stays as it was).
+  // A card opened by its button (or by the chat) slides into view once it knows how tall it is (zoom stays as it was).
+  // The chat never moves the view while the person is moving it, or just did; with reduced motion it jumps.
   const shown = useRef<string | null>(null);
   useEffect(() => {
-    if (focus?.by !== "tap" || !focusH || shown.current === focus.id) return;
+    if (!focus || focus.by === "zoom" || !focusH || shown.current === focus.id) return;
     shown.current = focus.id;
+    if (focus.by === "chat" && (busyHands.current || Date.now() - lastHands.current < HANDS_OFF_MS)) return;
     const p = spots.get(focus.id), f = flow.current;
-    if (p && f) f.setCenter(p.x + NODE_W / 2, p.y + focusH / 2, { zoom: f.getZoom(), duration: 300 });
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (p && f) f.setCenter(p.x + NODE_W / 2, p.y + focusH / 2, { zoom: f.getZoom(), duration: still ? 0 : 300 });
   }, [focus, focusH, spots]);
   useEffect(() => { if (!focus) shown.current = null; }, [focus]);
 
@@ -243,7 +282,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const dd = Math.hypot(p.x + NODE_W / 2 - cx, p.y + NODE_H / 2 - cy);
       if (dd < dist && devices.find((d) => d.id === id)?.kind !== "watched") { best = id; dist = dd; }
     }
-    if (focus?.by === "tap" || !best || focus?.id === best) return;
+    if (focus?.by === "tap" || focus?.by === "chat" || !best || focus?.id === best) return;
     setFocusH(0);
     setFocus({ id: best, by: "zoom" });
   }
@@ -265,24 +304,30 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);
     }}>
-      <div className="hm-canvas" ref={box}>
+      {/* any hand on the map (a card, the paper, the minimap, the zoom buttons, a pinch, a wheel, a key) keeps the
+          chat's camera still until it has been off for a few seconds */}
+      <div className="hm-canvas" ref={box} onPointerDownCapture={hands} onWheelCapture={() => { lastHands.current = Date.now(); }}
+        onKeyDownCapture={() => { lastHands.current = Date.now(); }}>
       <ReactFlow<DeviceNodeType, LinkEdgeType>
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
         onNodesChange={(ch: NodeChange<DeviceNodeType>[]) => onNodesChange(ch.filter((c) => c.type !== "remove"))}
         onInit={(i) => { flow.current = i; }}
         onNodeClick={(_, n) => { setEdgeSel(null); open(n.id); }}
         onNodeDragStart={(_, n) => {
+          busyHands.current = true;
           const b = base.get(n.id), v = spots.get(n.id);
           shift.current[n.id] = b && v ? { dx: v.x - b.x, dy: v.y - b.y } : { dx: 0, dy: 0 };
         }}
         onNodeDragStop={(_, n) => {
+          busyHands.current = false; lastHands.current = Date.now();
           const o = shift.current[n.id] ?? { dx: 0, dy: 0 };
           delete shift.current[n.id];
           dropped(n.id, { x: n.position.x - o.dx, y: n.position.y - o.dy });
         }}
-        onMoveEnd={(_, v) => moved(v)}
+        onMoveStart={(e) => { if (e) busyHands.current = true; }} // e: the person moved it (not the app)
+        onMoveEnd={(e, v) => { if (e) { busyHands.current = false; lastHands.current = Date.now(); } moved(v); }}
         onEdgeClick={(_, e) => setEdgeSel(e.id)}
-        onPaneClick={() => { setEdgeSel(null); setFocus(null); }}
+        onPaneClick={() => { setEdgeSel(null); setFocus(null); setDimmed(followed.seq); }}
         onConnect={connect} onConnectEnd={connectEnd} connectionMode={ConnectionMode.Loose} connectionRadius={30}
         onEdgesDelete={(es) => es.forEach((e) => { const l = links.find((x) => x.id === e.id); if (l) remove(l); })}
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
