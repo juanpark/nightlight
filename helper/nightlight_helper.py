@@ -20,6 +20,7 @@ after you approve its card in the app; Nightlight sends a job name and target, n
 Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # join with a one-time code from the app
   nightlight_helper.py pair <API_URL> [--web URL]              # or: show a code to approve in the app / by phone
+  nightlight_helper.py pair <API_URL> --web URL --browser --install  # the Mac installer: approve in the browser
   nightlight_helper.py install | uninstall | status            # run in the background (systemd / launchd)
   nightlight_helper.py settings                                # app-managed or strict; strict: what's allowed
   nightlight_helper.py once                                    # send one report
@@ -51,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.22"
+VERSION = "0.9.23"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1989,31 +1990,80 @@ def default_name():
     return (_os_name().split(" ")[0] or "Linux") + " computer"
 
 
-def pair(api, web=None, name=None):
-    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone."""
+PAIR_WAIT = 600
+BROWSER_WAIT = 900  # the Mac installer's path: signing in first can take a while (the server's code may end sooner)
+
+
+def _open_browser(url):
+    """Open the default browser on `url`. False if there is no way to."""
+    tool = "open" if sys.platform == "darwin" else shutil.which("xdg-open")
+    if not tool:
+        return False
+    try:
+        return subprocess.run([tool, url], capture_output=True, timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _notify(text):
+    """A Mac notification for someone who isn't at a terminal (the installer's path). Best effort."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.run(["osascript", "-e", "on run argv", "-e", 'display notification (item 1 of argv) with title '
+                        '"Nightlight"', "-e", "end run", text], capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def pair(api, web=None, name=None, browser=False, then_install=False):
+    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone. With `browser`
+    (the Mac installer: nobody at a terminal) the approval page opens by itself, and `then_install` sets up the
+    background service right after the approval, managed from the app."""
     api = check_api(api)
+    if browser and not web:
+        sys.exit("--browser needs --web (the Nightlight web address).")
+    again = "Open the Nightlight installer again for a new code." if browser else "Run pair again for a new one."
+
+    def give_up(text):
+        if browser:
+            _notify(text)
+        sys.exit("  " + text)
+
     status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
     if status != 201:
-        sys.exit(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
+        give_up(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
     code, interval = body["code"], max(int(body.get("interval", 3)), 2)
     print(f"\n  Your code:  {code}\n")
     if web:
         link = f"{web.rstrip('/')}/pair?code={code}"
         print(f"  Open Nightlight > Add a device > Enter code, or scan this with your phone:\n  {link}\n")
-        if shutil.which("qrencode"):
+        if browser:
+            if not _open_browser(link):
+                _notify(f"Open {link} to add this Mac.")
+        elif shutil.which("qrencode"):
             subprocess.run(["qrencode", "-t", "ANSIUTF8", link], check=False)
-    print("  Waiting for you to approve it (10 minutes)...")
-    deadline = time.time() + 600
+    wait = BROWSER_WAIT if browser else PAIR_WAIT
+    print(f"  Waiting for you to approve it ({wait // 60} minutes)...")
+    deadline = time.time() + wait
     while time.time() < deadline:
         time.sleep(interval)
         st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
         if st == 200 and res.get("token"):
             _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
             print("  Approved. This device is now on your Nightlight map.")
+            if then_install:
+                try:
+                    install(manage="app")
+                except (SystemExit, OSError, subprocess.SubprocessError) as e:
+                    print(f"  Install failed: {e}")
+                    give_up("Approved, but the background service didn't start. Open the Nightlight installer again.")
+                if browser:
+                    _notify("This Mac is now on your Nightlight map.")
             return
         if st == 401:
-            sys.exit("  The code was declined or has expired. Run pair again for a new one.")
-    sys.exit("  The code expired. Run pair again for a new one.")
+            give_up("The code was declined or has expired. " + again)
+    give_up("The code expired. " + again)
 
 
 # ------------------------------------------------------------------ discovery (owner-run, reviewed here first)
@@ -2770,6 +2820,8 @@ def _net():
 APP_DIR = (os.path.expanduser("~/Library/Application Support/Nightlight") if sys.platform == "darwin"
            else os.path.expanduser("~/.local/share/nightlight"))
 UNIT = "/etc/systemd/system/nightlight-helper.service"
+PKG_DIR = "/Library/Application Support/Nightlight"  # Nightlight.pkg's own Python and helper, shared by every user
+PKG_ID = "com.nightlight.installer"
 PLIST = os.path.expanduser("~/Library/LaunchAgents/com.nightlight.helper.plist")
 LABEL = "com.nightlight.helper"
 
@@ -2828,8 +2880,9 @@ def _unit_is_mine():
     return f"# nightlight-owner={os.getuid()}" in text or legacy
 
 
-def install(every=60):
-    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first."""
+def install(every=60, manage=None):
+    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first.
+    `manage` ("app" or "strict") answers the permissions question without a terminal (the Mac installer)."""
     try:
         _load()
     except (OSError, ValueError):
@@ -2837,14 +2890,18 @@ def install(every=60):
     cfg = _load()
     if cfg.get("manage") not in ("app", "strict"):
         interactive = sys.stdin.isatty()
-        app = interactive and _ask("Let the Nightlight app manage what it may do on this device? You'll switch things "
-                                   "on and off in the app; every restart still asks you first. (n = strict: changes "
-                                   "only on this device)", True)
+        app = manage == "app" if manage else interactive and _ask(
+            "Let the Nightlight app manage what it may do on this device? You'll switch things on and off in the app; "
+            "every restart still asks you first. (n = strict: changes only on this device)", True)
         _update_config(lambda c: c.setdefault("manage", "app" if app else "strict"))
         print("Managed from the app." if app else "Strict: change permissions here with `nightlight settings`.")
     # The one moment someone is at this Mac's terminal: settle macOS's folder prompts now, not in a later visit.
+    # Without a terminal (the Mac installer) nothing is recorded: still not asked, so it can be offered later, and
+    # until then the private folders are never read.
     if sys.platform == "darwin" and sys.stdin.isatty() and "macPrivateFolders" not in _load():
         _ask_mac_private(True)
+    # The Python running this install also runs the service: from the Mac installer that is its own bundled Python,
+    # which signed updates leave in place (they replace only the helper file and restart with this same Python).
     script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
     _link_command(script, py)
     every = max(int(every), 30)
@@ -2936,6 +2993,21 @@ def uninstall():
         except OSError:
             pass
     print("Uninstalled. Nothing of Nightlight is left running on this device.")
+    _pkg_leftovers()
+
+
+def _pkg_leftovers():
+    """Nightlight.pkg's shared folder needs an administrator to remove: removed when run as root, otherwise say how."""
+    if sys.platform != "darwin" or not os.path.isdir(PKG_DIR) or os.path.islink(PKG_DIR):
+        return
+    if os.geteuid() == 0:
+        shutil.rmtree(PKG_DIR)
+        subprocess.run(["pkgutil", "--forget", PKG_ID], capture_output=True, check=False)
+        print(f"Removed the Mac installer's files ({PKG_DIR}).")
+        return
+    print(f"The Mac installer's files are still in {PKG_DIR} (its own Python; nothing runs from it now). If nobody "
+          f"else on this Mac uses Nightlight, remove them with:\n  sudo rm -rf '{PKG_DIR}' && sudo pkgutil --forget "
+          f"{PKG_ID}")
 
 
 def _sudo_ok():
@@ -3129,6 +3201,8 @@ def main():
     pa.add_argument("api")
     pa.add_argument("--web", default=None)
     pa.add_argument("--name", default=None)
+    pa.add_argument("--browser", action="store_true", help="open the approval page in the browser (Mac installer)")
+    pa.add_argument("--install", action="store_true", help="install the background service once approved")
     ins = sub.add_parser("install")
     ins.add_argument("--every", type=int, default=60)
     sub.add_parser("uninstall")
@@ -3153,7 +3227,7 @@ def main():
     if a.cmd == "enrol":
         enrol(a.api, a.code, (a.name or default_name())[:40])
     elif a.cmd == "pair":
-        pair(a.api, a.web, a.name)
+        pair(a.api, a.web, a.name, a.browser, a.install)
     elif a.cmd == "install":
         install(a.every)
     elif a.cmd == "uninstall":

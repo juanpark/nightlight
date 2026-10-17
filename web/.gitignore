@@ -6,3 +6,5 @@ next-env.d.ts
 *.tsbuildinfo
 # copied from ../helper at build time (scripts/copy-helper.mjs)
 public/nightlight_helper.py
+# copied from ../build/mac by scripts/deploy_web.sh (the Mac installer)
+public/download/

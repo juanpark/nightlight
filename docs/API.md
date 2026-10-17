@@ -101,6 +101,12 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `POST /api/settings` | owner | `{"deviceNames": bool}` | `200 {ok, deviceNames}`: the account's switch for the names things nearby announce (on by default: it is the owner's own dashboard). Off: helpers stop sending names from their next report, new lists keep none, and the names already kept are removed (from every discovery list, and `seenName` from watched devices; one still called by its announced name goes back to its guess). Addresses never leave a device either way |
 | `POST /helper/leave` | `X-Device-Token` | `{}` | `200 {ok}`: the device revokes its own token (uninstall); `401 invalid_token` |
 
+**The Mac installer** (`GET /download/Nightlight.pkg` on the web app, with its sha256 at
+`/download/Nightlight.pkg.sha256`; `404` until a notarized package is deployed) uses the same pairing: its
+postinstall runs `pair <API> --web <WEB> --browser --install` as the person at the screen, which opens
+`<WEB>/pair?code=…` in their browser, polls, and installs the background service (managed from the app) once they
+approve. No new endpoints.
+
 Heartbeat reply fields:
 
 - `findings`: how many findings this report produced (a number).

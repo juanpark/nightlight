@@ -16,6 +16,17 @@ CFG=$(curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token)" -H 
 val() { python3 -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])" "$CFG" "$1"; }
 ./scripts/secret_scan.sh
 mkdir -p web/public && cp helper/nightlight_helper.py web/public/nightlight_helper.py  # served for /install.sh (not committed)
+# The Mac installer, served at /download/Nightlight.pkg (built by scripts/build_mac_pkg.sh; not committed). Only a
+# notarized one ships: other Macs refuse to open anything else. ALLOW_UNSIGNED_PKG=1 ships it anyway (previews).
+rm -rf web/public/download
+if [ -f build/mac/Nightlight.pkg ]; then
+  if xcrun stapler validate build/mac/Nightlight.pkg >/dev/null 2>&1 || [ "${ALLOW_UNSIGNED_PKG:-}" = 1 ]; then
+    mkdir -p web/public/download
+    cp build/mac/Nightlight.pkg build/mac/Nightlight.pkg.sha256 web/public/download/
+  else
+    echo "build/mac/Nightlight.pkg isn't notarized, so it isn't deployed (/download/Nightlight.pkg answers 404)."
+  fi
+fi
 # Every revision gets a known name, so production can be pointed at exactly this build: once a preview has pinned
 # the traffic split, a plain deploy no longer moves it (it did not, Oct 17 14:40–17:30 KST), and "latest" could be
 # someone's preview.

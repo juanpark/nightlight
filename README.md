@@ -198,6 +198,15 @@ Trash, so nobody has to come back to the terminal for it. If someone else looks 
 shares the line with three plain steps for them. The helper is [`helper/nightlight_helper.py`](helper/nightlight_helper.py): Python 3.8+, standard library
 only, about 2,500 lines, reviewable in one sitting.
 
+**On a Mac, download the installer.** `Nightlight.pkg` (from **Add a device**, served at `/download/Nightlight.pkg`)
+needs no Terminal and no developer tools: it brings its own Python. Click through the standard installer; your
+browser opens Nightlight's approval page; click **Approve** and the Mac appears on your map. The background service
+is managed from the app, and the question about the private folders is left for later. Nothing on the Mac listens
+for connections, so the firewall never asks. The package is built, signed and notarized by
+[`scripts/build_mac_pkg.sh`](scripts/build_mac_pkg.sh) (CPython from python-build-standalone, checked against pinned
+sha256 digests). Its shared files stay in `/Library/Application Support/Nightlight` after an uninstall; the uninstall
+prints the one administrator command that removes them.
+
 It changes nothing by default. What it can do, and only after you allow it:
 
 | You allow | Nightlight can |
@@ -218,7 +227,8 @@ Removing a device is a card too: the helper uninstalls itself and the device lea
   changed.
 - The trust ladder (jobs running on their own) applies to the sample home only.
 - The helper supports Linux (systemd) and macOS (launchd). **Windows is not supported.**
-- Adding a device needs one line in a terminal. There are no installers yet.
+- Adding a Linux device needs one line in a terminal. Only the Mac has an installer, and macOS opens it only once it
+  is notarized with a Developer ID.
 - Lines between devices on the map are drawn by the owner (or by the agent when you tell it how two devices relate).
   Nightlight does not yet work them out from what devices see of each other.
 - A device token has no expiry; it is revocable but not rotated.
@@ -260,6 +270,7 @@ research, reset and the cost guards.
 
 ```bash
 ./scripts/deploy_api.sh   # Cloud Run: verifies the helper's signature, copies the signed release in, deploys
+./scripts/build_mac_pkg.sh  # build/mac/Nightlight.pkg: signed and notarized with Developer ID certificates if present
 ./scripts/deploy_web.sh   # Cloud Run: reads the public Firebase web config at deploy time, deploys, moves traffic
 ```
 
