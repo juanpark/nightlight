@@ -2517,7 +2517,7 @@ def _seen_name(text):
     text = re.sub(r"\s*\((?:[0-9A-Fa-f]{2}[:-]){2,5}[0-9A-Fa-f]{2}\)$", "", " ".join(text.split()))
     text = re.sub(r"(?i)\.local\.?$", "", text)
     if not text or not text.isprintable() or scrub(text)[0] != text \
-            or re.search(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or re.search(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[:_-][0-9A-Fa-f]{2}){2,}(?![0-9A-Za-z])|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
             or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
         return None
     return text[:60].strip() or None

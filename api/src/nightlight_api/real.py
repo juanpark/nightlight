@@ -370,7 +370,7 @@ def found_name(text: str | None) -> str | None:
     something the scrubber hid."""
     if not isinstance(text, str) or not text.strip() or not text.isprintable() or len(text) > 60:
         return None
-    if re.search(r"\[(ip|mac|email|hidden|user)\]|\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b"
+    if re.search(r"\[(ip|mac|email|hidden|user)\]|(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[:_-][0-9A-Fa-f]{2}){2,}(?![0-9A-Za-z])"
                  r"|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
             or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
         return None

@@ -163,3 +163,8 @@ def test_a_thing_added_before_fingerprints_learns_its_own(client, started):
                          "maker": "Apple"}])
     assert client.get("/api/found").json()["items"] == []
     assert db.device(started, sid).get().to_dict()["model"] == "Apple TV"
+
+
+def test_the_server_refuses_a_name_shaped_like_a_hardware_address(client, started):
+    from nightlight_api import real
+    assert real.found_name("0E_B9_20_9B_31_B7") is None and real.found_name("Living Room") == "Living Room"

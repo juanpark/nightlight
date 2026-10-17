@@ -417,3 +417,19 @@ def test_a_homekit_bridge_name_never_beats_the_machines_own_name(helper, monkeyp
     monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
     helper.discover(yes=True, quiet=True)
     assert [i.get("name") for i in sent[0]["items"]] == ["mini"]
+
+
+def test_a_homekit_host_shaped_like_a_hardware_address_never_leaves(helper, monkeypatch):  # Codex depth #1
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY,
+                         "deviceNames": True})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.30": "4c:20:b8:eb:3f:31"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.30": [80]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [
+        ("192.168.1.30", "_hap._tcp", {"md": "homebridge"}, {"instance": "Homebridge climate bridge",
+                                                             "host": "0E_B9_20_9B_31_B7.local"})])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: (None, {}))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    assert [i.get("name") for i in sent[0]["items"]] == ["Homebridge climate bridge"]
+    assert "0E_B9" not in json.dumps(sent)
