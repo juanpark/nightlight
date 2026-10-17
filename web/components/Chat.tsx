@@ -47,6 +47,7 @@ const Chat = forwardRef<ChatHandle, {
     const log = useRef<HTMLDivElement>(null);
     const nearBottom = useRef(true);
     const streamed = useRef(new Set<string>());
+    const answered = useRef(new Set<string>()); // actions whose follow-up is already in the saved conversation
     const pending = useRef(new Set<string>()); // follow-ups promised by a device that hasn't answered yet
     const [pendingTick, setPendingTick] = useState(0); // re-check actions when a new promise arrives
     const watching = useRef(new Set<AbortController>());
@@ -69,11 +70,15 @@ const Chat = forwardRef<ChatHandle, {
     // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
     useEffect(() => {
       setTurns([]);
+      answered.current.clear();
       const sid = savedSession(uid, generation);
       if (!sid) return;
       let cancelled = false;
       loadMessages(uid, sid).then((msgs) => {
-        if (!cancelled && msgs.length) setTurns((cur) => [...fromHistory(msgs, devicesRef.current), ...cur]);
+        if (cancelled || !msgs.length) return;
+        const past = fromHistory(msgs, devicesRef.current);
+        for (const t of past) if (t.kind === "agent") for (const id of t.after ?? []) answered.current.add(id);
+        setTurns((cur) => [...past, ...cur]);
       }).catch(() => {});
       return () => { cancelled = true; };
     }, [uid, generation]);
@@ -111,7 +116,9 @@ const Chat = forwardRef<ChatHandle, {
         if (ctl.signal.aborted) {
           update(k, stop);
         } else {
-          update(k, (t) => ({ ...stop(t), error: t.error ?? (e instanceof ApiError ? e.code : "connection problem") }));
+          update(k, (t) => ({ ...stop(t), error: t.error ?? (e instanceof ApiError
+            ? e.code === "turn_in_progress" ? "Nightlight is still finishing the last answer. Try again in a minute." : e.code
+            : "connection problem") }));
         }
       } finally {
         watching.current.delete(ctl);
@@ -152,10 +159,13 @@ const Chat = forwardRef<ChatHandle, {
     }, [busy, run, uid, generation, mode]);
 
     // Approve can be tapped while the answer that showed the card is still streaming: its follow-up then waits its turn.
-    const followUp = useCallback((turnId: string, retries = 10) => {
+    // Retries wait up to 10 s each, so 30 covers an Investigate answer still running (up to about 4 minutes).
+    const followUp = useCallback((turnId: string, retries = 30) => {
       if (streamed.current.has(turnId)) return;
-      streamed.current.add(turnId);
       const after = actionsRef.current.filter((a) => a.continuationTurnId === turnId).map((a) => a.id);
+      // already in the saved conversation (it ran before this page was opened): don't run it again
+      if (after.length && after.every((id) => answered.current.has(id))) return;
+      streamed.current.add(turnId);
       run(`/api/turns/${turnId}/stream`, {}, "quick", after, retries);
     }, [run]);
 
@@ -164,7 +174,7 @@ const Chat = forwardRef<ChatHandle, {
       for (const a of actions) {
         if (a.continuationTurnId && pending.current.has(a.continuationTurnId)) {
           pending.current.delete(a.continuationTurnId);
-          followUp(a.continuationTurnId, 20);
+          followUp(a.continuationTurnId);
         }
       }
     }, [actions, followUp, pendingTick]);
