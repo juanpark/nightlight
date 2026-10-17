@@ -159,15 +159,18 @@ async function ask(page, text) {
   await page.keyboard.press("Enter");
 }
 
-/** Approves the newest card and waits for "Done" and the agent's follow-up. */
+/** Approves the newest card once its answer has finished, then waits for "Done" and the agent's follow-up. */
 async function approve(page, mark) {
+  await answered(page);
   const card = chat(page).locator(".card").last();
+  const replies = await chat(page).locator(".bubble.agent").count();
   const yes = card.locator("button", { hasText: "Approve" });
   await yes.waitFor({ timeout: 30_000 });
   await press(page, yes, { pause: 300 });
   mark?.("approve");
   await card.locator("dd", { hasText: /^Done/ }).waitFor({ timeout: AGENT_WAIT });
   mark?.("done");
+  await chat(page).locator(".bubble.agent").nth(replies).waitFor({ timeout: AGENT_WAIT }).catch(() => {});
   await answered(page).catch(() => {});
   mark?.("follow-up");
 }
