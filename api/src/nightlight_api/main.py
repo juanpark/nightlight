@@ -712,6 +712,20 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+class SetupBody(Strict):
+    preset: Literal["watch", "fix", "custom"]
+    autoUpdate: bool = False
+    macFolders: bool = False
+
+
+@app.post("/api/devices/{device_id}/setup")
+def device_setup(device_id: str, body: SetupBody, uid: str = Depends(owner_uid)):
+    """The one-time setup card: what Nightlight may do on a newly connected device (asked once; Settings later)."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    return real.device_setup(uid, device_id, body.preset, body.autoUpdate, body.macFolders)
+
+
 class PlaceBody(Strict):
     name: str = Field(min_length=1, max_length=40)
 
