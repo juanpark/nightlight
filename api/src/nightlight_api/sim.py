@@ -228,7 +228,9 @@ def _restart_card(d, svcs):
     return {"svcId": "minecraft",
             "plan": "Restart the Minecraft server to clear its memory.",
             "dryRun": f"About 1 minute offline; {online} player(s) online will be disconnected and can rejoin. "
-                      f"Memory should drop from {(d.get('vitals') or {}).get('mem')}% to about 45%.",
+                      f"Memory should drop from {(d.get('vitals') or {}).get('mem')}% to about 45%."
+                      + (f" The world hasn't been backed up in {game['lastBackupDaysAgo']} days: back it up first."
+                         if (game.get("lastBackupDaysAgo") or 0) > 7 else ""),
             "rollback": "Nothing to undo: the server comes back on its own with the same world."}
 
 
@@ -356,7 +358,7 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     return {**c, "blastRadius": [device["id"]], "riskClass": ACTIONS[action_type]["riskClass"]}
 
 
-FAILS_BECAUSE = {"rotate_logs": "log folder was locked by another program",
+FAILS_BECAUSE = {"rotate_logs": "log folder was locked by another program (which one isn't known)",
                  "clear_images": "Docker was busy with another task",
                  "restart_app": "app didn't stop in time",
                  "backup_world": "game server didn't respond in time", "restart_server": "game server didn't respond in time",

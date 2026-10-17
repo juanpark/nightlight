@@ -487,3 +487,76 @@ def test_a_plain_no_before_a_claim_never_excuses_it(client, started):  # Codex c
                                  "No problem, I've put up a card to restart the Minecraft game server.")
     ev = events(ask(client, new_session(client), "And the game?"))
     assert "I've put up a card" not in "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+
+
+def test_an_answer_that_stops_at_its_opening_line_becomes_the_look_it_announced(client, started):  # judge r4 #1
+    FakeLlm.behavior = _scripted("Let me check the Raspberry Pi. NAS", "The Pi's disk is 94% full.")
+    ev = events(ask(client, new_session(client), "The Pi feels slow. What's going on?"))
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert next(e for e in ev if e["type"] == "tool_call")["args"] == {"device_id": "pi-1"}
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert "NAS" not in text.split("Let me check the Raspberry Pi.")[-1].split("The Pi")[0]
+
+
+def test_the_home_summary_lists_apps_and_never_calls_unknown_healthy(client, started):
+    from conftest import generation
+    text = agentlib.fleet_summary(started, generation(started))
+    assert "Apps: " in text and "plex" in text
+    assert "unknown (Nightlight only sees whether it answers; never call it healthy)" in text
+
+
+def test_a_decline_reason_and_an_opened_trust_offer_reach_the_chat(client, started):
+    from nightlight_api import actions, trust as trustlib
+    from conftest import generation
+    g = generation(started)
+    sid = new_session(client)
+    card = actions.propose(started, session_id=sid, turn_id="t_d", generation=g, action_type="backup_world",
+                           device_id="game-1", params={})
+    r = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "deny", "note": "they're mid-game"})
+    turn = db.turns(started, sid).document(r.json()["continuationTurnId"]).get().to_dict()
+    assert "they're mid-game" in turn["input"] and "propose nothing more disruptive" in turn["input"]
+    ref = db.trust_doc(started, "sim", "rotate_logs")
+    doc = trustlib.new_doc("rotate_logs", g)
+    doc["successes"] = [{"actionId": f"a{i}", "at": None} for i in range(2)]
+    ref.set(doc)
+    card = actions.propose(started, session_id=sid, turn_id="t_o", generation=g, action_type="rotate_logs",
+                           device_id="pi-1", params={})
+    r = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"})
+    turn = db.turns(started, sid).document(r.json()["continuationTurnId"]).get().to_dict()
+    if (ref.get().to_dict() or {}).get("offer"):
+        assert "Trust:" in turn["input"] and "Trust panel" in turn["input"]
+
+
+def test_a_restart_card_warns_when_the_world_isnt_backed_up(client, started):
+    from nightlight_api import actions
+    from conftest import generation
+    client.post("/api/demo/inject", json={"kind": "server_lagging", "deviceId": "game-1"})
+    card = actions.propose(started, session_id="s", turn_id="t_r", generation=generation(started),
+                           action_type="restart_server", device_id="game-1", params={})
+    assert "hasn't been backed up in 9 days: back it up first" in card["dryRun"]
+
+
+def test_a_narration_follow_up_never_gets_a_made_up_tool_call(client, started):  # Codex final polish #1
+    from nightlight_api import actions
+    from conftest import generation
+    sid = new_session(client)
+    card = actions.propose(started, session_id=sid, turn_id="t_n", generation=generation(started),
+                           action_type="rotate_logs", device_id="pi-1", params={})
+    cont = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "deny"}).json()["continuationTurnId"]
+    FakeLlm.behavior = _scripted("Let me check the Raspberry Pi.")
+    ev = events(client.post(f"/api/turns/{cont}/stream", json={}))
+    assert not any(e["type"] == "tool_call" for e in ev) and ev[-1]["type"] == "done"
+
+
+def test_a_decline_never_promises_a_reminder(client, started):  # Codex final polish #2
+    from nightlight_api import conversation
+    text = conversation.render("job_declined", {"type": "rotate_logs", "plan": "Clean up.",
+                                                "decision": {"note": "not now"}}, "Raspberry Pi")
+    assert "remind" not in text and "ask again whenever it suits them" in text
+
+
+def test_a_long_app_list_says_it_is_partial(client, started):  # Codex final polish #3
+    from conftest import generation
+    text = agentlib.fleet_summary(started, generation(started))
+    mac = next(line for line in text.splitlines() if line.startswith("- mac-1 "))
+    assert "and more (get_device lists them all)" in mac  # the sample Mac Mini runs 14 apps

@@ -68,6 +68,10 @@ How to answer:
 - Nightlight's helper runs on Macs and Linux machines (a Raspberry Pi, a Linux server or NAS). Windows isn't
   supported yet: say so plainly; Nightlight can still watch whether a Windows PC answers on the network (Found
   nearby). Phones, routers, printers and cameras can only be watched that way too.
+- If a card for it is already waiting, point at that card instead of putting up another. If they ask to retry a job
+  that failed, say it failed last time and why (the reason it gave) before putting the card up again.
+- Before saying an app isn't there, check the apps listed for every device below, and call get_device on any whose
+  list says "and more".
 - Once a card is up, it IS the question: say it's waiting for their tap; never ask "would you like me to go ahead?".
 - Only name a cause that a tool result states. If a job failed, quote the reason it gave; never invent one.
 - Reply in the language the person wrote in.
@@ -201,6 +205,7 @@ class TurnContext:
     memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
     fixes: list = field(default_factory=list)  # (tool, device id, plan) a sample device read this turn offers
+    narrating: bool = False  # a follow-up that only puts a finished event into words: it has no tools
     promised: tuple | None = None  # (tool, device id) of a call made from the model's words: always a card
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
@@ -326,8 +331,13 @@ def fleet_summary(uid: str, generation: int) -> str:
         made = f" ({_made(d)})" if d.get("kind") == "watched" and _made(d) else ""  # "Printer (Brother HL-L2350DW)"
         if d.get("kind") == "watched" and d.get("seenName"):
             made += f", announces itself as {_quoted(d['seenName'])}"
-        lines.append(f"- {s['id']} ({s['name']}{made}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}."
-                     f"{extra}")
+        health = "unknown (Nightlight only sees whether it answers; never call it healthy)" \
+            if s["status"] == "unknown" or d.get("health") == "unknown" else s["status"]
+        apps = [n for n in (x.to_dict().get("name") for x in db.services(uid, snap_id).limit(13).get()) if n]
+        more = " and more (get_device lists them all)" if len(apps) > 12 else ""
+        apps = f" Apps: {', '.join(apps[:12])}{more}." if apps else ""
+        lines.append(f"- {s['id']} ({s['name']}{made}, {kind}): {s['purpose']} Health: {health}; {disk}{problem}."
+                     f"{apps}{extra}")
     found = real.found_view(uid)
     if found:
         lines.append("- found nearby, not on the map yet (the person can add them under Found nearby): "
@@ -1211,6 +1221,43 @@ def _drop_unbacked_claims(ctx: TurnContext, llm_response) -> None:
         p.text = None
 
 
+LEAD = re.compile(r"^\s*(?:Let me|I'll) (?:check|look at|look into|see)(?: on)? (?:the |your )?([^.]{1,60})\.")
+
+
+def _unstall(ctx: TurnContext, llm_response) -> None:
+    """The model sometimes says "Let me check the Raspberry Pi." and stops (sometimes with a stray id after it), before
+    any tool ran. That answer becomes the look it announced: get_device on the device it named, else list_fleet.
+    A stray id or name right after the opening line is dropped when a tool call follows it."""
+    parts = (llm_response.content.parts if llm_response.content else None) or []
+    texts = [p for p in parts if p.text and not p.thought]
+    if not texts:
+        return
+    text = "".join(p.text for p in texts)
+    lead = LEAD.match(text)
+    if not lead:
+        return
+    rest = text[lead.end():].strip()
+    stray = len(rest.split()) <= 2 and not re.search(r"[.!?]$", rest)  # "NAS", "nas-1": not a sentence
+    if any(p.function_call for p in parts):
+        if rest and stray:
+            texts[0].text = lead.group(0)
+            for p in texts[1:]:
+                p.text = None
+        return
+    if ctx.narrating or ctx.metrics["toolCalls"] or (rest and not stray):
+        return  # it has looked already, or it said more than the opening line
+    names = {n.strip().lower(): i for i, n in _fleet_names(ctx.fleet).items()}
+    said = lead.group(1).strip().lower()
+    device = names.get(said) or next((i for n, i in names.items() if n in said or said in n), None)
+    call = types.FunctionCall(name="get_device", args={"device_id": device}) if device else \
+        types.FunctionCall(name="list_fleet", args={})
+    signature = next((p.thought_signature for p in parts if p.thought_signature), None) \
+        or b"skip_thought_signature_validator"
+    llm_response.content = types.Content(role="model", parts=[types.Part(text=lead.group(0)),
+                                                               types.Part(function_call=call,
+                                                                          thought_signature=signature)])
+
+
 def _keep_card_promise(ctx: TurnContext, llm_response) -> None:
     """A model sometimes says "I've put a card up" without calling the tool. When this turn read a sample device that
     offers the fix it describes, the answer becomes that tool call instead (the model then words the result), so the
@@ -1334,6 +1381,7 @@ def make_callbacks(ctx: TurnContext):
             return None
         # Scrub the model's own words (as one text) before they become history for the next call.
         scrub_content(llm_response.content)
+        _unstall(ctx, llm_response)
         _tidy_thinking(ctx, llm_response)
         _keep_card_promise(ctx, llm_response)
         _drop_unbacked_claims(ctx, llm_response)  # a claim it couldn't keep is not said
@@ -1366,6 +1414,7 @@ def make_callbacks(ctx: TurnContext):
 def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     """The question agent gets the fleet summary and the tools; the follow-up after an approval gets neither: the
     server already knows the result, so one short model call narrates it."""
+    ctx.narrating = continuation
     before_model, after_model, before_tool = make_callbacks(ctx)
     if continuation:
         instruction = CONTINUATION

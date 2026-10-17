@@ -39,15 +39,18 @@ def _by_id(services: list[dict]) -> dict:
 
 
 def _invalidate_trust(tx, uid: str, action: dict, device: dict, service: dict | None, trust_doc: dict, trust_ref,
-                      by: str, ok: bool) -> None:
-    """Apply an outcome to trust; on failure also demote unpinned device/service overrides for this scope."""
-    tx.set(trust_ref, trustlib.after_outcome(trust_doc, action, ok, by, _now()))
+                      by: str, ok: bool) -> dict:
+    """Apply an outcome to trust (returns the new trust doc); on failure also demote unpinned device/service
+    overrides for this scope."""
+    after = trustlib.after_outcome(trust_doc, action, ok, by, _now())
+    tx.set(trust_ref, after)
     if ok:
-        return
+        return after
     if (update := trustlib.demoted_overrides(device, action["type"])):
         tx.update(db.device(uid, device["id"]), update)
     if service and (update := trustlib.demoted_overrides(service, action["type"])):
         tx.update(db.services(uid, device["id"]).document(service["id"]), update)
+    return after
 
 
 def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trust_doc: dict, trust_ref,
@@ -72,12 +75,14 @@ def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trus
             tx.update(db.device(uid, device["id"]), {"simFailNext": firestore.DELETE_FIELD})
         a["status"] = "done" if ok else "failed"
         a["result"] = result
-        _invalidate_trust(tx, uid, a, device, service, trust_doc, trust_ref, by, ok)
+        after = _invalidate_trust(tx, uid, a, device, service, trust_doc, trust_ref, by, ok)
+        opened = ((after or {}).get("offer") or {}) if not (trust_doc or {}).get("offer") else {}
     else:
         a["status"] = "denied"
+        opened = {}
     if by == "user":
         conversation.post(tx, uid, a, "job_finished" if decision == "approve" else "job_declined", device["name"],
-                          service=service)
+                          service=service, offer=opened.get("text"))
         a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": a["continuationTurnId"]}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
     return a
