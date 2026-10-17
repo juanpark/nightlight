@@ -60,7 +60,7 @@
 .gauge.none .g-arc { stroke: none; }
 .dsilent { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; border-radius: 8px;
   background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--offline) 12%, transparent) 6px 12px); }
-.dapps { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
+.dapps { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
   padding-top: 6px; }
 .dapps .dot { width: 7px; height: 7px; }
 /* a watched thing: whether it answers, and who checks it */
