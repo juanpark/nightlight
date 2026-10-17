@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { firebase } from "@/lib/firebase";
 import type { Device } from "@/lib/types";
 import PairApprove from "./PairApprove";
 
@@ -10,6 +11,50 @@ export function Copy({ text }: { text: string }) {
     <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0" }}>
       <pre style={{ flex: 1, margin: 0, padding: 8, background: "var(--bg)", borderRadius: 8, overflowX: "auto" }}>{text}</pre>
       <button onClick={() => navigator.clipboard.writeText(text).then(() => setDone(true))}>{done ? "Copied" : "Copy"}</button>
+    </div>
+  );
+}
+
+/** The message for whoever set the device up: what this is, the line, three steps, and when the line runs out. */
+function setupMessage(owner: string | null, line: string, minutes: number) {
+  return [
+    `${owner ?? "Someone you know"} uses Nightlight to keep an eye on their home devices and asked you to set it up on `
+      + "one of them. It takes about a minute.",
+    "",
+    "1. On that device, open Terminal (or connect to it over SSH).",
+    "2. Paste this line:",
+    "",
+    line,
+    "",
+    "3. Press Enter. It may ask for the device's password once.",
+    "",
+    `The line works once and expires in about ${minutes} minute${minutes === 1 ? "" : "s"}. If it has, ask them for a `
+      + "new one. After this nobody needs the terminal again: everything else happens in the Nightlight app.",
+  ].join("\n");
+}
+
+/** Hand the one-time setup to someone else: the phone's share sheet where there is one, otherwise the clipboard. */
+function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
+  const [owner, setOwner] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    firebase().then(({ auth }) => setOwner(auth.currentUser?.displayName?.split(" ")[0] || null)).catch(() => {});
+  }, []);
+  async function send() {
+    const minutes = Math.round((new Date(expiresAt).getTime() - Date.now()) / 60000);
+    if (minutes < 1) { setNote("This line has run out. Close this and get a new one."); return; }
+    const text = setupMessage(owner, line, minutes);
+    if (navigator.share) {
+      try { await navigator.share({ title: "Set up Nightlight", text }); return; }
+      catch (e) { if (e instanceof DOMException && e.name === "AbortError") return; } // otherwise fall back to copying
+    }
+    await navigator.clipboard.writeText(text).then(() => setNote("Copied. Paste it into a message to them."),
+      () => setNote("Couldn't copy. Copy the line above and send it with these steps."));
+  }
+  return (
+    <div className="send-line">
+      <button onClick={send}>Send to whoever set up this device</button>
+      {note && <span className="small muted">{note}</span>}
     </div>
   );
 }
@@ -58,6 +103,7 @@ export default function AddDevice({ anonymous, onSave, devices }: {
     }
   }
   const [other, setOther] = useState(false);
+  const line = code ? `curl -fsSL ${origin}/install.sh | sh -s -- ${code.code}` : "";
 
   return (
     <div className="panel">
@@ -69,7 +115,8 @@ export default function AddDevice({ anonymous, onSave, devices }: {
           <strong>Get your line.</strong>{" "}
           {!code ? <button className="primary" onClick={getCode}>Get my line</button>
             : <span className="small muted">(works once, for 10 minutes)</span>}
-          {code && <Copy text={`curl -fsSL ${origin}/install.sh | sh -s -- ${code.code}`} />}
+          {code && <Copy text={line} />}
+          {code && <SendLine line={line} expiresAt={code.expiresAt} />}
         </li>
         <li><strong>Paste it on the device</strong>: open its Terminal (on a Mac: Applications &gt; Utilities &gt;
           Terminal), paste, press Enter. It may ask for the device&apos;s password once.</li>
