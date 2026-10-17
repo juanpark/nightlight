@@ -10,8 +10,21 @@ import "@/app/chat.css";
 
 export interface ChatHandle { ask: (text: string) => void; followUp: (turnId: string) => void }
 
-const SUGGESTIONS = ["Is anything wrong at home?", "My kids say Minecraft is laggy tonight. Can you help?",
-  "When was the Minecraft world last backed up?"];
+const rank = (s?: string) => ({ crit: 0, warn: 1, offline: 2 } as Record<string, number>)[s ?? ""] ?? 3;
+
+/** Questions to start with, about what is actually on the map: the sample home's story, or the person's own devices. */
+function suggestions(devices: Device[]): string[] {
+  if (devices.some((d) => d.realm !== "real")) {
+    return ["Is anything wrong at home?", "My kids say Minecraft is laggy tonight. Can you help?",
+      "When was the Minecraft world last backed up?"];
+  }
+  const own = devices.filter((d) => d.kind !== "watched");
+  if (!own.length) return ["What can you do for me?", "How do I add my first device?"];
+  const worst = [...own].sort((a, b) => rank(a.status) - rank(b.status))[0];
+  return ["Is anything wrong at home?", `How is my ${worst.name} doing?`,
+    own.length > 1 ? "Which device needs attention first?" : `What runs on my ${worst.name}?`];
+}
+
 
 const MODES: { id: Mode; name: string; hint: string }[] = [
   { id: "quick", name: "Quick", hint: "Fast answers from what Nightlight already knows" },
@@ -162,8 +175,13 @@ const Chat = forwardRef<ChatHandle, {
           nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}>
           {turns.length === 0 && (
-            <div className="muted small">Ask Nightlight about your home. It explains in plain words and asks before it
-              changes anything.</div>
+            <div className="chat-empty">
+              <strong>Ask about your home</strong>
+              <p className="muted small">Nightlight looks at your devices, explains what it finds in plain words, and asks
+                before it changes anything.</p>
+              {suggestions(devices).map((s) => (
+                <button key={s} className="chat-starter" disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>))}
+            </div>
           )}
           {turns.some((t) => "past" in t && t.past) && (
             <div className="chat-past-note small muted">Earlier in this chat (kept 30 days) ·{" "}
@@ -181,9 +199,6 @@ const Chat = forwardRef<ChatHandle, {
               </div>
             );
           })}
-        </div>
-        <div className="suggest">
-          {SUGGESTIONS.map((s) => <button key={s} disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>)}
         </div>
         <div className="mode-switch" role="radiogroup" aria-label="How Nightlight answers">
           {MODES.map((m) => (
