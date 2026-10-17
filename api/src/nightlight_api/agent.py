@@ -624,10 +624,17 @@ def make_tools(ctx: TurnContext, read_only: bool):
         cards = [s for s in steps if s.get("actionId")]
         if cards:
             runbooks.used(ctx.uid, device_id, runbook_id, ctx.turn_id)
-        status = "pending" if any(s["status"] == "pending" for s in cards) else "done" if cards else \
-            "error" if any(s["status"] == "error" for s in steps) else "yours"
-        return _bounded({"status": status, "runbook": rb["title"], "steps": steps,
-                         "actionIds": [s["actionId"] for s in cards if s["status"] == "pending"]}, ctx)
+        failed = [s for s in steps if s["status"] in ("failed", "error", "refused")]
+        status = "pending" if any(s["status"] == "pending" for s in cards) else "failed" if failed else \
+            "done" if cards else "yours"  # a step that failed is never reported as done
+        head = {"status": status, "runbook": rb["title"], "failedSteps": len(failed),
+                "actionIds": [s["actionId"] for s in cards if s["status"] == "pending"]}
+        # The control fields (status, card ids) always survive; only the step descriptions are shortened to fit.
+        for shown in (steps, [{"say": s["say"][:80], "status": s["status"]} for s in steps], []):
+            out = _bounded({**head, "steps": shown}, ctx)
+            if not out.get("truncated"):
+                return out
+        return {**head, "steps": [], "note": "steps too long to show"}
 
     async def use_runbook(device_id: str, runbook_id: str, tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_use_runbook_sync, device_id, runbook_id, tool_context)

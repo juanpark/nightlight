@@ -215,3 +215,25 @@ def test_reset_clears_sample_runbooks_but_keeps_real_ones(client, started):
     demo.reset(started)
     assert list(db.device(started, "pi-1").collection("runbooks").get()) == []
     assert [r["title"] for r in runbooks.listed(started, dev["deviceId"], generation(started))] == ["Real"]
+
+
+def test_a_long_runbook_keeps_its_cards_when_its_text_is_shortened(client, started, monkeypatch):  # codex kb #1
+    from nightlight_api.config import settings
+    tools, _ = _tools(started)
+    saved = _call(tools, "save_runbook", device_id="pi-1", title="Clear old logs", when="Disk nearly full",
+                  steps=[{"say": "Explain step %d in many plain words so it takes up room" % i} for i in range(9)]
+                  + [{"say": "Clear old logs", "job": {"type": "rotate_logs"}}])
+    monkeypatch.setattr(settings, "tool_result_bytes", 400)
+    used = _call(tools, "use_runbook", device_id="pi-1", runbook_id=saved["runbookId"])
+    assert used["status"] == "pending" and len(used["actionIds"]) == 1 and "truncated" not in used
+
+
+def test_a_runbook_whose_step_fails_is_not_reported_done(client, started):  # codex kb #2
+    dev = enrolled(client)
+    beat(client, dev["token"], FACTS)  # nothing allowed: a restart can't be proposed
+    rb = runbooks.save(started, dev["deviceId"], "Restart it", "It stopped",
+                       [{"say": "Restart", "job": {"type": "restart_container", "params": {"container": "x"}}}],
+                       "nightlight", generation(started))
+    tools, _ = _tools(started)
+    used = _call(tools, "use_runbook", device_id=dev["deviceId"], runbook_id=rb["id"])
+    assert used["status"] != "done" and used["failedSteps"] == 1
