@@ -747,9 +747,9 @@ def test_looking_for_peers_has_one_overall_deadline(helper, monkeypatch):  # cod
     # 120 mounted shares whose names never resolve must not hold up the report: names are deduplicated and capped,
     # and every lookup shares one budget.
     import time as _t
-    monkeypatch.setattr(helper, "_connections", lambda: [])
-    monkeypatch.setattr(helper, "_time_machine_hosts", lambda: [])
-    monkeypatch.setattr(helper, "_drive_hosts", lambda: [f"nas{i}.local" for i in range(120)])
+    monkeypatch.setattr(helper, "_connections", lambda timeout=5: [])
+    monkeypatch.setattr(helper, "_time_machine_hosts", lambda timeout=5: [])
+    monkeypatch.setattr(helper, "_drive_hosts", lambda timeout=5: [f"nas{i}.local" for i in range(120)])
     looked = []
 
     def slow(host, timeout=3):
@@ -759,4 +759,4 @@ def test_looking_for_peers_has_one_overall_deadline(helper, monkeypatch):  # cod
     monkeypatch.setattr(helper, "_resolve", slow)
     t = _t.monotonic()
     assert helper._relied_on(budget=1.0) == []
-    assert _t.monotonic() - t < 1.5 and len(looked) <= helper.NET_HOSTS
+    assert _t.monotonic() - t < 1.5 and 0 < len(looked) <= helper.NET_HOSTS  # it did look, and stopped in time
