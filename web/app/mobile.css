@@ -40,3 +40,9 @@
   .tabs { overflow-x: auto; }
   .vitals { gap: 8px; }
 }
+
+/* The map becomes a grid of tiles on phones (the desktop layout positions them by hand). */
+@media (max-width: 700px) {
+  .board { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .board .node { width: auto !important; position: relative; left: auto !important; top: auto !important; }
+}
