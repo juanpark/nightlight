@@ -23,6 +23,8 @@ def fake_model(monkeypatch):
                         real_build(ctx, continuation=continuation, model=FakeLlm()))
     db.client().collection("ops").document("flags").delete()
     db.client().collection("ops").document("quota").delete()
+    for d in db.client().collection("ipQuotas").list_documents():  # probes sharing this emulator count calls too
+        d.delete()
     yield
 
 
@@ -278,3 +280,43 @@ def test_the_sample_mac_minis_unhealthy_app_has_a_fix(client, started):
     assert immich["status"] == "ok" and immich["findings"] == []
     svcs = {s.id: s.to_dict() for s in db.services(started, "mac-1").get()}
     assert not any(f["tool"] == "restart_app" for f in sim.fixes(device, svcs))
+
+
+def test_a_full_sample_pi_offers_logs_first_and_unused_images_as_an_option(client, started):
+    from nightlight_api import actions, sim
+    from conftest import generation
+    device = dict(db.device(started, "pi-1").get().to_dict(), id="pi-1")
+    svcs = {s.id: s.to_dict() for s in db.services(started, "pi-1").get()}
+    assert [f["tool"] for f in sim.fixes(device, svcs) if f["for"] == "disk_over_90"] == ["rotate_logs", "clear_images"]
+    card = actions.propose(started, session_id="s", turn_id="t", generation=generation(started),
+                           action_type="clear_images", device_id="pi-1", params={})
+    assert "Nothing to undo" in card["rollback"]
+    assert client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()["status"] == "done"
+    device = dict(db.device(started, "pi-1").get().to_dict(), id="pi-1")
+    assert device["vitals"]["diskPct"] < 94
+    assert "clear_images" not in [f["tool"] for f in sim.fixes(device, svcs)]
+
+
+def test_an_unbacked_card_claim_becomes_the_tool_call(client, started):
+    # The model reads the full Pi, then only *says* it put a card up: the claim is turned into the fix it offered.
+    from google.adk.models.llm_response import LlmResponse as R
+    calls = []
+
+    async def behave(llm_request, stream):
+        calls.append(1)
+        if len(calls) == 1:
+            part = types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"}))
+        elif len(calls) == 2:
+            part = types.Part(text="The Pi is 94% full. I've put a card up to clean up old log files.")
+        else:
+            part = types.Part(text="A card to clean up old logs is waiting for your tap.")
+        u = types.GenerateContentResponseUsageMetadata(prompt_token_count=500, candidates_token_count=20,
+                                                       total_token_count=520)
+        yield R(content=types.Content(role="model", parts=[part]), partial=False, usage_metadata=u,
+                turn_complete=True)
+    FakeLlm.behavior = behave
+    ev = events(ask(client, new_session(client), "Is anything wrong at home?"))
+    names = [e["name"] for e in ev if e["type"] == "tool_call"]
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert names == ["get_device", "rotate_logs"] and any(e["type"] == "approval_request" for e in ev)
+    assert turns.NO_CARD not in text and "I've put a card up" not in text

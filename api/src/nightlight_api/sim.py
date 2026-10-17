@@ -163,6 +163,31 @@ def _rotate_logs_apply(d, svcs):
             "before": {"diskPct": before}, "after": {"diskPct": after}}, d, svcs
 
 
+def _clear_images_card(d, svcs):
+    images = _consumer(d, "images")
+    if not images or not images.get("sizeGb"):
+        raise ValueError("no_images")
+    before = disk_pct(d)
+    after_dev = deepcopy(d)
+    _consumer(after_dev, "images")["sizeGb"] = 0.0
+    return {"svcId": DISK_SERVICE.get(d["id"]),
+            "plan": f"Remove the Docker images no app uses on the {d['name']}.",
+            "dryRun": f"Would free about {round(images['sizeGb'], 1)} GB ({before}% → {disk_pct(after_dev)}% full). "
+                      "Logs and running apps are not touched.",
+            "rollback": "Nothing to undo: an app downloads its image again if it ever needs it."}
+
+
+def _clear_images_apply(d, svcs):
+    before = disk_pct(d)
+    images = _consumer(d, "images")
+    freed = round(images["sizeGb"], 1)
+    images["sizeGb"] = 0.0
+    d, svcs = refresh(d, svcs)
+    after = d["vitals"]["diskPct"]
+    return {"summary": f"Removed unused Docker images: freed {freed} GB on the {d['name']} ({before}% → {after}% full).",
+            "before": {"diskPct": before}, "after": {"diskPct": after}}, d, svcs
+
+
 def _need_game(svcs):
     game = _game(svcs)
     if game is None:
@@ -279,6 +304,9 @@ ACTIONS = {
     "rotate_logs": {"label": "Clean up old log files", "riskClass": "routine", "allowlisted": True,
                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _rotate_logs_card, "apply": _rotate_logs_apply,
                     "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
+    "clear_images": {"label": "Remove unused Docker images", "riskClass": "routine", "allowlisted": True,
+                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _clear_images_card,
+                     "apply": _clear_images_apply, "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
     "backup_world": {"label": "Back up the game world", "riskClass": "routine", "allowlisted": True,
                      "svc": _game_svc, "card": _backup_card, "apply": _backup_apply,
                      "snapshot": lambda d, s: {"lastBackupDaysAgo": (_game(s) or {}).get("lastBackupDaysAgo")}},
@@ -294,7 +322,7 @@ ACTIONS = {
 }
 
 
-FIX_FOR = {"disk_over_90": "rotate_logs", "memory_high": "restart_server", "backup_overdue": "backup_world",
+FIX_FOR = {"disk_over_90": ("rotate_logs", "clear_images"), "memory_high": "restart_server", "backup_overdue": "backup_world",
            "update_available": "update_server", "container_unhealthy": "restart_app"}  # which job answers which
 
 
@@ -305,13 +333,12 @@ def fixes(device: dict, services: dict) -> list[dict]:
     checks += [f.get("check") for s in services.values() for f in s.get("findings") or []]
     out = []
     for check in dict.fromkeys(checks):
-        job = FIX_FOR.get(check)
-        if not job:
-            continue
-        try:
-            out.append({"tool": job, "for": check, "plan": card(device, services, job, {})["plan"]})
-        except ValueError:
-            pass
+        jobs = FIX_FOR.get(check) or ()
+        for job in (jobs,) if isinstance(jobs, str) else jobs:  # the first answers it best; the rest are options
+            try:
+                out.append({"tool": job, "for": check, "plan": card(device, services, job, {})["plan"]})
+            except ValueError:
+                pass
     return out
 
 
