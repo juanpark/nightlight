@@ -343,8 +343,8 @@ def test_a_promise_never_runs_a_trusted_job_or_picks_an_unrelated_fix(client, st
     from conftest import generation
     ref = db.trust_doc(started, "sim", "rotate_logs")
     ref.set({**trustlib.new_doc("rotate_logs", generation(started)), "level": "auto"})
-    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), "I've put a card up to clean up old logs.",
-                                 "It's waiting for your tap.")
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "The Pi is full. I've put a card up to clean up old logs.", "It's waiting for your tap.")
     ev = events(ask(client, new_session(client), "Is anything wrong at home?"))
     aid = next(e["actionId"] for e in ev if e["type"] == "approval_request")
     assert db.action(started, aid).get().to_dict()["status"] == "pending"  # a card, though trust says auto
@@ -388,6 +388,15 @@ def test_a_promise_about_another_device_is_not_moved_to_the_one_read(client, sta
 def test_a_promise_naming_a_device_loosely_must_still_be_that_device(client, started):  # Codex rev3 #1
     for claim, made in (("I've put up a card to clean up logs on the Mac.", False),
                         ("I've put up a card to clean up logs on your Pi.", True)):
+        FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), claim, "Waiting for you.")
+        ev = events(ask(client, new_session(client), "Clean up"))
+        assert ("rotate_logs" in [e["name"] for e in ev if e["type"] == "tool_call"]) is made, claim
+
+
+def test_a_promised_card_needs_its_device_positively_named(client, started):  # Codex rev4 #1
+    for claim, made in (("The Raspberry Pi is full. I've put up a card to clean up logs for your Mac.", False),
+                        ("I've put up a card to clean up old logs.", False),  # no device named at all
+                        ("The Pi is 94% full. I've put up a card to clean up old logs.", True)):
         FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), claim, "Waiting for you.")
         ev = events(ask(client, new_session(client), "Clean up"))
         assert ("rotate_logs" in [e["name"] for e in ev if e["type"] == "tool_call"]) is made, claim
