@@ -108,3 +108,30 @@ def test_the_app_can_ask_an_app_managed_device_to_look_nearby(client, started):
     _again(dev["token"])
     jobs = beat(client, dev["token"], {**FACTS, "manage": "app"}).json()["jobs"]
     assert [j["type"] for j in jobs] == ["discover"]
+
+
+def test_things_seen_by_several_devices_are_listed_once_and_your_own_devices_not_at_all(client, started):
+    mac, pi = enrolled(client, "Mac"), enrolled(client, "Pi")
+    pi_tag, router_tag = "c" * 20, "d" * 20
+    beat(client, pi["token"], {**FACTS, "net": {"self": pi_tag, "gateway": router_tag, "peers": []}})
+    router = {**ITEM, "cid": "aaaaaaaaaaa1", "guess": "Device with a web page", "vendor": None, "services": ["web page"],
+              "ports": [80], "tag": router_tag}
+    the_pi = {**ITEM, "cid": "bbbbbbbbbbb1", "tag": pi_tag}
+    for dev, items in ((mac, [router, the_pi]), (pi, [{**router, "cid": "ccccccccccc1"}])):
+        h = {"X-Device-Token": dev["token"]}
+        assert client.post("/helper/discoveries", json={"items": items}, headers=h).status_code == 200
+    rows = client.get("/api/found").json()["items"]
+    assert len(rows) == 1 and rows[0]["guess"] == "Device with a web page"  # the router once; the Pi is yours
+    assert sorted(s["name"] for s in rows[0]["seenBy"]) == ["Mac", "Pi"]
+    assert "seen by Mac, Pi" in agentlib.fleet_summary(started, generation(started)).replace("Pi, Mac", "Mac, Pi")
+
+
+def test_looking_everywhere_asks_one_device_per_network(client, started):
+    a, b, c = enrolled(client, "Mac"), enrolled(client, "Pi"), enrolled(client, "Old")
+    home = {"self": "a" * 20, "gateway": "d" * 20, "peers": []}
+    beat(client, a["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21", "net": home})
+    beat(client, b["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21", "net": {**home, "self": "b" * 20}})
+    beat(client, c["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.17"})
+    r = client.post("/api/discover", json={}).json()
+    assert len(r["asked"]) == 1 and r["asked"][0]["name"] in ("Mac", "Pi")  # one home, one look
+    assert [s["name"] for s in r["skipped"]] == ["Old"] and "updating" in r["skipped"][0]["why"]

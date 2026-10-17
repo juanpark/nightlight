@@ -294,6 +294,60 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
     return db.run_transaction(run)
 
 
+def found_view(uid: str) -> list[dict]:
+    """Everything found nearby that isn't on the map yet, once each: two devices that saw the same thing share its
+    fingerprint (same address, same account key), so it becomes one row listing who saw it; a thing whose fingerprint
+    is one of your own devices is left out. Untagged items (older helpers) stay one row per finder."""
+    now = _now()
+    mine = {(d.get("net") or {}).get("self") for d in (s.to_dict() for s in db.devices(uid).get())
+            if not d.get("archived")} - {None}
+    rows: dict[str, dict] = {}
+    for snap in discoveries_ref(uid).get():
+        d = snap.to_dict()
+        if d.get("expiresAt") and d["expiresAt"] < now:
+            continue
+        for it in d.get("items") or []:
+            if it.get("added") or it.get("tag") in mine:
+                continue
+            key = it.get("tag") or f"{snap.id}:{it.get('cid')}"
+            row = rows.setdefault(key, {**{k: it.get(k) for k in ("guess", "vendor", "services", "ports", "tag")},
+                                        "seenBy": []})
+            row["seenBy"].append({"deviceId": snap.id, "name": d.get("byName"), "cid": it.get("cid")})
+    return list(rows.values())
+
+
+DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
+
+
+def discover_everywhere(uid: str) -> dict:
+    """Look nearby on every network you have a device on: one device per router (the freshest app-managed one with a
+    new enough helper), so a home is scanned once, not once per device. Says which devices couldn't and why."""
+    from . import actions, release
+    asked, skipped, best = [], [], {}
+    for snap in db.devices(uid).get():
+        d = dict(snap.to_dict(), id=snap.id)
+        if d.get("realm") != "real" or d.get("kind") == "watched" or d.get("archived") or d.get("revoked"):
+            continue
+        why = ("it isn't reporting right now" if view(d).get("stale")
+               else "it is set to strict (it looks only when someone runs it there)" if d.get("manage") != "app"
+               else "its helper needs updating first" if release.newer(DISCOVER_FROM, d.get("helperVersion"))
+               else None)
+        if why:
+            skipped.append({"deviceId": d["id"], "name": d.get("name"), "why": why})
+            continue
+        network = (d.get("net") or {}).get("gateway") or d["id"]  # unknown router: a network of its own
+        seen = d.get("lastSeen")
+        if network not in best or (seen and (best[network].get("lastSeen") is None or seen > best[network]["lastSeen"])):
+            best[network] = d
+    for d in best.values():
+        try:
+            actions.request(uid, "discover", d["id"], {}, session_id=None, turn_id="app_discover", origin="app")
+            asked.append({"deviceId": d["id"], "name": d.get("name")})
+        except (ValueError, ApiError) as e:
+            skipped.append({"deviceId": d["id"], "name": d.get("name"), "why": str(e)})
+    return {"asked": asked, "skipped": skipped}
+
+
 def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
     """Put one found thing on the map, watched by the helper that found it (it checks the thing still answers)."""
     dref = discoveries_ref(uid).document(helper_id)

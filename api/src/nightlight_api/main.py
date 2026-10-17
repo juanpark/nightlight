@@ -705,6 +705,18 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+@app.post("/api/discover", status_code=202)
+def discover_everywhere(body: Empty, uid: str = Depends(owner_uid)):
+    """Look nearby on every network the owner has a device on, one device per router (the tap is the approval)."""
+    return real.discover_everywhere(uid)
+
+
+@app.get("/api/found")
+def found(uid: str = Depends(current_uid)):
+    """Found nearby, once per thing: merged across the devices that saw it, without your own devices."""
+    return {"items": real.found_view(uid)}
+
+
 @app.post("/api/devices/{device_id}/discover", status_code=202)
 def discover_from_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     """Look for devices nearby from one of the owner's devices (the tap is the approval). The helper sends what it

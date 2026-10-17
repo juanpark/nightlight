@@ -247,12 +247,11 @@ def fleet_summary(uid: str, generation: int) -> str:
         extra = (f" Tags: {', '.join(s['tags'])}." if s["tags"] else "") + \
             (f" {s['known']} known problem(s) the owner is leaving for now." if s["known"] else "")
         lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.{extra}")
-    for snap in db.user(uid).collection("discoveries").get():
-        d = snap.to_dict()
-        waiting = [it.get("guess") for it in d.get("items") or [] if not it.get("added")]
-        if waiting:
-            lines.append(f"- found nearby by {d.get('byName')}, not on the map yet (the person can add them under "
-                         f"Found nearby): {', '.join(waiting[:10])}.")
+    found = real.found_view(uid)
+    if found:
+        lines.append("- found nearby, not on the map yet (the person can add them under Found nearby): "
+                     + "; ".join(f"{f['guess']} (seen by {', '.join(s['name'] or 'a device' for s in f['seenBy'])})"
+                                 for f in found[:10]) + ".")
     for snap in db.user(uid).collection("watches").get():
         w = snap.to_dict()
         state = {"ok": "up", "crit": "NOT ANSWERING", "unknown": "not checked yet"}.get(w.get("status"), "unknown")
