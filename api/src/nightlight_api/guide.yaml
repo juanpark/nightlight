@@ -88,7 +88,7 @@ mac_privacy:
   text: |
     macOS protects Downloads, Desktop, Documents, Movies and the Trash with a prompt. Nightlight never reads them from
     the background unless you allowed it, so no dialog pops up on a Mac nobody is watching. Installing asks once
-    (helper 0.9.18 or newer): say yes and click Allow when macOS asks, and the helper measures their sizes (and can
+    (helper 0.9.19 or newer): say yes and click Allow when macOS asks, and the helper measures their sizes (and can
     empty the Trash after your OK) from then on. Changing your mind later is the only time it needs the Mac's
     terminal again: `nightlight settings`.
 

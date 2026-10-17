@@ -655,3 +655,28 @@ def test_installing_on_a_mac_settles_the_folder_prompts_once(helper, monkeypatch
     monkeypatch.setattr(helper, "_ask", lambda q, default: True)
     helper.install()
     assert helper._load()["macPrivateFolders"] is True and measured  # yes: macOS's prompts raised right away
+
+
+def test_saying_yes_at_install_really_opens_the_private_folders(helper, monkeypatch, tmp_path):  # codex 0.9.18 #1
+    # Real guard and real measuring: a yes must be on record before the folders are touched, or the guard refuses
+    # them and macOS never asks while the person is there.
+    import subprocess
+    places = []
+    for name in ("Downloads", "Desktop"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "f.bin").write_bytes(b"x" * 10)
+        places.append((name, str(tmp_path / name)))
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d"})
+    monkeypatch.setattr(helper.sys, "platform", "darwin")
+    monkeypatch.setattr(helper.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(helper, "_mac_private_places", lambda: places)
+    monkeypatch.setattr(helper, "APP_DIR", str(tmp_path / "app"))
+    monkeypatch.setattr(helper, "PLIST", str(tmp_path / "LaunchAgents" / "x.plist"))
+    monkeypatch.setattr(helper, "_link_command", lambda *a: None)
+    monkeypatch.setattr(helper.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(helper, "_ask", lambda q, default: True)
+    opened, pin = [], helper._pin
+    monkeypatch.setattr(helper, "_pin", lambda path: opened.append(path) or pin(path))
+    helper.install()
+    assert helper._load()["macPrivateFolders"] is True
+    assert {p for _n, p in places} <= {os.path.abspath(p) for p in opened}

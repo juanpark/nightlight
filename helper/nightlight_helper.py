@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.18"
+VERSION = "0.9.19"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2457,10 +2457,12 @@ def _ask_mac_private(default_yes):
     own Allow prompts right away, so nobody has to come back to the terminal for this later."""
     if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
             "ask you to allow each one now; click Allow.", default_yes):
+        # The yes is recorded first: the privacy guard reads it, so only then can the folders be opened, which is
+        # what raises macOS's prompts now, while you're here to answer them.
+        _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
         _inspect_until[0] = time.time() + 120
         for _label, path in _mac_private_places():
-            _du(path)  # raises macOS's prompts now, while you're here to answer them
-        _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
+            _du(path)
     else:
         _update_config(lambda c: c.__setitem__("macPrivateFolders", False))  # a recorded no: not asked again
 
