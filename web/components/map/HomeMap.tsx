@@ -81,7 +81,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       return {
         id: d.id, type: "device", deletable: false, selected: d.id === selected, dragging: old?.dragging,
         position: old?.dragging ? old.position : (held[d.id] && { x: held[d.id].x, y: held[d.id].y }) ?? spots.get(d.id)!,
-        data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask },
+        data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask,
+          by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
   }, [devices, spots, held, marks, selected, uid, now, open, ask, setNodes]);

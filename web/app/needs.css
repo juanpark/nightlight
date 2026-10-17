@@ -19,7 +19,16 @@
   .needs-list { gap: 12px; }
 }
 
+.drawer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .drawer-status { margin: 6px 0 4px; font-size: 15px; }
+/* a watched thing's panel (WatchedPanel.tsx) */
+.role-pick { display: block; margin-bottom: 6px; }
+.avail { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.avail i { display: block; height: 100%; }
+.avail i.ok { background: var(--ok); }
+.avail i.crit { background: var(--crit); }
+.avail i.none { background: var(--line); }
+.avail-scale { display: flex; justify-content: space-between; margin-top: 2px; }
 .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 10px 0 8px; }
 .tabs button { border: none; background: none; padding: 6px 12px; border-bottom: 2px solid transparent;

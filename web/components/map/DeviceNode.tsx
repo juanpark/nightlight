@@ -5,14 +5,14 @@
 import { memo } from "react";
 import { Handle, NodeToolbar, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
 import { Info, MessageCircle } from "lucide-react";
-import { ago, type Need } from "@/lib/needsYou";
+import { ago, answering, type Need } from "@/lib/needsYou";
 import { useServices } from "@/lib/data";
 import type { Device } from "@/lib/types";
 import NeedsMark from "../NeedsMark";
-import { iconFor } from "./kinds";
+import { deviceIcon, roleOf } from "./kinds";
 
 export type DeviceNodeData = {
-  device: Device; uid: string; needs?: Need[]; now: number;
+  device: Device; uid: string; needs?: Need[]; now: number; by?: string; // by: the device that watches it
   onOpen: (id: string) => void; onAsk: (q: string) => void;
 };
 export type DeviceNodeType = Node<DeviceNodeData, "device">;
@@ -42,18 +42,38 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   const { device: d, needs, now } = data;
   const services = useServices(data.uid, d.id);
   const compact = useStore((s) => s.transform[2] < 0.45); // zoomed far out: icon and name only
-  const Icon = iconFor(d.kind);
+  const Icon = deviceIcon(d);
   const sample = d.realm !== "real";
   const silent = d.realm === "real" && d.status === "offline";
   const bad = services.filter((s) => (s.status ?? "ok") !== "ok").length;
+  const tools = (
+    <NodeToolbar position={Position.Top} className="dtools">
+      <button onClick={() => data.onAsk(`How is my ${d.name} doing?`)}><MessageCircle size={14} /> Ask</button>
+      <button onClick={() => data.onOpen(d.id)}><Info size={14} /> Details</button>
+    </NodeToolbar>
+  );
+  // A thing a helper watches (a router, a printer…): Nightlight only knows whether it answers, so no gauges.
+  if (d.kind === "watched") {
+    return (
+      <div className={`dnode watched ${d.status} ${roleOf(d) === "router" ? "router" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""}`}
+        onDoubleClick={() => data.onOpen(d.id)}>
+        {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
+        {tools}
+        <div className="dhead">
+          <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} strokeWidth={1.8} /></span>
+          <strong className="dname" title={d.purpose ?? d.name}>{d.name}</strong>
+          <NeedsMark needs={needs} />
+        </div>
+        {!compact && <div className={`dwatch ${d.status}`}>{answering(d, now)}</div>}
+        {!compact && data.by && <div className="dby">watched by the {data.by}</div>}
+      </div>
+    );
+  }
   return (
     <div className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""}`}
       onDoubleClick={() => data.onOpen(d.id)}>
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
-      <NodeToolbar position={Position.Top} className="dtools">
-        <button onClick={() => data.onAsk(`How is my ${d.name} doing?`)}><MessageCircle size={14} /> Ask</button>
-        <button onClick={() => data.onOpen(d.id)}><Info size={14} /> Details</button>
-      </NodeToolbar>
+      {tools}
       <div className="dhead">
         <span className={`dicon ${d.status}`}><Icon size={compact ? 26 : 18} strokeWidth={1.8} /></span>
         <strong className="dname" title={d.purpose ?? d.name}>{d.name}</strong>

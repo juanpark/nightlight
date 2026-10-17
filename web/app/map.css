@@ -54,6 +54,14 @@
 .dapps { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
   padding-top: 6px; }
 .dapps .dot { width: 7px; height: 7px; }
+/* a watched thing: whether it answers, and who checks it */
+.dnode.watched { gap: 4px; }
+.dnode.watched.router { border-width: 2px; border-color: var(--accent); }
+.dnode.watched.router.crit { border-color: var(--crit); }
+.dwatch { font-size: 13px; padding-left: 40px; color: var(--ink); }
+.dwatch.crit { color: var(--crit); font-weight: 600; }
+.dwatch.offline { color: var(--muted); }
+.dby { font-size: 11px; color: var(--muted); padding-left: 40px; }
 .dapps .more { font-size: 10px; }
 .dapps-text { margin-left: auto; white-space: nowrap; }
 .dapps-text b { color: var(--warn); font-weight: 600; }

@@ -11,7 +11,7 @@ export type Priority = 1 | 2 | 3; // 1 act now (red), 2 decide (orange), 3 finis
 export type Go =
   | { to: "card"; actionId: string }
   | { to: "drawer"; deviceId: string; tab?: "overview" | "about" | "settings" }
-  | { to: "panel"; panel: "found" }
+  | { to: "panel"; panel: "found" | "add" }
   | { to: "chat"; ask: string }
   | { to: "offer"; actionType: string; offerId: string }
   | { to: "line"; line: "uninstall" }; // shown in place, with Copy and Done
@@ -61,6 +61,18 @@ export function newer(a?: string, b?: string): boolean {
 export function ago(ms: number): string {
   const m = Math.round(ms / 60000);
   return m < 90 ? `${Math.max(1, m)} min` : m < 2880 ? `${Math.round(m / 60)} hours` : `${Math.round(m / 1440)} days`;
+}
+
+/** A clock time today, or how long ago for anything older. */
+export const when = (at: Date, now: number) => now - at.getTime() < 20 * 3600000
+  ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : `${ago(now - at.getTime())} ago`;
+
+/** How a watched thing is doing, in a few words: "answers in 12 ms", "not answering since 19:40". */
+export function answering(d: Device, now: number): string {
+  if (d.status === "crit") return d.lastSeen ? `not answering since ${when(d.lastSeen, now)}` : "not answering";
+  if (d.status === "offline") return "not checked lately";
+  const ms = d.vitals?.latencyMs;
+  return ms != null ? `answers in ${Math.max(1, Math.round(ms))} ms` : "answers";
 }
 
 export function needsYou(i: NeedsInput): Need[] {

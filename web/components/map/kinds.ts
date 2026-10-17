@@ -1,12 +1,28 @@
 // The map's visual vocabulary: an icon per kind of device, a line style per kind of relationship.
-import { Cctv, Cpu, Gamepad2, Globe, HardDrive, Laptop, Monitor, Router, Server, type LucideIcon } from "lucide-react";
-import type { LinkKind } from "@/lib/types";
+import { Cctv, CircleHelp, Cpu, Gamepad2, Globe, HardDrive, House, Laptop, Monitor, Printer, Router, Server, Speaker,
+  type LucideIcon } from "lucide-react";
+import type { Device, LinkKind, Role } from "@/lib/types";
 
 export const DEVICE_ICON: Record<string, LucideIcon> = {
   pi: Cpu, mac: Monitor, nas: HardDrive, gameserver: Gamepad2, camera: Cctv, router: Router, computer: Laptop,
   watched: Globe,
 };
 export const iconFor = (kind?: string): LucideIcon => DEVICE_ICON[kind ?? ""] ?? Server;
+
+/** What a watched thing is (the person can correct Nightlight's guess), in the order the picker shows them. */
+export const ROLES: Record<Role, { label: string; icon: LucideIcon }> = {
+  router: { label: "Router", icon: Router },
+  printer: { label: "Printer", icon: Printer },
+  fileshare: { label: "File share or NAS", icon: HardDrive },
+  smarthome: { label: "Smart home", icon: House },
+  server: { label: "Media or game server", icon: Server },
+  speaker: { label: "TV or speaker", icon: Speaker },
+  computer: { label: "Computer", icon: Laptop },
+  other: { label: "Other", icon: CircleHelp },
+};
+export const roleOf = (d: Device): Role => d.role && d.role in ROLES ? d.role : "other";
+/** The icon for any device: a watched thing by its role, the rest by kind. */
+export const deviceIcon = (d: Device): LucideIcon => d.kind === "watched" ? ROLES[roleOf(d)].icon : iconFor(d.kind);
 
 /** Each relationship reads differently at a glance: solid wire, flowing dashes, dots, dash-dot. */
 export const LINK: Record<LinkKind, { label: string; verb: string; color: string; dash?: string; arrow: boolean;

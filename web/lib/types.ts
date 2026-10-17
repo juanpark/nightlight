@@ -51,7 +51,8 @@ export interface Device {
   purpose?: string;
   status: Status;
   health?: "verified" | "unknown";
-  vitals?: { cpu?: number | null; mem?: number | null; diskPct?: number | null; uptime?: number | null };
+  vitals?: { cpu?: number | null; mem?: number | null; diskPct?: number | null; uptime?: number | null;
+    latencyMs?: number | null }; // latencyMs: watched things
   findings?: Finding[];
   x?: number;
   y?: number;
@@ -74,7 +75,11 @@ export interface Device {
   containersRunning?: number;
   createdAt?: Date | null;
   tags?: string[];
+  /** Watched things (kind "watched", added from Found nearby): what it is, who checks it and how. */
+  role?: Role; roleSetBy?: "auto" | "user"; guess?: string; services?: string[]; ports?: number[];
+  vendor?: string | null; checkPort?: number | null; watchedBy?: string | null; cid?: string;
 }
+export type Role = "router" | "printer" | "fileshare" | "smarthome" | "server" | "speaker" | "computer" | "other";
 
 /** How two devices relate, drawn as a line on the map: connected through, backs up to, relies on, powered by. */
 export type LinkKind = "network" | "backup" | "depends" | "power";
