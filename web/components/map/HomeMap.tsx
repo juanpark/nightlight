@@ -186,6 +186,16 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     if (to) connect({ source: s.fromNode.id, target: to });
   }
 
+  // A card opened by its button slides into view once it knows how tall it is (zoom stays as it was).
+  const shown = useRef<string | null>(null);
+  useEffect(() => {
+    if (focus?.by !== "tap" || !focusH || shown.current === focus.id) return;
+    shown.current = focus.id;
+    const p = spots.get(focus.id), f = flow.current;
+    if (p && f) f.setCenter(p.x + NODE_W / 2, p.y + focusH / 2, { zoom: f.getZoom(), duration: 300 });
+  }, [focus, focusH, spots]);
+  useEffect(() => { if (!focus) shown.current = null; }, [focus]);
+
   // Zoomed in far enough, the card nearest the middle of the view opens; zoomed back out, a card opened that way closes.
   const box = useRef<HTMLDivElement>(null);
   function moved(v: { x: number; y: number; zoom: number }) {
