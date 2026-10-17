@@ -99,8 +99,11 @@ def _inspect(c: Ctx):
 
 
 def _discover(c: Ctx):
+    from . import real, release
     if c.device.get("manage") != "app":
         raise ValueError("strict_device")  # a strict device looks only when someone runs it there
+    if release.newer(real.DISCOVER_FROM, c.device.get("helperVersion")):
+        raise ValueError("update_helper_first")
     return _card(c.device, f"Look for other devices on the {c.device['name']}'s network (read-only).",
                  "Lists what answers nearby: a guess at what each thing is, its maker and the services it offers. "
                  "Addresses never leave the device; nothing joins your map until you add it under Found nearby.",

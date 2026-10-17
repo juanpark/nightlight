@@ -724,7 +724,7 @@ def discover_from_device(device_id: str, body: Empty, uid: str = Depends(owner_u
     if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
         raise not_found()
     try:
-        a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id="app_discover", origin="app")
+        a = real.request_discover(uid, device_id)
     except ValueError as e:
         raise (not_found() if str(e) == "not_applicable" else ApiError(409, str(e))) from None
     return {"actionId": a["id"], "status": a["status"]}

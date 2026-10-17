@@ -777,3 +777,17 @@ def test_looking_nearby_from_the_app_needs_an_app_managed_device(helper, monkeyp
     helper._update_config(lambda c: c.__setitem__("manage", "app"))
     ok, words, _ = helper.run_job({"type": "discover", "params": {}})
     assert ok and "Found 1" in words and len(sent) == 1 and "192.168" not in json.dumps(sent)
+
+
+def test_an_empty_look_from_the_app_clears_the_old_list(helper, monkeypatch):  # codex discover #2
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "app"})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {})
+    monkeypatch.setattr(helper, "_mdns", lambda: {})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    ok, words, _ = helper.run_job({"type": "discover", "params": {}})
+    assert ok and sent == [{"items": []}] and "nothing new" in words
+    sent.clear()
+    helper.discover()  # at a terminal, finding nothing sends nothing (as before)
+    assert sent == []

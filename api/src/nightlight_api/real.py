@@ -319,10 +319,24 @@ def found_view(uid: str) -> list[dict]:
 DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
 
 
+def request_discover(uid: str, device_id: str) -> dict:
+    """Ask one device to look nearby. A scan still under way is that scan (asking twice doesn't queue a second); a new
+    scan gets its own identity, so a late result from an earlier one can never finish it."""
+    from . import actions
+    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("type", "==", "discover"))
+    for snap in q.get():
+        a = snap.to_dict()
+        if a.get("status") in ("pending", "approved", "running"):
+            return dict(a, id=snap.id)
+    return actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{new_id('scan')}",
+                           origin="app")
+
+
 def discover_everywhere(uid: str) -> dict:
     """Look nearby on every network you have a device on: one device per router (the freshest app-managed one with a
     new enough helper), so a home is scanned once, not once per device. Says which devices couldn't and why."""
-    from . import actions, release
+    from . import release
     asked, skipped, best = [], [], {}
     for snap in db.devices(uid).get():
         d = dict(snap.to_dict(), id=snap.id)
@@ -341,7 +355,7 @@ def discover_everywhere(uid: str) -> dict:
             best[network] = d
     for d in best.values():
         try:
-            actions.request(uid, "discover", d["id"], {}, session_id=None, turn_id="app_discover", origin="app")
+            request_discover(uid, d["id"])
             asked.append({"deviceId": d["id"], "name": d.get("name")})
         except (ValueError, ApiError) as e:
             skipped.append({"deviceId": d["id"], "name": d.get("name"), "why": str(e)})

@@ -16,8 +16,8 @@ add_device:
 found_nearby:
   title: Find other devices nearby (and the lines on the map)
   text: |
-    Under "Found nearby", choose "Look from" and one of your devices (managed from the app, helper 0.9.21 or newer):
-    it looks at its network and lists what answers, with a guess at what each thing is, its maker and services. No
+    Under "Found nearby", choose "Look for devices nearby": one of your devices on each network (managed from the
+    app, helper 0.9.21 or newer) looks around and lists what answers, each thing once, with a guess at what each thing is, its maker and services. No
     address leaves the device. Add what you want to watch; adding your router lets the map draw "connected through"
     lines to it. A device set to strict only looks when someone runs `nightlight discover` on it.
     Lines between your devices are drawn three ways: by you (drag from one device to another), by me when you tell

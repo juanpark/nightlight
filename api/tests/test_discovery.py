@@ -102,11 +102,11 @@ def test_the_app_can_ask_an_app_managed_device_to_look_nearby(client, started):
     beat(client, dev["token"], {**FACTS, "manage": "strict"})
     assert client.post(f"/api/devices/{dev['deviceId']}/discover", json={}).status_code == 409  # strict: at the device
     _again(dev["token"])
-    beat(client, dev["token"], {**FACTS, "manage": "app"})
+    beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21"})
     r = client.post(f"/api/devices/{dev['deviceId']}/discover", json={})
     assert r.status_code == 202 and r.json()["status"] == "approved"  # the tap is the approval
     _again(dev["token"])
-    jobs = beat(client, dev["token"], {**FACTS, "manage": "app"}).json()["jobs"]
+    jobs = beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21"}).json()["jobs"]
     assert [j["type"] for j in jobs] == ["discover"]
 
 
@@ -135,3 +135,24 @@ def test_looking_everywhere_asks_one_device_per_network(client, started):
     r = client.post("/api/discover", json={}).json()
     assert len(r["asked"]) == 1 and r["asked"][0]["name"] in ("Mac", "Pi")  # one home, one look
     assert [s["name"] for s in r["skipped"]] == ["Old"] and "updating" in r["skipped"][0]["why"]
+
+
+def test_each_look_is_its_own_job_and_an_empty_one_clears_the_list(client, started):  # codex discover #1, #2
+    from nightlight_api import actions
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21"})
+    first = client.post(f"/api/devices/{dev['deviceId']}/discover", json={}).json()["actionId"]
+    assert client.post(f"/api/devices/{dev['deviceId']}/discover", json={}).json()["actionId"] == first  # same scan
+    db.action(started, first).update({"status": "done", "result": {"ok": True, "summary": "Found 1"}})
+    second = client.post(f"/api/devices/{dev['deviceId']}/discover", json={}).json()["actionId"]
+    assert second != first  # a new look: a late result for the first can't finish it
+    h = {"X-Device-Token": dev["token"]}
+    assert client.post("/helper/discoveries", json={"items": [ITEM]}, headers=h).status_code == 200
+    assert client.post("/helper/discoveries", json={"items": []}, headers=h).status_code == 200
+    assert client.get("/api/found").json()["items"] == []
+    beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.20"})
+    _again(dev["token"])
+    beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.20"})
+    db.action(started, second).update({"status": "done"})
+    r = client.post(f"/api/devices/{dev['deviceId']}/discover", json={})
+    assert r.status_code == 409 and r.json()["code"] == "update_helper_first"

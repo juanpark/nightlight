@@ -2129,12 +2129,14 @@ def discover(yes=False, quiet=False):
         local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
     if not items:
         say("Didn't find anything to suggest on this network.")
-        return True, 0
+        if not quiet:
+            return True, 0  # at a terminal nothing is sent unless picked
+        items = []  # asked from the app: an empty list replaces what an earlier look found
     say(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
     for n, it in enumerate(items, 1):
         say(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
               + (f" ({', '.join(it['services'])})" if it["services"] else ""))
-    if yes:
+    if yes or quiet:
         chosen = items
     else:
         try:
@@ -2146,7 +2148,7 @@ def discover(yes=False, quiet=False):
         else:
             nums = {int(x) for x in re.findall(r"\d+", ans)}
             chosen = [it for n, it in enumerate(items, 1) if n in nums]
-    if not chosen:
+    if not chosen and not quiet:
         say("Nothing sent.")
         return True, 0
     picked = {it["cid"]: local[it["cid"]] for it in chosen}
