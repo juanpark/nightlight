@@ -534,3 +534,29 @@ def test_a_restart_card_warns_when_the_world_isnt_backed_up(client, started):
     card = actions.propose(started, session_id="s", turn_id="t_r", generation=generation(started),
                            action_type="restart_server", device_id="game-1", params={})
     assert "hasn't been backed up in 9 days: back it up first" in card["dryRun"]
+
+
+def test_a_narration_follow_up_never_gets_a_made_up_tool_call(client, started):  # Codex final polish #1
+    from nightlight_api import actions
+    from conftest import generation
+    sid = new_session(client)
+    card = actions.propose(started, session_id=sid, turn_id="t_n", generation=generation(started),
+                           action_type="rotate_logs", device_id="pi-1", params={})
+    cont = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "deny"}).json()["continuationTurnId"]
+    FakeLlm.behavior = _scripted("Let me check the Raspberry Pi.")
+    ev = events(client.post(f"/api/turns/{cont}/stream", json={}))
+    assert not any(e["type"] == "tool_call" for e in ev) and ev[-1]["type"] == "done"
+
+
+def test_a_decline_never_promises_a_reminder(client, started):  # Codex final polish #2
+    from nightlight_api import conversation
+    text = conversation.render("job_declined", {"type": "rotate_logs", "plan": "Clean up.",
+                                                "decision": {"note": "not now"}}, "Raspberry Pi")
+    assert "remind" not in text and "ask again whenever it suits them" in text
+
+
+def test_a_long_app_list_says_it_is_partial(client, started):  # Codex final polish #3
+    from conftest import generation
+    text = agentlib.fleet_summary(started, generation(started))
+    mac = next(line for line in text.splitlines() if line.startswith("- mac-1 "))
+    assert "and more (get_device lists them all)" in mac  # the sample Mac Mini runs 14 apps

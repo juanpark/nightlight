@@ -70,7 +70,8 @@ How to answer:
   nearby). Phones, routers, printers and cameras can only be watched that way too.
 - If a card for it is already waiting, point at that card instead of putting up another. If they ask to retry a job
   that failed, say it failed last time and why (the reason it gave) before putting the card up again.
-- Before saying an app isn't there, check the apps listed for every device below.
+- Before saying an app isn't there, check the apps listed for every device below, and call get_device on any whose
+  list says "and more".
 - Once a card is up, it IS the question: say it's waiting for their tap; never ask "would you like me to go ahead?".
 - Only name a cause that a tool result states. If a job failed, quote the reason it gave; never invent one.
 - Reply in the language the person wrote in.
@@ -204,6 +205,7 @@ class TurnContext:
     memory_epoch: int = 0  # the user's memory epoch when this turn started: a save after a purge is undone
     actions: list = field(default_factory=list)  # action docs proposed this turn
     fixes: list = field(default_factory=list)  # (tool, device id, plan) a sample device read this turn offers
+    narrating: bool = False  # a follow-up that only puts a finished event into words: it has no tools
     promised: tuple | None = None  # (tool, device id) of a call made from the model's words: always a card
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
@@ -331,8 +333,9 @@ def fleet_summary(uid: str, generation: int) -> str:
             made += f", announces itself as {_quoted(d['seenName'])}"
         health = "unknown (Nightlight only sees whether it answers; never call it healthy)" \
             if s["status"] == "unknown" or d.get("health") == "unknown" else s["status"]
-        apps = [x.to_dict().get("name") for x in db.services(uid, snap_id).limit(12).get()]
-        apps = f" Apps: {', '.join(a for a in apps if a)}." if any(apps) else ""
+        apps = [n for n in (x.to_dict().get("name") for x in db.services(uid, snap_id).limit(13).get()) if n]
+        more = " and more (get_device lists them all)" if len(apps) > 12 else ""
+        apps = f" Apps: {', '.join(apps[:12])}{more}." if apps else ""
         lines.append(f"- {s['id']} ({s['name']}{made}, {kind}): {s['purpose']} Health: {health}; {disk}{problem}."
                      f"{apps}{extra}")
     found = real.found_view(uid)
@@ -1241,7 +1244,7 @@ def _unstall(ctx: TurnContext, llm_response) -> None:
             for p in texts[1:]:
                 p.text = None
         return
-    if ctx.metrics["toolCalls"] or (rest and not stray):
+    if ctx.narrating or ctx.metrics["toolCalls"] or (rest and not stray):
         return  # it has looked already, or it said more than the opening line
     names = {n.strip().lower(): i for i, n in _fleet_names(ctx.fleet).items()}
     said = lead.group(1).strip().lower()
@@ -1411,6 +1414,7 @@ def make_callbacks(ctx: TurnContext):
 def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     """The question agent gets the fleet summary and the tools; the follow-up after an approval gets neither: the
     server already knows the result, so one short model call narrates it."""
+    ctx.narrating = continuation
     before_model, after_model, before_tool = make_callbacks(ctx)
     if continuation:
         instruction = CONTINUATION
