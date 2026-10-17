@@ -377,6 +377,35 @@ def found_name(text: str | None) -> str | None:
     return text.strip()
 
 
+def _filled_in(d: dict, device_id: str, items: list[dict]) -> dict:
+    """What a new look adds to a thing already on the map: its maker, model, services and announced name when they
+    were missing (it may have been added before the helper could tell). Fills blanks only, and its name only while it
+    is still the guess it was given, so nothing the owner typed is changed."""
+    if d.get("archived") or d.get("revoked"):
+        return {}
+    tag = (d.get("net") or {}).get("self")
+    it = next((i for i in items if (d.get("watchedBy") == device_id and i.get("cid") == d.get("cid"))
+               or (tag and i.get("tag") == tag)), None)
+    if not it:
+        return {}
+    update = {}
+    if not d.get("model") and it.get("model"):
+        update["maker"], update["model"] = it.get("maker") or d.get("maker"), it["model"]  # maker and model together
+    elif not d.get("maker") and it.get("maker"):
+        update["maker"] = it["maker"]
+    if not d.get("vendor") and it.get("vendor"):
+        update["vendor"] = it["vendor"]
+    services = sorted(set(d.get("services") or []) | set(it.get("services") or []))[:8]
+    if services != sorted(d.get("services") or []):
+        update["services"] = services
+    seen = it.get("name")
+    if seen and not d.get("seenName"):
+        update["seenName"] = seen
+        if d.get("nameFromSeen") is not False and d.get("name") == (d.get("guess") or "Found device")[:40]:
+            update["name"], update["nameFromSeen"] = seen[:40], True
+    return update
+
+
 def save_discoveries(token: str, items: list[dict]) -> dict:
     """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list. Names are
     kept only while the account shows them."""
@@ -387,11 +416,17 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
         watched = db.devices(uid).where(filter=FieldFilter("watchedBy", "==", device_id)).get(transaction=tx)
         names = names_on(db.user(uid).get(transaction=tx).to_dict() or {})
         name = (dsnap.to_dict() or {}).get("name", "A device")
+        on_map = db.devices(uid).where(filter=FieldFilter("kind", "==", "watched")).get(transaction=tx)
         added = {w.to_dict().get("cid") for w in watched}  # already on the map: stays "added" across rediscovery
+        kept = [{**it, "name": found_name(it.get("name")) if names else None, "added": it["cid"] in added}
+                for it in items]
         tx.set(discoveries_ref(uid).document(device_id), {
-            "items": [{**it, "name": found_name(it.get("name")) if names else None, "added": it["cid"] in added}
-                      for it in items], "by": device_id, "byName": name,
+            "items": kept, "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
+        for w in on_map:
+            update = _filled_in(w.to_dict(), device_id, kept)
+            if update:
+                tx.update(w.reference, update)
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
         return {"ok": True, "items": len(items)}
 

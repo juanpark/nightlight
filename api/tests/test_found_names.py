@@ -90,3 +90,28 @@ def test_codex_release_probes_are_closed(client, started):
     for model in ("AA-BB-CC-DD-EE-12", "Alex2-MacBook", "3C2AF4E5B6A7"):
         assert real.product("Brother", model) == ("Brother", None)
     assert real.product("Brother", "HL-L2350DW") == ("Brother", "HL-L2350DW")
+
+
+def test_a_later_look_fills_in_what_was_missing_on_things_already_on_the_map(client, started):
+    # Added before the helper could tell its maker, model or name: the next look fills those blanks.
+    mac, pi = enrolled(client, "Mac"), enrolled(client, "Pi")
+    bare = {**PRINTER, "tag": "8" * 20, "maker": None, "model": None, "name": None, "services": ["printer"]}
+    _send(client, mac, [bare, {**SPEAKER, "name": None, "tag": "9" * 20}])
+    pid = client.post(f"/api/discoveries/{mac['deviceId']}/{PRINTER['cid']}/add", json={}).json()["deviceId"]
+    sid = client.post(f"/api/discoveries/{mac['deviceId']}/{SPEAKER['cid']}/add", json={}).json()["deviceId"]
+    assert client.post(f"/api/devices/{sid}/layout", json={"name": "Kitchen TV"}).status_code == 200
+    _again(mac["token"])
+    _send(client, mac, [{**PRINTER, "tag": "8" * 20, "services": ["printer", "web page"]}])
+    printer = db.device(started, pid).get().to_dict()
+    assert (printer["maker"], printer["model"]) == ("Brother", "HL-L2350DW")
+    assert (printer["name"], printer["seenName"], printer["nameFromSeen"]) == ("Office Printer", "Office Printer", True)
+    assert printer["services"] == ["printer", "web page"]
+    # Seen by another of your devices (same fingerprint): fills the speaker's blanks, keeps the name they typed.
+    _send(client, pi, [{**SPEAKER, "cid": "d0d0d0d0d0d0", "tag": "9" * 20, "maker": "Apple", "model": "Apple TV"}])
+    speaker = db.device(started, sid).get().to_dict()
+    assert (speaker["name"], speaker["seenName"], speaker["model"]) == ("Kitchen TV", "Living Room", "Apple TV")
+    # What is already known is never overwritten.
+    _again(mac["token"])
+    _send(client, mac, [{**PRINTER, "tag": "8" * 20, "model": "HL-L2370DW", "name": "Upstairs"}])
+    printer = db.device(started, pid).get().to_dict()
+    assert (printer["model"], printer["name"]) == ("HL-L2350DW", "Office Printer")
