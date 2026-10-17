@@ -9,6 +9,14 @@
 .needs-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .needs-text { flex: 1; min-width: 160px; }
 .needs-strip .verdict { font-weight: 600; }
+/* phones: the verdict on its own line with its buttons under it; each row's button under its text */
+@media (max-width: 600px) {
+  .needs-strip .verdict { flex-basis: 100%; }
+  .needs-strip > .spacer { display: none; }
+  .needs-strip > button { font-size: 13px; padding: 6px 10px; }
+  .needs-row .needs-text { flex-basis: calc(100% - 24px); }
+  .needs-row > button { margin-left: 16px; }
+}
 
 .drawer-status { margin: 6px 0 4px; font-size: 15px; }
 .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
@@ -33,3 +41,4 @@
 .fr-title { flex: 1; min-width: 0; }
 .firstrun-alt { margin: 8px 0 0; }
 .needs-line { padding: 4px 0 8px 16px; }
+.send-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 4px; } /* AddDevice */
