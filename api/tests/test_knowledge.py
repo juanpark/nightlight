@@ -93,6 +93,10 @@ def test_log_lists_finished_jobs_newest_first_scrubbed_with_who_set_them_going(c
     assert jobs[1]["by"] == "nightlight" and "hunter2" not in jobs[1]["output"] and "[hidden]" in jobs[1]["output"]
     assert [j["actionId"] for j in client.get(f"/api/devices/{did}/log?limit=1").json()["jobs"]] == [card["id"]]
     assert client.get(f"/api/devices/{did}/log?limit=0").status_code == 422
+    assert [j["actionId"] for j in client.get(f"/api/devices/{did}/log?service=PI-GRAFANA-1").json()["jobs"]] \
+        == [card["id"], look["id"]]  # one app's jobs, by name (any case) or id
+    assert client.get(f"/api/devices/{did}/log?service=pi-teslamate-1").json()["jobs"] == []
+    assert client.get(f"/api/devices/{did}/log?service=").status_code == 422
 
     tools, _ = _tools(started)
     seen = _call(tools, "read_device_log", device_id=did, service="pi-grafana-1", limit=5)

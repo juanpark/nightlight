@@ -269,13 +269,15 @@ def device_knowledge(device_id: str, uid: str = Depends(current_uid)):
 
 
 @app.get("/api/devices/{device_id}/log")
-def device_log(device_id: str, limit: int = 50, uid: str = Depends(current_uid)):
-    """Every job that finished on a device, newest first."""
+def device_log(device_id: str, limit: int = 50, service: str | None = None, uid: str = Depends(current_uid)):
+    """Every job that finished on a device, newest first; `service` (an app's id or name) keeps that app's jobs."""
     if not re.fullmatch(r"[a-z0-9_-]{2,40}", device_id):
         raise not_found()
     if not 1 <= limit <= knowledge.LOG_LIMIT:
         raise invalid("limit", "out_of_range")
-    return {"jobs": knowledge.log(uid, device_id, _generation(uid), limit=limit)}
+    if service is not None and not 1 <= len(service) <= 120:
+        raise invalid("service", "out_of_range")
+    return {"jobs": knowledge.log(uid, device_id, _generation(uid), limit=limit, service=service)}
 
 
 class RunbookBody(Strict):
