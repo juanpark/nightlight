@@ -2,7 +2,7 @@
 // One device, with progressive disclosure: a status sentence and what needs the person first, then three tabs
 // (Overview: how it is and what runs there; About: what Nightlight knows about it; Settings: what it may do).
 // UX spec 2026-10-17 §2.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useServices } from "@/lib/data";
 import { statusSentence, type Go, type Need } from "@/lib/needsYou";
@@ -57,6 +57,12 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const real = device.realm === "real";
   const watched = device.kind === "watched";
   const removing = needs.some((n) => n.kind === "removing");
+  // Opened from the map, the panel sits below it: bring it into view when its top would be off screen (phones).
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const top = box.current?.getBoundingClientRect().top ?? 0;
+    if (top > window.innerHeight * 0.6) box.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [device.id]);
   async function rename() {
     if (name.trim() && name.trim() !== device.name) {
       await api("POST", `/api/devices/${device.id}/layout`, { name: name.trim() }).catch(() => {});
@@ -67,7 +73,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   const tabs: Tab[] = real && !watched ? ["overview", "about", "settings"] : [];
   const current: Tab = tabs.includes(tab) ? tab : "overview";
   return (
-    <div className="panel drawer">
+    <div className="panel drawer" ref={box}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className={`dot ${device.status}`} />
         {editing
