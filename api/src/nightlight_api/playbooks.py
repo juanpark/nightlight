@@ -55,6 +55,7 @@ def _fits(cause: dict, m: re.Match) -> bool:
 def evaluate(book: dict, output: str, device: dict) -> dict:
     """Which known causes the checks' output shows, in the playbook's order; at most one hit per cause."""
     allowed = set((device.get("allowedJobs") or {}).get("fix", []))
+    cleanup_on = bool(allowed) or bool((device.get("permissions") or {}).get("cleanup"))
     found = []
     for cause in book["causes"]:
         hit = next((m for m in cause["_re"].finditer(output or "") if _fits(cause, m)), None)
@@ -67,6 +68,8 @@ def evaluate(book: dict, output: str, device: dict) -> dict:
         if cause.get("fix"):
             row["fix"] = cause["fix"]
             row["fixAllowed"] = cause["fix"] in allowed
+            if cleanup_on and not row["fixAllowed"]:
+                row["fixUnavailable"] = True  # switched on, but the device can't run it (e.g. it needs root)
         found.append(row)
     return {"id": book["id"], "title": book["title"], "found": found,
             "nothing": None if found else book.get("nothing")}
@@ -101,6 +104,8 @@ def summary(result: dict) -> str:
         tail = ""
         if f.get("fix"):
             tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("card")
+                    else " A clean-up exists, but the helper on this device can't run it (it needs administrator "
+                         "rights the helper doesn't have)." if f.get("fixUnavailable")
                     else " A clean-up exists, but \"clean up space\" isn't switched on for this device."
                     if not f.get("fixAllowed") else " A clean-up exists, but no card could be made right now.")
         lines.append(f"- {f['say']}{tail}" + (f" {f['advice']}" if f.get("advice") else ""))

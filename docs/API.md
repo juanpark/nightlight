@@ -255,12 +255,14 @@ follow-up.
 **Playbooks.** `GET /api/devices/{id}/playbooks` lists what a real device can run (`suggested` when a current
 problem matches). `POST /api/devices/{id}/playbooks/{playbookId}/run {"sessionId"}` → `202 {actionId}`: an
 `inspect` action with `playbook` set. When the device answers, `result.playbook` holds
-`{id, title, found: [{cause, say, advice?, fix?, fixAllowed?}], nothing}` (matched on the server, no model call) and
+`{id, title, found: [{cause, say, advice?, fix?, fixAllowed?, fixUnavailable?}], nothing}` (`fixUnavailable`:
+"clean up space" is on, but the device doesn't offer that recipe) (matched on the server, no model call) and
 one pending `fix` card is created per allowed clean-up. The library is `api/src/nightlight_api/playbooks.yaml`.
 
 **Clean-ups (`fix`).** `params {"recipe": name}`, one of `empty_trash`, `brew_cleanup`, `npm_cache`,
 `xcode_build_data`, `docker_prune`, `apt_clean`, `journal_vacuum`, only when the device lists it in
-`allowedJobs.fix` (helper 0.9+). Always an approval card. `result: {ok, summary}` (the summary says how much space was
+`allowedJobs.fix` (helper 0.9+; `apt_clean` and `journal_vacuum` only when the helper can act as root, so never
+under the Linux service's `NoNewPrivileges`). Always an approval card. `result: {ok, summary}` (the summary says how much space was
 freed). Permissions: `cleanup` (bool) in `POST /api/devices/{id}/permissions`.
 
 **Capabilities and events (architecture).** Everything a real device can be asked to do is one entry in
