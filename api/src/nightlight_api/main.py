@@ -712,6 +712,23 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+class PlaceBody(Strict):
+    name: str = Field(min_length=1, max_length=40)
+
+
+@app.post("/api/places/{place_id}")
+def name_place(place_id: str, body: PlaceBody, uid: str = Depends(current_uid)):
+    """Name a place: the devices behind one router (`place_id` is that router's fingerprint, as devices report it in
+    net.gateway). Names are the owner's own words, scrubbed like every other label."""
+    if not re.fullmatch(r"[0-9a-f]{20}", place_id):
+        raise not_found()
+    name = scrub(body.name.strip())[0]
+    if not name or len(name) > 40:
+        raise ApiError(422, "bad_name")
+    db.user(uid).collection("places").document(place_id).set({"name": name, "at": firestore.SERVER_TIMESTAMP})
+    return {"ok": True, "placeId": place_id, "name": name}
+
+
 class DiscoverBody(Strict):
     everyDevice: bool = False
 

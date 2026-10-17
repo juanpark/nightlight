@@ -219,3 +219,10 @@ def test_an_old_devices_router_never_names_a_new_thing(client, started):  # code
     assert client.post("/helper/discoveries", json={"items": [printer]}, headers=h).status_code == 200
     pid = client.post(f"/api/discoveries/{new['deviceId']}/{ITEM['cid']}/add", json={"name": "P"}).json()["deviceId"]
     assert db.device(started, pid).get().to_dict()["role"] == "printer"
+
+
+def test_a_place_can_be_named(client, started):
+    assert client.post(f"/api/places/{ROUTER}", json={"name": "Home"}).json()["name"] == "Home"
+    assert db.user(started).collection("places").document(ROUTER).get().to_dict()["name"] == "Home"
+    assert client.post("/api/places/not-a-tag", json={"name": "x"}).status_code == 404
+    assert client.post(f"/api/places/{ROUTER}", json={"name": ""}).status_code == 422
