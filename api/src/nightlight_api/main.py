@@ -303,8 +303,6 @@ def decide(action_id: str, body: DecideBody, uid: str = Depends(current_uid)):
         raise not_found()
     note = scrub(body.note)[0] if body.note else None
     status, payload = actions.decide(uid, action_id, body.decision, note)
-    if body.decision == "approve":
-        archive.after_approval(uid, action_id)  # a removal the device can't do itself finishes now
     return JSONResponse(payload, status_code=status)
 
 
@@ -659,7 +657,10 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     """Install the signed helper release on a real device (the owner's tap is the approval)."""
     if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
         raise not_found()
-    a = real.request_update(uid, device_id)
+    try:
+        a = actions.request(uid, "update_helper", device_id, {}, session_id=None, turn_id="app_update", origin="app")
+    except ValueError as e:
+        raise (not_found() if str(e) == "not_applicable" else ApiError(409, str(e))) from None
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 

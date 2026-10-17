@@ -294,7 +294,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
 
     async def produce():
         try:
-            continuation = c.turn["kind"] == "continuation"
+            # Event turns follow their policy (conversation.py): narrate only, or continue with tools.
+            kind = c.turn["kind"]
+            continuation = kind == "continuation" or (kind == "event" and c.turn.get("policy") != "continue")
             if not continuation:
                 # One memory lookup per turn, in parallel with the fleet summary; both go into the instruction and
                 # so through the same exact token bound as everything else.
@@ -312,11 +314,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             for content in await asyncio.to_thread(history, uid, c):
                 await sessions.append_event(adk_session, Event(
                     author="user" if content.role == "user" else agent.name, content=content))
-            prompt = c.turn["input"] if not continuation else f"[Update] {c.turn['input']}"
+            prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
             message = types.Content(role="user", parts=[types.Part(text=prompt)])
             async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
                                              run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                                  max_llm_calls=settings.model_calls_per_turn)):
+                                                                  max_llm_calls=ctx.max_calls)):
                 await queue.put(("event", ev))
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides

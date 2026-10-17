@@ -28,7 +28,7 @@ def test_approve_once_then_replay_and_conflict(started):
     assert pi["vitals"]["diskPct"] == 61 and pi["version"] == 2
     assert trust(uid)["successes"] == [a["id"]]
     cont = db.turns(uid, "sess_test").document(f"cont_{a['id']}").get().to_dict()
-    assert cont["status"] == "queued" and cont["kind"] == "continuation"
+    assert cont["status"] == "queued" and cont["kind"] == "event" and cont["event"] == "job_finished"
     assert actions.decide(uid, a["id"], "approve") == (200, body)
     with pytest.raises(ApiError) as e:
         actions.decide(uid, a["id"], "deny")

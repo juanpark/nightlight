@@ -273,4 +273,5 @@ def test_signing_the_investigation_card_resumes_the_chat(client, owner):
                         action_type="expert_grant", device_id=dev["deviceId"], params={"why": "why it crashed"})
     r = client.post(f"/api/actions/{g['id']}/sign", json=pk.sign(g["params"]["challenge"])).json()
     turn = db.turns(uid, "sess_test").document(r["continuationTurnId"]).get().to_dict()
-    assert turn["mode"] == "investigate" and turn["kind"] == "user" and "why it crashed" in turn["input"]
+    assert turn["mode"] == "investigate" and turn["kind"] == "event" and turn["event"] == "investigation_approved"
+    assert turn["policy"] == "continue" and "why it crashed" in turn["input"]

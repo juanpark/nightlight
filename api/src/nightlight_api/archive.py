@@ -94,17 +94,18 @@ def request(uid: str, device_id: str) -> dict:
     d = ref.get().to_dict()
     if not d or d.get("realm") != "real" or d.get("archived") or d.get("kind") == "watched":
         raise not_found()
-    if real.view(dict(d, id=device_id)).get("stale") or d.get("revoked") or not can_self_uninstall(d):
-        return remove_now(uid, device_id)
-    a = actions.approved_job(uid, device_id, "remove_device", {}, session_id=None, turn_id="app_remove")
+    a = actions.request(uid, "remove_device", device_id, {}, session_id=None, turn_id="app_remove", origin="app")
+    if a.get("status") == "done":  # the device couldn't do it itself: its access was cut (the capability's hook)
+        return {"ok": True, "deviceId": device_id, "removed": "access_cut", "actionId": a["id"],
+                "summary": a["result"]["summary"]}
     return {"ok": True, "deviceId": device_id, "removed": "asked_device", "actionId": a["id"],
             "summary": "Asked the device to uninstall its helper; it leaves your map within a minute."}
 
 
 def after_approval(uid: str, action_id: str) -> None:
-    """A removal card was approved: if the device can't do it itself, finish it now."""
+    """A removal was approved (the capability's hook): if the device can't do it itself, finish it now."""
     a = db.action(uid, action_id).get().to_dict() or {}
-    if a.get("type") != "remove_device" or a.get("status") != "approved":
+    if a.get("status") != "approved":
         return
     d = db.device(uid, a["deviceId"]).get().to_dict() or {}
     if real.view(dict(d, id=a["deviceId"])).get("stale") or d.get("revoked") or not can_self_uninstall(d):

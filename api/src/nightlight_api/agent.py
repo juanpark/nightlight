@@ -133,6 +133,10 @@ class TurnContext:
     actions: list = field(default_factory=list)  # action docs proposed this turn
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
+
+    @property
+    def mode(self) -> str:
+        return "investigate" if self.deep else "quick"
     started: float = field(default_factory=time.monotonic)
 
     @property
@@ -290,7 +294,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     def _propose(action_type: str, device_id: str, params: dict | None = None) -> dict:
         try:
-            a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, generation=ctx.generation,
+            a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode, generation=ctx.generation,
                                 action_type=action_type, device_id=device_id, params=params or {},
                                 fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
         except ApiError as e:
@@ -373,7 +377,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             target: the container or system service name, exactly as get_device lists it.
         """
         try:
-            a = actions.request_diagnosis(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id,
+            a = actions.request_diagnosis(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode,
                                           generation=ctx.generation, device_id=device_id, target=target,
                                           fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt,
                                                            ctx.generation))
@@ -428,7 +432,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             what: the names of the checks to run, e.g. ["disk"] or ["processes", "load"].
         """
         try:
-            a = actions.request_inspection(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id,
+            a = actions.request_inspection(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode,
                                            generation=ctx.generation, device_id=device_id, what=what,
                                            fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt,
                                                             ctx.generation))
@@ -457,7 +461,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             playbook: one of the playbook ids listed for the device ("playbooks: ...").
         """
         try:
-            a = playbooks.start(ctx.uid, device_id, playbook, session_id=ctx.session_id, turn_id=ctx.turn_id,
+            a = playbooks.start(ctx.uid, device_id, playbook, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode,
                                 generation=ctx.generation,
                                 fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation))
         except ApiError as e:
@@ -573,7 +577,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             command: the command line.
         """
         try:
-            a = actions.request_read_command(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id,
+            a = actions.request_read_command(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode,
                                              generation=ctx.generation, device_id=device_id, command=command,
                                              fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt,
                                                               ctx.generation))

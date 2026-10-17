@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from google.cloud import firestore
 
-from . import db, real, sim, trust as trustlib
+from . import capabilities, conversation, db, real, sim, trust as trustlib
 from .redact import scrub
 from .errors import ApiError, conflict, not_found
 from .ids import action_id as make_action_id, continuation_turn_id, proposal_key
@@ -75,40 +75,15 @@ def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trus
     else:
         a["status"] = "denied"
     if by == "user":
-        _queue_continuation(tx, uid, a, device["name"])
+        conversation.post(tx, uid, a, "job_finished" if decision == "approve" else "job_declined", device["name"])
         a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": a["continuationTurnId"]}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
     return a
 
 
 def label(action_type: str) -> str:
-    return (sim.ACTIONS.get(action_type) or real.JOBS.get(action_type) or real.READS[action_type])["label"]
-
-
-def _queue_continuation(tx, uid: str, a: dict, device_name: str) -> None:
-    """Queue the follow-up turn that tells the person how a decided job ended."""
-    cont = continuation_turn_id(a["id"])
-    verb = {"done": "was approved and completed", "failed": "was approved but failed",
-            "denied": "was declined"}[a["status"]]
-    summary = f" Result: {a['result']['summary']}" if a.get("result") else ""
-    if a["type"] == "expert_command" and a.get("result"):
-        summary += f"\nCommand: {a['params'].get('command')}\nOutput:\n{a['result'].get('output') or ''}".rstrip()
-    if a["type"] in real.READS:
-        target = a["params"].get("target") or ", ".join(a["params"].get("what") or [])
-        verb = "finished" if a["status"] == "done" else "couldn't finish"
-        summary = (f" (checked: {target}). What it found: {a['result']['summary']}\n"
-                   f"{a['result'].get('output') or ''}").rstrip()
-        if a["result"].get("playbook"):
-            from . import playbooks
-            summary = f" (checked: {target}).\n{playbooks.summary(a['result']['playbook'])}"
-    tx.set(db.turns(uid, a["sessionId"]).document(cont), {
-        "kind": "continuation", "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
-        "actionId": a["id"], "input": f"{label(a['type'])} on the {device_name} {verb}.{summary}",
-        "createdAt": _now()})
-    # Lets POST /api/turns/{turnId}/stream find the session that owns this continuation.
-    tx.set(db.user(uid).collection("turnIndex").document(cont),
-           {"sessionId": a["sessionId"], "demoGeneration": a["demoGeneration"]})
-    a["continuationTurnId"] = cont
+    cap = capabilities.get(action_type)
+    return cap.label if cap else sim.ACTIONS[action_type]["label"]
 
 
 def _read_context(tx, uid: str, device_id: str, action_type: str):
@@ -121,12 +96,16 @@ def _read_context(tx, uid: str, device_id: str, action_type: str):
 
 
 def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_type: str, device_id: str,
-            params: dict, fence=None) -> dict:
-    """Create (or find) the action for this logical operation. Runs it at once when trust allows.
+            params: dict, fence=None, mode: str = "quick") -> dict:
+    """Create (or find) the action for this logical operation. Sample-home jobs run at once when trust allows; a
+    real device's capability follows its own approval rule (capabilities.py).
 
     `fence(tx)` lets the turn engine abort if its lease or attempt is no longer current.
     """
-    if action_type not in sim.ACTIONS and action_type not in real.JOBS:
+    if capabilities.get(action_type):
+        return request(uid, action_type, device_id, params, session_id=session_id, turn_id=turn_id,
+                       generation=generation, fence=fence, mode=mode)
+    if action_type not in sim.ACTIONS:
         raise ApiError(422, "unknown_action")
 
     @firestore.transactional
@@ -139,11 +118,8 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         if not device_snap.exists:
             raise not_found()
         device = dict(device_snap.to_dict(), id=device_id)
-        if (device.get("realm") == "real") != (action_type in real.JOBS):
-            raise ValueError("not_applicable")  # simulated jobs on the sample home, real jobs on real devices only
         if device.get("realm") == "real":
-            return _propose_real(tx, uid, user, device, services, action_type, params, generation, session_id,
-                                 turn_id)
+            raise ValueError("not_applicable")  # simulated jobs on the sample home only
         # Identity first, from stable inputs only: a retried turn must find its action even when the job has
         # already run and would no longer apply (e.g. an update that is now installed).
         key = proposal_key(generation, turn_id, device_id, sim.service_for(device, action_type), action_type, params)
@@ -157,7 +133,7 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device_id, "params": params,
                   **c, "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
                   "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
-                  "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
+                  "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now()}
         if decision["auto"]:
             return _finish(tx, uid, action, device, services, trust_doc, trust_ref, "approve", "auto", None)
         tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
@@ -166,55 +142,56 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
 
 
-def _propose_real(tx, uid, user, device, services, action_type, params, generation, session_id, turn_id) -> dict:
-    """A real-device job always waits for a tap: no trust level lets it run on its own."""
-    key = proposal_key(generation, turn_id, device["id"], real.service_for(params), action_type, params)
-    aid = make_action_id(key)
-    existing = db.action(uid, aid).get(transaction=tx)
-    if existing.exists:
-        return dict(existing.to_dict(), id=aid)  # recovery first: identity never depends on current state
-    if real.view(device).get("stale") and action_type != "remove_device":  # removing a silent device is the point
-        raise ValueError("device_not_reporting")
-    if action_type in ("expert_command", "expert_grant"):
-        from . import expert
-        c, params = (expert.card if action_type == "expert_command" else expert.grant_card)(device, params)
-    else:
-        c = real.card(device, _by_id(services), action_type, params)
-    action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device["id"], "params": params, **c,
-              "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
-              "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
-              "sessionId": session_id, "turnId": turn_id, "createdAt": _now()}
-    tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
-    return action
+# ------------------------------------------------------------------ real devices: one pipeline for every capability
 
-
-def approved_job(uid: str, device_id: str, action_type: str, params: dict, *, session_id: str | None,
-                 turn_id: str) -> dict:
-    """A real job the owner asked for directly in the app (their confirmation is the approval): no pending card."""
+def request(uid: str, name: str, device_id: str, params: dict, *, session_id: str | None, turn_id: str,
+            generation: int | None = None, fence=None, origin: str = "chat", mode: str = "quick",
+            extra: dict | None = None) -> dict:
+    """Ask a real device for a capability. Who asks decides only one thing: a person confirming in the app
+    (`origin="app"`) has approved a one-tap capability already. Everything else comes from the registry: a read the
+    device allows runs without a card, other jobs wait for a tap, signed ones for the owner's passkey.
+    ValueError(code) when the capability doesn't apply to this device."""
+    cap = capabilities.get(name)
+    if not cap:
+        raise ApiError(422, "unknown_action")
 
     @firestore.transactional
     def run(tx):
-        user = db.user(uid).get(transaction=tx).to_dict()
-        _require_ready(user)
-        dsnap = db.device(uid, device_id).get(transaction=tx)
-        if not dsnap.exists:
+        if fence:
+            fence(tx)
+        user_snap, device_snap, services, _, _ = _read_context(tx, uid, device_id, name)
+        user = user_snap.to_dict() if user_snap.exists else None
+        _require_ready(user, generation)
+        if not device_snap.exists:
             raise not_found()
-        device = dict(dsnap.to_dict(), id=device_id)
-        generation = user.get("demoGeneration")
-        key = proposal_key(generation, turn_id, device_id, None, action_type, params)
+        device = dict(device_snap.to_dict(), id=device_id)
+        if device.get("realm") != "real" or device.get("archived"):
+            raise ValueError("not_applicable")
+        gen = user.get("demoGeneration") if generation is None else generation
+        key = proposal_key(gen, turn_id, device_id, real.service_for(params), name, params)
         aid = make_action_id(key)
         existing = db.action(uid, aid).get(transaction=tx)
-        if existing.exists and existing.to_dict().get("status") in ("approved", "running"):
-            return dict(existing.to_dict(), id=aid)
-        c = real.card(device, {}, action_type, params)
-        a = {"proposalKey": key, "type": action_type, "deviceId": device_id, "params": params, **c,
-             "status": "approved", "demoGeneration": generation, "deviceVersion": device.get("version"),
-             "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real", "sessionId": session_id,
-             "turnId": turn_id, "decision": {"by": "user", "decision": "approve"}, "createdAt": _now()}
-        tx.set(db.action(uid, aid), a)
-        return dict(a, id=aid)
+        old = existing.to_dict() if existing.exists else None
+        if old and (origin != "app" or old.get("status") in ("pending", "approved", "running")):
+            return dict(old, id=aid)  # recovery first: identity never depends on current state
+        if real.view(device).get("stale") and not cap.while_silent:
+            raise ValueError("device_not_reporting")
+        fields, clean = cap.build(capabilities.Ctx(uid, device, _by_id(services), params))
+        approved = cap.approval == "device" or (origin == "app" and cap.approval == "card")
+        a = {"id": aid, "proposalKey": key, "type": name, "deviceId": device_id, "params": clean, **fields,
+             "status": "approved" if approved else "pending", "realm": "real", "demoGeneration": gen,
+             "deviceVersion": device.get("version"), "trustLevelAtProposal": "ask", "resolvedBy": "real_device",
+             "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now(), **(extra or {})}
+        if approved:
+            a["decision"] = {"by": "owner_allowed_on_device" if cap.approval == "device" else "user",
+                             "decision": "approve"}
+        tx.set(db.action(uid, aid), {k: v for k, v in a.items() if k != "id"})
+        return a
 
-    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+    a = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+    if a.get("status") == "approved" and cap.after_approval:
+        cap.after_approval(uid, a)
+    return db.action(uid, a["id"]).get().to_dict() | {"id": a["id"]} if cap.after_approval else a
 
 
 def decide(uid: str, action_id_: str, decision: str, note: str | None = None) -> tuple[int, dict]:
@@ -226,8 +203,6 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         if not action_snap.exists:
             raise not_found()
         action = dict(action_snap.to_dict(), id=action_id_)
-        if decision == "approve" and action.get("type") in ("expert_command", "expert_grant"):
-            raise conflict("needs_passkey", actionId=action_id_)  # only the owner's passkey signature approves
         user_snap, device_snap, services, trust_ref, trust_snap = _read_context(
             tx, uid, action["deviceId"], action["type"])
         user = user_snap.to_dict() if user_snap.exists else None
@@ -263,6 +238,8 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
     status, body = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
     if status == 409:
         raise conflict(body["code"], actionId=body.get("actionId"))
+    if body.get("status") == "approved":
+        approved(uid, action_id_)  # the capability's own follow-up, if it has one
     return status, body
 
 
@@ -271,10 +248,13 @@ def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str,
 
     A real device reports every minute, so its version can't fence the card; the helper re-checks the target on the
     device before acting instead."""
+    cap = capabilities.get(action["type"])
+    if decision == "approve" and cap and cap.approval == "passkey":
+        raise conflict("needs_passkey", actionId=action["id"])  # only the owner's passkey signature approves
     a = dict(action)
     a["decision"] = {k: v for k, v in {"by": "user", "decision": decision, "note": note, "at": _now()}.items()
                      if v is not None}
-    if device is None or device.get("revoked"):
+    if device is None or device.get("revoked") and not (cap and cap.while_silent):
         tx.update(db.action(uid, a["id"]), {"status": "stale", "finishedAt": _now()})
         return 409, {"error": "conflict", "code": "stale", "actionId": a["id"]}
     if decision == "approve":
@@ -283,85 +263,82 @@ def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str,
     else:
         a["status"] = "denied"
         a["finishedAt"] = _now()
-        _queue_continuation(tx, uid, a, device["name"])
+        conversation.post(tx, uid, a, "job_declined", device["name"])
         a["response"] = {"actionId": a["id"], "status": "denied", "continuationTurnId": a["continuationTurnId"]}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
     return 202, a["response"]
 
 
-def request_diagnosis(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, target: str,
-                      fence=None) -> dict:
-    """Ask a real device to look into one target. Read-only and allowed by the owner on the device, so it is created
-    already approved (no card); the helper picks it up on its next check."""
-    return _request_read(uid, "diagnose", {"target": target}, session_id=session_id, turn_id=turn_id,
-                         generation=generation, device_id=device_id, fence=fence)
+def approved(uid: str, action_id_: str) -> None:
+    """After an approval was committed: the capability's own follow-up (e.g. a removal the device can't do itself
+    finishes now). Called by every path that approves."""
+    a = db.action(uid, action_id_).get().to_dict() or {}
+    cap = capabilities.get(a.get("type"))
+    if cap and cap.after_approval and a.get("status") == "approved":
+        cap.after_approval(uid, dict(a, id=action_id_))
 
 
-def request_inspection(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, what: list,
-                       fence=None, extra: dict | None = None) -> dict:
-    """Ask a real device to run some of its fixed read-only checks (disk use, programs, updates...). Like diagnose:
-    allowed by the owner on the device, so no card."""
-    return _request_read(uid, "inspect", {"what": what}, session_id=session_id, turn_id=turn_id,
-                         generation=generation, device_id=device_id, fence=fence, extra=extra)
-
-
-def request_read_command(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, command: str,
-                         fence=None) -> dict:
-    """One read-only command under the owner's signed investigation grant (the device checks both again)."""
-    return _request_read(uid, "expert_read", {"command": command}, session_id=session_id, turn_id=turn_id,
-                         generation=generation, device_id=device_id, fence=fence)
-
-
-def _request_read(uid: str, kind: str, params: dict, *, session_id: str, turn_id: str, generation: int,
-                  device_id: str, fence=None, extra: dict | None = None) -> dict:
+def signed(uid: str, action_id_: str, signature: dict, result_summary: str | None = None) -> dict:
+    """The owner signed a passkey card (the signature was checked by expert.sign). A job for the device is now
+    approved and carries the signature; one that only unlocks others (a grant) is done, and the chat that asked
+    carries on (an `investigation_approved` event)."""
 
     @firestore.transactional
     def run(tx):
-        if fence:
-            fence(tx)
-        user_snap, device_snap, services, _, _ = _read_context(tx, uid, device_id, kind)
-        user = user_snap.to_dict() if user_snap.exists else None
-        _require_ready(user, generation)
-        if not device_snap.exists:
-            raise not_found()
-        device = dict(device_snap.to_dict(), id=device_id)
-        if device.get("realm") != "real":
-            raise ValueError("not_applicable")
-        clean = dict(params)
-        if kind == "inspect":
-            clean["what"] = real.inspect_ok(device, params.get("what"))
-        if kind == "expert_read":
-            from . import expert
-            clean = expert.read_params(uid, device, params.get("command"))
-        key = proposal_key(generation, turn_id, device_id, None, kind, clean)
-        aid = make_action_id(key)
-        existing = db.action(uid, aid).get(transaction=tx)
-        if existing.exists:
-            return dict(existing.to_dict(), id=aid)
-        if real.view(device).get("stale"):
-            raise ValueError("device_not_reporting")
-        if kind == "expert_read":
-            plan = f"Run on the {device['name']} (read-only): {clean['command']}"
-            dry = "A read-only command under the investigation you signed; the device checks it is read-only."
-        elif kind == "diagnose":
-            target = clean["target"]
-            real.diagnose_target_ok(device, _by_id(services), target)
-            plan = f"Look into {target} on the {device['name']} (read-only)."
-            dry = "Reads its status" + (" and its last log lines" if target in
-                                         (device.get("allowedJobs") or {}).get("logs", []) else "") + "; changes nothing."
+        ref = db.action(uid, action_id_)
+        a = ref.get(transaction=tx).to_dict()
+        dsnap = db.device(uid, a["deviceId"]).get(transaction=tx) if a else None
+        if not a or a.get("status") != "pending":
+            raise conflict("not_pending", actionId=action_id_)
+        a = dict(a, id=action_id_)
+        cap = capabilities.get(a["type"])
+        a["params"] = {**a["params"], "signed": signature}
+        a["decision"] = {"by": "user", "decision": "approve", "with": "passkey"}
+        if cap.on_device:
+            a["status"] = "approved"
         else:
-            plan = f"Look around the {device['name']}: {', '.join(clean['what'])} (read-only)."
-            dry = "Runs the helper's fixed read-only checks; changes nothing."
-        action = {"id": aid, "proposalKey": key, "type": kind, "deviceId": device_id, "params": clean,
-                  "plan": plan, "dryRun": dry, "rollback": "Nothing to undo.", "blastRadius": [device_id],
-                  "riskClass": "read", "status": "approved", "realm": "real", "demoGeneration": generation,
-                  "deviceVersion": device["version"], "sessionId": session_id, "turnId": turn_id,
-                  "decision": {"by": "owner_allowed_on_device", "decision": "approve"}, "createdAt": _now(),
-                  **(extra or {})}
-        tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
-        return action
+            a["status"], a["finishedAt"], a["followUp"] = "done", _now(), "none"
+            a["result"] = {"ok": True, "summary": result_summary or "Approved."}
+            if a.get("sessionId"):
+                conversation.post(tx, uid, a, "investigation_approved",
+                                  ((dsnap.to_dict() if dsnap and dsnap.exists else {}) or {}).get("name", "device"),
+                                  mode="investigate")
+        tx.set(ref, {k: v for k, v in a.items() if k != "id"})
+        return a
 
-    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+    a = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+    cap = capabilities.get(a["type"])
+    if cap.after_approval:
+        cap.after_approval(uid, a)
+    return {"ok": True, "actionId": action_id_, "status": a["status"],
+            **({"continuationTurnId": a["continuationTurnId"]} if a.get("continuationTurnId") else {})}
+
+
+def request_diagnosis(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, target: str,
+                      fence=None, mode: str = "quick") -> dict:
+    """Ask a real device to look into one target (read-only, allowed by the owner on the device: no card)."""
+    return request(uid, "diagnose", device_id, {"target": target}, session_id=session_id, turn_id=turn_id,
+                   generation=generation, fence=fence, mode=mode)
+
+
+def request_inspection(uid: str, *, session_id: str | None, turn_id: str, generation: int, device_id: str,
+                       what: list, fence=None, extra: dict | None = None, mode: str = "quick") -> dict:
+    """Ask a real device to run some of its fixed read-only checks (disk use, programs, updates...)."""
+    return request(uid, "inspect", device_id, {"what": what}, session_id=session_id, turn_id=turn_id,
+                   generation=generation, fence=fence, extra=extra, mode=mode)
+
+
+def request_read_command(uid: str, *, session_id: str, turn_id: str, generation: int, device_id: str, command: str,
+                         fence=None, mode: str = "quick") -> dict:
+    """One read-only command under the owner's signed investigation grant (the device checks both again)."""
+    return request(uid, "expert_read", device_id, {"command": command}, session_id=session_id, turn_id=turn_id,
+                   generation=generation, fence=fence, mode=mode)
+
+
+def approved_job(uid: str, device_id: str, action_type: str, params: dict, *, session_id: str | None,
+                 turn_id: str) -> dict:
+    """A real job the owner asked for directly in the app (their confirmation is the approval)."""
+    return request(uid, action_type, device_id, params, session_id=session_id, turn_id=turn_id, origin="app")
 
 
 def await_diagnosis(uid: str, action_id_: str) -> dict | None:
@@ -382,9 +359,10 @@ def await_diagnosis(uid: str, action_id_: str) -> dict | None:
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
 
 
-def _playbook_cards(tx, uid: str, a: dict, device: dict) -> list:
+def cards_for_findings(tx, uid: str, a: dict, device: dict) -> list:
     """One pending clean-up card per allowed fix a playbook found. Reads only (the caller writes, after all reads);
     each finding gets `card` = the card's id, or None when no card could be made."""
+    cap = capabilities.get("fix")
     out = []
     for f in a["result"]["playbook"]["found"]:
         if not f.get("fixAllowed"):
@@ -396,42 +374,24 @@ def _playbook_cards(tx, uid: str, a: dict, device: dict) -> list:
         if db.action(uid, aid).get(transaction=tx).exists:
             continue  # can't happen for a first result; never make a second card
         try:
-            c = real.card(device, {}, "fix", params)
+            fields, clean = cap.build(capabilities.Ctx(uid, device, {}, params))
         except ValueError:
             continue
         f["card"] = aid
         out.append((db.action(uid, aid), {
-            "proposalKey": key, "type": "fix", "deviceId": device["id"], "params": params, **c, "status": "pending",
-            "demoGeneration": a["demoGeneration"], "deviceVersion": device.get("version"),
+            "proposalKey": key, "type": "fix", "deviceId": device["id"], "params": clean, **fields,
+            "status": "pending", "demoGeneration": a["demoGeneration"], "deviceVersion": device.get("version"),
             "trustLevelAtProposal": "ask", "resolvedBy": "real_device", "realm": "real",
-            "sessionId": a["sessionId"], "turnId": a["turnId"], "fromPlaybook": a["id"], "createdAt": _now()}))
+            "sessionId": a["sessionId"], "turnId": a["turnId"], "mode": a.get("mode", "quick"),
+            "fromPlaybook": a["id"], "createdAt": _now()}, False))
     return out
-
-
-def _report_auto_look(tx, uid: str, a: dict, device: dict) -> None:
-    """What Nightlight found when it looked by itself (e.g. after an unexpected restart): one Activity line and a note
-    in the device's notebook, so the person and the chat both know without asking. Writes only (after all reads)."""
-    from . import playbooks
-    from .ids import new_id
-    pb = a["result"]["playbook"]
-    name = device.get("name", "A device")
-    lines = [f["say"] for f in pb.get("found") or []]
-    before = (device.get("lastGap") or {}).get("diskBefore")
-    if a.get("playbook") == "after_restart" and isinstance(before, (int, float)) and before >= 95:
-        lines.append(f"Its disk was {before:.0f}% full just before it went silent: a full disk can freeze or crash a "
-                     "computer, so that is the most likely cause. Free some space.")
-    text = " ".join(lines) or (pb.get("nothing") or "Nothing unusual found.")
-    real.event(tx, uid, a["deviceId"], "looked", "warn" if pb.get("found") else "info",
-               f"{name}: {pb.get('title')}. {text}"[:300], who="nightlight")
-    tx.set(db.notes(uid, a["deviceId"]).document(new_id("note")),
-           {"text": f"{datetime.now(timezone.utc):%Y-%m-%d} {pb.get('title')}: {text}"[:300], "by": "nightlight",
-            "at": datetime.now(timezone.utc)})
-    del playbooks
 
 
 def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str | None,
                output: str | None = None) -> dict:
-    """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once."""
+    """The helper reports how a job it ran ended. Only the device the job was handed to can report it, once. The
+    result is recorded the same way for every capability; the capability's own hook runs (reads first); then the
+    outcome goes where it belongs: the chat that asked (an event), or Activity."""
 
     @firestore.transactional
     def run(tx):
@@ -446,52 +406,29 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
             return {"ok": True, "actionId": action_id_, "status": a["status"]}  # a repeated report changes nothing
         if a["status"] != "running":
             raise conflict("illegal_transition", actionId=action_id_)
-        text = scrub(summary)[0][:200]
+        cap = capabilities.get(a["type"])
+        device = dict(dsnap.to_dict() or {}, id=device_id)
         a["status"] = "done" if ok else "failed"
         a["finishedAt"] = _now()
-        if a["type"] in real.READS:
+        a["result"] = {"ok": ok, "summary": scrub(summary)[0][:200]}
+        if cap.keeps_output:
             found, hidden = scrub(output or "")
-            a["result"] = {"ok": ok, "summary": text, "output": found[:4000], "hidden": hidden}
-            from . import playbooks  # here, not at the top: playbooks uses this module
-            current = user.get("demo", {}).get("state") == "ready" and \
-                a.get("demoGeneration") == user.get("demoGeneration")
-            cards = []
-            if a.get("playbook") in playbooks.library() and ok:  # matched here, in code: no AI needed
-                device = dict(dsnap.to_dict() or {}, id=device_id)
-                a["result"]["playbook"] = playbooks.evaluate(playbooks.library()[a["playbook"]], found, device)
-                if current:  # cards in this same transaction, so the words below only claim cards that exist
-                    cards = _playbook_cards(tx, uid, a, device)
-            for ref, doc in cards:
-                tx.set(ref, doc)
-            if a.get("followUp") == "wanted" and current:  # the turn that asked has already ended
-                _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
-            if not a.get("sessionId") and current and a["result"].get("playbook"):  # Nightlight looked by itself
-                _report_auto_look(tx, uid, a, dsnap.to_dict() or {})
-            tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
-            return {"ok": True, "actionId": action_id_, "status": a["status"]}
-        if a["type"] == "expert_command":
-            found, hidden = scrub(output or "")
-            a["result"] = {"ok": ok, "summary": text, "output": found[:4000], "hidden": hidden}
-        elif a["type"] in ("fix", "update_helper"):
-            a["result"] = {"ok": ok, "summary": text}
-        else:
-            a["result"] = \
-                {"ok": ok, "summary": text, "before": {"state": "stopped"}, "after": {"state": state}}
-        if not a.get("sessionId"):  # asked from the app, not from a chat (a helper update): Activity tells it
-            real.event(tx, uid, device_id, a["type"], "info" if ok else "warn",
-                       f"{(dsnap.to_dict() or {}).get('name', 'A device')}: {text}")
+            a["result"].update(output=found[:4000], hidden=hidden)
+        if a["type"] in ("restart_container", "restart_service"):
+            a["result"].update(before={"state": "stopped"}, after={"state": state})
+        current = user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration")
+        writes = cap.on_result(tx, uid, a, device) if cap.on_result and current else []  # its reads happen here
+        for ref, doc, merge in writes:
+            tx.set(ref, doc, merge=merge)
+        name = device.get("name", "device")
+        if not a.get("sessionId"):
             a["followUp"] = "none"
-            tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
-            return {"ok": True, "actionId": action_id_, "status": a["status"]}
-        if ok and a.get("svcId"):
-            tx.set(db.services(uid, device_id).document(a["svcId"]), {"status": "ok", "detail": state, "failed": False},
-                   merge=True)  # recovered: no new restart card until the device reports it failed again
-        # What happened on the device is always recorded. The chat follow-up only goes to a chat that still exists:
-        # not while a reset runs, and not into a generation a reset has replaced.
-        if user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration"):
-            _queue_continuation(tx, uid, a, (dsnap.to_dict() or {}).get("name", "device"))
-        else:
-            a["followUp"] = "skipped_after_reset"
+            if current:
+                conversation.to_activity(tx, uid, a, device)
+        elif not current:
+            a["followUp"] = "skipped_after_reset"  # the chat that asked is gone; the result is still recorded
+        elif not cap.reads or a.get("followUp") == "wanted":  # a change, or a read the asking turn stopped waiting for
+            conversation.post(tx, uid, a, "job_finished", name)
         tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
         return {"ok": True, "actionId": action_id_, "status": a["status"]}
 

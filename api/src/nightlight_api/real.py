@@ -27,15 +27,7 @@ CHAT_ACTIVE = timedelta(minutes=5)  # while the owner chats, helpers check for w
 FAST_POLL_SECONDS = 5
 CLAIM_MIN_SECONDS = 4
 
-# Jobs a real device can run. The helper has its own copy and runs only these, only on targets its owner allowed on
-# that machine; the server sends a job name and a target, never a command.
-JOBS = {"restart_container": {"label": "Restart a stopped container", "riskClass": "service"},
-        "restart_service": {"label": "Restart a stopped system service", "riskClass": "service"},
-        "fix": {"label": "Clean up space", "riskClass": "service"},
-        "update_helper": {"label": "Update the helper", "riskClass": "service"},
-        "remove_device": {"label": "Remove a device", "riskClass": "service"},
-        "expert_command": {"label": "Run a command you signed", "riskClass": "destructive"},
-        "expert_grant": {"label": "Investigate with commands (read-only, 15 minutes)", "riskClass": "read"}}
+# What a real device can be asked to do is declared in capabilities.py; the card builders for its jobs live here.
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
 FIX = {
@@ -57,9 +49,6 @@ FIX = {
 }
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
-READS = {"diagnose": {"label": "Look into", "riskClass": "read"},
-         "inspect": {"label": "Look around", "riskClass": "read"},
-         "expert_read": {"label": "Investigate (read-only command)", "riskClass": "read"}}
 ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
 # The helper's fixed read-only checks (`inspect`); it runs only these names, at most MAX_INSPECT per job.
 INSPECT = {"disk": "which known folders take the most space", "processes": "which programs use the most memory and CPU",
@@ -536,7 +525,7 @@ def _unit_card(device: dict, services: dict, params: dict) -> dict:
             "dryRun": f"The helper on the device runs \"sudo systemctl restart {unit}\" and checks it is still running "
                       f"a few seconds later. Nothing else is touched.",
             "rollback": "Nothing to undo: if it fails again, it simply stays stopped and you'll see why.",
-            "blastRadius": [device["id"]], "riskClass": JOBS["restart_service"]["riskClass"]}
+            "blastRadius": [device["id"]], "riskClass": "service"}
 
 
 def _fix_card(device: dict, params: dict) -> dict:
@@ -547,7 +536,7 @@ def _fix_card(device: dict, params: dict) -> dict:
     title, what, undo = FIX[params["recipe"]]
     return {"svcId": None, "plan": f"{title} on the {device['name']}.",
             "dryRun": f"{what}. The helper reports how much space it freed. Nothing else is touched.",
-            "rollback": undo, "blastRadius": [device["id"]], "riskClass": JOBS["fix"]["riskClass"]}
+            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service"}
 
 
 def _remove_card(device: dict, params: dict) -> dict:
@@ -563,7 +552,7 @@ def _remove_card(device: dict, params: dict) -> dict:
                        "and it leaves your map; to delete the helper's files, run the uninstall line on it."),
             "rollback": f"Its history, notes and activity are kept for {ARCHIVE_DAYS} days, then deleted. To bring it "
                         "back, add it again (it becomes a new device).",
-            "blastRadius": [device["id"]], "riskClass": JOBS["remove_device"]["riskClass"]}
+            "blastRadius": [device["id"]], "riskClass": "service"}
 
 
 def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
@@ -575,7 +564,7 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
         return _fix_card(device, params)
     if action_type == "restart_service":
         return _unit_card(device, services, params)
-    if action_type not in JOBS or set(params) != {"container"}:
+    if action_type != "restart_container" or set(params) != {"container"}:
         raise ValueError("not_applicable")
     name = params["container"]
     if not isinstance(name, str) or not CONTAINER_NAME.fullmatch(name):
@@ -591,7 +580,7 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
             "dryRun": f"The helper on the device runs \"docker start {name}\" and checks it is still running a few "
                       f"seconds later. Nothing else is touched.",
             "rollback": f"Stop {name} again (from the app or with \"docker stop {name}\").",
-            "blastRadius": [device["id"]], "riskClass": JOBS[action_type]["riskClass"]}
+            "blastRadius": [device["id"]], "riskClass": "service"}
 
 
 def _span(seconds: float) -> str:
@@ -937,51 +926,6 @@ def inspect_ok(device: dict, what) -> list[str]:
     if any(n not in offered for n in names):
         raise ValueError("not_allowed_on_device")
     return names
-
-
-def request_update(uid: str, device_id: str) -> dict:
-    """The owner taps Update: an approved job (the tap is the approval) to install the signed release on offer."""
-    offer = release.latest()
-    if not offer:
-        raise ApiError(409, "no_release")
-    ref = db.device(uid, device_id)
-
-    @firestore.transactional
-    def run(tx):
-        snap = ref.get(transaction=tx)
-        d = snap.to_dict() if snap.exists else None
-        if not d or d.get("realm") != "real" or d.get("kind") == "watched" or d.get("revoked"):
-            raise not_found()
-        user = db.user(uid).get(transaction=tx).to_dict() or {}
-        if user.get("demo", {}).get("state") != "ready":
-            raise ApiError(409, "resetting")
-        if not release.newer(offer["version"], d.get("helperVersion")):
-            raise ApiError(409, "up_to_date")
-        if "signed" not in (d.get("allowedJobs") or {}).get("update", []):
-            raise ApiError(409, "update_by_hand" if not release.newer(d.get("helperVersion"), "0.8.99")
-                           else "updates_off")
-        if view(dict(d, id=device_id)).get("stale"):
-            raise ApiError(409, "device_not_reporting")
-        key = proposal_key(user.get("demoGeneration"), "app_update", device_id, None, "update_helper",
-                           {"version": offer["version"]})
-        aid = make_action_id(key)
-        existing = db.action(uid, aid).get(transaction=tx)
-        if existing.exists and existing.to_dict().get("status") in ("approved", "running"):
-            return dict(existing.to_dict(), id=aid)
-        a = {"proposalKey": key, "type": "update_helper", "deviceId": device_id, "params": {"version": offer["version"]},
-             "svcId": None, "plan": f"Update the Nightlight helper on the {d.get('name')} from "
-             f"{d.get('helperVersion')} to {offer['version']}.",
-             "dryRun": "The helper downloads the new version, installs it only if Nightlight's signature checks out "
-                       "and it passes a self-test, then restarts itself.",
-             "rollback": "On the device: nightlight rollback (the previous version is kept).",
-             "blastRadius": [device_id], "riskClass": "service", "status": "approved", "realm": "real",
-             "demoGeneration": user.get("demoGeneration"), "deviceVersion": d.get("version"),
-             "sessionId": None, "turnId": None, "decision": {"by": "user", "decision": "approve"},
-             "createdAt": _now()}
-        tx.set(db.action(uid, aid), a)
-        return dict(a, id=aid)
-
-    return db.run_transaction(run)
 
 
 def token_owner(tx, token: str) -> tuple[str, str]:

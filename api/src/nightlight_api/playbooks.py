@@ -83,13 +83,13 @@ def offered(device: dict) -> list[dict]:
 
 
 def start(uid: str, device_id: str, book_id: str, *, session_id: str, turn_id: str, generation: int,
-          fence=None) -> dict:
+          fence=None, mode: str = "quick") -> dict:
     book = library().get(book_id)
     if not book:
         raise ValueError("unknown_playbook")
     return actions.request_inspection(uid, session_id=session_id, turn_id=turn_id, generation=generation,
                                       device_id=device_id, what=book["checks"], fence=fence,
-                                      extra={"playbook": book_id})
+                                      extra={"playbook": book_id}, mode=mode)
 
 
 def summary(result: dict) -> str:

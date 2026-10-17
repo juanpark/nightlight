@@ -200,6 +200,15 @@ one pending `fix` card is created per allowed clean-up. The library is `api/src/
 `allowedJobs.fix` (helper 0.9+). Always an approval card. `result: {ok, summary}` (the summary says how much space was
 freed). Permissions: `cleanup` (bool) in `POST /api/devices/{id}/permissions`.
 
+**Capabilities and events (architecture).** Everything a real device can be asked to do is one entry in
+`api/src/nightlight_api/capabilities.py` (`docs/adr/0001-capability-registry.md`): how its card is built, how it is
+approved (`device`: allowed on the device, no card; `card`: one tap, or the owner's confirmation in the app;
+`passkey`: a card signed with the owner's passkey), and what follows its approval and its result. Follow-ups are
+**event turns** (`docs/adr/0002-conversation-events.md`): `kind: "event"`, `event` (`job_finished`,
+`job_declined`, `investigation_approved`), `mode`, and `policy` (`narrate`: tell what happened, no tools;
+`continue`: carry on with tools, e.g. after an investigation was approved). The turn id is still
+`cont_<actionId>` and is opened the same way.
+
 **Helper updates.** `GET /helper/release` → `{version, sha256}`; `GET /helper/release/nightlight_helper.py` and
 `.sig` (public). Heartbeat responses carry `latestHelper`. `POST /api/devices/{id}/update {}` (signed-in owner) →
 `202 {actionId, version}`, an approved `update_helper` job; `409` codes: `no_release`, `up_to_date`,
