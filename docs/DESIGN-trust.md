@@ -5,6 +5,32 @@ jobs, so even a fully breached Nightlight cloud can't take over your machines. E
 type) is the next step: commands the AI proposes, that run only after **your passkey** signs them on your own phone
 or laptop. The power of a sysadmin, with the keys in your pocket, not ours.
 
+## The central tension: safety vs. power and convenience
+
+This is the hardest problem in Nightlight, and the one we spent the most effort on. The benchmark we hold ourselves
+to is a person running an AI coding agent in a terminal on their own machine, with their own SSH keys and a folder of
+notes about their servers: it can investigate anything, fix anything, and it is only as safe as the person watching.
+Nightlight has to come close to that **for people who have never opened a terminal**, while being safe even if
+Nightlight itself is breached. Every gain in power or convenience is a potential gain for an attacker, so each step
+had to answer two questions at once: *does it make the agent more capable?* and *who could abuse it, and how do we
+stop them without asking a lay user to be a security expert?*
+
+| Step | Power / convenience gained | The risk it raised | How we closed it |
+|---|---|---|---|
+| Fixed job menu | restarts, checks, clean-ups from the app | a breached cloud could run jobs | job names, not commands; the device's own allowlist; cards for every change |
+| Signed helper updates | no terminal to update, ever | a breached cloud could push code | release key kept offline; the device verifies the signature, refuses older versions |
+| Playbooks | expert answers for common problems, the same every time | none new (no new abilities) | data only: checks and clean-ups that already exist |
+| Automatic post-mortems | it finds out why a device crashed without being asked | it must not invent evidence | read-only checks; "unknown" when the history can't prove a crash |
+| Investigate mode + research | a stronger model that digs in, and searches the web | cost; personal details leaking to a search engine | budgets per turn and per day; the home's names, addresses and secrets stripped first |
+| Expert sessions | real commands in a loop, like an administrator | a breached cloud, prompt injection, replay, secret exfiltration | the owner's passkey signs; the device verifies; read-only enforced on the device by exact rules |
+
+**Independent review is part of the design.** Each step was reviewed adversarially (by a separate AI reviewer working
+from the code and the rules, with probes). The first version of expert sessions was sent back with five high-severity
+findings: "read-only" was a list of names that `docker system prune` slipped through; the card showed one command
+while signing an opaque challenge; the device trusted a fingerprint supplied by the cloud; replay protection forgot
+old tokens. Each was fixed with a regression test, then reviewed again, until the reviewer couldn't break it. That
+loop, more than any single feature, is how the gap between safe and capable keeps closing.
+
 ## The fork we faced
 
 Juan's own setup (a folder of notes plus an AI in a terminal with his SSH keys) can fix almost anything. A product for
