@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.10"
+VERSION = "0.9.11"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1308,7 +1308,7 @@ _RO_RULES = {
                   "args": "name", "max": 5},
     "launchctl": {"subs": {"list"}, "args": "name", "max": 1},
     "docker": {"subs": {"ps", "logs", "stats", "images", "version", "system"},
-               "then": {"system": {"df"}}, "flags": {"-a", "--no-stream", "--no-trunc", "-t"},
+               "then": {"system": {"df"}}, "flags": {"-a", "--no-stream", "-t"},
                "values": {"--tail": "int", "--since": "since"}, "args": "name", "max": 3},
     "ip": {"subs": {"addr", "address", "route", "link"}, "then": {"link": {"show"}, "addr": {"show"},
                                                                   "address": {"show"}, "route": {"show"}},
@@ -1458,7 +1458,10 @@ def readonly_command(command):
         return None, f"{prog} needs a log file"
     if prog == "ping" and int(rest[rest.index("-c") + 1]) > 10:
         return None, "ping at most 10 times"
-    return [exe] + argv[1:], None
+    out = [exe] + argv[1:]
+    if prog == "docker" and argv[1:2] == ["ps"]:  # its COMMAND column can carry secrets: only these columns
+        out += ["--format", "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
+    return out, None
 
 
 def readonly_ok(command):

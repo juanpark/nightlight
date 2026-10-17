@@ -53,7 +53,18 @@ def home_names(uid: str, generation: int | None) -> list[str]:
         names.update(s.to_dict().get("name") for s in db.services(uid, snap.id).stream() if s.to_dict().get("name"))
     hint = (db.user(uid).get().to_dict() or {}).get("ownerHint") or ""
     names.update(w for w in re.split(r"[^A-Za-z]+", hint.split("@")[0]) if len(w) > 1)
+    parts = set()
+    for n in list(names):  # "Juan's NAS" also hides "Juan"; plain device words ("Mac", "server") stay searchable
+        for w in re.split(r"[^\w]+", re.sub(r"[’']s\b", "", str(n))):
+            if len(w) >= 3 and w.lower() not in _COMMON:
+                parts.add(w)
+    names |= parts
     return sorted((n for n in names if isinstance(n, str) and len(n) >= 3), key=len, reverse=True)
+
+
+_COMMON = {"mac", "mini", "macbook", "pro", "air", "imac", "studio", "raspberry", "nas", "server", "router", "home",
+           "office", "desktop", "laptop", "linux", "ubuntu", "debian", "windows", "the", "and", "for", "computer",
+           "docker", "pihole", "plex", "minecraft", "backup", "backups", "game", "media", "storage", "printer"}
 
 
 def anonymise(question: str, private_names=()) -> str:
@@ -90,8 +101,11 @@ def search(uid: str, ip: str, question: str, fence=None, client=None, private_na
         sources = [{"title": c.web.title, "url": c.web.uri} for c in (gm.grounding_chunks or [])
                    if getattr(c, "web", None)][:5] if gm else []
         answer, _ = scrub(r.text or "")
+        u = r.usage_metadata
         return {"status": "done", "question": clean, "answer": answer[:2500], "sources": sources,
-                "costUsd": actual or 0.0}
+                "costUsd": actual or 0.0, "tokensIn": getattr(u, "prompt_token_count", 0) or 0,
+                "tokensOut": max((getattr(u, "total_token_count", 0) or 0) - (getattr(u, "prompt_token_count", 0) or 0),
+                                 0)}
     except Exception as e:  # research never breaks a turn
         return {"status": "error", "reason": f"the search didn't work ({type(e).__name__})"}
     finally:

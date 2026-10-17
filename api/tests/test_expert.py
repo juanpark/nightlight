@@ -236,3 +236,12 @@ def test_rev2_old_nonce_lists_are_kept(helper):  # rev2 #3
     assert helper.run_job({"type": "expert_command", "params": {"payload": p2, "signed": s2}})[0]  # migrates
     again = helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})
     assert not again[0] and "already used" in again[1]
+
+
+def test_rev3_docker_listing_never_shows_container_commands(helper):  # rev3 #1
+    assert helper.readonly_ok("docker ps --no-trunc") is not None
+    argv, why = helper.readonly_command("docker ps -a")
+    if why is None:  # docker installed here
+        assert argv[-2:] == ["--format", "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
+    else:
+        assert "isn't installed" in why

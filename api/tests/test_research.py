@@ -28,3 +28,19 @@ def test_research_scrubs_cites_and_caps(client, started, monkeypatch):
 def test_rev2_names_and_local_hosts_never_leave(client, started):  # rev2 #7
     q = research.anonymise("Juan says my-nas.internal and plex.local crash on Mac mini", ["Mac mini", "Juan"])
     assert "Juan" not in q and "my-nas" not in q and "plex.local" not in q and "Mac mini" not in q
+
+
+def test_rev3_name_parts_are_hidden(client, started):  # rev3 #2
+    from nightlight_api import db
+    sample = next(s.id for s in db.devices(started).get())
+    db.device(started, sample).update({"name": "Juan's NAS"})
+    from conftest import generation
+    names = research.home_names(started, generation(started))
+    assert "Juan" in names  # the name part, not only the whole device name
+    assert "Juan" not in research.anonymise("Juan says the disk is full", names)
+
+
+def test_rev3_research_tokens_are_reported(client, started):  # rev3 #3
+    from types import SimpleNamespace as NS
+    out = research.search(started, "1.2.3.4", "kernel panic", client=NS(models=FakeModels()))
+    assert out["tokensIn"] == 50 and out["tokensOut"] == 350
