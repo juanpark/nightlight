@@ -190,5 +190,8 @@ export type StreamEvent =
 
 export interface FoundItem { cid: string; guess: string; vendor?: string | null; services: string[]; ports: number[];
   added?: boolean }
+/** One thing found nearby, merged across the devices that saw it (`GET /api/found`). */
+export interface FoundThing { guess: string; vendor?: string | null; services: string[]; ports: number[];
+  tag?: string | null; seenBy: { deviceId: string; name: string; cid: string }[] }
 export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
   expiresAt?: Date | null }
