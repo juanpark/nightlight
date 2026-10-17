@@ -926,14 +926,20 @@ def wait_for_jobs(token: str, hold: float = WAIT_SECONDS) -> dict:
         busy = t.get("waitUntil")
         if busy and busy > _now():
             raise ApiError(429, "already_waiting", retryAfter=max(1, int((busy - _now()).total_seconds())))
-        tx.update(tref, {"waitUntil": _now() + timedelta(seconds=hold + 5)})
+        tx.update(tref, {"waitUntil": _now() + timedelta(seconds=hold + 5), "waitOwner": owner})
         return t
 
+    @firestore.transactional
+    def release(tx):  # only our own lease: a late finisher never clears its successor's
+        if (tref.get(transaction=tx).to_dict() or {}).get("waitOwner") == owner:
+            tx.update(tref, {"waitUntil": None, "waitOwner": None})
+
+    owner = new_id("wait")
     t = db.run_transaction(lease)
     try:
         return _wait(token, t, hold)
     finally:
-        tref.update({"waitUntil": None})
+        db.run_transaction(release)
 
 
 def _wait(token: str, t: dict, hold: float) -> dict:

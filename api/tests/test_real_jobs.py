@@ -290,3 +290,18 @@ def test_one_open_wait_per_device_and_the_hold_follows_the_report(client, starte
     t = time.monotonic()
     r = client.post("/helper/jobs/wait?hold=2", json={}, headers={"X-Device-Token": dev["token"]})
     assert r.status_code == 200 and r.json()["jobs"] == [] and time.monotonic() - t < 6
+
+
+def test_a_late_wait_never_clears_its_successors_lease(client, started, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from nightlight_api import db, real
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    tref = db.client().collection("helperTokens").document(real._sha(dev["token"]))
+
+    def slow_wait(token, t, hold):  # while A is still finishing, its lease expires and B takes over
+        tref.update({"waitUntil": datetime.now(timezone.utc) + timedelta(seconds=30), "waitOwner": "wait_B"})
+        return {"ok": True, "jobs": []}
+    monkeypatch.setattr(real, "_wait", slow_wait)
+    real.wait_for_jobs(dev["token"], hold=1)
+    assert tref.get().to_dict()["waitOwner"] == "wait_B"  # A didn't clear B's lease
