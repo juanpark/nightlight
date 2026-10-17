@@ -186,3 +186,35 @@ def test_a_thing_seen_differently_by_two_devices_can_still_be_added(client, star
     assert first["canWatch"] and first["deviceId"] == pi["deviceId"]
     r = client.post(f"/api/discoveries/{first['deviceId']}/{first['cid']}/add", json={"name": "Home Assistant"})
     assert r.status_code == 201
+
+
+def test_a_finished_look_is_never_reopened(client, started):  # codex discover rev3 #1
+    from nightlight_api import actions
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "app", "helperVersion": "0.9.21"})
+    first = real.request_discover(started, dev["deviceId"])
+    db.action(started, first["id"]).update({"status": "done", "result": {"ok": True, "summary": "Found 1"}})
+    again = actions.request(started, "discover", dev["deviceId"], {}, session_id=None, turn_id="app_discover_1",
+                            origin="app", once=True)  # a late or retried ask for scan 1
+    assert again["id"] == first["id"] and again["status"] == "done"  # left as it finished
+    nxt = real.request_discover(started, dev["deviceId"])
+    assert nxt["id"] != first["id"] and nxt["status"] == "approved"
+
+
+def test_add_uses_a_finder_with_room_left(client, started, monkeypatch):  # codex discover rev3 #2
+    monkeypatch.setattr(real, "WATCHED_PER_HELPER", 1)
+    mac, pi = enrolled(client, "Mac"), enrolled(client, "Pi")
+    beat(client, mac["token"], FACTS)
+    beat(client, pi["token"], FACTS)
+    hm = {"X-Device-Token": mac["token"]}
+    other = {**ITEM, "cid": "ddddddddddd3", "tag": "f" * 20}
+    assert client.post("/helper/discoveries", json={"items": [other]}, headers=hm).status_code == 200
+    assert client.post(f"/api/discoveries/{mac['deviceId']}/{other['cid']}/add", json={"name": "x"}).status_code == 201
+    shared = {**ITEM, "cid": "eeeeeeeeeee3", "tag": "a" * 20}
+    for dev, cid in ((mac, "eeeeeeeeeee3"), (pi, "eeeeeeeeeee4")):
+        h = {"X-Device-Token": dev["token"]}
+        assert client.post("/helper/discoveries", json={"items": [{**shared, "cid": cid}]}, headers=h).status_code == 200
+    [row] = [r for r in client.get("/api/found").json()["items"] if r["tag"] == "a" * 20]
+    first = row["seenBy"][0]
+    assert first["deviceId"] == pi["deviceId"] and first["canWatch"]  # the Mac is full
+    assert client.post(f"/api/discoveries/{first['deviceId']}/{first['cid']}/add", json={"name": "y"}).status_code == 201

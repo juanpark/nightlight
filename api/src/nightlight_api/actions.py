@@ -162,7 +162,7 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
 
 def request(uid: str, name: str, device_id: str, params: dict, *, session_id: str | None, turn_id: str,
             generation: int | None = None, fence=None, origin: str = "chat", mode: str = "quick",
-            extra: dict | None = None) -> dict:
+            extra: dict | None = None, once: bool = False) -> dict:
     """Ask a real device for a capability. Who asks decides only one thing: a person confirming in the app
     (`origin="app"`) has approved a one-tap capability already. Everything else comes from the registry: a read the
     device allows runs without a card, other jobs wait for a tap, signed ones for the owner's passkey.
@@ -188,8 +188,9 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         aid = make_action_id(key)
         existing = db.action(uid, aid).get(transaction=tx)
         old = existing.to_dict() if existing.exists else None
-        if old and (origin != "app" or old.get("status") in ("pending", "approved", "running")):
-            return dict(old, id=aid)  # recovery first: identity never depends on current state
+        if old and (origin != "app" or once or old.get("status") in ("pending", "approved", "running")):
+            return dict(old, id=aid)  # recovery first: identity never depends on current state; `once`: a finished
+            # job is never reopened under its identity (a new one needs a new identity)
         if real.view(device).get("stale") and not cap.while_silent:
             raise ValueError("device_not_reporting")
         fields, clean = cap.build(capabilities.Ctx(uid, device, _by_id(services), params))

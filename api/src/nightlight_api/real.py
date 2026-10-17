@@ -322,8 +322,18 @@ def found_view(uid: str) -> list[dict]:
                 row["guess"] = it["guess"]  # the more specific guess wins
             row["seenBy"].append({"deviceId": snap.id, "name": d.get("byName"), "cid": it.get("cid"),
                                   "canWatch": any(p in WATCH_PORTS for p in it.get("ports") or [])})
-    for row in rows.values():  # Add uses the first finder: one that can watch it (it saw a port to check)
-        row["seenBy"].sort(key=lambda f: not f["canWatch"])
+    # A finder can watch it when it saw a port to check, is still a working device of yours, and has room left.
+    helpers = {snap.id: snap.to_dict() for snap in db.devices(uid).get()}
+    room = {}
+    for h in helpers.values():
+        if h.get("watchedBy") and not h.get("revoked"):
+            room[h["watchedBy"]] = room.get(h["watchedBy"], 0) + 1
+    for row in rows.values():
+        for f in row["seenBy"]:
+            h = helpers.get(f["deviceId"]) or {}
+            f["canWatch"] = f["canWatch"] and not h.get("archived") and not h.get("revoked") \
+                and room.get(f["deviceId"], 0) < WATCHED_PER_HELPER
+        row["seenBy"].sort(key=lambda f: not f["canWatch"])  # Add uses the first finder
     return list(rows.values())
 
 
@@ -332,29 +342,39 @@ DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
 
 def request_discover(uid: str, device_id: str) -> dict:
     """Ask one device to look nearby. A scan still under way is that scan (asking twice doesn't queue a second); a new
-    scan gets its own identity, so a late result from an earlier one can never finish it."""
+    scan gets its own identity, so a late result from an earlier one can never finish it.
+
+    Scans are numbered per device; scan n is the job with identity `app_discover_<n>` (`once`: a finished one is never
+    reopened). One transaction reads the counter and that job: missing or under way, ask for scan n again (whoever
+    asked first may still be making it; asking again finds it); finished, move to n + 1. Nothing else is recorded, so
+    an interruption anywhere leaves nothing half done."""
     from . import actions
-    slot = db.user(uid).collection("scans").document(device_id)  # which scan this device is on, in order
+    slot = db.user(uid).collection("scans").document(device_id)
 
     @firestore.transactional
     def which(tx):
-        """The scan number to ask for: the current one while it is being made or still under way, else the next.
-        Two requests at once agree on one number (the transaction), and one number is one job (its identity)."""
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
         snap = slot.get(transaction=tx)
-        cur = snap.to_dict() if snap.exists else {"n": 0}
-        if snap.exists and not cur.get("actionId"):
-            return cur["n"]  # being made by another request right now
-        if cur.get("actionId"):
-            a = db.action(uid, cur["actionId"]).get(transaction=tx)
-            if not a.exists or (a.to_dict() or {}).get("status") in ("pending", "approved", "running"):
-                return cur["n"]
-        tx.set(slot, {"n": cur["n"] + 1, "actionId": None})
-        return cur["n"] + 1
+        n = (snap.to_dict() or {}).get("n", 0) if snap.exists else 0
+        a = db.action(uid, _scan_action_id(user, device_id, n)).get(transaction=tx) if n else None
+        if n and (not a.exists or (a.to_dict() or {}).get("status") in ("pending", "approved", "running")):
+            return n
+        tx.set(slot, {"n": n + 1})
+        return n + 1
 
-    n = db.run_transaction(which)
-    a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{n}", origin="app")
-    slot.set({"n": n, "actionId": a["id"]}, merge=True)
+    for _ in range(3):  # a scan finishing between choosing and asking: choose again
+        n = db.run_transaction(which)
+        a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id=f"app_discover_{n}",
+                            origin="app", once=True)
+        if a.get("status") in ("pending", "approved", "running"):
+            return a
     return a
+
+
+def _scan_action_id(user: dict, device_id: str, n: int) -> str:
+    """The job identity of scan n on this device (as actions.request derives it)."""
+    return make_action_id(proposal_key(user.get("demoGeneration"), f"app_discover_{n}", device_id,
+                                       service_for({}), "discover", {}))
 
 
 def discover_everywhere(uid: str) -> dict:
