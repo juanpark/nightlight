@@ -1122,6 +1122,10 @@ CARD_CLAIM = re.compile(r"\b(I've|I have|I) (just )?put (up )?(a|an|the|your) [\
 FIX_WORDS = (("clear_images", r"image"), ("rotate_logs", r"\blog"), ("backup_world", r"back ?up|copy of the world"),
              ("update_server", r"updat"), ("restart_app", r"immich|photo|restart (the )?app"),
              ("restart_server", r"restart"))
+# Words that say the claim itself is false or only reported ("that wasn't right:", "earlier I said"); a plain "no"
+# ("No problem, I've put up a card…") is not one.
+DENIED = re.compile(r"\b(?:(?:was|is|were) ?n[o']t (?:true|right|correct|accurate)|not (?:true|right|correct|accurate)|"
+                    r"inaccurate|incorrect(?:ly)?|wrong|mistaken?|i (?:said|claimed|wrote))\b")
 NEGATED = re.compile(r"\b(not|no|never|wasn't|isn't|didn't|haven't|hadn't|inaccurate|wrong|mistake)\b|n't\b")
 CLAUSE_END = re.compile(r"[.!?…][\"')\]]*(?=\s|$)|\n")
 # A sentence right after a claim that only points at the card that isn't there ("It's waiting for your tap.").
@@ -1150,7 +1154,7 @@ def _claims(text: str) -> list[re.Match]:
         before = text[max(start, m.start() - 60):m.start()].lower()
         # Only what comes before the claim can undo it ("that wasn't right: I've put…"); words after it ("no
         # changes happen until you approve") don't. The claim's own negative forms never match CARD_CLAIM.
-        if NEGATED.search(before) or '"' in before[-3:]:
+        if DENIED.search(before) or '"' in before[-3:]:
             continue
         out.append(m)
     return out

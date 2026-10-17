@@ -472,3 +472,15 @@ def test_words_after_a_claim_never_excuse_it(client, started):  # Codex claims #
     text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
     stored = next(m.to_dict()["text"] for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
     assert "I've put up a card" not in text and stored == text and not any(e["type"] == "approval_request" for e in ev)
+
+
+def test_a_plain_no_before_a_claim_never_excuses_it(client, started):  # Codex claims rev2 #1
+    from nightlight_api import agent as a
+    assert a.claims_a_card("No problem, I've put up a card to clean up old logs.")
+    assert a.claims_a_card("Nothing else is wrong. I've put up a card to clean up old logs.")
+    assert not a.claims_a_card("Earlier I said I've put up a card to clean up logs, but that was wrong.")
+    assert not a.claims_a_card('You asked whether "I have put up a card" means it ran: it does not.')
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "No problem, I've put up a card to restart the Minecraft game server.")
+    ev = events(ask(client, new_session(client), "And the game?"))
+    assert "I've put up a card" not in "".join(e.get("delta", "") for e in ev if e["type"] == "text")
