@@ -544,6 +544,7 @@ class Found(Strict):
     services: list[Literal[tuple(real.FOUND_SERVICES)]] = Field(default_factory=list, max_length=8)
     ports: list[Literal[tuple(real.FOUND_PORTS)]] = Field(default_factory=list, max_length=8)
     tag: str | None = Field(default=None, pattern=TAG)  # its address's keyed fingerprint (see Net), never the address
+    hw: str | None = Field(default=None, pattern=TAG)  # its hardware address's keyed fingerprint, never the address
     name: str | None = Field(default=None, min_length=1, max_length=60, pattern=r"^[^\x00-\x1f\x7f]+$")
     maker: Literal[tuple(real.MAKERS)] | None = None
     model: str | None = Field(default=None, pattern=real.MODEL_CHARS)

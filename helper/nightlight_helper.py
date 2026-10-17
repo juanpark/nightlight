@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.23"
+VERSION = "0.9.24"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2089,7 +2089,7 @@ PORTS = {22: "remote login (SSH)", 80: "web page", 443: "secure web page", 445: 
 MDNS = {"_home-assistant._tcp": "Home Assistant", "_plexmediasvr._tcp": "Plex", "_smb._tcp": "file sharing",
         "_ipp._tcp": "printer", "_printer._tcp": "printer", "_googlecast._tcp": "Chromecast / Google speaker",
         "_airplay._tcp": "AirPlay speaker or TV", "_hap._tcp": "HomeKit accessory", "_ssh._tcp": "remote login (SSH)",
-        "_raop._tcp": "AirPlay speaker"}
+        "_raop._tcp": "AirPlay speaker", "_companion-link._tcp": "Apple device"}
 # A small, public table of makers by the first half of the hardware address (IEEE registry), common in homes.
 VENDORS = {"b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi", "28cdc1": "Raspberry Pi",
            "d83add": "Raspberry Pi", "2ccf67": "Raspberry Pi", "001132": "Synology", "245ebe": "QNAP",
@@ -2193,7 +2193,7 @@ IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models, start t
 MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
 DESCRIPTION_BYTES = 64 * 1024
 MDNS_ASK = ("_ipp._tcp", "_printer._tcp", "_airplay._tcp", "_raop._tcp", "_device-info._tcp", "_googlecast._tcp",
-            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp")
+            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp", "_companion-link._tcp")
 # Where routers commonly keep their UPnP description (miniupnpd, Netgear, TP-Link, AVM, Broadcom/Realtek kits).
 UPNP_PLACES = ((1900, "/rootDesc.xml"), (5000, "/rootDesc.xml"), (49152, "/description.xml"), (2189, "/gatedesc.xml"),
                (52869, "/picsdesc.xml"), (80, "/rootDesc.xml"), (49000, "/igddesc.xml"))
@@ -2281,6 +2281,8 @@ def _txt_about(kind, txt):
             return {"maker": "Apple", "model": _apple_model(code)}
         if kind != "_device-info._tcp" and code and not re.fullmatch(r"[A-Za-z]+\d+,\d+", code):
             return {"maker": txt.get("manufacturer"), "model": code}  # another maker's AirPlay speaker or TV
+    if kind == "_companion-link._tcp":  # iPhones, iPads, Macs and Apple TVs: only Apple announces this
+        return {"maker": "Apple", "model": _apple_model(txt.get("rpMd"))}
     return {}
 
 
@@ -2542,6 +2544,7 @@ def discover(yes=False, quiet=False):
     neigh, mdns = _neighbours(), _mdns()
     ips = set(neigh) | set(mdns) | {ip for ip in about if _private_v4(ip)}
     ports = _open_ports(ips)
+    ips = _one_per_machine(ips, neigh, lambda ip: len(ports.get(ip, [])) + len(mdns.get(ip, ())) + len(about.get(ip) or {}))
     known = {v.get("ip"): k for k, v in (cfg.get("found") or {}).items()}  # same thing, same id as last time
     items, local = [], {}
     for ip in sorted(ips):
@@ -2559,6 +2562,9 @@ def discover(yes=False, quiet=False):
         tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
         if tag:
             items[-1]["tag"] = tag
+        hw = hw_tag(cfg.get("netKey"), neigh.get(ip))  # the same thing after its address changes
+        if hw:
+            items[-1]["hw"] = hw
         local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
     if not items:
         say("Didn't find anything to suggest on this network.")
@@ -2649,6 +2655,30 @@ def net_tag(key, ip):
     if not _private_v4(ip) or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
         return None
     return hmac.new(bytes.fromhex(key), ip.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def hw_tag(key, mac):
+    """The keyed fingerprint of a hardware (MAC) address, or None. It stays the same when the router hands the thing
+    a new IP address; a phone's private Wi-Fi address is usually fixed per network. Never the address itself."""
+    import hashlib
+    import hmac
+    if not isinstance(mac, str) or not re.fullmatch(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", mac) or int(mac[:2], 16) & 1 \
+            or mac == "00:00:00:00:00:00" or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+        return None
+    return hmac.new(bytes.fromhex(key), b"hw:" + mac.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def _one_per_machine(ips, neigh, score):
+    """One address per hardware address: the neighbour table can still hold a thing's old addresses after the router
+    gave it a new one. Keeps the address that says the most (then the lowest, so it is stable)."""
+    best = {}
+    for ip in sorted(ips):
+        mac = neigh.get(ip)
+        if not mac:
+            best[ip] = ip
+        elif mac not in best or score(ip) > score(best[mac]):
+            best[mac] = ip
+    return set(best.values())
 
 
 def _own_ip():

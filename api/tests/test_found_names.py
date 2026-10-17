@@ -115,3 +115,21 @@ def test_a_later_look_fills_in_what_was_missing_on_things_already_on_the_map(cli
     _send(client, mac, [{**PRINTER, "tag": "8" * 20, "model": "HL-L2370DW", "name": "Upstairs"}])
     printer = db.device(started, pid).get().to_dict()
     assert (printer["model"], printer["name"]) == ("HL-L2350DW", "Office Printer")
+
+
+def test_one_thing_under_two_addresses_is_one_row_and_stays_matched_after_it_moves(client, started):
+    # Two devices saw it under different addresses (one an older helper without the hardware fingerprint).
+    mac, pi = enrolled(client, "Mac"), enrolled(client, "Pi")
+    _send(client, mac, [{**SPEAKER, "tag": "1" * 20, "hw": "a" * 20}])
+    _send(client, pi, [{**SPEAKER, "cid": "d0d0d0d0d0d1", "tag": "2" * 20, "hw": "a" * 20},
+                       {**SPEAKER, "cid": "d0d0d0d0d0d2", "tag": "1" * 20}])
+    rows = client.get("/api/found").json()["items"]
+    assert len(rows) == 1 and len(rows[0]["seenBy"]) == 3
+    sid = client.post(f"/api/discoveries/{mac['deviceId']}/{SPEAKER['cid']}/add", json={}).json()["deviceId"]
+    assert db.device(started, sid).get().to_dict()["net"] == {"self": "1" * 20, "hw": "a" * 20}
+    # Later it has a new address: it is still the thing on the map, not a new row, and its blanks still fill in.
+    _again(pi["token"])
+    _send(client, pi, [{**SPEAKER, "cid": "d0d0d0d0d0d3", "tag": "3" * 20, "hw": "a" * 20, "model": "Apple TV",
+                        "maker": "Apple"}])
+    assert client.get("/api/found").json()["items"] == []
+    assert db.device(started, sid).get().to_dict()["model"] == "Apple TV"

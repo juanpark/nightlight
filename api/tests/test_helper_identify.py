@@ -316,3 +316,30 @@ def test_the_helper_sends_names_only_after_the_server_says_so(helper, monkeypatc
     sent.clear()
     helper.discover(yes=True, quiet=True)
     assert all("name" not in i for i in sent[0]["items"])
+
+
+def test_apple_devices_say_their_name_and_model_and_old_addresses_fold_into_one(helper, monkeypatch):
+    # An iPad on a private Wi-Fi address announces "companion-link": its name and that Apple made it. The neighbour
+    # table still holds its old address too; one thing is sent, matched by a keyed hardware fingerprint.
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY,
+                         "deviceNames": True})
+    ipad = "7a:11:22:33:44:55"  # 0x7a: a private (locally administered) address
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.60": ipad, "192.168.1.61": ipad,
+                                                        "192.168.1.70": "b8:27:eb:01:02:03"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.70": [22]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [
+        ("192.168.1.61", "_companion-link._tcp", {"rpBA": "AA:BB:CC:DD:EE:FF", "rpMd": "iPad13,8"},
+         {"instance": "Juan’s iPad Pro", "host": "Juans-iPad-Pro.local"})])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: (None, {}))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    items = {i.get("name") or i["guess"]: i for i in sent[0]["items"]}
+    assert set(items) == {"Juan’s iPad Pro", "Raspberry Pi"}
+    pad = items["Juan’s iPad Pro"]
+    assert (pad.get("maker"), pad.get("model"), pad["services"]) == ("Apple", "iPad", ["Apple device"])
+    assert pad["hw"] == helper.hw_tag(KEY, ipad) and pad["hw"] != pad["tag"] and len(pad["hw"]) == 20
+    assert helper.hw_tag(KEY, "ff:ff:ff:ff:ff:ff") is None and helper.hw_tag(KEY, "01:00:5e:00:00:fb") is None
+    assert helper.hw_tag(None, ipad) is None
+    text = json.dumps(sent)
+    assert "192.168" not in text and "7a:11" not in text and "AA:BB" not in text and "b8:27" not in text

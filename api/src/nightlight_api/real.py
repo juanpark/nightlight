@@ -263,7 +263,7 @@ WATCHED_PER_HELPER = 10
 FOUND_PORTS = (22, 80, 443, 445, 631, 8123, 25565, 32400)
 FOUND_SERVICES = ("remote login (SSH)", "web page", "secure web page", "file sharing", "printer", "Home Assistant",
                   "Minecraft", "Plex", "Chromecast / Google speaker", "AirPlay speaker or TV", "HomeKit accessory",
-                  "AirPlay speaker", "router", "media player", "media server")
+                  "AirPlay speaker", "router", "media player", "media server", "Apple device")
 FOUND_VENDORS = ("Raspberry Pi", "Synology", "QNAP", "VMware virtual machine", "Philips Hue", "Sonos",
                  "Espressif (smart-home gadget)", "Google", "Amazon", "Ubiquiti", "Nintendo",
                  "private address (likely a phone or laptop)")
@@ -383,9 +383,9 @@ def _filled_in(d: dict, device_id: str, items: list[dict]) -> dict:
     is still the guess it was given, so nothing the owner typed is changed."""
     if d.get("archived") or d.get("revoked"):
         return {}
-    tag = (d.get("net") or {}).get("self")
+    tag, hw = (d.get("net") or {}).get("self"), (d.get("net") or {}).get("hw")
     it = next((i for i in items if (d.get("watchedBy") == device_id and i.get("cid") == d.get("cid"))
-               or (tag and i.get("tag") == tag)), None)
+               or (hw and i.get("hw") == hw) or (tag and i.get("tag") == tag)), None)
     if not it:
         return {}
     update = {}
@@ -491,16 +491,19 @@ def found_view(uid: str) -> list[dict]:
     fingerprint (same address, same account key), so it becomes one row listing who saw it; a thing whose fingerprint
     is one of your own devices is left out. Untagged items (older helpers) stay one row per finder."""
     now = _now()
-    mine = own_tags(s.to_dict() for s in db.devices(uid).get())
+    devices = [s.to_dict() for s in db.devices(uid).get()]
+    mine = own_tags(devices)
+    mine_hw = {(d.get("net") or {}).get("hw") for d in devices if not d.get("archived")} - {None}
+    looks = [(snap.id, d) for snap in discoveries_ref(uid).get() for d in [snap.to_dict()]
+             if not (d.get("expiresAt") and d["expiresAt"] < now)]
+    # The hardware fingerprint outlasts an address; an older helper's row joins it through the address both saw.
+    same = {it["tag"]: it["hw"] for _id, d in looks for it in d.get("items") or [] if it.get("tag") and it.get("hw")}
     rows: dict[str, dict] = {}
-    for snap in discoveries_ref(uid).get():
-        d = snap.to_dict()
-        if d.get("expiresAt") and d["expiresAt"] < now:
-            continue
+    for snap_id, d in looks:
         for it in d.get("items") or []:
-            if it.get("added") or it.get("tag") in mine:
+            if it.get("added") or it.get("tag") in mine or it.get("hw") in mine_hw:
                 continue
-            key = it.get("tag") or f"{snap.id}:{it.get('cid')}"
+            key = it.get("hw") or same.get(it.get("tag")) or it.get("tag") or f"{snap_id}:{it.get('cid')}"
             row = rows.setdefault(key, {"guess": it.get("guess"), "vendor": it.get("vendor"), "tag": it.get("tag"),
                                         "name": None, "maker": None, "model": None, "services": [], "ports": [],
                                         "seenBy": []})
@@ -513,7 +516,7 @@ def found_view(uid: str) -> list[dict]:
             row["ports"] = sorted(set(row["ports"]) | set(it.get("ports") or []))[:8]
             if row["guess"] in (None, "Unknown device", "Device with a web page") and it.get("guess"):
                 row["guess"] = it["guess"]  # the more specific guess wins
-            row["seenBy"].append({"deviceId": snap.id, "name": d.get("byName"), "cid": it.get("cid"),
+            row["seenBy"].append({"deviceId": snap_id, "name": d.get("byName"), "cid": it.get("cid"),
                                   "canWatch": any(p in WATCH_PORTS for p in it.get("ports") or [])})
     # A finder can watch it when it saw a port to check, is still a working device of yours, and has room left.
     helpers = {snap.id: snap.to_dict() for snap in db.devices(uid).get()}
@@ -656,7 +659,9 @@ def add_found(uid: str, helper_id: str, cid: str, name: str | None) -> dict:
             "vendor": item.get("vendor"), "maker": item.get("maker"), "model": item.get("model"),
             "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
             "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
-            "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {}),
+            "registered": True,
+            **({"net": {k: v for k, v in (("self", item.get("tag")), ("hw", item.get("hw"))) if v}}
+               if item.get("tag") or item.get("hw") else {}),
             **({"seenName": seen, "nameFromSeen": not name} if seen else {})})
         tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
                {"uid": uid, "deviceId": device_id})
