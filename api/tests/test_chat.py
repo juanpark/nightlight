@@ -250,3 +250,31 @@ def test_stopping_on_the_first_frame_also_frees_the_chat(client, started):
     # a turn that is already over is never touched by a dropped replay
     replay = turns.claim(started, turn_id)
     assert replay.mode == "failed"
+
+
+def test_a_card_claimed_without_a_card_is_corrected(client, started):
+    from fake_llm import reply
+    FakeLlm.behavior = reply("I've put a card up for your approval to clean up old logs.")
+    ev = events(ask(client, new_session(client), "Clean up the Pi please"))
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert text.endswith(turns.NO_CARD) and not any(e["type"] == "approval_request" for e in ev)
+    FakeLlm.behavior = reply("The card I put up earlier is still waiting for you.")
+    ev = events(ask(client, new_session(client), "Is the card still there?"))
+    assert turns.NO_CARD not in "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+
+
+def test_the_sample_mac_minis_unhealthy_app_has_a_fix(client, started):
+    from nightlight_api import actions, sim
+    from conftest import generation
+    svcs = {s.id: s.to_dict() for s in db.services(started, "mac-1").get()}
+    device = dict(db.device(started, "mac-1").get().to_dict(), id="mac-1")
+    assert any(f["tool"] == "restart_app" for f in sim.fixes(device, svcs))
+    card = actions.propose(started, session_id="s", turn_id="t", generation=generation(started),
+                           action_type="restart_app", device_id="mac-1", params={})
+    assert card["status"] == "pending" and "Immich" in card["plan"]
+    d = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "approve"}).json()
+    assert d["status"] == "done"
+    immich = db.services(started, "mac-1").document("immich").get().to_dict()
+    assert immich["status"] == "ok" and immich["findings"] == []
+    svcs = {s.id: s.to_dict() for s in db.services(started, "mac-1").get()}
+    assert not any(f["tool"] == "restart_app" for f in sim.fixes(device, svcs))

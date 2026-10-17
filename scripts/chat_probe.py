@@ -58,7 +58,7 @@ def scene(name, steps):
     demo.start(uid)
     app.dependency_overrides[current_uid] = lambda: uid
     app.dependency_overrides[owner_uid] = lambda: uid
-    c = TestClient(app)
+    c = TestClient(app, client=("chat-probe", 50000))  # its own address: tests running alongside keep their quota
     sid = c.post("/api/chat/sessions", json={}).json()["sessionId"]
     print(f"\n=== {name} ===")
     last = []

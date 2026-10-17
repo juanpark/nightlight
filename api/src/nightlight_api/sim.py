@@ -11,6 +11,7 @@ from copy import deepcopy
 SEVERITY = {"crit": 3, "warn": 2, "info": 1}
 # Which service a full disk hurts, for the card and the finding.
 DISK_SERVICE = {"pi-1": "teslamate", "game-1": "minecraft"}
+APP_SERVICE = {"mac-1": "immich"}  # the sample app that can go unhealthy, per device
 
 
 def disk_pct(device: dict) -> int | None:
@@ -244,6 +245,36 @@ def _game_svc(d):
     return "minecraft"
 
 
+def _app(d, svcs):
+    s = svcs.get(APP_SERVICE.get(d["id"]) or "")
+    if not s:
+        raise ValueError("no_app")
+    return s
+
+
+def _app_name(s):
+    return (s.get("name") or "the app").capitalize()
+
+
+def _restart_app_card(d, svcs):
+    s = _app(d, svcs)
+    if s.get("status") == "ok" and not s.get("findings"):
+        raise ValueError("app_healthy")
+    return {"svcId": APP_SERVICE[d["id"]],
+            "plan": f"Restart {_app_name(s)} on the {d['name']} so it reconnects to its database.",
+            "dryRun": f"{_app_name(s)} is unavailable for about 30 seconds. Your photos and its database are not "
+                      "touched.",
+            "rollback": "Nothing to undo: it starts again with the same settings."}
+
+
+def _restart_app_apply(d, svcs):
+    s = _app(d, svcs)
+    s.update(status="ok", findings=[], detail="Up 1 minute (healthy)")
+    d, svcs = refresh(d, svcs)
+    return {"summary": f"Restarted {_app_name(s)}; it reports healthy again and reconnected to its database.",
+            "before": {"status": "warn"}, "after": {"status": "ok"}}, d, svcs
+
+
 ACTIONS = {
     "rotate_logs": {"label": "Clean up old log files", "riskClass": "routine", "allowlisted": True,
                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _rotate_logs_card, "apply": _rotate_logs_apply,
@@ -254,6 +285,9 @@ ACTIONS = {
     "restart_server": {"label": "Restart the game server", "riskClass": "service", "allowlisted": False,
                        "svc": _game_svc, "card": _restart_card, "apply": _restart_apply,
                        "snapshot": lambda d, s: {"mem": (d.get("vitals") or {}).get("mem")}},
+    "restart_app": {"label": "Restart an app", "riskClass": "service", "allowlisted": False,
+                    "svc": lambda d: APP_SERVICE.get(d["id"]), "card": _restart_app_card, "apply": _restart_app_apply,
+                    "snapshot": lambda d, s: {"status": (s.get(APP_SERVICE.get(d["id"]) or "") or {}).get("status")}},
     "update_server": {"label": "Update the game server", "riskClass": "service", "allowlisted": False,
                       "svc": _game_svc, "card": _update_card, "apply": _update_apply,
                       "snapshot": lambda d, s: {"version": (_game(s) or {}).get("version")}},
@@ -261,7 +295,7 @@ ACTIONS = {
 
 
 FIX_FOR = {"disk_over_90": "rotate_logs", "memory_high": "restart_server", "backup_overdue": "backup_world",
-           "update_available": "update_server"}  # which job answers which problem
+           "update_available": "update_server", "container_unhealthy": "restart_app"}  # which job answers which
 
 
 def fixes(device: dict, services: dict) -> list[dict]:

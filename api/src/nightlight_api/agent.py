@@ -31,6 +31,8 @@ The lines under "How they connect" are the person's own map: use them to reason 
 failure would take down, where backups go). When they tell you how two devices relate, draw it with link_devices.
 
 How to answer:
+- Start with one short sentence saying what you'll look at ("Let me check the Raspberry Pi."), then call your tools:
+  it shows while you work. Skip it when you can answer from the summary alone.
 - The summary of their home is below; use get_device for details before proposing a fix. Never invent device
   state.
 - Lead with what matters in one or two short sentences: what is wrong, why it matters to them, how serious it is.
@@ -48,6 +50,17 @@ How to answer:
   failed = say it didn't work and give the reason the result states (a clean-up may have removed some items).
 - Never claim something was done unless a tool result says status "done", and never announce a job ("I'll start a
   backup") without calling its tool in the same answer.
+- Trust: every kind of job asks first. On the sample home, after the person approves the same safe kind of job a few
+  times, Nightlight offers to do that kind on its own and tell them afterwards (the Trust panel shows each job's step
+  and can move it back); jobs that can't be undone always ask. On their own devices every restart, clean-up or
+  removal waits for their tap; only helper updates can run by themselves, if they allowed that. Never say it will
+  "never" act on its own, and when they ask you to handle something on your own, explain this and point to Trust.
+- They see these devices as their home: never call a device "simulated", "sample" or "fake" unless they ask.
+- Never give them commands to type (no curl, sudo, docker, terminal steps): for setting up Nightlight point to "Add a
+  device"; for other software, say what it is and that installing it happens outside Nightlight.
+- If they ask for a safer option, or to keep a copy first, offer the real alternatives: another clean-up from the
+  device's list, a different fix, or (on a REAL device in Investigate mode) an exact command they sign with their
+  passkey. Never refuse without saying what you can do instead.
 - Game servers (e.g. Minecraft): a world backup is safe; restarting or updating disconnects players, so say so.
 - Most devices are a simulated sample home; devices marked REAL report live data through the Nightlight helper.
   On a REAL device the jobs are the ones your tools offer for it: read-only checks (look_into, inspect,
@@ -395,6 +408,16 @@ def make_tools(ctx: TurnContext, read_only: bool):
         """
         return _propose("restart_server", device_id)
 
+    def _restart_app_sync(device_id: str, tool_context: ToolContext) -> dict:
+        """Propose restarting an app that reports unhealthy on a sample device (get_device lists it under
+        fixes_you_can_propose). It is unavailable for about 30 seconds; its data is not touched. Always needs the
+        person's approval.
+
+        Args:
+            device_id: the sample device's id, for example "mac-1".
+        """
+        return _propose("restart_app", device_id)
+
     def _update_server_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Propose updating a game server to its latest version (it backs up the world first).
 
@@ -566,7 +589,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return tool
 
     action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
-                                       _update_server_sync)]
+                                       _restart_app_sync, _update_server_sync)]
     action_tools.append(restart_container)
     action_tools.append(restart_service)
 
@@ -793,7 +816,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             when: when it helps, in one plain sentence, e.g. "The disk is nearly full and Docker holds old images".
             steps: 1 to 10 steps in order. Each is {"say": "what this step does, plainly"} plus at most one of
                 "job": {"type": a job you proposed (fix, restart_container, restart_service, rotate_logs,
-                backup_world, restart_server or update_server), "params": the same parameters, e.g.
+                backup_world, restart_server, restart_app or update_server), "params": the same parameters, e.g.
                 {"recipe": "docker_prune"} or {"container": "name"}} or "command": an expert command you proposed.
             service: optional: the service on that device it is about (its name as get_device lists it).
         """

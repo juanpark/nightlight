@@ -8,6 +8,7 @@ History is rebuilt from Firestore on every turn, so any instance can serve any t
 import asyncio
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -27,8 +28,13 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
-ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "update_server", "restart_container", "restart_service",
+ACTION_TOOLS = {"rotate_logs", "backup_world", "restart_server", "restart_app", "update_server", "restart_container",
+                "restart_service",
                 "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
+
+
+CARD_CLAIM = re.compile(r"\b(I've|I have|I) (just )?put (up )?(a|an|the) [\w\s-]{0,30}card\b", re.I)
+NO_CARD = "(Correction: no card was put up in this answer. Ask me again and I'll put it up.)"
 
 
 def _utcnow() -> datetime:
@@ -413,6 +419,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
+        if not ctx.actions and CARD_CLAIM.search(shown):
+            # It said it put a card up, but no card was made in this answer: never leave that claim standing.
+            piece = "\n\n" + NO_CARD
+            shown += piece
+            yield out({"type": "text", "delta": piece})
         if not shown.strip():
             shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)
             first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
