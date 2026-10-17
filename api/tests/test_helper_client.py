@@ -760,3 +760,20 @@ def test_looking_for_peers_has_one_overall_deadline(helper, monkeypatch):  # cod
     t = _t.monotonic()
     assert helper._relied_on(budget=1.0) == []
     assert _t.monotonic() - t < 1.5 and 0 < len(looked) <= helper.NET_HOSTS  # it did look, and stopped in time
+
+
+def test_looking_nearby_from_the_app_needs_an_app_managed_device(helper, monkeypatch):
+    # The owner's tap in the app is the consent on a device they let the app manage; a strict device refuses, and
+    # either way no address is sent and nothing is asked at a terminal.
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.20": "b8:27:eb:11:22:33"})
+    monkeypatch.setattr(helper, "_mdns", lambda: {"192.168.1.20": {"Home Assistant"}})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.20": [8123]})
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("a job never asks at a terminal"))
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "manage": "strict"})
+    ok, words, _ = helper.run_job({"type": "discover", "params": {}})
+    assert not ok and not sent
+    helper._update_config(lambda c: c.__setitem__("manage", "app"))
+    ok, words, _ = helper.run_job({"type": "discover", "params": {}})
+    assert ok and "Found 1" in words and len(sent) == 1 and "192.168" not in json.dumps(sent)

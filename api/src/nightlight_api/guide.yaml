@@ -13,6 +13,17 @@ add_device:
     like WXYZ-1234, and you type it in the app ("Use a code it shows instead") to approve it.
     Nightlight never logs in to your devices: the helper on the device dials out to Nightlight, nothing dials in.
 
+found_nearby:
+  title: Find other devices nearby (and the lines on the map)
+  text: |
+    Under "Found nearby", choose "Look from" and one of your devices (managed from the app, helper 0.9.21 or newer):
+    it looks at its network and lists what answers, with a guess at what each thing is, its maker and services. No
+    address leaves the device. Add what you want to watch; adding your router lets the map draw "connected through"
+    lines to it. A device set to strict only looks when someone runs `nightlight discover` on it.
+    Lines between your devices are drawn three ways: by you (drag from one device to another), by me when you tell
+    me how two devices relate, and automatically from what the helpers see (Time Machine, shared folders, services
+    in use, the router), matched by fingerprints so no address is ever sent.
+
 remove_device:
   title: Remove a device
   text: |

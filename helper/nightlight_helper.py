@@ -48,7 +48,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.20"
+VERSION = "0.9.21"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1623,6 +1623,16 @@ def run_job(job, wait=5):
         ok, summary = remove_from_app()
         _RESTART.append("exit")  # nothing to restart into: the loop ends after reporting
         return ok, summary, None
+    if kind == "discover":
+        # Asked from the app: the owner's tap is the consent, on a device they let the app manage. A strict device
+        # only looks when someone runs `discover` here.
+        if _manage() != "app":
+            return False, "This device only looks for devices nearby when someone runs it there.", None
+        ok, n = discover(yes=True, quiet=True)
+        if not ok:
+            return False, "Looked nearby but couldn't send the list.", None
+        return True, (f"Found {n} thing(s) nearby; they're under Found nearby to add." if n
+                      else "Looked nearby: nothing new to suggest."), None
     if kind == "update_helper":
         return self_update(params.get("version") if isinstance(params, dict) else None)
     if kind == "fix":
@@ -2095,7 +2105,10 @@ def _guess(vendor, services, ports):
     return vendor or "Unknown device"
 
 
-def discover(yes=False):
+def discover(yes=False, quiet=False):
+    """Look for other things on this network and send what is picked (all of them with `yes`), without addresses.
+    Returns (sent, how many). `quiet`: run as a job from the app, nothing printed."""
+    say = (lambda *_a, **_k: None) if quiet else print
     cfg = _load()
     neigh, mdns = _neighbours(), _mdns()
     ips = set(neigh) | set(mdns)
@@ -2115,11 +2128,11 @@ def discover(yes=False):
             items[-1]["tag"] = tag
         local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
     if not items:
-        print("Didn't find anything to suggest on this network.")
-        return
-    print(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
+        say("Didn't find anything to suggest on this network.")
+        return True, 0
+    say(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
     for n, it in enumerate(items, 1):
-        print(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
+        say(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
               + (f" ({', '.join(it['services'])})" if it["services"] else ""))
     if yes:
         chosen = items
@@ -2134,14 +2147,15 @@ def discover(yes=False):
             nums = {int(x) for x in re.findall(r"\d+", ans)}
             chosen = [it for n, it in enumerate(items, 1) if n in nums]
     if not chosen:
-        print("Nothing sent.")
-        return
+        say("Nothing sent.")
+        return True, 0
     picked = {it["cid"]: local[it["cid"]] for it in chosen}
     _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **picked}))
     st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
                      {"X-Device-Token": cfg["token"]})
-    print(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
-          else f"Couldn't send ({st or 'network error'}).")
+    say(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
+        else f"Couldn't send ({st or 'network error'}).")
+    return st == 200, len(chosen[:30])
 
 
 def secrets_hex(n):

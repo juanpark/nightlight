@@ -95,3 +95,16 @@ def test_removing_a_watched_device_frees_its_place(client, started, monkeypatch)
     assert client.post(f"/api/discoveries/{dev['deviceId']}/000000000009/add", json={"name": "x"}).status_code == 201
     _again(dev["token"])
     assert all(w["cid"] != ITEM["cid"] for w in beat(client, dev["token"], FACTS).json()["watch"])
+
+
+def test_the_app_can_ask_an_app_managed_device_to_look_nearby(client, started):
+    dev = enrolled(client, "Pi")
+    beat(client, dev["token"], {**FACTS, "manage": "strict"})
+    assert client.post(f"/api/devices/{dev['deviceId']}/discover", json={}).status_code == 409  # strict: at the device
+    _again(dev["token"])
+    beat(client, dev["token"], {**FACTS, "manage": "app"})
+    r = client.post(f"/api/devices/{dev['deviceId']}/discover", json={})
+    assert r.status_code == 202 and r.json()["status"] == "approved"  # the tap is the approval
+    _again(dev["token"])
+    jobs = beat(client, dev["token"], {**FACTS, "manage": "app"}).json()["jobs"]
+    assert [j["type"] for j in jobs] == ["discover"]

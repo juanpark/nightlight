@@ -94,6 +94,7 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `POST /helper/jobs/claim` | `X-Device-Token` | `{}` | `200 {ok, jobs, pollEverySec}`: a light check for approved work between reports; `429 too_frequent` (4 s apart) |
 | `POST /helper/jobs/{actionId}/result` | `X-Device-Token` | `{"ok":true,"summary":"…","state":"running","output":null}` | `200 {ok, actionId, status}`; a repeated report changes nothing; `409 illegal_transition` before the job was handed to this device; `404` for any other device |
 | `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
+| `POST /api/devices/{deviceId}/discover` | owner | `{}` | `202 {actionId, status:"approved"}`: the app asks one app-managed device (helper 0.9.21+) to look nearby; the tap is the approval. The helper runs its discovery without prompting and sends everything it found (no addresses) as above; the person picks what to add under Found nearby. `409 strict_device` for a strict device (it looks only when someone runs `discover` there) |
 | `POST /helper/leave` | `X-Device-Token` | `{}` | `200 {ok}`: the device revokes its own token (uninstall); `401 invalid_token` |
 
 Heartbeat reply fields:

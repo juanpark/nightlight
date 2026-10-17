@@ -705,6 +705,19 @@ def update_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
     return {"actionId": a["id"], "status": a["status"], "version": a["params"]["version"]}
 
 
+@app.post("/api/devices/{device_id}/discover", status_code=202)
+def discover_from_device(device_id: str, body: Empty, uid: str = Depends(owner_uid)):
+    """Look for devices nearby from one of the owner's devices (the tap is the approval). The helper sends what it
+    finds, without addresses, to Found nearby; strict devices only look when someone runs it there."""
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", device_id):
+        raise not_found()
+    try:
+        a = actions.request(uid, "discover", device_id, {}, session_id=None, turn_id="app_discover", origin="app")
+    except ValueError as e:
+        raise (not_found() if str(e) == "not_applicable" else ApiError(409, str(e))) from None
+    return {"actionId": a["id"], "status": a["status"]}
+
+
 class SignBody(Strict):
     authenticatorData: str = Field(max_length=2000, pattern=r"^[A-Za-z0-9_-]+$")
     clientDataJSON: str = Field(max_length=4000, pattern=r"^[A-Za-z0-9_-]+$")
