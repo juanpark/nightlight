@@ -208,6 +208,11 @@ def _silence(d: dict, s: dict, everyone: list[dict]) -> str:
             + f"; {where} still reporting: {', '.join(up) or 'none'}" + (f"; also silent: {', '.join(down)}" if down else ""))
 
 
+def _made(d: dict) -> str:
+    """Maker and model as a found thing announces them ("Brother HL-L2350DW"), or ""."""
+    return " ".join(x for x in (d.get("maker"), d.get("model")) if x)
+
+
 def fleet_summary(uid: str, generation: int) -> str:
     """One plain line per device for the instruction (no braces: ADK treats {name} in instructions as variables)."""
     lines = []
@@ -246,11 +251,14 @@ def fleet_summary(uid: str, generation: int) -> str:
                                                      "restarting")))
         extra = (f" Tags: {', '.join(s['tags'])}." if s["tags"] else "") + \
             (f" {s['known']} known problem(s) the owner is leaving for now." if s["known"] else "")
-        lines.append(f"- {s['id']} ({s['name']}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}.{extra}")
+        made = f" ({_made(d)})" if d.get("kind") == "watched" and _made(d) else ""  # "Printer (Brother HL-L2350DW)"
+        lines.append(f"- {s['id']} ({s['name']}{made}, {kind}): {s['purpose']} Health: {s['status']}; {disk}{problem}."
+                     f"{extra}")
     found = real.found_view(uid)
     if found:
         lines.append("- found nearby, not on the map yet (the person can add them under Found nearby): "
-                     + "; ".join(f"{f['guess']} (seen by {', '.join(s['name'] or 'a device' for s in f['seenBy'])})"
+                     + "; ".join(f"{f['guess']}{', ' + _made(f) if _made(f) else ''} "
+                                 f"(seen by {', '.join(s['name'] or 'a device' for s in f['seenBy'])})"
                                  for f in found[:10]) + ".")
     for snap in db.user(uid).collection("watches").get():
         w = snap.to_dict()

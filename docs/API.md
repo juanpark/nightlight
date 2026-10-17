@@ -37,7 +37,7 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 | `users/{uid}/trust/{realm}:{actionType}` | trust level per kind of job, `pinned`, `successes`, promotion `offer` |
 | `users/{uid}/sessions/{sid}` + `/messages` + `/turns` | chats, messages ordered by `seq`, turn status |
 | `users/{uid}/watches/{watchId}` | watched websites: `name`, `url`, `tags`, `status` (`unknown`/`ok`/`crit`), `httpStatus`, `latencyMs`, `lastCheckedAt`, `lastChange`, `createdAt`, `expiresAt` (30 days after adding) |
-| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, services[], ports[], tag, added}`, `by`, `byName`, `at`, `expiresAt` (24 h) |
+| `users/{uid}/discoveries/{helperDeviceId}` | what a helper found nearby: `items[] {cid, guess, vendor, maker, model, services[], ports[], tag, added}`, `by`, `byName`, `at`, `expiresAt` (24 h) |
 
 Every sample-home document carries `demoGeneration`. Show only documents whose `demoGeneration` equals the user's
 current `demoGeneration` (older ones are leftovers from before a reset), plus real devices and real events
@@ -93,11 +93,11 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `POST /helper/heartbeat` | `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}], pollEverySec, watch:[{cid, port}], netKey}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
 | `POST /helper/jobs/claim` | `X-Device-Token` | `{}` | `200 {ok, jobs, pollEverySec}`: a light check for approved work between reports; `429 too_frequent` (4 s apart) |
 | `POST /helper/jobs/{actionId}/result` | `X-Device-Token` | `{"ok":true,"summary":"…","state":"running","output":null}` | `200 {ok, actionId, status}`; a repeated report changes nothing; `409 illegal_transition` before the job was handed to this device; `404` for any other device |
-| `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
+| `POST /helper/discoveries` | `X-Device-Token` | `{"items":[{cid, guess, vendor, services, ports, tag?, maker?, model?}]}` (≤30) | `200 {ok, items}`: replaces this helper's list (kept 24 h) |
 | `POST /api/devices/{deviceId}/discover` | owner | `{}` | `202 {actionId, status:"approved"}`: the app asks one app-managed device (helper 0.9.21+) to look nearby; the tap is the approval. The helper runs its discovery without prompting and sends everything it found (no addresses) as above; the person picks what to add under Found nearby. `409 strict_device` for a strict device (it looks only when someone runs `discover` there), `409 update_helper_first` before 0.9.21. A scan under way is reused; each new scan is its own job. An empty scan sends `items: []`, which clears that device's earlier finds |
 | `POST /api/places/{placeId}` | signed in | `{"name": 1-40}` | `200 {ok, placeId, name}`: names a place: the devices behind one router. `placeId` is that router's fingerprint (a device's `net.gateway`, 20 hex). Only a router one of the owner's devices reports (`404` otherwise), at most 20 places (`409 too_many_places`). Stored at `users/{uid}/places/{placeId}` `{name, at}` (readable by the owner) |
 | `POST /api/discover` | owner | `{"everyDevice"?: bool}` | `202 {asked:[{deviceId,name}], skipped:[{deviceId,name,why}]}`: look nearby on every network the owner has a device on, once per network: devices sharing a router fingerprint count as one network, and the freshest app-managed device with helper 0.9.21+ looks for it. With `everyDevice: true` every eligible device looks (more complete: each sees mostly what it talked to lately; the list merges). Strict, silent or older devices are skipped with the reason |
-| `GET /api/found` | signed in | — | `200 {items:[{guess, vendor, services, ports, tag?, seenBy:[{deviceId,name,cid}]}]}`: Found nearby once per thing. Items with the same fingerprint (`tag`) from several devices merge into one row; anything whose fingerprint is one of the owner's own devices, or already added, is left out. Merged rows keep every service and port seen and the most specific guess; `seenBy[].canWatch` says whether that finder saw a port to check, and finders that can come first, so Add uses `seenBy[0]`'s `deviceId` and `cid` |
+| `GET /api/found` | signed in | — | `200 {items:[{guess, vendor, maker, model, services, ports, tag?, seenBy:[{deviceId,name,cid}]}]}`: Found nearby once per thing. Items with the same fingerprint (`tag`) from several devices merge into one row; anything whose fingerprint is one of the owner's own devices (any of a helper's addresses, `net.self` or `net.selves`), or already added, is left out. Merged rows keep every service and port seen, the most specific guess and the first maker and model reported (`null` when none); `seenBy[].canWatch` says whether that finder saw a port to check, and finders that can come first, so Add uses `seenBy[0]`'s `deviceId` and `cid` |
 | `POST /helper/leave` | `X-Device-Token` | `{}` | `200 {ok}`: the device revokes its own token (uninstall); `401 invalid_token` |
 
 Heartbeat reply fields:
@@ -125,11 +125,19 @@ Heartbeat facts (anything else is rejected):
 | `watchResults[] {cid, up, ms}` | ≤10; `cid` 12 hex characters, `ms` 0-60,000 or null |
 | `failedAgents[]` | ≤20 labels, ≤100 characters: macOS background items (not Apple's) whose last run failed |
 | `safety` | keys `passwordlessSudo`, `sshPasswordLogin`: true, false or null (unknown) |
-| `net` | optional (helper 0.9.20+): `{self, gateway, peers[] {tag, why}}`; every tag is 20 hex characters or null; ≤20 peers; `why` is `time_machine`, `network_drive` or `service:<port>` with a port from 445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000. Omitted, the stored `net` stays |
+| `net` | optional (helper 0.9.20+): `{self, selves[], gateway, peers[] {tag, why}}`; every tag is 20 hex characters or null; `selves` (helper 0.9.22+, ≤8) are all of the device's own private addresses, one per interface, `self` the main one; ≤20 peers; `why` is `time_machine`, `network_drive` or `service:<port>` with a port from 445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000. Omitted, the stored `net` stays |
 
 Discovery items use a fixed vocabulary: `guess`, `vendor`, `services` and `ports` (22, 80, 443, 445, 631, 8123,
 25565, 32400) must be one of the helper's known words or numbers; `cid` is a random 12-hex id; the optional `tag` is
-the keyed fingerprint of its address (20 hex). No addresses or free text. The server scrubs every value of every
+the keyed fingerprint of its address (20 hex). Helper 0.9.22+ adds `maker` (≤40) and `model` (≤60) as the thing
+announces them (the router's UPnP description, fetched from a few well-known places on the router only: manufacturer,
+modelName and modelNumber, never friendlyName; mDNS TXT records of printers, AirPlay and Apple devices, asked of the
+system's own mDNS service, `dns-sd` or avahi, with Apple model codes in plain words such as "Mac mini"). The helper
+only asks and never waits for incoming traffic, so it never raises a firewall prompt. It adds the services `router`,
+`media player` and `media server` from the UPnP device type, with the guesses `Router` and `Media server`. `maker` and
+`model` allow letters, digits, spaces and `.,!+&()_#/-` only (`422` otherwise); both the helper and the server drop
+values that read like a person's name ("Juan's iPhone", "iPhone de Juan", "Juans-MacBook"), an address or a bare
+number. No addresses or other free text. The server scrubs every value of every
 helper request. Free-text values such as container names come from the device and are shown as reported.
 
 ## Real devices
@@ -146,7 +154,8 @@ Extra device fields from the helper: `os`, `arch`, `helperVersion`, `allowedJobs
 services (`category: "system"`, `kind: "system"`, `unit`, `failed: true`).
 
 **Watched devices** (added from discovery) have `kind: "watched"`, `realm: "real"`, `watchedBy` (the helper's device
-id), `cid`, `checkPort`, `vendor`, `vitals.latencyMs`. Their helper checks them each report (a TCP connect, 1 s):
+id), `cid`, `checkPort`, `vendor`, `maker`, `model`, `vitals.latencyMs`. Their `role` comes from the router fingerprint, a
+specific guess, the UPnP services, then words in the maker and model (a LaserJet is a printer, a Synology a file share). Their helper checks them each report (a TCP connect, 1 s):
 `ok`, or `crit` with a `watched_down` finding. If the helper stops reporting, they go stale by the same 5-minute rule.
 
 ### Lines the helpers see
@@ -161,7 +170,10 @@ address (10/8, 172.16/12, 192.168/16; link-local, shared and public addresses ar
 looked up at most every 30 minutes. A found device's `tag` becomes its `net.self` when it is added to the map. Equal
 tags within one account mean the same address, so the server matches them: a peer that is another device's `self`
 gives a `backup` line (Time Machine) or a `depends` line (shared folder, service), from the device that relies to the
-one it relies on; a device whose `self` is the others' `gateway` gets a `network` line from each of them. Automatic
+one it relies on; a device whose `self` is the others' `gateway` gets a `network` line from each of them. A helper
+(0.9.22+) also sends `selves`, every one of its own addresses, so a found thing on its second interface is still
+recognised as that device. A watched thing gets a `network` line to the router of the device that found it ("found on
+the same network as Mac mini"), unless it is that router. Automatic
 lines have `source: "auto"` and `why`; a line the person drew (or one between the same two devices) is never changed,
 a deleted automatic line is not drawn again, and automatic lines stay until deleted. **Privacy reasoning:** stored
 data, logs, exports and other accounts never see an address, and tags from different accounts can't be compared. A

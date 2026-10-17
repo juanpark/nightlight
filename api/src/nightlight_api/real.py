@@ -263,14 +263,25 @@ WATCHED_PER_HELPER = 10
 FOUND_PORTS = (22, 80, 443, 445, 631, 8123, 25565, 32400)
 FOUND_SERVICES = ("remote login (SSH)", "web page", "secure web page", "file sharing", "printer", "Home Assistant",
                   "Minecraft", "Plex", "Chromecast / Google speaker", "AirPlay speaker or TV", "HomeKit accessory",
-                  "AirPlay speaker")
+                  "AirPlay speaker", "router", "media player", "media server")
 FOUND_VENDORS = ("Raspberry Pi", "Synology", "QNAP", "VMware virtual machine", "Philips Hue", "Sonos",
                  "Espressif (smart-home gadget)", "Google", "Amazon", "Ubiquiti", "Nintendo",
                  "private address (likely a phone or laptop)")
 PRIVATE_MAC = "private address (likely a phone or laptop)"  # the helper's word for a randomized hardware address
 FOUND_GUESSES = ("Home Assistant", "Plex media server", "Minecraft server", "Printer", "File share (NAS or computer)",
                  "Speaker or TV", "Raspberry Pi", "VMware virtual machine", "Computer (remote login)",
-                 "Device with a web page", "Unknown device", *FOUND_VENDORS)
+                 "Device with a web page", "Unknown device", "Router", "Media server", *FOUND_VENDORS)
+# A maker or model as the thing announces it ("Brother", "HL-L2350DW series"): plain product characters only.
+PRODUCT = r"^[A-Za-z0-9][A-Za-z0-9 .,!+&()_#/-]{0,%d}$"
+_NAMELIKE = re.compile(r"\b(de|von|van|di|da|du|of)\s+[A-Z]|^[A-Z][a-z]+s-|(?i:https?\b|www\.|\.local\b|\[\w+\])")
+
+
+def product(text: str | None) -> str | None:
+    """A maker or model kept only when it reads like a product: never a person's name ("iPhone de Juan",
+    "Juans-MacBook"), an address, something the scrubber hid, or a bare number."""
+    if not isinstance(text, str) or _NAMELIKE.search(text) or re.fullmatch(r"[\d .,_#-]+", text):
+        return None
+    return text
 
 
 def discoveries_ref(uid: str):
@@ -303,7 +314,17 @@ ROLE_FROM_GUESS = {"Printer": "printer", "File share (NAS or computer)": "filesh
                    "Plex media server": "server", "Minecraft server": "server", "Speaker or TV": "speaker",
                    "Raspberry Pi": "computer", "Computer (remote login)": "computer",
                    "VMware virtual machine": "computer", "Synology": "fileshare", "QNAP": "fileshare",
-                   "Philips Hue": "smarthome", "Espressif (smart-home gadget)": "smarthome", "Sonos": "speaker"}
+                   "Philips Hue": "smarthome", "Espressif (smart-home gadget)": "smarthome", "Sonos": "speaker",
+                   "Router": "router", "Media server": "server"}
+GENERIC_GUESSES = ("Raspberry Pi", "VMware virtual machine", "Computer (remote login)", "Device with a web page",
+                   "Unknown device", *FOUND_VENDORS)
+# What a maker and model say a thing is, when its guess is only generic; the first that matches wins.
+ROLE_HINTS = (("router", r"(?i)\b(router|gateway|airport|archer|nighthawk|eero|orbi|deco|fritz|mesh wi-?fi)\b"),
+              ("printer", r"(?i)\b(printer|laserjet|deskjet|officejet|pixma|ecotank|workforce|imageclass|mfc|"
+                          r"dcp|hl-\w+|ecosys|bizhub)\b"),
+              ("fileshare", r"(?i)\b(synology|qnap|diskstation|my ?cloud|asustor|terramaster|readynas|nas)\b"),
+              ("speaker", r"(?i)\b(tv|bravia|sonos|roku|chromecast|apple tv|homepod|echo|soundbar|speaker)\b"),
+              ("computer", r"(?i)\b(mac mini|macbook|imac|mac pro|mac|raspberry pi|thinkpad)\b"))
 
 
 ROLE_WORDS = {"router": "Your router: your devices reach the internet through it", "printer": "A printer",
@@ -321,7 +342,21 @@ def role_for(item: dict, routers: set) -> str:
     """What a found thing most likely is, in the app's few words (the person can correct it)."""
     if item.get("tag") and item["tag"] in routers:
         return "router"
-    return ROLE_FROM_GUESS.get(item.get("guess")) or ROLE_FROM_GUESS.get(item.get("vendor")) or "other"
+    if item.get("guess") not in GENERIC_GUESSES and ROLE_FROM_GUESS.get(item.get("guess")):
+        return ROLE_FROM_GUESS[item["guess"]]  # what answers on it (a printer service) beats a name
+    services = set(item.get("services") or [])
+    if "router" in services:
+        return "router"
+    if "media player" in services:
+        return "speaker"
+    made = " ".join(x for x in (item.get("maker"), item.get("model")) if x)
+    hint = next((role for role, words in ROLE_HINTS if made and re.search(words, made)), None)
+    return hint or ROLE_FROM_GUESS.get(item.get("guess")) or ROLE_FROM_GUESS.get(item.get("vendor")) or "other"
+
+
+def own_tags(devices) -> set:
+    """Every address fingerprint that is one of your own devices (each helper's main address and all its others)."""
+    return set().union(*(links.tags_of(d) for d in devices if not d.get("archived")))
 
 
 def found_view(uid: str) -> list[dict]:
@@ -329,8 +364,7 @@ def found_view(uid: str) -> list[dict]:
     fingerprint (same address, same account key), so it becomes one row listing who saw it; a thing whose fingerprint
     is one of your own devices is left out. Untagged items (older helpers) stay one row per finder."""
     now = _now()
-    mine = {(d.get("net") or {}).get("self") for d in (s.to_dict() for s in db.devices(uid).get())
-            if not d.get("archived")} - {None}
+    mine = own_tags(s.to_dict() for s in db.devices(uid).get())
     rows: dict[str, dict] = {}
     for snap in discoveries_ref(uid).get():
         d = snap.to_dict()
@@ -341,8 +375,11 @@ def found_view(uid: str) -> list[dict]:
                 continue
             key = it.get("tag") or f"{snap.id}:{it.get('cid')}"
             row = rows.setdefault(key, {"guess": it.get("guess"), "vendor": it.get("vendor"), "tag": it.get("tag"),
-                                        "services": [], "ports": [], "seenBy": []})
+                                        "maker": None, "model": None, "services": [], "ports": [], "seenBy": []})
             row["vendor"] = row["vendor"] or it.get("vendor")
+            if not row["model"] and it.get("model"):
+                row["maker"], row["model"] = it.get("maker") or row["maker"], it["model"]  # maker and model together
+            row["maker"] = row["maker"] or it.get("maker")
             row["services"] = sorted(set(row["services"]) | set(it.get("services") or []))[:8]
             row["ports"] = sorted(set(row["ports"]) | set(it.get("ports") or []))[:8]
             if row["guess"] in (None, "Unknown device", "Device with a web page") and it.get("guess"):
@@ -481,18 +518,18 @@ def add_found(uid: str, helper_id: str, cid: str, name: str) -> dict:
             "purpose": role_purpose(role, helper_name),
             "guess": item.get("guess"), "services": item.get("services") or [], "ports": item.get("ports") or [],
             "realm": "real", "simulated": False, "watchedBy": helper_id, "cid": cid, "checkPort": port,
-            "vendor": item.get("vendor"), "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
+            "vendor": item.get("vendor"), "maker": item.get("maker"), "model": item.get("model"),
+            "health": "unknown", "status": "offline", "vitals": {}, "findings": [],
             "version": 1, "x": 420, "y": 220, "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None,
             "registered": True, **({"net": {"self": item["tag"]}} if item.get("tag") else {})})
         tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"),
                {"uid": uid, "deviceId": device_id})
         event(tx, uid, device_id, "joined", "info", f"{name} joined your map, watched by {helper_name}.", who="you")
-        links.mark_due(tx, uid)  # a found thing with a fingerprint may be someone's router: lines may change
-        return {"ok": True, "deviceId": device_id}, bool(item.get("tag"))
+        links.mark_due(tx, uid)  # it sits behind its finder's router, and may be the router itself: lines change
+        return {"ok": True, "deviceId": device_id}
 
-    result, fingerprinted = db.run_transaction(run)
-    if fingerprinted:
-        links.infer_quietly(uid)  # e.g. the router: the devices behind it get their lines
+    result = db.run_transaction(run)
+    links.infer_quietly(uid)  # its line to the router; if it is the router, the devices behind it get theirs
     return result
 
 

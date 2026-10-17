@@ -7,7 +7,9 @@ image name and tag without any registry address or path, state, status text), th
 facts (administrator commands without a password; SSH password logins), what you allowed here, and up/down results
 for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
 variables or passwords. To draw lines between your devices it sends keyed fingerprints of local network addresses
-(its own, its router's, and those it backs up to or relies on), never the addresses themselves. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
+(its own, its router's, and those it backs up to or relies on), never the addresses themselves. Things it finds nearby
+are sent as a guess of what they are and their maker and model (as they announce them), never their names or
+addresses. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
 scrubbed here first. It talks only HTTPS to the address you joined with.
 
 By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
@@ -48,7 +50,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.21"
+VERSION = "0.9.22"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2046,14 +2048,11 @@ def _neighbours():
 
 
 def _mdns():
-    """IP -> set of service kinds announced on the network (avahi on Linux; skipped elsewhere)."""
+    """IP -> set of service kinds announced on the network (asked of the system's mDNS service)."""
     out = {}
-    if not shutil.which("avahi-browse"):
-        return out
-    for line in _run(["avahi-browse", "-aprtk"], timeout=6).splitlines():
-        f = line.split(";")
-        if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS:
-            out.setdefault(f[7], set()).add(MDNS[f[4]])
+    for ip, kind, _txt_record in _hourly("mdns", _mdns_records, every=60):
+        if kind in MDNS:
+            out.setdefault(ip, set()).add(MDNS[kind])
     return out
 
 
@@ -2090,11 +2089,11 @@ def _vendor(mac):
 def _guess(vendor, services, ports):
     """A plain-words guess of what something is, from what answers on it and who made it."""
     for service, name in (("Home Assistant", "Home Assistant"), ("Plex", "Plex media server"),
-                          ("Minecraft", "Minecraft server"), ("printer", "Printer"),
-                          ("file sharing", "File share (NAS or computer)")):
+                          ("Minecraft", "Minecraft server"), ("printer", "Printer"), ("router", "Router"),
+                          ("file sharing", "File share (NAS or computer)"), ("media server", "Media server")):
         if service in services:
             return name
-    if any("speaker" in x or "Chromecast" in x or "TV" in x for x in services):
+    if any("speaker" in x or "Chromecast" in x or "TV" in x or x == "media player" for x in services):
         return "Speaker or TV"
     if vendor in ("Raspberry Pi", "VMware virtual machine"):
         return vendor
@@ -2105,24 +2104,271 @@ def _guess(vendor, services, ports):
     return vendor or "Unknown device"
 
 
+# Who made it and which model, as the things themselves announce it. Only outgoing questions, never a socket that
+# waits for others to call in (an unattended helper must never raise a firewall prompt): mDNS records come from the
+# system's own service (`dns-sd` on a Mac, avahi on Linux), and the router's UPnP description file is fetched from a
+# few well-known places on the router only. Only a maker and a model leave this device, and only when they read like a
+# product, never like a name ("Juan's iPhone"), an address or a bare number. friendlyName (often a name) is never read.
+
+IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models (mDNS records, then the router's description)
+MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
+DESCRIPTION_BYTES = 64 * 1024
+MDNS_ASK = ("_ipp._tcp", "_printer._tcp", "_airplay._tcp", "_raop._tcp", "_device-info._tcp", "_googlecast._tcp",
+            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp")
+# Where routers commonly keep their UPnP description (miniupnpd, Netgear, TP-Link, AVM, Broadcom/Realtek kits).
+UPNP_PLACES = ((1900, "/rootDesc.xml"), (5000, "/rootDesc.xml"), (49152, "/description.xml"), (2189, "/gatedesc.xml"),
+               (52869, "/picsdesc.xml"), (80, "/rootDesc.xml"), (49000, "/igddesc.xml"))
+UPNP_KIND = (("InternetGatewayDevice", "router"), ("MediaRenderer", "media player"),
+             ("MediaServer", "media server"), ("Printer", "printer"))
+APPLE_MODELS = (("MacBookPro", "MacBook Pro"), ("MacBookAir", "MacBook Air"), ("MacBook", "MacBook"),
+                ("Macmini", "Mac mini"), ("MacPro", "Mac Pro"), ("iMac", "iMac"), ("iPhone", "iPhone"),
+                ("iPad", "iPad"), ("AppleTV", "Apple TV"), ("AudioAccessory", "HomePod"), ("Mac", "Mac"))
+PRINTER_MAKERS = ("Brother", "Canon", "Epson", "HP", "Xerox", "Lexmark", "Samsung", "Kyocera", "Ricoh", "Dell",
+                  "OKI", "Sharp", "Konica Minolta", "Pantum")
+PLAIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,!+&()_#/-]*$")  # the server accepts exactly these characters
+_COMPANY = re.compile(r"(?i)[,.]?\s+(inc|ltd|llc|co|corp|corporation|limited|gmbh|ag|industries)\.?$")
+
+
+def _plain(text, limit):
+    """A maker or model fit to leave the device, or None: printable ASCII product words only. Anything that reads like
+    a person's name ("Juan's iPhone", "iPhone de Juan", "Juans-MacBook"), an address or only a number is dropped."""
+    if not isinstance(text, str):
+        return None
+    text = _COMPANY.sub("", _COMPANY.sub("", " ".join(text.split())))  # "Brother Industries, Ltd." -> "Brother"
+    if not text or not PLAIN_RE.fullmatch(text) or scrub(text)[0] != text or re.fullmatch(r"[\d .,_#/-]+", text):
+        return None
+    if re.search(r"(?i)https?\b|www\.|\.local\b", text) or re.search(r"\b(de|von|van|di|da|du|of)\s+[A-Z]", text) \
+            or re.match(r"[A-Z][a-z]+s-", text):
+        return None
+    return text[:limit].rstrip(" .,-") or None
+
+
+def _apple_model(code):
+    """ "Macmini9,1" -> "Mac mini"; an Apple model code we don't know -> None."""
+    if not isinstance(code, str):
+        return None
+    return next((words for prefix, words in APPLE_MODELS if re.fullmatch(prefix + r"\d+,\d+", code)), None)
+
+
+def _txt_about(kind, txt):
+    """{maker, model} from one mDNS TXT record of a printer, an AirPlay speaker or TV, or an Apple device."""
+    if kind in ("_ipp._tcp", "_printer._tcp"):
+        maker, model, ty = txt.get("usb_MFG"), txt.get("usb_MDL"), txt.get("ty") or ""
+        if not model and ty:  # "Brother HL-L2350DW series"
+            maker = maker or next((m for m in PRINTER_MAKERS if ty.lower().startswith(m.lower() + " ")), None)
+            model = ty[len(maker) + 1:] if maker and ty.lower().startswith(maker.lower() + " ") else ty
+        return {"maker": maker, "model": model}
+    if kind in ("_airplay._tcp", "_raop._tcp", "_device-info._tcp"):
+        code = txt.get("model") or txt.get("am")
+        if _apple_model(code):
+            return {"maker": "Apple", "model": _apple_model(code)}
+        if kind != "_device-info._tcp" and code and not re.fullmatch(r"[A-Za-z]+\d+,\d+", code):
+            return {"maker": txt.get("manufacturer"), "model": code}  # another maker's AirPlay speaker or TV
+    return {}
+
+
+def _unescape(text):
+    """DNS-SD escapes: "\\032" (a decimal byte) and "\\x" (a literal character)."""
+    return re.sub(r"\\(\d{3}|.)", lambda m: chr(int(m.group(1))) if m.group(1).isdigit() else m.group(1), text)
+
+
+def _txt(field):
+    """A TXT record as printed, '"ty=Brother HL" "txtvers=1"', as a dict."""
+    out = {}
+    for entry in re.findall(r'"((?:[^"\\]|\\.)*)"', field):
+        key, eq, value = _unescape(entry).partition("=")
+        if eq:
+            out.setdefault(key, value)
+    return out
+
+
+def _watch(cmds, seconds):
+    """Run listing commands that never end by themselves side by side for `seconds`, then stop them. Returns what
+    each printed by then (at most 256 KB each)."""
+    import select
+    procs = []
+    for cmd in cmds:
+        try:
+            procs.append(subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL))
+        except OSError:
+            pass
+    got = {p.stdout: [] for p in procs}
+    reading = list(got)
+    deadline = time.monotonic() + seconds
+    try:
+        while reading:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            for f in select.select(reading, [], [], left)[0]:
+                chunk = os.read(f.fileno(), 65536)
+                got[f].append(chunk)
+                if not chunk or sum(map(len, got[f])) > 256 * 1024:
+                    reading.remove(f)
+    except (OSError, ValueError):
+        pass
+    finally:
+        for p in procs:
+            try:
+                p.kill()
+                p.wait(timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            p.stdout.close()
+    return [b"".join(got[p.stdout]).decode("utf-8", "replace") for p in procs]
+
+
+def _dns_sd_zone(text, kind):
+    """[(host, kind, txt)] from `dns-sd -Z <kind>` output (zone-file lines: PTR, then SRV and TXT per instance)."""
+    hosts, txts = {}, {}
+    for line in text.splitlines():
+        m = re.match(r"^(\S+)\s+(SRV|TXT)\s+(.*)$", line)
+        if not m:
+            continue
+        if m.group(2) == "SRV":
+            parts = m.group(3).split()
+            if len(parts) >= 4:
+                hosts[m.group(1)] = parts[3].rstrip(".")
+        else:
+            txts[m.group(1)] = _txt(m.group(3))
+    return [(host, kind, txts.get(owner, {})) for owner, host in hosts.items()]
+
+
+def _mdns_records(seconds=MDNS_SECONDS):
+    """[(address, kind, txt)] for services announced nearby, from the system's mDNS service (asked, not listened
+    for). On Linux avahi resolves the addresses itself; on a Mac the host names are looked up within the same time."""
+    out = []
+    if shutil.which("avahi-browse"):
+        for line in _run(["avahi-browse", "-aprtk"], timeout=6).splitlines():
+            f = line.split(";")
+            if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS_ASK and _private_v4(f[7]):
+                out.append((f[7], f[4], _txt(f[9]) if len(f) > 9 else {}))
+        return out
+    if sys.platform != "darwin" or not shutil.which("dns-sd"):
+        return out
+    deadline = time.monotonic() + seconds + 3
+    found = []
+    for kind, text in zip(MDNS_ASK, _watch([["dns-sd", "-Z", k, "local"] for k in MDNS_ASK], seconds)):
+        found += _dns_sd_zone(text, kind)
+    addresses = {}
+    for host in list(dict.fromkeys(h for h, _k, _t in found))[:20]:
+        left = deadline - time.monotonic()
+        if left <= 0.2:
+            break
+        addresses[host] = _resolve(host, min(1.0, left))
+    return [(addresses[h], k, t) for h, k, t in found if _private_v4(addresses.get(h))]
+
+
+def _upnp_about(data):
+    """{maker, model, kind} from a UPnP description file. A file with a DOCTYPE or ENTITY is refused unread (entities
+    can make a few bytes expand without end); the friendlyName, often a person's name, is never read."""
+    import xml.etree.ElementTree as ET
+    if not data or len(data) > DESCRIPTION_BYTES or re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
+        return {}
+    try:
+        root = ET.fromstring(data)
+    except (ET.ParseError, ValueError):
+        return {}
+    device = next((e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "device"), None)
+    if device is None:
+        return {}
+    got = {}
+    for child in device:
+        key = child.tag.rsplit("}", 1)[-1]
+        if key in ("manufacturer", "modelName", "modelNumber", "deviceType") and (child.text or "").strip():
+            got[key] = child.text.strip()
+    model = got.get("modelName") or ""
+    if len(got.get("modelNumber", "")) > 2 and got["modelNumber"] not in model:  # not a bare "1"
+        model = (model + " " + got["modelNumber"]).strip()
+    kind = next((w for t, w in UPNP_KIND if ":" + t + ":" in got.get("deviceType", "")), None)
+    return {"maker": got.get("manufacturer"), "model": model or None, "kind": kind}
+
+
+_LAN = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)  # nearby: no proxy, no redirects
+
+
+def _description(url, timeout):
+    try:
+        with _LAN.open(url, timeout=timeout) as r:
+            return r.read(DESCRIPTION_BYTES + 1)
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+        return b""
+
+
+def _router_about(budget):
+    """(router address, {maker, model, kind}) from its UPnP description, tried at a few well-known places on the
+    router only (plain outgoing requests, 1 s each, one shared deadline); (None, {}) when none answers in time."""
+    gateway = _gateway()
+    if not _private_v4(gateway):
+        return None, {}
+    deadline = time.monotonic() + budget
+    for port, path in UPNP_PLACES:
+        left = deadline - time.monotonic()
+        if left <= 0.2:
+            break
+        about = _upnp_about(_description("http://%s:%d%s" % (gateway, port, path), min(1.0, left)))
+        if about.get("maker") or about.get("model"):
+            return gateway, about
+    return gateway, {}
+
+
+def _keep(mine, about):
+    """Keep the first maker and model that may leave the device."""
+    maker, model = _plain(about.get("maker"), 40), _plain(about.get("model"), 60)
+    if maker and model and model.lower().startswith(maker.lower() + " "):
+        model = model[len(maker) + 1:]  # "FUJI XEROX DocuPrint CP115" made by FUJI XEROX: "DocuPrint CP115"
+    if model and not mine.get("model"):
+        mine["model"], mine["maker"] = model, maker or mine.get("maker")
+    elif maker and not mine.get("maker"):
+        mine["maker"] = maker
+
+
+def _identify(budget=IDENTIFY_BUDGET):
+    """{address: {"services": set, "maker", "model"}} for things that say who made them. One deadline covers the
+    mDNS listings and the router's description; what doesn't fit is left out, and nothing here can fail the look."""
+    deadline = time.monotonic() + budget
+    out = {}
+    try:
+        for ip, kind, txt in _hourly("mdns", lambda: _mdns_records(min(MDNS_SECONDS, budget / 3)), every=60):
+            mine = out.setdefault(ip, {"services": set()})
+            if kind in MDNS:
+                mine["services"].add(MDNS[kind])
+            _keep(mine, _txt_about(kind, txt))
+        router, about = _router_about(max(0.0, deadline - time.monotonic()))
+        if about:
+            mine = out.setdefault(router, {"services": set()})
+            if about.get("kind"):
+                mine["services"].add(about["kind"])
+            _keep(mine, about)
+    except Exception:  # makers and models are a nicety: they never cost the look
+        pass
+    return out
+
+
 def discover(yes=False, quiet=False):
     """Look for other things on this network and send what is picked (all of them with `yes`), without addresses.
     Returns (sent, how many). `quiet`: run as a job from the app, nothing printed."""
     say = (lambda *_a, **_k: None) if quiet else print
     cfg = _load()
+    about = _identify()  # first: whatever answers is then in the neighbour table too
     neigh, mdns = _neighbours(), _mdns()
-    ips = set(neigh) | set(mdns)
+    ips = set(neigh) | set(mdns) | {ip for ip in about if _private_v4(ip)}
     ports = _open_ports(ips)
     known = {v.get("ip"): k for k, v in (cfg.get("found") or {}).items()}  # same thing, same id as last time
     items, local = [], {}
     for ip in sorted(ips):
         vendor = _vendor(neigh.get(ip))
-        services = sorted(mdns.get(ip, set()) | {PORTS[p] for p in ports.get(ip, [])})
-        if not services and not vendor:
+        told = about.get(ip) or {}
+        services = sorted(mdns.get(ip, set()) | told.get("services", set()) | {PORTS[p] for p in ports.get(ip, [])})
+        if not services and not vendor and not told.get("model"):
             continue  # nothing to say about it
         cid = known.get(ip) or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
+        for k in ("maker", "model"):
+            if told.get(k):
+                items[-1][k] = told[k]
         tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
         if tag:
             items[-1]["tag"] = tag
@@ -2134,7 +2380,8 @@ def discover(yes=False, quiet=False):
         items = []  # asked from the app: an empty list replaces what an earlier look found
     say(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
     for n, it in enumerate(items, 1):
-        say(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
+        made = " ".join(x for x in (it.get("maker"), it.get("model")) if x) or it["vendor"]
+        say(f"  {n}. {it['guess']}" + (f" - {made}" if made else "")
               + (f" ({', '.join(it['services'])})" if it["services"] else ""))
     if yes or quiet:
         chosen = items
@@ -2229,6 +2476,30 @@ def _own_ip():
         return None
     finally:
         s.close()
+
+
+SELVES = 8  # own addresses reported at most (Wi-Fi, cable, Docker bridges, VPNs...)
+
+
+def _own_ips(timeout=3):
+    """Every private IPv4 address of this device, on every interface, the main one first: `ip` or /proc/net/fib_trie
+    on Linux, `ifconfig` on a Mac. Found nearby leaves out what is really one of your own devices."""
+    found = []
+    if sys.platform == "darwin":
+        found = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)", _run(["ifconfig"], timeout=timeout))
+    else:
+        found = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)/", _run(["ip", "-4", "-o", "addr"], timeout=timeout)
+                           if shutil.which("ip") else "")
+        if not found:
+            try:
+                with open("/proc/net/fib_trie") as f:
+                    lines = f.read().splitlines()
+                found = [lines[i - 1].split()[-1] for i, ln in enumerate(lines)
+                         if i and ln.strip() == "/32 host LOCAL" and lines[i - 1].split()]
+            except OSError:
+                pass
+    main = _own_ip()
+    return [ip for ip in dict.fromkeys([main] + found) if _private_v4(ip)][:SELVES]
 
 
 def _hex_v4(h):
@@ -2363,13 +2634,14 @@ def _net():
         if not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
             return None
         me = net_tag(key, _own_ip())
+        selves = [t for t in dict.fromkeys(net_tag(key, ip) for ip in _hourly("selves", _own_ips, every=300)) if t]
         peers, seen = [], set()
         for ip, why in _hourly("net", _relied_on, every=NET_EVERY):
             tag = net_tag(key, ip)
-            if tag and tag != me and (tag, why) not in seen and len(peers) < 20:
+            if tag and tag != me and tag not in selves and (tag, why) not in seen and len(peers) < 20:
                 seen.add((tag, why))
                 peers.append({"tag": tag, "why": why})
-        return {"self": me, "gateway": net_tag(key, _gateway()), "peers": peers}
+        return {"self": me, "selves": selves[:SELVES], "gateway": net_tag(key, _gateway()), "peers": peers}
     except Exception:  # never let this cost a report
         return None
 
