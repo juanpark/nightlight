@@ -39,14 +39,8 @@ export type Probe = {
   checked: number; // machines the light has reached
 };
 
-// The glow page's own colours, and "home": the same night recoloured for "/",
-// where the ground is the page's navy and every light is star yellow or cream.
-// Tone mapping darkens the clear colour, so home's BG is set lighter than the
-// page's #0b1430 in order to land on it on screen.
-const PALETTES = {
-  glow: { BG: 0x0d1019, WARM: 0xffc65a, OK: 0x8fd6a8, WARN: 0xf5a83a },
-  home: { BG: 0x1b233c, WARM: 0xfdd83a, OK: 0xc9d1ea, WARN: 0xfdd83a },
-};
+// The night's colours: the ground, the warm lights, and the status lights.
+const P = { BG: 0x0d1019, WARM: 0xffc65a, OK: 0x8fd6a8, WARN: 0xf5a83a };
 // Night clay: low-saturation greys, so the colour comes from the light (cool
 // moon outside, warm lamps inside) rather than from the paint.
 const CLAY = {
@@ -59,8 +53,7 @@ const CLAY = {
 const COOL_PANE = new THREE.Color(0x2a3a6a);
 const OFF = new THREE.Color(0x232a40);
 
-export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean; palette?: keyof typeof PALETTES }) {
-  const P = PALETTES[opts.palette ?? "glow"];
+export function createScene(canvas: HTMLCanvasElement, opts: { calm: boolean }) {
   const BG = P.BG;
   const WARM = new THREE.Color(P.WARM);
   const OK = new THREE.Color(P.OK);

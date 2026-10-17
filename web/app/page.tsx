@@ -1,12 +1,12 @@
 import { AppGate } from "@/src/components/landing/AppGate";
-import { HomeLanding } from "@/src/components/landing/home/HomeLanding";
+import { GlowLanding } from "@/src/components/landing/glow/GlowLanding";
 
-// "/" is the landing page and sign-in in one: rendered on the server, and
-// replaced by the app once someone is signed in.
+// "/" is the landing page and sign-in in one: one night in a clay dollhouse,
+// told on scroll, and replaced by the app once someone is signed in.
 export default function Page() {
   return (
     <AppGate>
-      <HomeLanding />
+      <GlowLanding />
     </AppGate>
   );
 }

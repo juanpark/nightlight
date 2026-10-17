@@ -7,9 +7,9 @@ import { useGSAP } from "@gsap/react";
 import Lenis from "lenis";
 import { Logo } from "../../brand/Logo";
 import { AuthButtons } from "../AuthButtons";
-import { Icon, type IconName } from "../Icon";
 import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, type TrustState } from "../StoryCards";
 import { display, sans } from "../fonts";
+import { revealLines, riseIn } from "../motion/reveal";
 import type { Probe, View } from "./scene";
 import s from "./Glow.module.css";
 
@@ -24,30 +24,65 @@ gsap.registerPlugin(useGSAP, ScrollTrigger);
 // page; the camera never cuts, it travels. Under reduced motion it jumps
 // between still views instead.
 
+// The words follow what the camera shows at each beat.
 const STEPS = [
   {
-    title: "It notices",
-    text: "The light goes room to room and checks every machine. Tonight the Raspberry Pi in the attic is almost out of space.",
+    title: "It notices.",
+    text: "Every minute each machine reports how it’s doing, and the light goes room to room to check. Tonight the Raspberry Pi in the attic is almost out of space.",
   },
   {
-    title: "It explains",
-    text: "No error codes. It says what’s wrong, why it matters and what it already looked at, in words anyone can follow.",
+    title: "It explains.",
+    text: "No error codes. It says what’s wrong, why it matters and what it already checked, in words anyone can follow.",
   },
   {
-    title: "It asks first",
-    text: "Nothing changes without your yes. You see the plan, a dry run, what it touches and how to undo it.",
+    title: "It asks first.",
+    text: "Nothing changes without your yes. You see the plan, a dry run, what it touches and how to undo it. Go on, you approve it.",
   },
   {
-    title: "Trust grows",
-    text: "After the same safe fix a few times, it offers to handle that one job on its own. You can take it back any time.",
+    title: "It earns trust.",
+    text: "After the same safe fix three times, it offers to do that one job on its own. You can take it back any time.",
   },
 ];
 
-const FEATURES: { icon: IconName; title: string; text: string }[] = [
-  { icon: "eye", title: "One friendly map", text: "Every machine at home, what it does, and the one thing that needs you." },
-  { icon: "plan", title: "Plain words", text: "Problems explained the way a patient neighbour would, never as a log file." },
-  { icon: "shield", title: "Your yes, every time", text: "Each job shows its risk. Nothing risky ever happens on its own." },
-  { icon: "check", title: "Stays at home", text: "Only health numbers leave a device. Never your files, passwords or machine names." },
+const WATCH = [
+  {
+    title: ["Space", "running out"],
+    items: ["Disks filling up", "Old logs and caches", "Docker images", "The biggest folders"],
+    text: "It finds what’s taking the room, names it with sizes, and offers a clean-up you approve.",
+  },
+  {
+    title: ["Things", "that stop"],
+    items: ["Containers", "System services", "Game servers", "The home VPN"],
+    text: "Before asking to restart anything, it looks into why: exit codes, memory, restarts.",
+  },
+  {
+    title: ["Updates", "and backups"],
+    items: ["Updates waiting", "Backups overdue", "Lagging game worlds", "Safety checks"],
+    text: "One plain sentence when an update is waiting or a backup hasn’t run in days.",
+  },
+  {
+    title: ["Devices", "gone quiet"],
+    items: ["Since when", "For how long", "Who still reports", "Back, or restarted"],
+    text: "When a machine goes silent it tells you since when, and which neighbours still check in.",
+  },
+];
+
+// Who it is for; what it watches for each is already said under WATCH.
+const WHO = [
+  "A family with a NAS full of photos",
+  "A Raspberry Pi running the home VPN",
+  "A Minecraft world hosted for the kids",
+  "A small office, or a dental clinic",
+];
+
+const SENT = ["CPU, memory and disk percentages", "Which services and containers run", "How many updates are waiting", "Two safety checks"];
+const NEVER = ["Host names or addresses", "Your files", "Passwords or keys", "Environment variables"];
+
+const LINKS = [
+  { href: "#story", label: "How a night goes" },
+  { href: "#watch", label: "What it looks after" },
+  { href: "#who", label: "Who it’s for" },
+  { href: "#privacy", label: "Privacy" },
 ];
 
 // Where the camera is at each beat. Every beat is its own shot of the same house,
@@ -66,11 +101,11 @@ const KEYS: Partial<View>[] = [
   { tx: 1.1, ty: 6.5, tz: -1.5, zoom: 3, az: 46, el: 42, ox: -0.1, oy: 0.22, rings: 0 },
   { tx: 0, ty: 5.4, tz: 0, zoom: 1.12, az: 28, el: 20, ox: -0.12, oy: 0.18, lit: 1, orb: 1 },
   { tx: 0, ty: 0.5, tz: 0, zoom: 0.6, az: 42, el: 48, ox: 0.2, oy: -0.15, lift: 0.08 },
-  { tx: -0.5, ty: 3.4, tz: 1.5, zoom: 0.92, az: 6, el: 5, ox: 0, oy: 0, lift: -0.2 },
+  { tx: -0.5, ty: 3.4, tz: 1.5, zoom: 0.92, az: 6, el: 5, ox: 0, oy: 0.2, lift: -0.25 },
 ];
 const BEATS = KEYS.length - 1;
 // The sections each beat belongs to; a beat lands when its section's top meets the top of the screen.
-const MARKS = ["step-1", "step-2", "step-3", "step-4", "why", "closing"];
+const MARKS = ["step-1", "step-2", "step-3", "step-4", "watch", "closing"];
 // The still view for each beat (reduced motion).
 const STILL: View[] = KEYS.map((_, i) => ({
   ...BASE,
@@ -237,7 +272,7 @@ export function GlowLanding() {
         // 0 → 1: the camera follows the light along the wire, room to room, then
         // settles on the Pi as its old logs pile up beside it.
         tl.to(v, { trail: 1, duration: 1, ease: "power1.inOut" }, 0)
-          .to(v, { tx: 0, ty: 4, zoom: 1.7, az: 30, ox: -0.08, oy: 0.2, lift: 0, follow: 0.6, rings: 0, duration: 0.45 }, 0)
+          .to(v, { tx: 0, ty: 4, zoom: 1.7, az: 30, ox: 0.16, oy: 0.2, lift: 0, follow: 0.6, rings: 0, duration: 0.45 }, 0)
           .to(v, { ...KEYS[1], duration: 0.55 }, 0.45)
           .to(v, { logs: 1, duration: 0.3, ease: "power1.out" }, 0.8)
           // 1 → 2: swing round and down to eye level in the attic.
@@ -286,6 +321,9 @@ export function GlowLanding() {
         // The opening: the copy rises in while the light starts up.
         const q = gsap.utils.selector(root);
         gsap.from(q("[data-rise]"), { y: 24, opacity: 0, duration: 1.1, stagger: 0.09, ease: "power3.out", delay: 0.15 });
+        // Headings rise line by line as they come in; blocks arrive part by part.
+        q("[data-lines]").forEach((el) => revealLines(el));
+        q("[data-block]").forEach((el, i) => riseIn(el.querySelectorAll("[data-part]"), el, (i % 4) * 0.04));
         // ...and steps back out of the way as the camera sets off after the light.
         gsap.to(hero.current, {
           opacity: 0,
@@ -330,10 +368,13 @@ export function GlowLanding() {
 
       <header className={s.nav}>
         <nav className={s.links} aria-label="Sections">
-          <a href="#story">The night story</a>
-          <a href="#why">Why it’s different</a>
+          {LINKS.slice(0, 3).map((l) => (
+            <a key={l.href} href={l.href}>
+              {l.label}
+            </a>
+          ))}
         </nav>
-        <a href="/" className={s.brand} aria-label="Nightlight, home">
+        <a href="#glow-main" className={s.brand} aria-label="Nightlight, back to top">
           <Logo height={24} />
         </a>
         <div className={s.navActions}>
@@ -344,16 +385,18 @@ export function GlowLanding() {
       <main id="glow-main" className={s.main}>
         <section ref={hero} className={s.hero} aria-labelledby="glow-title">
           <h1 id="glow-title" className={s.h1} data-rise>
-            A house‑sitter for the machines you run at home.
+            You sleep.
+            <br />
+            It keeps watch.
           </h1>
           <p className={s.lede} data-rise>
-            Nightlight watches every device while you sleep, explains problems in plain words, and fixes things only
-            when you say yes.
+            Nightlight looks after the computers in your home or small office. It tells you what’s wrong in plain
+            words, and never fixes anything without your yes.
           </p>
           <div data-rise>
             <AuthButtons styles={s} />
           </div>
-          <a href="#step-1" className={s.cue} data-rise>
+          <a href="#intro" className={s.cue} data-rise>
             Scroll to watch one night
           </a>
           <p className={s.sample}>
@@ -362,9 +405,20 @@ export function GlowLanding() {
           </p>
         </section>
 
-        <section id="story" className={s.story} aria-label="One night with Nightlight">
+        {/* While the light makes its rounds, room to room. */}
+        <section id="intro" className={s.intro} aria-label="Why Nightlight">
+          <p className={s.statement} data-lines>
+            Most homes now run a small data centre: a NAS, a Pi, a game server, the router. Nobody is on call for it.{" "}
+            <strong>Nightlight is.</strong>
+          </p>
+        </section>
+
+        <section id="story" className={s.story} aria-label="How a night goes">
           <div className={s.railWrap}>
-            <nav className={s.rail} data-show={step > 0 && step <= STEPS.length} aria-label="Steps">
+            <nav className={s.rail} data-show={step > 0 && step <= STEPS.length} aria-label="How a night goes">
+              <p className={s.railHead} aria-hidden="true">
+                How a night goes
+              </p>
               <ol>
                 {STEPS.map((st, i) => (
                   <li key={st.title} data-active={step === i + 1 || undefined}>
@@ -398,39 +452,111 @@ export function GlowLanding() {
           ))}
         </section>
 
-        <section id="why" className={s.why} aria-labelledby="why-title">
-          <h2 id="why-title" className={s.h2}>
-            Made for people who have never opened a terminal.
+        {/* High above the house: everything it keeps an eye on. */}
+        <section id="watch" className={s.watch} aria-labelledby="watch-title">
+          <h2 id="watch-title" className={s.h2} data-lines>
+            What it keeps
+            <br />
+            an eye on
           </h2>
-          <ul className={s.grid}>
-            {FEATURES.map((f) => (
-              <li key={f.title}>
-                <span className={s.featIcon}>
-                  <Icon name={f.icon} size={22} />
+          <div className={s.watchGrid}>
+            {WATCH.map((w) => (
+              <article key={w.title[0]} className={s.watchBlock} data-block>
+                <h3 className={s.watchTitle} data-part>
+                  {w.title[0]}
+                  <br />
+                  {w.title[1]}
+                </h3>
+                <ul className={s.watchItems} data-part>
+                  {w.items.map((it) => (
+                    <li key={it}>{it}</li>
+                  ))}
+                </ul>
+                <p className={s.watchText} data-part>
+                  {w.text}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {/* On the way back down to the front path. */}
+        <section id="who" className={s.who} aria-labelledby="who-title">
+          <h2 id="who-title" className={s.h2} data-lines>
+            For homes with
+            <br />
+            no IT person
+          </h2>
+          <ul className={s.whoList}>
+            {WHO.map((w) => (
+              <li key={w} className={s.whoRow} data-block>
+                <span className={s.whoName} data-part>
+                  {w}
                 </span>
-                <h3>{f.title}</h3>
-                <p>{f.text}</p>
               </li>
             ))}
           </ul>
         </section>
 
-        <section id="closing" className={s.closing} aria-labelledby="closing-title">
-          <h2 id="closing-title" className={s.h2}>
-            Go to sleep. Nightlight keeps the light on.
+        <section id="privacy" className={s.privacy} aria-labelledby="privacy-title">
+          <h2 id="privacy-title" className={s.h2} data-lines>
+            What leaves
+            <br />
+            your house
           </h2>
+          <div className={s.privacyCols}>
+            <div data-block>
+              <h3 className={s.privacyHead} data-part>
+                Health numbers, every minute
+              </h3>
+              <ul className={s.privacyList} data-part>
+                {SENT.map((x) => (
+                  <li key={x}>{x}</li>
+                ))}
+              </ul>
+            </div>
+            <div data-block>
+              <h3 className={s.privacyHead} data-part>
+                Never
+              </h3>
+              <ul className={s.privacyList} data-part data-never>
+                {NEVER.map((x) => (
+                  <li key={x}>{x}</li>
+                ))}
+              </ul>
+            </div>
+            <p className={s.privacyNote} data-block>
+              <span data-part>
+                On a real device, every restart waits for your tap, whatever the trust settings say.
+              </span>
+            </p>
+          </div>
+        </section>
+
+        <section id="closing" className={s.closing} aria-labelledby="closing-title">
+          <h2 id="closing-title" className={s.ctaTitle} data-lines>
+            Don’t lose
+            <br />
+            sleep over it.
+          </h2>
+          <p className={s.fine}>The demo opens a simulated sample home in one click. No account, nothing to install.</p>
           <AuthButtons styles={s} />
-          <p className={s.fine}>The demo needs no account. It runs on a simulated sample home.</p>
         </section>
       </main>
 
       <footer className={s.footer}>
         <Logo height={18} />
-        <nav aria-label="Other versions">
-          <a href="/">Night story</a>
-          <a href="/day">Lit room</a>
+        <nav aria-label="Footer">
+          {LINKS.map((l) => (
+            <a key={l.href} href={l.href}>
+              {l.label}
+            </a>
+          ))}
         </nav>
-        <p>Every device on this page is simulated.</p>
+        <p>A house-sitter for your home and small-office servers. Built for the Google Cloud AI Builder Cup 2026.</p>
+        <p className={s.footerBase}>
+          <span>© 2026 Nightlight</span>
+        </p>
       </footer>
     </div>
   );
