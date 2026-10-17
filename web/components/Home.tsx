@@ -160,7 +160,7 @@ export default function Home({ user }: { user: User }) {
           <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
             needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
             onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
-            onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} />
+            onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} hidden={pane === "chat"} />
         )}
         <aside className="right">
           <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
