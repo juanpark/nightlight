@@ -95,7 +95,8 @@ const Chat = forwardRef<ChatHandle, {
             break;
           } catch (e) {
             if (!(e instanceof ApiError && e.status === 409 && i < retries)) throw e;
-            await new Promise((r) => setTimeout(r, 3000));
+            const wait = Math.min(10, Number(e.body.retryAfter) || 3); // the server says how long the other turn holds
+            await new Promise((r) => setTimeout(r, wait * 1000));
           }
         }
         update(k, (t) => ({ ...t, busy: false }));
@@ -140,7 +141,8 @@ const Chat = forwardRef<ChatHandle, {
       await run(`/api/chat/sessions/${sid}/messages`, { text: q, clientRequestId: crypto.randomUUID(), mode }, mode);
     }, [busy, run, uid, generation, mode]);
 
-    const followUp = useCallback((turnId: string, retries = 0) => {
+    // Approve can be tapped while the answer that showed the card is still streaming: its follow-up then waits its turn.
+    const followUp = useCallback((turnId: string, retries = 10) => {
       if (streamed.current.has(turnId)) return;
       streamed.current.add(turnId);
       const after = actionsRef.current.filter((a) => a.continuationTurnId === turnId).map((a) => a.id);
