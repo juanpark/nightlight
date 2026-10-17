@@ -222,6 +222,9 @@ def test_an_old_devices_router_never_names_a_new_thing(client, started):  # code
 
 
 def test_a_place_can_be_named(client, started):
+    assert client.post(f"/api/places/{ROUTER}", json={"name": "Home"}).status_code == 404  # no device of yours is there
+    mac = enrolled(client, "Mac")
+    _report(client, mac, _net(MAC))
     assert client.post(f"/api/places/{ROUTER}", json={"name": "Home"}).json()["name"] == "Home"
     assert db.user(started).collection("places").document(ROUTER).get().to_dict()["name"] == "Home"
     assert client.post("/api/places/not-a-tag", json={"name": "x"}).status_code == 404

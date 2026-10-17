@@ -725,8 +725,25 @@ def name_place(place_id: str, body: PlaceBody, uid: str = Depends(current_uid)):
     name = scrub(body.name.strip())[0]
     if not name or len(name) > 40:
         raise ApiError(422, "bad_name")
-    db.user(uid).collection("places").document(place_id).set({"name": name, "at": firestore.SERVER_TIMESTAMP})
+    places = db.user(uid).collection("places")
+
+    @firestore.transactional
+    def run(tx):
+        # Only a router one of your own devices reports can be named, and at most MAX_PLACES of them.
+        mine = {(d.to_dict().get("net") or {}).get("gateway") for d in db.devices(uid).get(transaction=tx)
+                if not d.to_dict().get("archived")}
+        if place_id not in mine:
+            raise not_found()
+        existing = places.document(place_id).get(transaction=tx)
+        if not existing.exists and len(list(places.limit(MAX_PLACES).get(transaction=tx))) >= MAX_PLACES:
+            raise ApiError(409, "too_many_places")
+        tx.set(places.document(place_id), {"name": name, "at": firestore.SERVER_TIMESTAMP})
+
+    db.run_transaction(run)
     return {"ok": True, "placeId": place_id, "name": name}
+
+
+MAX_PLACES = 20
 
 
 class DiscoverBody(Strict):
