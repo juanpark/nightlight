@@ -4,7 +4,8 @@
 .top-nav { display: contents; }
 
 @media (max-width: 900px) {
-  .shell { height: 100dvh; grid-template-rows: auto 1fr auto; }
+  /* minmax(0, …): a wide child (the swipeable suggestion row) scrolls inside its pane instead of widening the page */
+  .shell { height: 100dvh; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr); }
   .top { gap: 8px; padding: 8px 12px; flex-wrap: nowrap; position: relative; }
   .top > .small, .top > .pill { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
   .menu-toggle { display: inline-block; }
@@ -15,7 +16,7 @@
   .top-nav.open > button { text-align: left; padding: 10px 12px; }
   .top-nav.open > .small { padding: 4px 2px; overflow: hidden; text-overflow: ellipsis; }
 
-  .main { grid-template-columns: 1fr; min-height: 0; }
+  .main { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .main[data-pane="home"] > .right, .main[data-pane="chat"] > .left { display: none; }
   .left { padding: 12px; gap: 12px; }
   .right { border: 0; min-height: 0; }
