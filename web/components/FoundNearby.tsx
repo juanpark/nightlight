@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { newer, type Go } from "@/lib/needsYou";
 import type { Found } from "@/lib/found";
@@ -73,6 +73,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
 }) {
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
+  useEffect(() => { refresh(); }, [refresh]); // opening the panel always shows the server's current list
   const key = (t: FoundThing) => t.tag ?? `${t.seenBy[0]?.deviceId}:${t.seenBy[0]?.cid}`;
   async function add(t: FoundThing) {
     const by = t.seenBy[0];

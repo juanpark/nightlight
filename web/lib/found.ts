@@ -7,17 +7,19 @@ import type { Discovery, FoundThing } from "./types";
 
 export interface Found { items: FoundThing[] | null; refresh: () => void }
 
-/** Refetched on every discovery snapshot (a new scan, or something added from another tab) and on refresh(). */
-export function useFound(discoveries: Discovery[]): Found {
+/** Refetched on every discovery snapshot (a new scan, or something added from another tab), when a list expires
+ * (lists last 24 h; `now` is the page's clock), and on refresh(). */
+export function useFound(discoveries: Discovery[], now: number): Found {
   const [items, setItems] = useState<FoundThing[] | null>(null);
   const [tick, setTick] = useState(0);
+  const current = discoveries.filter((d) => (d.expiresAt?.getTime() ?? Infinity) > now).map((d) => d.id).join();
   useEffect(() => {
-    if (!discoveries.length) { setItems([]); return; } // nothing reported: nothing to ask the server
+    if (!current) { setItems([]); return; } // nothing current reported: nothing to ask the server
     let live = true;
     api<{ items: FoundThing[] }>("GET", "/api/found").then((r) => { if (live) setItems(r.items); })
       .catch(() => { if (live) setItems((cur) => cur ?? []); });
     return () => { live = false; };
-  }, [discoveries, tick]);
+  }, [discoveries, current, tick]);
   return { items, refresh: useCallback(() => setTick((n) => n + 1), []) };
 }
 
