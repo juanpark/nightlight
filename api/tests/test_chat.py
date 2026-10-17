@@ -254,12 +254,12 @@ def test_stopping_on_the_first_frame_also_frees_the_chat(client, started):
     assert replay.mode == "failed"
 
 
-def test_a_card_claimed_without_a_card_is_corrected(client, started):
+def test_a_card_claimed_without_a_card_is_not_said(client, started):
     from fake_llm import reply
     FakeLlm.behavior = reply("I've put a card up for your approval to clean up old logs.")
     ev = events(ask(client, new_session(client), "Clean up the Pi please"))
     text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
-    assert text.endswith(turns.NO_CARD) and not any(e["type"] == "approval_request" for e in ev)
+    assert text == agentlib.NO_CARD_SAID and not any(e["type"] == "approval_request" for e in ev)
     FakeLlm.behavior = reply("The card I put up earlier is still waiting for you.")
     ev = events(ask(client, new_session(client), "Is the card still there?"))
     assert turns.NO_CARD not in "".join(e.get("delta", "") for e in ev if e["type"] == "text")
@@ -352,11 +352,12 @@ def test_a_promise_never_runs_a_trusted_job_or_picks_an_unrelated_fix(client, st
                                  "I've put a card up to restart the Minecraft game server.")
     ev = events(ask(client, new_session(client), "And the game?"))
     assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
-    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
-    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
-                                 "Earlier I said \"I've put a card up to clean up logs\" but that wasn't right.")
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text") == agentlib.NO_CARD_SAID
+    said = "Earlier I said \"I've put a card up to clean up logs\" but that wasn't right."
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), said)
     ev = events(ask(client, new_session(client), "Did you?"))
     assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text") == said  # a quoted mention stays as written
 
 
 def test_a_log_lock_fails_only_the_log_clean_up(client, started):  # Codex agent quality #2
@@ -378,7 +379,7 @@ def test_a_promise_about_another_device_is_not_moved_to_the_one_read(client, sta
                                  "I've put up a card to clean up logs on the Mac Mini.")
     ev = events(ask(client, new_session(client), "Clean up the Mac Mini"))
     assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
-    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text") == agentlib.NO_CARD_SAID
     FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
                                  "I've put up a card to clean up old logs on the Raspberry Pi.", "Waiting for you.")
     ev = events(ask(client, new_session(client), "Clean up the Pi"))
@@ -411,3 +412,53 @@ def test_a_waiting_trust_offer_is_in_the_home_summary(client, started):
     db.trust_doc(started, "sim", "rotate_logs").set(doc)
     assert "Trust offers waiting for their answer in the Trust panel: Clean up old log files" in \
         agentlib.fleet_summary(started, g)
+
+
+def test_an_unbacked_claim_is_cut_with_its_follow_on_and_the_rest_is_kept(client, started):
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "The game server is lagging. I've put up a card to restart the Minecraft game server. "
+                                 "It's waiting for your tap. Players would be disconnected for a minute.")
+    sid = new_session(client)
+    ev = events(ask(client, sid, "Why is the game slow?"))
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert text == "The game server is lagging. Players would be disconnected for a minute."
+    stored = next(m.to_dict()["text"] for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    assert stored == text
+
+
+def test_a_negated_card_mention_stays_and_gets_no_correction(client, started):
+    said = "The Pi is fine. I haven't put up a card, because nothing needs fixing."
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}), said)
+    ev = events(ask(client, new_session(client), "Anything to fix?"))
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text") == said
+
+
+def test_the_correction_is_only_a_last_resort(client, started, monkeypatch):
+    # If a claim ever reached the end of an answer without a card, the visible correction still stops it standing.
+    monkeypatch.setattr(agentlib, "_drop_unbacked_claims", lambda ctx, r: None)
+    FakeLlm.behavior = _scripted(("get_device", {"device_id": "pi-1"}),
+                                 "I've put up a card to restart the Minecraft game server.")
+    ev = events(ask(client, new_session(client), "And the game?"))
+    assert "".join(e.get("delta", "") for e in ev if e["type"] == "text").endswith(turns.NO_CARD)
+
+
+def test_a_declined_card_says_nothing_changed_and_carries_the_known_state(client, started):
+    from nightlight_api import actions
+    from conftest import generation
+    sid = new_session(client)
+    card = actions.propose(started, session_id=sid, turn_id="turn_decline", generation=generation(started),
+                           action_type="restart_app", device_id="mac-1", params={})
+    r = client.post(f"/api/actions/{card['id']}/decide", json={"decision": "deny"})
+    cont = r.json()["continuationTurnId"]
+    turn = db.turns(started, sid).document(cont).get().to_dict()
+    assert "nothing was changed" in turn["input"] and card["plan"] in turn["input"]
+    assert "Up 3 days (unhealthy)" in turn["input"]  # the state the server knows, never a guess
+    FakeLlm.log.clear()
+    events(client.post(f"/api/turns/{cont}/stream", json={}))
+    assert "declined a card: say plainly that nothing was changed" in FakeLlm.log[0]["system"]
+    assert "Up 3 days (unhealthy)" in FakeLlm.log[0]["text"]
+
+
+def test_why_questions_build_on_what_was_already_found():
+    assert "When they ask why something broke, start from what this conversation" in agentlib.INSTRUCTION
+    assert "the note records the cause, not just" in agentlib.INSTRUCTION

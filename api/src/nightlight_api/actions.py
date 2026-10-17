@@ -4,7 +4,7 @@
 update, continuation turn and the stored response commit together or not at all.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -76,7 +76,8 @@ def _finish(tx, uid: str, action: dict, device: dict, services: list[dict], trus
     else:
         a["status"] = "denied"
     if by == "user":
-        conversation.post(tx, uid, a, "job_finished" if decision == "approve" else "job_declined", device["name"])
+        conversation.post(tx, uid, a, "job_finished" if decision == "approve" else "job_declined", device["name"],
+                          service=service)
         a["response"] = {"actionId": a["id"], "status": a["status"], "continuationTurnId": a["continuationTurnId"]}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
     return a
@@ -238,7 +239,8 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         _require_ready(user)
         device = dict(device_snap.to_dict(), id=action["deviceId"]) if device_snap.exists else None
         if action.get("realm") == "real":
-            return _decide_real(tx, uid, action, device, decision, note)  # no trust ladder for real jobs (yet)
+            return _decide_real(tx, uid, action, device, decision, note,  # no trust ladder for real jobs (yet)
+                                _service_doc(services, action.get("svcId")))
         service = _service_doc(services, action.get("svcId"))
         current_generation = action["demoGeneration"] == user.get("demoGeneration")
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action["type"],
@@ -262,7 +264,8 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
     return status, body
 
 
-def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str, note: str | None):
+def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str, note: str | None,
+                 service: dict | None = None):
     """Approving a real-device job queues it for that device's helper (it runs there, later); declining ends it.
 
     A real device reports every minute, so its version can't fence the card; the helper re-checks the target on the
@@ -282,7 +285,7 @@ def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str,
     else:
         a["status"] = "denied"
         a["finishedAt"] = _now()
-        conversation.post(tx, uid, a, "job_declined", device["name"])
+        conversation.post(tx, uid, a, "job_declined", device["name"], service=service)
         a["response"] = {"actionId": a["id"], "status": "denied", "continuationTurnId": a["continuationTurnId"]}
     tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
     return 202, a["response"]
@@ -416,15 +419,62 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         writes = cap.on_result(tx, uid, a, device, current) if cap.on_result else []  # its reads happen here
         for ref, doc, merge in writes:
             tx.set(ref, doc, merge=merge)
-        name = device.get("name", "device")
-        if not a.get("sessionId"):
-            a["followUp"] = "none"
-            conversation.to_activity(tx, uid, a, device)
-        elif not current:
-            a["followUp"] = "skipped_after_reset"  # the chat that asked is gone; the result is still recorded
-        elif not cap.reads or a.get("followUp") == "wanted":  # a change, or a read the asking turn stopped waiting for
-            conversation.post(tx, uid, a, "job_finished", name)
-        tx.set(db.action(uid, action_id_), {k: v for k, v in a.items() if k != "id"})
+        _deliver_outcome(tx, uid, a, device, cap, current)
         return {"ok": True, "actionId": action_id_, "status": a["status"]}
 
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+
+
+def _deliver_outcome(tx, uid: str, a: dict, device: dict, cap, current: bool) -> None:
+    """Where an ended device job goes (writes only): the chat that asked (an event), or Activity; then the job."""
+    if not a.get("sessionId"):
+        a["followUp"] = "none"
+        conversation.to_activity(tx, uid, a, device)
+    elif not current:
+        a["followUp"] = "skipped_after_reset"  # the chat that asked is gone; the result is still recorded
+    elif not cap.reads or a.get("followUp") == "wanted":  # a change, or a read the asking turn stopped waiting for
+        conversation.post(tx, uid, a, "job_finished", device.get("name", "device"))
+    tx.set(db.action(uid, a["id"]), {k: v for k, v in a.items() if k != "id"})
+
+
+# A job handed to a device that never reports back (the helper restarted mid-job, the device went away) would stay
+# "running" forever and its follow-up would never come: after this long it ends as failed, saying so plainly.
+REPORT_TIMEOUT = timedelta(minutes=10)
+READ_REPORT_TIMEOUT = timedelta(minutes=3)  # reads (look into, inspect) answer in seconds
+NO_REPORT = ("The device didn't report back (it may have restarted). Nothing is known to have changed; ask again to "
+             "retry.")
+
+
+def expire_unreported(uid: str, action_id_: str) -> bool:
+    """End a handed-over job whose device never reported, once its time is up: failed, with NO_REPORT as its result,
+    and its outcome delivered like any result (the waiting follow-up gets it). True when this call ended it. A late
+    report afterwards changes nothing (job_result keeps the first ending)."""
+
+    @firestore.transactional
+    def run(tx):
+        ref = db.action(uid, action_id_)
+        snap = ref.get(transaction=tx)
+        a = dict(snap.to_dict(), id=action_id_) if snap.exists else None
+        if not a or a.get("realm") != "real" or a.get("status") != "running":
+            return False
+        cap = capabilities.get(a["type"])
+        claimed = a.get("claimedAt")
+        limit = READ_REPORT_TIMEOUT if cap and cap.reads else REPORT_TIMEOUT
+        if not cap or not isinstance(claimed, datetime) or datetime.now(timezone.utc) - claimed < limit:
+            return False
+        user = db.user(uid).get(transaction=tx).to_dict() or {}
+        device = dict(db.device(uid, a["deviceId"]).get(transaction=tx).to_dict() or {}, id=a["deviceId"])
+        a["status"], a["finishedAt"] = "failed", _now()
+        a["result"] = {"ok": False, "summary": NO_REPORT, "noReport": True}
+        current = user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration")
+        _deliver_outcome(tx, uid, a, device, cap, current)
+        return True
+
+    return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+
+
+def expire_device_jobs(uid: str, device_id: str) -> int:
+    """The sweep's pass over one device: end its handed-over jobs that never reported (see expire_unreported)."""
+    running = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("status", "==", "running")).get()
+    return sum(expire_unreported(uid, snap.id) for snap in running)
