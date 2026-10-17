@@ -63,7 +63,8 @@ function LookNearby({ devices, discoveries, onGo, again }: {
 }
 
 /** Things your devices found on their networks (no addresses), once per thing however many devices saw it. Add =
- * put it on the map, watched by a helper that saw it (it checks the thing still answers). */
+ * put it on the map, watched by a helper that saw it (it checks the thing still answers); the server lists a finder
+ * that can watch it first. */
 export default function FoundNearby({ discoveries, devices, onGo }: {
   discoveries: Discovery[]; devices: Device[]; onGo: (g: Go) => void;
 }) {
@@ -111,9 +112,13 @@ export default function FoundNearby({ discoveries, devices, onGo }: {
                 {t.vendor && <span className="muted"> · {t.vendor}</span>}
                 {t.services.length > 0 && <span className="muted small"> ({t.services.join(", ")})</span>}
                 <span className="muted small"> · seen by the {names(t.seenBy.map((b) => b.name))}</span></span>
-              <input value={labels[key(t)] ?? t.guess} maxLength={40} aria-label="Name"
-                onChange={(e) => setLabels({ ...labels, [key(t)]: e.target.value })} style={{ width: 160 }} />
-              <button className="primary" onClick={() => add(t)}>Add</button>
+              {t.seenBy[0]?.canWatch === false
+                ? <span className="small muted">Nightlight can&apos;t check this one (it answered on no port it can watch).</span>
+                : <>
+                    <input value={labels[key(t)] ?? t.guess} maxLength={40} aria-label="Name"
+                      onChange={(e) => setLabels({ ...labels, [key(t)]: e.target.value })} style={{ width: 160 }} />
+                    <button className="primary" onClick={() => add(t)}>Add</button>
+                  </>}
             </div>
           ))}
         </div>
