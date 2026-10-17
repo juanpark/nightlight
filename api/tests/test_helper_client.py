@@ -597,6 +597,36 @@ def test_waiting_uses_the_work_channel_and_falls_back_on_old_servers(helper, mon
     monkeypatch.setattr(helper, "_post", lambda url, body, h=None: calls.append(url) or next(answers))
     monkeypatch.setattr(helper, "_do_job", lambda api, token, job: ran.append(job["id"]))
     monkeypatch.setattr(helper, "_poll_until", lambda seconds: calls.append("poll"))
-    helper._wait_and_claim(60)
-    assert calls[:2] == ["https://api.example.com/helper/jobs/wait"] * 2 and calls[2] == "poll"
-    assert ran == ["act_" + "a" * 26] and helper._CHANNEL["ok"] is False
+    helper._wait_and_claim(60)  # a job came: it ran, and the wait ended so the change is reported
+    assert calls == ["https://api.example.com/helper/jobs/wait"] and ran == ["act_" + "a" * 26]
+    helper._wait_and_claim(60)  # an old server (404): fall back to polling
+    assert calls[1:] == ["https://api.example.com/helper/jobs/wait", "poll"] and helper._CHANNEL["ok"] is False
+
+
+def test_a_too_soon_report_waits_the_asked_gap_not_a_backoff(helper, monkeypatch):
+    statuses = iter([429, 200])
+    sleeps, waits = [], []
+
+    def once():
+        try:
+            st = next(statuses)
+        except StopIteration:
+            raise KeyboardInterrupt
+        helper._RETRY_AFTER["s"] = 20 if st == 429 else 0
+        return st
+    monkeypatch.setattr(helper, "once", once)
+    monkeypatch.setattr(helper.time, "sleep", sleeps.append)
+    monkeypatch.setattr(helper, "_wait_and_claim", waits.append)
+    with pytest.raises(KeyboardInterrupt):
+        helper.run(60)
+    assert sleeps == [21] and waits == [60]  # retried after the server's gap, then back to the normal minute
+
+
+def test_after_running_a_job_the_helper_reports_at_once(helper, monkeypatch):
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43})
+    calls = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, h=None: calls.append(url) or (
+        200, {"jobs": [{"id": "act_" + "b" * 26, "type": "diagnose", "params": {}}]}))
+    monkeypatch.setattr(helper, "_do_job", lambda api, token, job: None)
+    helper._wait_and_claim(600)
+    assert len(calls) == 1  # returned right after the job instead of holding the channel again

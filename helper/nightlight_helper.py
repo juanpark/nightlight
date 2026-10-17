@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.14"
+VERSION = "0.9.15"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -1750,6 +1750,9 @@ def enrol(api, code, name):
     print(f"Joined Nightlight as device {body['deviceId']}. Token saved to {CONFIG} (owner-only).")
 
 
+_RETRY_AFTER = {"s": 0}  # the gap the server asked for when a report came too soon
+
+
 def once():
     cfg = _load()
     api = check_api(cfg["api"])
@@ -1757,6 +1760,7 @@ def once():
     if status == 200 and body.get("ok") is not True:
         status = 0  # a 200 without our acknowledgment is a protocol error, not a delivered report
         body = {"error": body.get("error") or "unexpected response"}
+    _RETRY_AFTER["s"] = int(body.get("retryAfter") or 20) if status == 429 else 0
     if status == 200:
         print(f"Report sent: {body.get('findings', 0)} finding(s).")
         _remember_about(cfg, body)
@@ -1846,8 +1850,11 @@ def run(every):
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
             sys.stdout.flush()
             os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
+        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure
+            time.sleep(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
+            continue
         wait = every if status == 200 else min(max(wait, every) * 2, 900)
-        _wait_and_claim(wait if status == 200 else wait)
+        _wait_and_claim(wait)  # returns early after running a job: the change is then reported right away
 
 
 _CHANNEL = {"ok": True}  # False once a server said it has no work channel (an older server): poll instead
@@ -1876,10 +1883,12 @@ def _wait_and_claim(seconds):
         if st != 200:  # network or server trouble: wait a little, never spin
             time.sleep(min(15.0, max(0.0, end - time.time())))
             continue
-        jobs = body.get("jobs")
-        for job in jobs if isinstance(jobs, list) else []:
-            if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
-                _do_job(api, token, job)
+        jobs = [j for j in (body.get("jobs") if isinstance(body.get("jobs"), list) else [])
+                if isinstance(j, dict) and isinstance(j.get("id"), str) and ACTION_RE.fullmatch(j["id"])]
+        for job in jobs:
+            _do_job(api, token, job)
+        if jobs:
+            return  # state just changed on this device: report it now, not at the next regular tick
 
 
 def _poll_until(seconds):

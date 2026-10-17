@@ -9,7 +9,9 @@ was a server-side guess about whether someone was watching.
 
 ## Decision
 Two channels with one job each:
-- **State**: the helper reports health every minute (and right away after a change made at the device). Unchanged.
+- **State**: the helper reports health every minute, and **right away whenever its state changed**: after it ran a
+  job, after it restarted into a new version, and after a change made at the device. A report that comes too soon
+  for the server is retried after the gap the server names (at most 20 s), never treated as a failure.
 - **Work**: between reports the helper keeps one request open, `POST /helper/jobs/wait`. The server holds it for up
   to 25 seconds with a Firestore listener on this device's approved jobs and answers the moment one appears
   (handing it over in the same transaction as before: at most once). An empty answer just means "ask again".
