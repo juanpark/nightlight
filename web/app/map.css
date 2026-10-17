@@ -2,8 +2,9 @@
 .homeview { display: flex; flex-direction: column; gap: 8px; }
 .view-switch { padding: 0; }
 .view-switch button { display: inline-flex; align-items: center; gap: 5px; }
-.homemap { height: min(68vh, 640px); min-height: 360px; border: 1px solid var(--line); border-radius: var(--radius);
-  overflow: hidden; background: var(--bg); }
+.homemap { display: flex; flex-direction: column; gap: 6px; }
+.homemap .react-flow { height: min(64vh, 620px); min-height: 360px; border: 1px solid var(--line);
+  border-radius: var(--radius); overflow: hidden; background: var(--bg); }
 .homemap .react-flow { --xy-edge-stroke-default: var(--offline); --xy-controls-button-background-color-default: var(--panel);
   --xy-controls-button-color-default: var(--ink); --xy-controls-button-border-color-default: var(--line);
   --xy-minimap-background-color-default: var(--panel); --xy-attribution-background-color-default: transparent; }
@@ -73,14 +74,13 @@
 .etools button.on { background: var(--accent); color: var(--bg); }
 
 /* legend and controls */
-.homemap .hm-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 11px; color: var(--muted);
-  background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 10px;
-  padding: 5px 9px; max-width: min(560px, calc(100% - 80px)); }
+.homemap .hm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; color: var(--muted);
+  padding: 0 4px; }
 .homemap .hm-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .hm-hint { flex-basis: 100%; opacity: .8; }
 
 @media (max-width: 900px) {
-  .homemap { height: calc(100dvh - 300px); min-height: 380px; }
+  .homemap .react-flow { height: calc(100dvh - 320px); min-height: 380px; }
   .hm-minimap { display: none; }
   .hm-hint { display: none; }
 }

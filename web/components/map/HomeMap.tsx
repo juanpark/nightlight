@@ -4,7 +4,7 @@
 // never touches a device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Background, BackgroundVariant, ConnectionMode, Controls, MiniMap, Panel, Position, ReactFlow, useNodesState,
+  Background, BackgroundVariant, ConnectionMode, Controls, MiniMap, Position, ReactFlow, useNodesState,
   type Connection, type NodeChange, type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -138,16 +138,19 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         {/* graph paper: fine squares, with a stronger line every fifth */}
         <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(120,128,150,.16)" />
         <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(120,128,150,.3)" />
-        <Controls showInteractive={false} position="bottom-right" />
-        <MiniMap className="hm-minimap" pannable zoomable nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />
-        <Panel position="bottom-left" className="hm-legend">
-          {LINK_KINDS.map((k) => (
-            <span key={k} title={LINK[k].verb}>
-              <svg width="26" height="8" aria-hidden><line x1="1" y1="4" x2="25" y2="4"
-                style={{ stroke: LINK[k].color, strokeWidth: 2, strokeDasharray: LINK[k].dash }} /></svg>{LINK[k].label}</span>))}
-          <span className="hm-hint">Drag from a dot on a device to another to link them</span>
-        </Panel>
+        <Controls showInteractive={false} position="top-right" />
+        <MiniMap className="hm-minimap" pannable zoomable style={{ width: 140, height: 90 }}
+          nodeColor={(n) => STATUS_HEX[(n.data as { device: Device }).device.status] ?? STATUS_HEX.offline} />
       </ReactFlow>
+      {/* the key sits under the map, never over a device */}
+      <div className="hm-legend small">
+        {LINK_KINDS.map((k) => (
+          <span key={k} title={LINK[k].verb}>
+            <svg width="26" height="8" aria-hidden><line x1="1" y1="4" x2="25" y2="4"
+              style={{ stroke: LINK[k].color, strokeWidth: 2, strokeDasharray: LINK[k].dash }} />
+            </svg>{LINK[k].verb}</span>))}
+        <span className="hm-hint">Drag from a dot on a device to another to link them · pinch or use the buttons to zoom</span>
+      </div>
     </div>
   );
 }
