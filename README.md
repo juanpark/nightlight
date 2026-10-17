@@ -1,8 +1,8 @@
 # Nightlight
 
-Nightlight is a house-sitter for the computers you run at home or in a small office, for people who have no IT
-person: it shows every device and what runs on it on one map, watches them, explains problems in plain words, and
-fixes them only with your permission, earning more freedom one kind of job at a time.
+Nightlight is a house-sitter for the computers you run at home or in a small office, for people with no IT person.
+It shows every device and what runs on it on one map. It watches them, explains problems in plain words, and fixes
+them only with your permission, earning more freedom one kind of job at a time.
 
 **Live app:** https://nightlight-web-1032111130355.asia-northeast3.run.app (one click, no account needed)
 
@@ -11,7 +11,7 @@ Everything here was written during the hackathon window.
 
 ## Try it in 30 seconds
 
-1. Open the live app and choose the one-click demo. You get a **simulated sample home**, labelled "Sample": a
+1. Open the live app and tap "Try the demo (no account)". You get a **simulated sample home**, labelled "Sample": a
    Raspberry Pi (VPN and a car data logger), a Mac Mini (home automation), a NAS (photos and a nightly backup), a
    Minecraft server, a camera recorder and a router.
 2. In the chat, ask: **"Is anything wrong at home?"**
@@ -29,7 +29,7 @@ update) and reset the sample home. Signing in with Google lets you add your own 
 |---|---|---|
 | **Watches** | Each device shows a health light and one plain sentence ("The Minecraft world hasn't been backed up in 9 days"). A sweep every 5 minutes marks devices that stopped reporting and checks watched websites. | `api/.../sim.py`, `real.py`, `watch.py`, `main.py` (`/internal/sweep`) |
 | **Explains in plain words** | A Gemini agent reads devices with tools and answers without jargon. Before answering "why is it full / slow / offline?" on a real device, it runs fixed read-only checks and answers with names and sizes. | `agent.py`, `playbooks.yaml`, helper `inspect` |
-| **Asks before fixing** | Every change is an approval card: the plan, a dry run, what it touches, how to undo it, a risk badge. One tap approves or declines. | `actions.py`, `capabilities.py`, `web/components/ApprovalCard.tsx` |
+| **Asks before fixing** | Every change is an approval card: the plan, a dry run, what it touches, how to undo it, a risk badge. One tap approves or declines. If an answer says "I've put a card up" and none was made, the server makes the card it described (sample home, one clear match) or adds a visible correction. | `actions.py`, `capabilities.py`, `agent.py`, `turns.py`, `web/components/ApprovalCard.tsx` |
 | **Earns trust per kind of job** | After three approved successes of the same kind of job, Nightlight may offer to handle that job on its own. Risky jobs have a ceiling (restarting a game server always asks). A failure moves trust back down a step. Jobs on real devices always wait for a tap. | `trust.py`, `web/components/TrustPanel.tsx` |
 
 Trust levels, in the words the app uses:
@@ -40,19 +40,25 @@ Trust levels, in the words the app uses:
 | Ask me for new things | does familiar safe jobs on its own, asks about anything new |
 | Just handle it and tell me | acts, then reports in plain words |
 
-The trust ladder runs on the sample home. On real devices every restart, clean-up or update needs a tap, whatever the
-trust settings say.
+The trust ladder runs on the sample home. On real devices every restart, clean-up or removal needs a tap, whatever the
+trust settings say; only signed helper updates may install on their own, and only if you allowed that.
 
 ## What you get
 
 | Area | In short |
 |---|---|
 | Map | a canvas on graph paper that opens fitted to any screen (pan, pinch or zoom); devices snap to the grid where you drop them; a list view too; draw a line by dragging from one device to another (works by touch); Tab and Enter open a device; lines between devices (connected through, backs up to, relies on, powered by) that the agent uses to reason about what depends on what; tags and filters; Live / Sample marks |
-| Chat | streamed answers with the agent's steps shown; Quick or Investigate deeply; a Stop button that keeps what was already done; cards inline; history kept 30 days; starter questions when the chat is empty |
+| Cards that open in place | a device's card opens on the map to show its apps (needs-a-look first, then starred, up to twelve); tap an app for its own view: what it is in one plain line, how it is, its version, and the notes, fixes and jobs about it |
+| Favorites | star a device or any of its apps; up to three starred apps show on the device's card; a Favorites chip narrows the map |
+| Device drawer | a panel from the left with one job per tab (Overview, Apps, Knowledge, Settings); the map stays usable beside it |
+| The map follows the chat | devices the agent's steps work on glow while it works; when it is done the main one opens with the apps it named pulsing; it never moves the view while you are touching the map, and with reduced motion the view moves without animation |
+| Chat | streamed answers with the agent's steps shown; it first says what it will look at; Quick, or Investigate (the "Investigate deeply" toggle); a Stop button that keeps what was already done; cards inline; history kept 30 days; replies in the language you write in |
+| Honest agent | says plainly what Nightlight can't do (Windows, jobs it has no tool for), never hands out commands to type, and when you ask for something safer offers only alternatives it really has |
 | Checkups (playbooks) | known problems (disk filling up, slow, no internet, updates, after a restart) written once as data; checks run, causes are matched in code, safe clean-ups come up as cards, with no AI call |
-| Investigate mode | a toggle under the chat: a stronger model with high thinking and up to 24 steps works like an administrator and reports what it checked, found and recommends |
+| Investigate | a toggle under the chat: a stronger model (medium thinking, up to 24 steps) works like an administrator and reports what it checked, found and recommends |
 | Web research | for an error it does not recognise, one Gemini call grounded with Google Search, sources shown; 20 per person per day; the question is stripped of addresses, secrets and the home's own names first |
-| Device notebook and profile | what Nightlight learned about each machine (causes, quirks, what worked), read before every investigation; the owner can edit it |
+| Knowledge per device | like an administrator's folder: a profile, notes grouped by app, runbooks (fixes that worked there, offered again as cards) and a log of every job that ran; read before every investigation; the owner can edit it |
+| Found nearby | your devices list what else is on the network, with the names and models things announce: Apple devices and printers through Bonjour, the router through UPnP. Add one and Nightlight watches whether it answers |
 | Activity and history | who did what (you, the device, Nightlight); per real device, 24 hours or 7 days of disk, memory and CPU |
 | Watched websites | up to 10 public addresses per account, checked from the cloud (status code and latency only) |
 | Memory | short facts you tell the agent ("the kids play on weekends"), kept in Agent Platform Memory Bank; a panel lists them and forgets all |
@@ -97,7 +103,7 @@ How the pieces talk:
 - **Browser to API.** Every `/api/*` call carries a Firebase ID token. The user id comes only from that verified
   token; nothing in a request body can choose it. The browser reads its own data straight from Firestore with
   listeners (read-only, own subtree only, enforced by `firestore.rules`); every write goes through the API.
-- **Chat.** A turn is one in-process ADK agent run. Replies stream as server-sent events. Every model call first
+- **Chat.** A turn is one in-process ADK agent run. Replies stream as server-sent events (the browser keeps one connection open and words arrive as they are written). Every model call first
   reserves its worst-case cost in a Firestore transaction (see Budgets below). Things that happen outside the
   person's own messages (a job finished, a job declined, an investigation approved) are posted as **events**, not as
   fake user messages ([ADR 0002](docs/adr/0002-conversation-events.md)).
@@ -115,13 +121,13 @@ How the pieces talk:
 
 | Service | What it does here | Why |
 |---|---|---|
-| **Gemini on Google Agent Platform** | `gemini-3.5-flash-lite` (low thinking) answers everyday questions; `gemini-3.8-flash` (high thinking, up to 24 steps) runs Investigate mode | Flash-Lite answered faster in our tests with equally plain answers; the stronger model is a choice the person makes, with its own budget |
+| **Gemini on Google Agent Platform** | `gemini-3.5-flash-lite` (low thinking) answers everyday questions; `gemini-3.8-flash` (medium thinking, up to 24 steps) runs Investigate mode | Flash-Lite answered faster in our tests with equally plain answers; the stronger model is a choice the person makes, with its own budget |
 | **Agent Development Kit (ADK, Python)** | the agent loop, tools, callbacks before and after each model call (cost reservation, size checks, scrubbing) | one place to bound every call |
 | **Agent Platform Memory Bank** | facts about the person, scoped to the verified user id, written only by the agent's `remember` tool, kept 180 days | memory that survives a cleared browser, without extracting it from transcripts behind the person's back |
 | **Google Search grounding** | one grounded Gemini call for unknown errors, sources returned | the agent should not guess at error messages it has never seen |
 | **Cloud Run** | the web app (Next.js) and the API (FastAPI); scale to zero, max 3 instances each | the judges' link stays up at near-zero idle cost |
 | **Cloud Scheduler** | `POST /internal/sweep` every 5 minutes with a Google-signed token (audience and invoker checked) | silent devices and watched websites are noticed with nobody watching |
-| **Firestore** | devices, services, history (TTL), approval cards, trust, chats, activity, quotas | transactions make approvals and job hand-over exactly-once; listeners give the browser live data |
+| **Firestore** | devices, services, history (expires on its own), approval cards, trust, chats, activity, quotas | transactions make approvals and job hand-over exactly-once; listeners give the browser live data |
 | **Firebase Authentication** | Google sign-in, and anonymous sign-in for the one-click demo | judges never create an account; real devices are always tied to a Google account |
 | **Firebase emulator** | the whole API test suite runs against the Firestore emulator | no cloud access needed to test |
 
@@ -144,7 +150,7 @@ the code-level details are in [`docs/SECURITY.md`](docs/SECURITY.md).
 | **Strict vs app-managed** | chosen once at install. *Strict:* permissions change only on the device; the cloud cannot widen them. *Managed from the app:* the owner's switches in the app are applied by the helper, but only for targets the device itself reports, and every change still waits for a tap. |
 | **Expert sessions with passkeys** | for anything beyond the fixed menu. The owner registers a passkey (WebAuthn, the same Face ID / Touch ID prompt as a password-free login) and pins its public key on each device at the device after comparing a fingerprint. Gemini proposes a command; the browser signs the exact command, device id, expiry (15 minutes) and a one-time nonce; the device verifies the signature itself before running. Read-only commands run under one signed 15-minute grant; the device enforces "read-only" with exact rules (fixed programs, reading sub-commands only, no pipes or chaining, no paths that look like secrets). A breached cloud cannot sign anything. |
 | **Scrubbing** | log lines and check output are scrubbed on the device before they leave (keys, tokens, `key=value` secrets, URL credentials, emails, IP and hardware addresses, home paths). The server scrubs again every heartbeat value, job result, chat message, tool result, model output and memory fact before storing, showing or sending it to the model. Best effort, not a guarantee. |
-| **What never leaves a device** | host names, IP or hardware addresses, files, environment variables, passwords or keys. The default device name comes from the hardware ("Raspberry Pi", "Mac mini"), never the host name. The server's schema rejects any field it does not expect. |
+| **What never leaves a device** | its host name, IP or hardware addresses, files, environment variables, passwords or keys. The default device name comes from the hardware ("Raspberry Pi", "Mac mini"), never the host name. Addresses of things nearby leave only as keyed fingerprints (HMAC-SHA256 with the account's own key). A maker leaves only if it is on a fixed list of brands, a model only if it is a known Apple model or looks like a product code; the server checks the same rules. The names things announce ("Living Room") are sent because this is your own map; that is on by default and can be turned off. The server's schema rejects any field it does not expect. |
 | **Device text is data** | names, tags, container names and log lines come from devices and are marked as evidence in the agent's instructions, never instructions. Discovery items use a fixed vocabulary the server checks. |
 | **Budgets and quotas** | no model call happens unless a reservation for its worst-case cost succeeds first, in one Firestore transaction with the per-person, per-visitor and daily counters and a kill switch. Defaults: a $35 model budget, 120 calls per person per hour, 100 per visitor per hour, 2,000 per day, 40 turns per person per hour, 8 model calls and 8 tool calls per turn (24 in Investigate mode, 240 s), input bounded with Gemini's token counter, output plus thinking capped at 1,024 tokens (4,096 in Investigate mode), 20 web searches per person per day. |
 | **Device tokens** | 256 random bits, stored only as a SHA-256 hash, revocable from the app or by uninstalling. Join codes are single use and expire in 10 minutes. |
@@ -196,7 +202,7 @@ code and a QR code for you to approve on your phone), and installs a background 
 user. On a Mac it asks once, there and then, whether it may measure Downloads, Desktop, Documents, Movies and the
 Trash, so nobody has to come back to the terminal for it. If someone else looks after the device, **Send the steps**
 shares the line with three plain steps for them. The helper is [`helper/nightlight_helper.py`](helper/nightlight_helper.py): Python 3.8+, standard library
-only, about 2,500 lines, reviewable in one sitting.
+only, about 3,300 lines, reviewable in one sitting.
 
 **On a Mac, download the installer.** `Nightlight.pkg` (from **Add a device**, served at `/download/Nightlight.pkg`)
 needs no Terminal and no developer tools: it brings its own Python. Click through the standard installer; your
@@ -207,15 +213,27 @@ for connections, so the firewall never asks. The package is built, signed and no
 sha256 digests). Its shared files stay in `/Library/Application Support/Nightlight` after an uninstall; the uninstall
 prints the one administrator command that removes them.
 
+When a device first connects, a one-time setup card asks what Nightlight may do there: Just watch, Watch and fix
+safe things (recommended), or Custom. On a device managed from the app, both presets include reading the recent log
+lines of the apps it has then, scrubbed on the device; you can switch that off per app.
+
+**Found nearby.** A device with the helper also lists the other things on its network: printers, TVs, phones, a NAS,
+the router. It asks the system's own mDNS service (Bonjour on a Mac, Avahi on Linux) and reads the router's UPnP
+description; it never opens a port that waits for others, so no firewall prompt appears. A thing keeps its identity
+through a keyed fingerprint of its hardware address, so it stays the same thing when the router gives it a new IP
+address. One of your own devices seen under another address shows in **Needs you** as a duplicate, with Review and
+Keep both. An Apple TV is watched on its AirPlay port. Code: `discover` and `_identify` in the helper, `real.py` on
+the server.
+
 It changes nothing by default. What it can do, and only after you allow it:
 
 | You allow | Nightlight can |
 |---|---|
 | `diagnose NAME` (or the "look into" switch) | read why a container or service is down, read-only, no card |
-| `logs NAME` | include its last 30 log lines, scrubbed on the device |
+| `logs NAME` (on in both setup presets) | include its last 30 log lines, scrubbed on the device |
 | `inspect` (or the "check why" switch) | run fixed read-only checks: biggest known folders, busiest programs, waiting updates, Docker disk use, DNS and internet, load, failing services |
 | `restart_container NAME` / `restart_service UNIT` | restart that one target, after your tap, only if it is stopped or failed |
-| `fix` (or the "clean up space" switch) | one clean-up from a fixed list (Trash, Homebrew / npm caches, Xcode build data, unused Docker images, apt cache, system journal), after your tap |
+| `fix` (or the "clean up space" switch) | one clean-up from a fixed list (Trash, Homebrew / npm caches, Xcode build data, Docker's untagged images, apt cache, system journal), after your tap |
 | `update` (or the "updates" switch) | install a signed, newer helper after your tap (or automatically if you say so) |
 | `nightlight expert` at the device | pin your passkey so expert sessions can run commands you sign |
 
@@ -226,11 +244,19 @@ Removing a device is a card too: the helper uninstalls itself and the device lea
 - Real-device jobs are the fixed list above plus passkey-signed expert commands. Everything else is explained, not
   changed.
 - The trust ladder (jobs running on their own) applies to the sample home only.
-- The helper supports Linux (systemd) and macOS (launchd). **Windows is not supported.**
+- The helper supports Linux (systemd) and macOS (launchd). **Windows is not supported**; a Windows PC can only be
+  watched from another device (does it answer on the network).
+- On a real device, a container that is running but failing its own health check is not flagged yet, and a restart
+  is offered only for a stopped container (the sample home shows the planned behaviour).
 - Adding a Linux device needs one line in a terminal. Only the Mac has an installer, and macOS opens it only once it
   is notarized with a Developer ID.
-- Lines between devices on the map are drawn by the owner (or by the agent when you tell it how two devices relate).
-  Nightlight does not yet work them out from what devices see of each other.
+- Lines are drawn automatically only for what helpers can see: the router, backups, mounted shared folders and a
+  few services in use. Everything else is drawn by the owner (or by the agent when you tell it how two devices relate).
+- A router's maker and model come only from UPnP; with UPnP off on the router it is found but not named.
+- Phones and laptops that use a private Wi-Fi address and announce no name fold into one line; when a phone rotates
+  that address, it looks like a new thing.
+- Names of things nearby can be turned off through the account settings API (`POST /api/settings`); the switch in the
+  app is not built yet.
 - A device token has no expiry; it is revocable but not rotated.
 - `curl | sh` trusts the HTTPS origin; the sha256 pin only proves the helper matches what that server serves.
 - A job handed to a helper that crashes before reporting stays "running"; a job approved while the device is offline
@@ -242,10 +268,11 @@ Removing a device is a card too: the helper uninstalls itself and the device lea
 
 ## Roadmap
 
-- Installers (a macOS package, a Raspberry Pi image, NAS packages) so the first install needs no terminal.
-- Lines on the map worked out automatically from what devices can see of each other, keyed so that nothing about
-  the network itself leaves the home.
-- Windows support for the helper.
+- An installer for every OS, so the first install needs no terminal: the macOS package exists; next a Linux `.deb`,
+  a Docker package for NAS boxes, then Windows.
+- Recent logs on by default for apps that appear after setup, not only those present at setup.
+- A backup before any clean-up, so even a clean-up that can't be undone can be.
+- Health checks of running containers on real devices, with a restart for unhealthy ones.
 - Device token rotation and expiry; release signing in a hardware security module or CI outside the cloud.
 - Retention you choose per account, and account deletion that purges everything at once.
 - A local-first mode: the helper keeps watching and answering on the home network when the cloud is away.
@@ -263,8 +290,9 @@ cd web && npm install && npm run dev   # web app on http://localhost:3000 (envir
 ```
 
 The API runs with no Memory Bank id locally (memory becomes a no-op) and with the emulator as Firestore. The test
-suite has about 350 tests across the agent, approvals, trust, the helper client, pairing, expert sessions, playbooks,
-research, reset and the cost guards.
+suite has about 460 tests across the agent, approvals, trust, the helper client, pairing, discovery, automatic lines,
+device knowledge, expert sessions, playbooks, research, reset and the cost guards. `scripts/chat_probe.py` puts
+conversations to the real agent against a fresh sample home and prints what a person would see.
 
 ## Deploy
 
@@ -288,17 +316,20 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `api/src/nightlight_api/capabilities.py` | the registry of everything a real device can be asked to do |
 | `api/src/nightlight_api/actions.py` | approval cards: request, decide, job result (one pipeline) |
 | `api/src/nightlight_api/trust.py`, `sim.py`, `template.py`, `demo.py` | the trust ladder and the simulated sample home |
-| `api/src/nightlight_api/real.py` | real devices: joining, heartbeats, findings, job hand-over |
+| `api/src/nightlight_api/real.py` | real devices: joining, heartbeats, setup, found things, job hand-over |
+| `api/src/nightlight_api/links.py` | lines between devices, drawn or worked out from keyed fingerprints |
+| `api/src/nightlight_api/apps.py` | what an app is: a fixed catalog of home apps, each with one plain line |
+| `api/src/nightlight_api/turns.py` | a chat turn: streaming, events, the correction when a claimed card wasn't made |
 | `api/src/nightlight_api/expert.py` | passkey registration and signing for expert sessions |
 | `api/src/nightlight_api/playbooks.py`, `playbooks.yaml` | known problems as data |
 | `api/src/nightlight_api/research.py` | Google Search grounded research |
-| `api/src/nightlight_api/memory.py`, `notebook.py` | Memory Bank facts; per-device notebook |
-| `api/src/nightlight_api/quota.py`, `redact.py`, `fence.py` | cost reservations, scrubbing, turn leases |
+| `api/src/nightlight_api/memory.py`, `notebook.py`, `runbooks.py`, `knowledge.py` | Memory Bank facts; per-device notes, runbooks and job log |
+| `api/src/nightlight_api/quota.py`, `redact.py`, `fence.py` | cost reservations, scrubbing, one chat turn at a time per person |
 | `api/src/nightlight_api/release.py`, `scripts/sign_helper.sh` | signed helper releases |
 | `api/src/nightlight_api/guide.yaml` | what the agent says about Nightlight itself |
 | `api/tests/` | the test suite (`fake_llm.py` stands in for Gemini) |
 | `helper/nightlight_helper.py`, `.sig` | the device helper and its release signature |
-| `web/` | Next.js app: `components/` (Board, Chat, ApprovalCard, TrustPanel, ExpertSessions, Checkups, ...), `lib/` (Firebase, API, listeners, passkeys), `app/install.sh` and `app/uninstall.sh` routes |
+| `web/` | Next.js app: `components/` (`map/`, Chat, ApprovalCard, DeviceDrawer, AppDetail, FoundNearby, TrustPanel, ExpertSessions, ...), `lib/` (Firebase, API, listeners, passkeys), `app/install.sh` and `app/uninstall.sh` routes |
 | `docs/API.md` | the contract between web, helper and API |
 | `docs/SECURITY.md`, `docs/DESIGN-trust.md` | the security model; safety vs power, and why |
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
@@ -306,7 +337,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `docs/architecture/` | the architecture diagram as code |
 | `contracts/mocks/` | sample data for every state of the demo story |
 | `firebase.json`, `firestore.rules` | emulator settings; browsers read only their own data |
-| `scripts/` | tests, secret scan, deploys, benchmark, smoke tests, mock generation |
+| `scripts/` | tests, secret scan, deploys, the Mac installer build, benchmark, chat probe, smoke tests, mock generation |
 
 ## How we built it
 
