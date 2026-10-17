@@ -224,11 +224,14 @@ def infer(uid: str) -> int:
         # A watched thing your devices reach the internet through is your router (unless you said otherwise).
         gateways = {(d.get("net") or {}).get("gateway") for d in devices.values()} - {None}
         for i, d in devices.items():
-            if d.get("kind") == "watched" and (d.get("net") or {}).get("self") in gateways \
-                    and d.get("role") != "router" and d.get("roleSetBy") != "user":
-                rename = {"name": "Router"} if d.get("name") in (d.get("guess"), "Device with a web page") else {}
-                tx.update(db.device(uid, i), {"role": "router", **rename,
-                                              "purpose": "Your router: your devices reach the internet through it."})
+            if d.get("kind") != "watched" or (d.get("net") or {}).get("self") not in gateways \
+                    or d.get("roleSetBy") == "user":
+                continue
+            fix = {"role": "router", "purpose": "Your router: your devices reach the internet through it."}
+            if d.get("name") in (d.get("guess"), "Device with a web page"):
+                fix["name"] = "Router"  # still the generic name it was added with
+            if any(d.get(k) != v for k, v in fix.items()):
+                tx.update(db.device(uid, i), fix)
                 changed += 1
         if state.exists and state.to_dict().get("linesDue"):
             tx.update(_net_ref(uid), {"linesDue": False})  # done: only a success clears it
