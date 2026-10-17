@@ -17,6 +17,7 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
 }) {
   const [naming, setNaming] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [err, setErr] = useState("");
   const kinds = (Object.keys(CATEGORIES) as Category[]).filter((c) => devices.some((d) => categoryOf(d) === c));
   const tags = [...new Set([...devices, ...watches].flatMap((d) => d.tags ?? []))].sort();
   // "Sample" separates the sample home from your own devices, so it only helps when both are on the map
@@ -24,17 +25,19 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
   const chosen = places.find((p) => p.id === filter.place);
   const renamable = chosen && chosen.id !== SAMPLE && chosen.id !== UNKNOWN;
   async function save() {
-    if (chosen && name.trim()) await api("POST", `/api/places/${chosen.id}`, { name: name.trim() }).catch(() => {});
-    setNaming(null);
+    if (!chosen || !name.trim()) { setNaming(null); return; }
+    setErr("");
+    try { await api("POST", `/api/places/${chosen.id}`, { name: name.trim() }); setNaming(null); }
+    catch { setErr("Couldn't save the name. Try again."); } // the draft stays for another try
   }
   return (
     <div className="homebar">
-      <div className="mode-switch view-switch" role="radiogroup" aria-label="Show your home as">
+      {devices.length > 0 && <div className="mode-switch view-switch" role="radiogroup" aria-label="Show your home as">
         <button role="radio" aria-checked={view === "map"} className={view === "map" ? "on" : ""} onClick={() => onView("map")}>
           <MapIcon size={14} /> Map</button>
         <button role="radio" aria-checked={view === "list"} className={view === "list" ? "on" : ""} onClick={() => onView("list")}>
           <List size={14} /> List</button>
-      </div>
+      </div>}
       {places.length > 1 && (
         <div className="chips" role="group" aria-label="Place">
           <button className={!filter.place ? "on" : ""} onClick={() => onFilter({ ...filter, place: null })}>All places</button>
@@ -49,7 +52,8 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
               <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoFocus
                 placeholder="e.g. Home, Office, Mum's" aria-label="Place name" />
               <button className="primary small">Save</button>
-              <button type="button" className="small" onClick={() => setNaming(null)}>Cancel</button>
+              <button type="button" className="small" onClick={() => { setNaming(null); setErr(""); }}>Cancel</button>
+              {err && <span className="small" style={{ color: "var(--crit)" }}>{err}</span>}
             </form>)}
         </div>)}
       {kinds.length > 1 && (
