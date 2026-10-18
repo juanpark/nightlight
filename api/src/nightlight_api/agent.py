@@ -1042,7 +1042,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
         wrapper.__doc__ = sync.__doc__
     tools = [list_fleet, get_device, get_recent_events, look_into, inspect, run_playbook, write_note,
              how_nightlight_works, run_command, update_profile, research, link_devices, read_device_log, save_runbook]
-    if memory.on_for(ctx.uid):
+    if memory.on_for(getattr(ctx, "uid", None)):
         tools.append(remember)
     return [_tolerant(t) for t in (tools if read_only else [*tools, *action_tools])]
 
@@ -1419,7 +1419,7 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     if continuation:
         instruction = CONTINUATION
     else:
-        instruction = INSTRUCTION + (MEMORY_RULES if memory.on_for(ctx.uid) else "") + (DEEP if ctx.deep else "")
+        instruction = INSTRUCTION + (MEMORY_RULES if memory.on_for(getattr(ctx, "uid", None)) else "") + (DEEP if ctx.deep else "")
         instruction += "\n\nTheir home right now:\n" + (ctx.fleet or "- no devices")
         if ctx.memories:
             instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
