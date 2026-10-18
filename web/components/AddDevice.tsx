@@ -66,9 +66,9 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
 function Waiting({ devices, before, continued }: {
   devices: Device[]; before: Set<string>; continued?: { id: string; since: number };
 }) {
-  const fresh = continued
-    ? devices.find((d) => d.id === continued.id && (d.lastSeen?.getTime() ?? 0) > continued.since)
-    : devices.find((d) => d.realm === "real" && !before.has(d.id));
+  // either way: the server can still add it as new if the earlier device went away before the helper picked it up
+  const fresh = devices.find((d) => d.realm === "real" && !before.has(d.id))
+    ?? (continued && devices.find((d) => d.id === continued.id && (d.lastSeen?.getTime() ?? 0) > continued.since));
   return fresh
     ? <p className="live-status ok"><span className="dot ok" /> Connected! {fresh.name} is on your map.</p>
     : <p className="live-status"><span className="dot offline pulse" /> Waiting for your device…</p>;
