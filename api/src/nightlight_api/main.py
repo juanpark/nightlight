@@ -11,8 +11,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from . import __version__, actions, archive, db, expert, demo, knowledge, links, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
-from .auth import current_uid, owner_uid
+from . import __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
+from .auth import current_uid, live_lease, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
 from .ids import new_id
@@ -360,7 +360,57 @@ def internal_sweep(request: Request):
         raise ApiError(401, "invalid_token") from None
     if claims.get("email") != settings.sweep_invoker or not claims.get("email_verified"):
         raise ApiError(403, "forbidden")
-    return watch.sweep()
+    out = watch.sweep()
+    try:
+        out["live"] = live.sweep()
+    except Exception as e:  # the live pool never breaks the device sweep
+        import logging
+        logging.getLogger(__name__).warning("live sweep failed: %s", type(e).__name__)
+    return out
+
+
+# ------------------------------------------------------------------ live demo machines (live.py)
+
+class LiveBody(Strict):
+    scenario: Literal[live.SCENARIOS] = "none"
+
+
+@app.get("/api/demo/live/status")
+def live_status():
+    """Public: how many live demo machines exist, are in use and are running, for the line on the demo page."""
+    return live.status()
+
+
+@app.post("/api/demo/live")
+def live_start(body: LiveBody, request: Request, uid: str = Depends(current_uid)):
+    """Lease a live demo machine for this visitor (the same one again if they already hold one) and start it."""
+    return live.lease(uid, _client_ip(request), body.scenario)
+
+
+@app.get("/api/demo/live/me")
+def live_me(lease: tuple[str, str] = Depends(live_lease)):
+    return live.mine(*lease)
+
+
+@app.post("/api/demo/live/heartbeat")
+def live_heartbeat(body: Empty, lease: tuple[str, str] = Depends(live_lease)):
+    return live.heartbeat(*lease)
+
+
+@app.post("/api/demo/live/scenario")
+def live_scenario(body: LiveBody, lease: tuple[str, str] = Depends(live_lease)):
+    return live.set_scenario(*lease, body.scenario)
+
+
+@app.post("/api/demo/live/reset")
+def live_reset(body: LiveBody, lease: tuple[str, str] = Depends(live_lease)):
+    """Start fresh on the visitor's own machine (one at a time; progress shows in GET /api/demo/live/me)."""
+    return live.reset_mine(*lease, body.scenario)
+
+
+@app.post("/api/demo/live/end")
+def live_end(body: Empty, lease: tuple[str, str] = Depends(live_lease)):
+    return live.end(*lease)
 
 
 @app.post("/api/demo/reset")

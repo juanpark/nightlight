@@ -3,7 +3,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{uid}/{document=**} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      // A live demo machine's pool account (token claims nl_slot / nl_lease) reads only while that lease is current,
+      // so a visitor who has left can't read the next visitor's chats with a still-valid ID token.
+      allow read: if request.auth != null && request.auth.uid == uid
+        && (!('nl_lease' in request.auth.token)
+            || get(/databases/$(database)/documents/livePool/$(request.auth.token.nl_slot)).data.get('leaseId', '')
+               == request.auth.token.nl_lease);
       allow write: if false;
     }
     match /{document=**} {

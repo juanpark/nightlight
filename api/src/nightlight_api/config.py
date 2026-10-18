@@ -57,6 +57,16 @@ class Settings:
     # The scheduled sweep (`POST /internal/sweep`) must carry a Google identity token for this audience and account.
     sweep_audience: str = os.environ.get("SWEEP_AUDIENCE", "")
     sweep_invoker: str = os.environ.get("SWEEP_INVOKER", "")
+    # Live demo machines (live.py). LIVE_POOL="nl-live-1=judge-pool-1,..." (instance=pool account uid); empty = off.
+    live_pool: list[str] = field(default_factory=lambda: _list("LIVE_POOL"))
+    live_zone: str = os.environ.get("LIVE_ZONE", "asia-northeast3-a")
+    live_idle_seconds: int = int(os.environ.get("LIVE_IDLE_SECONDS", "900"))  # no heartbeat this long: released
+    live_max_seconds: int = int(os.environ.get("LIVE_MAX_SECONDS", "3600"))  # hard cap on one lease
+    live_per_ip: int = int(os.environ.get("LIVE_PER_IP", "2"))  # live leases one visitor address may hold at once
+    live_eta_seconds: int = int(os.environ.get("LIVE_ETA_SECONDS", "60"))  # measured click-to-ready 48-59 s (18 Oct)
+    live_restore_seconds: int = int(os.environ.get("LIVE_RESTORE_SECONDS", "120"))  # Start fresh, click-to-ready 105-110 s (18 Oct)
+    # The service account that signs pool custom tokens through IAM signBlob (needs Token Creator on itself).
+    live_signer: str = os.environ.get("LIVE_SIGNER", "")
     memory_location: str = os.environ.get("MEMORY_BANK_LOCATION", "global")
     memory_fact_chars: int = 300
     release_dir: str = os.environ.get("RELEASE_DIR", "")  # the signed helper on offer (default: package "release/")
