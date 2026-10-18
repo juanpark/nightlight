@@ -29,7 +29,7 @@ export default function FirstRun({ uid, anonymous, devices, discoveries, expert,
       <div className="panel firstrun firstrun-line small">
         This is a sample home: the devices are simulated. Yours take about two minutes.
         {/* sign in, then straight to the line for their own computer */}
-        <button className="linkish" onClick={async () => { await onSave(); onAdd(); }}>Try it on your own computer</button>
+        <button className="small" onClick={async () => { await onSave(); onAdd(); }}>Try it on your own computer</button>
       </div>
     );
   }
