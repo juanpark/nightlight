@@ -63,9 +63,13 @@ export async function leaveLive(ended = false) {
   await signOut((await firebase()).auth).catch(() => {});
 }
 
-/** Whether this sign-in is a live demo machine's account (its token carries the lease). */
-export async function isLiveSession(user: { getIdTokenResult: () => Promise<{ claims: Record<string, unknown> }> }) {
-  try { return "nl_lease" in (await user.getIdTokenResult()).claims; } catch { return false; }
+/** On a live demo machine, the account whose data this visit sees (each visit signs in as its own throwaway user, and
+ * its token names the machine's account); null for any other sign-in. */
+export async function liveAccount(user: { uid: string; getIdTokenResult: () => Promise<{ claims: Record<string, unknown> }> }) {
+  try {
+    const c = (await user.getIdTokenResult()).claims;
+    return typeof c.nl_account === "string" ? c.nl_account : "nl_lease" in c ? user.uid : null;
+  } catch { return null; }
 }
 
 export const minutes = (s?: number) => s == null ? "" : s < 90 ? `${Math.round(s)} seconds` : `${Math.round(s / 60)} minutes`;
