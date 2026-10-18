@@ -45,7 +45,7 @@ function BreakSomething({ devices, disabled, onAsk }: { devices: Device[]; disab
       setNote({ text: "Done. Now ask Nightlight:", ask: b.ask });
     } catch (e) {
       setNote(e instanceof ApiError && e.status === 422
-        ? { text: "That doesn't apply here right now. Reset the demo in Demo tools and try again.", ask: b.ask }
+        ? { text: "That doesn't apply here right now. Use Start fresh in Demo tools and try again.", ask: b.ask }
         : e instanceof ApiError && e.status === 409 ? { text: "The demo is resetting. Try again in a moment." }
           : { text: "Couldn't do that. Try again." });
     } finally { setBusy(false); }

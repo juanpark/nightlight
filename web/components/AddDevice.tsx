@@ -4,7 +4,8 @@ import { Cpu, Laptop } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import type { Device } from "@/lib/types";
-import PairApprove from "./PairApprove";
+import { leaveLive } from "@/lib/live";
+import PairApprove, { type PairResult } from "./PairApprove";
 
 export function Copy({ text }: { text: string }) {
   const [done, setDone] = useState(false);
@@ -60,9 +61,14 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
   );
 }
 
-/** "Waiting for your device…" until a real device that wasn't there before shows up on the map. */
-function Waiting({ devices, before }: { devices: Device[]; before: Set<string> }) {
-  const fresh = devices.find((d) => d.realm === "real" && !before.has(d.id));
+/** "Waiting for your device…" until a real device that wasn't there before shows up on the map, or, when a reinstall
+ * continues an earlier device, until that device reports after the approval. */
+function Waiting({ devices, before, continued }: {
+  devices: Device[]; before: Set<string>; continued?: { id: string; since: number };
+}) {
+  // either way: the server can still add it as new if the earlier device went away before the helper picked it up
+  const fresh = devices.find((d) => d.realm === "real" && !before.has(d.id))
+    ?? (continued && devices.find((d) => d.id === continued.id && (d.lastSeen?.getTime() ?? 0) > continued.since));
   return fresh
     ? <p className="live-status ok"><span className="dot ok" /> Connected! {fresh.name} is on your map.</p>
     : <p className="live-status"><span className="dot offline pulse" /> Waiting for your device…</p>;
@@ -163,17 +169,29 @@ function Uninstall({ origin }: { origin: string }) {
 
 const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
 
-export default function AddDevice({ anonymous, onSave, devices }: {
-  anonymous: boolean; onSave: () => void; devices: Device[];
+export default function AddDevice({ anonymous, live = false, onSave, devices }: {
+  anonymous: boolean; live?: boolean; onSave: () => void; devices: Device[];
 }) {
   const [os, setOs] = useState<Os | null>(null);
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [before, setBefore] = useState<Set<string> | null>(null);
-  const [paired, setPaired] = useState<{ approved: boolean; name: string } | null>(null);
+  const [paired, setPaired] = useState<(PairResult & { at: number }) | null>(null);
   const [origin, setOrigin] = useState("");
   const [err, setErr] = useState("");
   const [other, setOther] = useState(false);
   useEffect(() => { setOrigin(window.location.origin); }, []);
+
+  if (live) {
+    return (
+      <div className="panel">
+        <h3>Try it on your own computer</h3>
+        <p>This live machine is a shared demo, so devices can&apos;t be added to it. To put your own laptop or
+          Raspberry Pi on a map of your own, leave this machine and sign in with Google (about two minutes).</p>
+        <button className="primary" onClick={() => leaveLive()}>Leave and sign in</button>
+        <Reassure />
+      </div>
+    );
+  }
 
   if (anonymous) {
     return (
@@ -264,9 +282,10 @@ export default function AddDevice({ anonymous, onSave, devices }: {
           <p className="small muted">Paste <code>curl -fsSL {origin}/install.sh | sh</code> on the device. It shows a code
             like WXYZ-1234 (and a link you can open on your phone). Type the code here:</p>
           {!paired
-            ? <PairApprove onApprove={snapshot} onDone={setPaired} />
+            ? <PairApprove onApprove={snapshot} onDone={(r) => setPaired({ ...r, at: Date.now() })} />
             : paired.approved
-              ? (before && <Waiting devices={devices} before={before} />)
+              ? (before && <Waiting devices={devices} before={before}
+                  continued={paired.continued ? { id: paired.continued, since: paired.at } : undefined} />)
               : <p className="small">Okay, that device was turned away. Nothing was added.</p>}
         </div>
       )}

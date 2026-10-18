@@ -6,10 +6,12 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { UserDoc } from "@/lib/types";
 
-export default function AccountSettings({ me, anonymous, onSave, onTour }: {
+export default function AccountSettings({ me, anonymous, live = false, onSave, onTour }: {
   me: UserDoc | null | undefined; anonymous: boolean; onSave: () => void; // demo accounts can look, not change
+  live?: boolean; // a live demo machine's visit: its account's settings stay as they are
   onTour: () => void; // the first-run tour, from the start
 }) {
+  const locked = anonymous || live;
   const saved = me?.settings?.deviceNames !== false;
   const [draft, setDraft] = useState<boolean | null>(null); // tapped here, not yet back from the account
   const [err, setErr] = useState("");
@@ -29,13 +31,15 @@ export default function AccountSettings({ me, anonymous, onSave, onTour }: {
   return (
     <div className="panel">
       <h3>Settings</h3>
-      <label className={`setting-row ${!me || anonymous ? "off" : ""}`}>
-        <input type="checkbox" role="switch" checked={on} onChange={flip} disabled={!me || anonymous}
-          aria-busy={saving || undefined} aria-describedby={`names-help${anonymous ? " names-demo" : ""}`} />
+      <label className={`setting-row ${!me || locked ? "off" : ""}`}>
+        <input type="checkbox" role="switch" checked={on} onChange={flip} disabled={!me || locked}
+          aria-busy={saving || undefined} aria-describedby={`names-help${locked ? " names-demo" : ""}`} />
         <span><strong>Show names things announce</strong> <span className="muted">(Living Room TV, Alex&apos;s iPhone)</span></span>
       </label>
       <p id="names-help" className="small muted setting-help">Names stay on your own map. Turning this off deletes the
         names kept so far; they come back only when things announce them again.</p>
+      {live && <p id="names-demo" className="small muted">This live machine is shared with other visitors, so its
+        settings stay as they are.</p>}
       {anonymous && <p id="names-demo" className="small muted">Settings are for your own account.{" "}
         <button className="linkish small" onClick={onSave}>Save with Google</button> to change them.</p>}
       {err && <p className="small" role="alert" style={{ color: "var(--crit)" }}>{err}</p>}

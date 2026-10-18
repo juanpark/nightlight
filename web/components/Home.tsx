@@ -17,6 +17,7 @@ import DeviceDrawer, { type Tab } from "./DeviceDrawer";
 import AccountSettings from "./AccountSettings";
 import Tour from "./Tour";
 import { restartTour } from "@/lib/tour";
+import { leaveLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -28,8 +29,11 @@ import MemoryPanel from "./MemoryPanel";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
 
-export default function Home({ user }: { user: User }) {
-  const uid = user.uid;
+// account: on a live demo machine, the machine's account, whose data this visit (its own throwaway user) sees
+export default function Home({ user, account }: { user: User; account?: string }) {
+  const live = !!account;
+  const uid = account ?? user.uid; // the data (Firestore users/{uid}/…)
+  const visit = user.uid; // what this browser remembers (tours, dismissed hints)
   const me = useUserDoc(uid);
   const gen = me?.demoGeneration;
   const now = useNow();
@@ -114,7 +118,7 @@ export default function Home({ user }: { user: User }) {
         <nav className={`top-nav ${menu ? "open" : ""}`}>
         <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
         <button onClick={() => toggle("activity")}>Activity</button>
-        <button onClick={() => toggle("memory")}>Memory</button>
+        {!live && <button onClick={() => toggle("memory")}>Memory</button>}
         <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
@@ -123,12 +127,12 @@ export default function Home({ user }: { user: User }) {
         {user.isAnonymous
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
           : <span className="small muted">{user.email}</span>}
-        <button onClick={async () => signOut((await firebase()).auth)}>Sign out</button>
+        <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
         </nav>
       </header>
       <div className="main" data-pane={pane}>
         <section className="left">
-          <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
+          <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
           <div className="panel needs needs-strip" data-tour="needs">
             <strong className="verdict">{verdict(needs)}</strong>
             <span className="spacer" />
@@ -147,15 +151,15 @@ export default function Home({ user }: { user: User }) {
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
-          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} onSave={saveWithGoogle}
-            onTour={() => { setPanel("none"); setPane("home"); restartTour(uid); }} />}
-          {panel === "memory" && <MemoryPanel />}
+          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}
+            onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
+          {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
-          {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
+          {me && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
+          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
           <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
             onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
             onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
@@ -177,10 +181,10 @@ export default function Home({ user }: { user: User }) {
           Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
         <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
       </nav>
-      <Tour uid={uid} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)}
+      <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)}
         state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
           realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
-      {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
+      {resetting && <div className="overlay"><div className="modal">Starting the sample home fresh…</div></div>}
     </div>
   );
 }

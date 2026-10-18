@@ -184,6 +184,23 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .driver-popover.nl-tour .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: var(--panel); }
 .driver-popover.nl-tour .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: var(--panel); }
 .driver-popover.nl-tour .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: var(--panel); }
+/* Start screen and live demo machines (SignIn.tsx, LiveSession.tsx) */
+.modal.start { max-width: 560px; text-align: left; }
+.modal.start h1, .modal.start > .muted { text-align: center; }
+.start-option { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+.start-option p { margin: 0 0 8px; }
+.start-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 4px 0 8px; }
+.live-phases { margin: 8px 0; padding-left: 20px; display: grid; gap: 4px; }
+.live-phases li { color: var(--muted); }
+.live-phases li.done { color: var(--ink); }
+.live-phases li.done::marker { content: "✓  "; color: var(--ok); }
+.live-phases li.now { color: var(--ink); font-weight: 700; }
+.live-bar { position: fixed; left: 12px; bottom: 12px; z-index: 50; display: flex; flex-wrap: wrap; align-items: center;
+  gap: 6px 10px; max-width: calc(100vw - 24px); padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); box-shadow: 0 4px 16px rgb(0 0 0 / 15%); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+@media (max-width: 900px) { .live-bar { bottom: 64px; } }
+
 /* A link that looks like a button (Add a device: Download anyway) */
 a.button { display: inline-block; font: inherit; border-radius: 10px; border: 1px solid var(--line);
   background: var(--panel); color: var(--ink); padding: 7px 12px; text-decoration: none; }
