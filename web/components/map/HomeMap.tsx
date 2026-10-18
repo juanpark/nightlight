@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MoveMap, Trash as Trash2 } from "@/src/components/icons";
 import {
-  Background, BackgroundVariant, ConnectionMode, Controls, Position, ReactFlow, useNodesState,
+  Background, BackgroundVariant, ConnectionMode, Controls, MiniMap, Position, ReactFlow, useNodesState,
   type FinalConnectionState, type NodeChange, type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -398,6 +398,11 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         {/* dot paper: one quiet dot per snap square (the colour is a theme token) */}
         <Background id="dots" variant={BackgroundVariant.Dots} gap={GRID} size={1.4} color="var(--map-dot)" />
         <Controls showInteractive={false} position={touch ? "bottom-right" : "top-right"} /> {/* on touch: clear of the devices */}
+        {/* the whole home at a glance in the corner, each device in its status colour (the theme's fills, so day and night
+            both read); drag or scroll it to move around. Hidden on phones, where it would cover the devices */}
+        <MiniMap className="hm-minimap" pannable zoomable ariaLabel="Overview of the whole map"
+          position={touch ? "bottom-left" : "bottom-right"} style={{ width: 150, height: 96 }} nodeBorderRadius={6}
+          nodeColor={(n) => `var(--${(n.data as { device: Device }).device.status ?? "offline"}-fill, var(--offline-fill))`} />
       </ReactFlow>
       {touch && <button className={`hm-move ${live ? "on" : ""}`} aria-pressed={live} onClick={() => setLive(!live)}>
         {live ? "Done" : <><MoveMap size={18} aria-hidden /> Move the map</>}</button>}

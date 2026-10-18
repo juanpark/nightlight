@@ -24,13 +24,16 @@
 .skip:focus { top: 12px; }
 
 /* ---------- type ---------- */
-.h1, .h2, .h2Big, .bandTitle, .ctaTitle { font-family: var(--font-display), system-ui, sans-serif; font-weight: 450;
+.h1, .h2, .h2Big, .ctaTitle { font-family: var(--font-display), system-ui, sans-serif; font-weight: 450;
   letter-spacing: -0.025em; margin: 0; text-wrap: balance; color: var(--ink); }
 .h1 { font-size: clamp(2.9rem, 7vw, 6rem); line-height: .98; letter-spacing: -0.035em; max-width: 11ch; }
 .h1 .quiet { display: block; }
 .h2 { font-size: clamp(1.9rem, 3vw, 2.75rem); line-height: 1.08; max-width: 14ch; }
 .h2Big { font-size: clamp(2rem, 3.6vw, 3.25rem); line-height: 1.08; max-width: 20ch; }
 .quiet { color: var(--quiet); }
+/* the masks a heading's lines rise through (MonoLanding's SplitText): room below the baseline so descenders aren't
+   clipped, given back with a negative margin so the heading's layout doesn't move */
+.page :global(.nl-line-mask) { padding-bottom: .14em; margin-bottom: -.14em; }
 .body { margin: 20px 0 0; color: var(--muted); font-size: 1.0625rem; line-height: 1.55; max-width: 46ch; text-wrap: pretty; }
 .lede { margin: 0; font-size: 1.1875rem; line-height: 1.5; color: var(--muted); max-width: 40ch; text-wrap: pretty; }
 .fine { margin: 12px 0 0; font-size: .875rem; color: var(--muted); max-width: 44ch; }
@@ -81,17 +84,24 @@
 .principles p { margin: 0; color: var(--muted); font-size: 1rem; line-height: 1.55; text-wrap: pretty; }
 .principles strong { color: var(--ink); font-weight: 600; }
 
-/* ---------- the band ---------- */
-.band { padding: clamp(72px, 10vh, 112px) var(--gutter) 0; max-width: calc(var(--max) + 2 * var(--gutter)); margin: 0 auto; }
-.bandInner { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
-  padding: 28px 0; border-block: 1px solid var(--line); }
-.bandTitle { font-size: 1.625rem; line-height: 1.2; letter-spacing: -0.015em; }
-.bandText { margin: 6px 0 0; color: var(--muted); }
-.bandActions { display: grid; gap: 8px; justify-items: end; }
 
 /* ---------- intro + chapters ---------- */
-.intro { padding: clamp(112px, 16vh, 176px) var(--gutter) 0; max-width: calc(var(--max) + 2 * var(--gutter)); margin: 0 auto; }
-.intro .body { max-width: 56ch; }
+/* the intro is a quiet bridge into the four chapters: centred, a step smaller than a chapter heading, and the four
+   steps it promises as small links into each chapter */
+.intro { padding: clamp(112px, 16vh, 176px) var(--gutter) 0; text-align: center; }
+.introInner { max-width: var(--max); margin: 0 auto; display: grid; justify-items: center; }
+.intro .h2Big { font-size: clamp(1.75rem, 3vw, 2.5rem); line-height: 1.12; max-width: 24ch; margin-inline: auto; }
+.intro .body { max-width: 50ch; margin: 20px auto 0; }
+.introSteps { list-style: none; margin: 32px 0 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.introSteps a { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 16px 0 6px; border-radius: 99px;
+  background: var(--panel); border: 1px solid var(--line); font-size: .9375rem; font-weight: 550; color: var(--ink);
+  transition: border-color .15s, background-color .15s; }
+.introSteps .stepNum { display: inline-grid; place-items: center; min-width: 0; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--panel-2); color: var(--muted); font-size: .8125rem; font-weight: 600; transition: color .15s; }
+@media (hover: hover) {
+  .introSteps a:hover { border-color: var(--line-hover); background: color-mix(in srgb, var(--panel-2) 55%, var(--panel)); }
+  .introSteps a:hover .stepNum { color: var(--ink); }
+}
 
 .chapter {
   display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; align-items: center;
@@ -357,23 +367,30 @@
 .footerNote { grid-column: 1 / -1; margin: 0; font-size: .8125rem; color: var(--muted); }
 
 /* ---------- the pointer (Cursor.tsx): only once script has turned it on ---------- */
-/* a small star-yellow light with a thin gold edge (no black ring), so it holds on cream and on the yellow buttons */
-.cursorDot { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; border-radius: 50%; opacity: 0;
-  width: 11px; height: 11px; background: var(--star); will-change: transform;
-  box-shadow: 0 0 0 1px var(--star-deep), 0 0 14px 4px rgb(253 216 58 / .5);
-  transition: opacity .2s, scale .3s var(--ease), box-shadow .3s; }
-.page[data-cursor-over="page"] .cursorDot, .page[data-cursor-over="control"] .cursorDot { opacity: 1; }
-/* over a control the light grows a little and glows warmer; it never fills or recolours the control */
-.page[data-cursor-over="control"] .cursorDot { scale: 1.45; box-shadow: 0 0 0 1px var(--star-deep), 0 0 18px 6px rgb(253 216 58 / .6); }
-.page[data-cursor-down] .cursorDot { scale: .7; }
-/* the big light: a soft star pool under the content, falling off on an eased curve so it has no edge. It shows on the
-   ground here and continues inside each frame (below), so cards and controls are never tinted */
-.cursorHalo { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; opacity: 0;
-  width: 640px; height: 640px; will-change: transform; background: var(--light-pool);
-  transition: opacity .6s; }
+/* the dot: 6px of ink with a paper edge, so it reads on cream, on the yellow buttons and on ink ones. It sits exactly
+   on the pointer; over a text field it becomes a caret, over a control it shrinks so the ring carries the moment */
+.cursorDot { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; opacity: 0;
+  width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 99px; background: var(--ink);
+  box-shadow: 0 0 0 1.5px rgb(252 251 248 / .9); will-change: transform;
+  transition: opacity .2s, width .25s var(--ease), height .25s var(--ease), margin .25s var(--ease), border-radius .25s; }
+.page:is([data-cursor-over="page"], [data-cursor-over="control"], [data-cursor-over="field"]) .cursorDot { opacity: 1; }
+.page[data-cursor-over="control"] .cursorDot { width: 4px; height: 4px; margin: -2px 0 0 -2px; }
+.page[data-cursor-over="field"] .cursorDot { width: 2px; height: 20px; margin: -10px 0 0 -1px; border-radius: 1px; }
+/* the ring: a hairline that trails the dot and leans into its speed (Cursor.tsx stretches the middle layer). Over a
+   control it opens to 52px around it, with no fill, so the control always looks exactly like itself; a press
+   tightens it; over a field it steps aside for the caret */
+.cursorRing { position: fixed; left: 0; top: 0; z-index: 99; width: 0; height: 0; pointer-events: none; opacity: 0;
+  will-change: transform; transition: opacity .25s; }
+.cursorStretch { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.cursorStretch span { position: absolute; left: 0; top: 0; width: 34px; height: 34px; translate: -50% -50%;
+  border-radius: 50%; border: 1px solid rgb(26 26 24 / .32);
+  transition: width .35s var(--ease), height .35s var(--ease), border-color .25s, scale .2s var(--ease); }
+.page:is([data-cursor-over="page"], [data-cursor-over="control"]) .cursorRing { opacity: 1; }
+.page[data-cursor-over="control"] .cursorStretch span { width: 52px; height: 52px; border-color: rgb(26 26 24 / .6); }
+.page[data-cursor-down] .cursorStretch span { scale: .82; }
+/* the light inside each product frame: a soft star wash, falling off on an eased curve so it has no edge */
 .page { --light-pool: radial-gradient(closest-side, rgb(253 216 58 / .26), rgb(253 216 58 / .17) 22%,
   rgb(253 216 58 / .08) 48%, rgb(253 216 58 / .025) 74%, transparent); }
-.page[data-cursor-over="page"] .cursorHalo, .page[data-cursor-over="control"] .cursorHalo { opacity: 1; }
 /* inside a frame the same light falls on the dot grid: a warm wash plus the nearby dots turning gold */
 .page[data-cursor] .frame { isolation: isolate; }
 .page[data-cursor] .frame::before, .page[data-cursor] .frame::after { content: ""; position: absolute; inset: 0; z-index: -1;
@@ -387,9 +404,8 @@
 .page[data-cursor-over="page"] .frame::before, .page[data-cursor-over="page"] .frame::after,
 .page[data-cursor-over="control"] .frame::before, .page[data-cursor-over="control"] .frame::after { opacity: 1; }
 
-/* the system pointer hides while ours is on; text fields keep their caret */
+/* the system pointer hides while ours is on (over a text field ours becomes the caret) */
 .page[data-cursor], .page[data-cursor] * { cursor: none !important; }
-.page[data-cursor] :is(input, textarea, [contenteditable="true"]) { cursor: text !important; }
 
 /* ---------- smaller screens ---------- */
 @media (max-width: 960px) {
@@ -419,7 +435,6 @@
   .floatCard, .privacyCard[data-never] { margin-top: 0; }
   .privacyStage { padding: 24px 14px 48px; }
   .terms > div { grid-template-columns: 1fr; gap: 2px; }
-  .bandActions { justify-items: start; }
   .whoRow { flex-direction: column; gap: 4px; }
   .whoWhat { text-align: left; }
   .footer { grid-template-columns: 1fr; }
@@ -430,6 +445,7 @@
    screen they grow, because the chapters invite you to tap them. 16px in the field so iOS doesn't zoom on focus. */
 @media (pointer: coarse) {
   .brand { padding: 11px 0; }
+  .introSteps a { min-height: 44px; }
   .navLinks a { display: inline-flex; align-items: center; min-height: 44px; }
   .canvasBtn { min-height: 44px; padding-inline: 14px; }
   .chips { gap: 8px; }
@@ -444,7 +460,8 @@
 
 /* print and anything that skips the scroll: every revealed section shows as it is */
 @media print {
-  .page [data-rise], .page [data-canvas], .page [data-hero-rise], .page [data-hero-canvas] { opacity: 1 !important; transform: none !important; }
+  .page [data-rise], .page [data-canvas], .page [data-hero-rise], .page [data-hero-canvas], .page figure, .page li,
+  .page :global(.nl-line) { opacity: 1 !important; visibility: visible !important; transform: none !important; clip-path: none !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

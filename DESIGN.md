@@ -2,45 +2,66 @@
 name: Nightlight
 description: A house-sitter for home servers; a small warm light that watches the machines while you sleep.
 colors:
+  paper: "#fcfbf8"
+  card-white: "#ffffff"
+  paper-raised: "#f3f2ee"
+  frame-paper: "#f4f3ef"
+  hairline: "#e8e6e0"
+  rule: "#cfccc3"
+  rule-hover: "#b9b5aa"
+  field-line: "#8d8a82"
+  ink: "#1a1a18"
+  ink-hover: "#3a3935"
+  graphite: "#5e5d58"
+  pencil: "#8a8882"
+  dot-grid: "#d9d6cd"
+  star-yellow: "#fdd83a"
+  star-hover: "#ffe14f"
+  star-edge: "#e9c21f"
+  star-deep: "#b38600"
+  logo-light: "#f5c400"
+  ok-text: "#1d7a3c"
+  ok-fill: "#22a447"
+  warn-text: "#b85a00"
+  warn-text-landing: "#a24f00"
+  warn-fill: "#d97706"
+  crit-text: "#c0352b"
+  crit-fill: "#ec3d32"
+  offline-text: "#5e5d58"
+  offline-fill: "#8e8c86"
   night-ground: "#0b1430"
   night-panel: "#111c3d"
-  night-panel-2: "#18254b"
+  night-panel-raised: "#18254b"
   night-line: "#22305c"
-  night-line-strong: "#33457a"
+  night-rule: "#33457a"
   night-select: "#1d2b5a"
-  night-muted: "#aab3cf"
+  night-field-line: "#5f72a8"
   cream-ink: "#f4efe4"
+  night-muted: "#a5a7ab"
+  night-star-hover: "#ffe36a"
   navy-ink: "#15224a"
-  star-yellow: "#fdd83a"
-  star-hover: "#ffe36a"
-  star-gold: "#f2b800"
-  day-ground: "#f5efe2"
-  day-panel: "#fffaf0"
-  day-panel-2: "#efe7d6"
-  day-line: "#e2d7c1"
-  day-line-strong: "#c4b595"
-  day-muted: "#56618a"
-  day-select: "rgb(21 34 74 / .08)"
-  night-ok: "#8fd6a8"
-  night-warn: "#f5b84a"
-  night-crit: "#ffb4a3"
-  night-offline: "#8a93b3"
-  day-ok: "#2f7a4c"
-  day-warn: "#9c5a00"
-  day-crit: "#c4553f"
-  day-offline: "#737a95"
+  night-ok: "#70d795"
+  night-warn: "#fab050"
+  night-crit: "#fb817a"
+  night-offline: "#97a1bb"
 typography:
   display:
+    fontFamily: "Funnel Display, system-ui, sans-serif"
+    fontSize: "clamp(2.9rem, 7vw, 6rem)"
+    fontWeight: 450
+    lineHeight: 0.98
+    letterSpacing: "-0.035em"
+  headline:
+    fontFamily: "Funnel Display, system-ui, sans-serif"
+    fontSize: "clamp(1.9rem, 3vw, 2.75rem)"
+    fontWeight: 450
+    lineHeight: 1.08
+    letterSpacing: "-0.025em"
+  verdict:
     fontFamily: "Funnel Display, system-ui, sans-serif"
     fontSize: "22px"
     fontWeight: 650
     lineHeight: 1.2
-    letterSpacing: "-0.01em"
-  headline:
-    fontFamily: "Funnel Display, system-ui, sans-serif"
-    fontSize: "21px"
-    fontWeight: 650
-    lineHeight: 1.25
     letterSpacing: "-0.01em"
   title:
     fontFamily: "Funnel Display, system-ui, sans-serif"
@@ -48,11 +69,11 @@ typography:
     fontWeight: 650
     lineHeight: 1.3
     letterSpacing: "-0.005em"
-  title-sm:
-    fontFamily: "Funnel Display, system-ui, sans-serif"
-    fontSize: "15px"
-    fontWeight: 650
-    lineHeight: 1.35
+  lede:
+    fontFamily: "Funnel Sans, system-ui, sans-serif"
+    fontSize: "1.1875rem"
+    fontWeight: 400
+    lineHeight: 1.5
   body:
     fontFamily: "Funnel Sans, system-ui, -apple-system, Segoe UI, sans-serif"
     fontSize: "15px"
@@ -80,9 +101,11 @@ rounded:
   xs: "6px"
   sm: "8px"
   control: "10px"
-  md: "12px"
+  button-landing: "12px"
   surface: "14px"
-  bubble: "16px"
+  frame: "16px"
+  bubble: "18px"
+  dialog: "24px"
   pill: "99px"
 spacing:
   2xs: "4px"
@@ -91,79 +114,89 @@ spacing:
   md: "10px"
   lg: "16px"
   xl: "24px"
-  panel: "16px 18px"
-  sidebar: "236px"
-  chat: "400px"
+  panel: "14px 16px"
+  gutter: "clamp(16px, 4vw, 56px)"
+  content-max: "1200px"
+  chat: "340px to 400px"
 components:
   button:
-    backgroundColor: "{colors.night-panel}"
-    textColor: "{colors.cream-ink}"
+    backgroundColor: "{colors.card-white}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.control}"
     padding: "7px 13px"
   button-hover:
-    backgroundColor: "{colors.night-panel-2}"
+    backgroundColor: "{colors.paper-raised}"
   button-primary:
     backgroundColor: "{colors.star-yellow}"
-    textColor: "{colors.navy-ink}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.control}"
     padding: "7px 13px"
   button-primary-hover:
     backgroundColor: "{colors.star-hover}"
-    textColor: "{colors.navy-ink}"
   button-primary-disabled:
-    backgroundColor: "{colors.night-panel-2}"
-    textColor: "{colors.night-muted}"
+    backgroundColor: "{colors.paper-raised}"
+    textColor: "{colors.graphite}"
+  button-landing-primary:
+    backgroundColor: "{colors.star-yellow}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.button-landing}"
+    height: "48px"
+    padding: "0 20px"
+  button-landing-secondary:
+    backgroundColor: "{colors.card-white}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.button-landing}"
+    height: "48px"
+    padding: "0 20px"
   input:
-    backgroundColor: "{colors.night-ground}"
-    textColor: "{colors.cream-ink}"
+    backgroundColor: "{colors.paper}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.control}"
     padding: "8px 11px"
   chip:
-    backgroundColor: "{colors.night-panel}"
-    textColor: "{colors.cream-ink}"
+    backgroundColor: "{colors.card-white}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.pill}"
-    padding: "5px 13px"
-  chip-selected:
-    backgroundColor: "{colors.night-select}"
-    textColor: "{colors.cream-ink}"
-    rounded: "{rounded.pill}"
-  nav-item:
-    textColor: "{colors.night-muted}"
-    rounded: "{rounded.control}"
-    padding: "9px 10px"
-  nav-item-selected:
-    backgroundColor: "{colors.night-select}"
-    textColor: "{colors.cream-ink}"
-    rounded: "{rounded.control}"
-  count-badge:
-    backgroundColor: "{colors.star-yellow}"
-    textColor: "{colors.navy-ink}"
-    rounded: "{rounded.pill}"
-    height: "20px"
+    padding: "5px 11px"
   panel:
-    backgroundColor: "{colors.night-panel}"
-    textColor: "{colors.cream-ink}"
+    backgroundColor: "{colors.card-white}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.surface}"
     padding: "{spacing.panel}"
   approval-card:
-    backgroundColor: "{colors.night-panel}"
+    backgroundColor: "{colors.card-white}"
     rounded: "{rounded.surface}"
     padding: "14px 16px"
+  accordion-step:
+    backgroundColor: "{colors.card-white}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.button-landing}"
+    padding: "14px 16px"
+  product-frame:
+    backgroundColor: "{colors.frame-paper}"
+    rounded: "{rounded.frame}"
+  start-dialog:
+    backgroundColor: "{colors.paper}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.dialog}"
+    padding: "32px 28px 24px"
   bubble-user:
-    backgroundColor: "{colors.night-panel-2}"
-    textColor: "{colors.cream-ink}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.bubble}"
-    padding: "10px 14px"
-  bubble-agent:
-    backgroundColor: "{colors.night-ground}"
-    textColor: "{colors.cream-ink}"
-    rounded: "{rounded.bubble}"
-    padding: "10px 14px"
-  device-node:
+    padding: "9px 14px"
+  count-badge:
+    backgroundColor: "{colors.star-yellow}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.pill}"
+    height: "20px"
+  night-panel:
     backgroundColor: "{colors.night-panel}"
+    textColor: "{colors.cream-ink}"
     rounded: "{rounded.surface}"
-    padding: "9px 10px"
-    width: "200px"
+  night-button-primary:
+    backgroundColor: "{colors.star-yellow}"
+    textColor: "{colors.navy-ink}"
+    rounded: "{rounded.control}"
 ---
 
 # Design System: Nightlight
@@ -172,59 +205,58 @@ components:
 
 **Creative North Star: "The Lamp Left On"**
 
-Nightlight is the landing page's night house turned into a calm working room. The ground is deep navy, text is cream, and the one warm thing in the room is the star yellow light, lit only where something needs the person: the primary button, a count, the verdict when something is wrong. Everything else stays quiet, so the light means something when it appears. The day theme is the same house with the curtains open: warm cream ground, navy ink, the same star.
+Nightlight is a quiet room with one warm light in it. The room is calm paper and near-black ink: a near-white cream ground, white cards on hairlines, graphite for everything secondary. The one warm thing is the star yellow, and it is lit only where the person is needed: the main action, a count, the verdict when something is wrong. Because nothing else glows, the light means something when it appears. The same house has a night setting (deep navy ground, cream ink, the same star), offered as a toggle rather than the default.
 
-The app shell is a slim left sidebar, the home in the middle (the verdict sentence on top, then filters and the house map), and the "Ask Nightlight" chat docked on the right. That form was chosen by the owner directly, not generated. Surfaces are soft rounded panels with hairline navy borders and lucide line icons at one stroke weight. Density is moderate: a non-technical owner should read the screen as sentences before they read it as data.
+The world is shared end to end. The "/" landing is a walk through the product itself: a large two-tone headline (ink, then a softer pencil grey for the quiet half), then the real dashboard framed on a dot grid, chapter by chapter, with a list beside each frame that changes what it shows. The app is the same palette at working scale: a calm header, the home with its verdict strip and house map, and the "Ask Nightlight" chat docked on the right. A visitor who clicks Get started should feel they stepped into the frame they were just looking at.
 
-The world is shared with the marketing landing (same navy steps, same star, same Funnel Display and Funnel Sans), so a person who arrives from the landing should feel they walked into the house they were just shown. The landing's typography ramp is larger and more theatrical; the app keeps the faces and the palette, not the scale.
+Density is moderate and sentence-led. A non-technical owner reads every screen as plain sentences before data. Motion is slow and soft (an exponential ease-out) and lives on indicators and reveals, never on a control being used. Character comes from the outlined wordmark, the traced mascot used sparingly, and the precision of the details, not from decoration.
 
 **Key Characteristics:**
-- Two themes that share token names: night (navy ground, cream text, star accent) and day (cream ground, navy ink, navy accent, same star for the primary action).
-- Star yellow is scarce: primary action, counts, "needs you".
-- Status colours (green, amber, soft coral) only ever appear with a word.
-- Selection is a lighter navy step with a thin accent ring, never grey.
-- The verdict strip's star light is the signature: a slow soft glow when something needs you, a quiet green dot otherwise.
-- The traced mascot appears in the empty chat and switches to its thinking mood while Nightlight works.
+- Light mono by default: near-black ink on near-white cream, white cards, warm hairlines; navy night as an alternative theme with the same token names.
+- Star yellow is scarce: the main action, counts, "needs you", and the verdict light.
+- Status colours (green, amber, red, slate) only ever travel with a word.
+- Two-tone headlines: the first half in ink, the quiet half in pencil grey.
+- The product is shown, not described: framed canvases of the real dashboard on a dot grid, labelled "Sample home · simulated".
+- Phosphor regular icons at one stroke weight, through a single icon module.
 
 ## Colors
 
-A strict three-colour world, navy, star yellow and cream, with three status hues held on a short leash.
+A strict monochrome of paper and ink, with one warm star and four status hues on a short leash.
 
 ### Primary
-- **Star Yellow** (star-yellow): the primary button fill, the count badges in the sidebar and phone tab bar, the verdict light when something needs you, the "needs you" border tint on the verdict strip, and the night theme's accent (focus ring, selected-nav ring and icon, selected device ring). Text on it is always Navy Ink.
-- **Star Hover** (star-hover): the primary button's hover fill, a half step lighter. Never used at rest.
-- **Star Gold** (star-gold): the dot of light in the wordmark on cream backgrounds only, where full Star Yellow would wash out. Not a UI colour.
+- **Star Yellow** (star-yellow): the fill of the one main action per area (Get started, Add a device, Approve, Sign in with Google in the start dialog), count badges, the verdict light when something needs you, and the "needs you" tint on the verdict strip's border. Text on it is always Ink in day and Navy Ink at night.
+- **Star Hover** (star-hover): the main action's hover fill, a half step lighter. Never at rest.
+- **Star Edge** (star-edge): the 1px border that holds a star-filled button against white.
+- **Star Deep** (star-deep): the cursor light's rim on the landing and the gold of its lit dot grid; also the favourite star's edge in the app. Never a fill.
+- **Logo Light** (logo-light): the dot of light in the wordmark only.
 
-### Neutral (night)
-- **Night Ground** (night-ground): the page ground and the agent's chat bubbles and inputs, the darkest step.
-- **Night Panel** (night-panel): sidebar, chat column, panels, cards and device tiles; one step up from the ground.
-- **Night Panel Raised** (night-panel-2): hover fill for buttons and nav items, the person's own chat bubbles, the disabled primary button.
-- **Night Selection** (night-select): the selected nav item, chip and segmented option. A lighter navy step, not a grey.
-- **Night Hairline** (night-line) and **Night Rule** (night-line-strong): panel and divider hairlines, then control borders.
-- **Cream Ink** (cream-ink): all body and heading text on night.
-- **Mist** (night-muted): secondary text, idle nav items, legends.
+### Neutral (day, the default)
+- **Paper** (paper): the page ground, inputs, and the start dialog's surface.
+- **Card White** (card-white): panels, cards, device tiles, accordion rows, chat column.
+- **Paper Raised** (paper-raised): hover fill for buttons and menu items, the disabled main button.
+- **Frame Paper** (frame-paper) with **Dot Grid** (dot-grid): the ground of every framed product canvas on the landing, a 1px dot every 18px.
+- **Hairline** (hairline) and **Rule** (rule): panel and divider hairlines, then control borders. **Rule Hover** (rule-hover) is a control's border on hover.
+- **Field Line** (field-line): the outline of anything you type in or pick from, at least 3:1 on every surface.
+- **Ink** (ink): all body and heading text, the focus ring, the day accent, and the text on star yellow. **Ink Hover** (ink-hover) is an ink-filled button on hover.
+- **Graphite** (graphite): secondary text, legends, idle icons, step numbers.
+- **Pencil** (pencil): the quiet half of a two-tone headline. Large text only (it is 3.5:1 on white).
 
-### Neutral (day)
-- **Warm Cream Ground** (day-ground), **Paper** (day-panel), **Paper Raised** (day-panel-2): the same three surface steps, inverted warm.
-- **Day Hairline** (day-line) and **Day Rule** (day-line-strong): borders, a warm sand rather than grey.
-- **Navy Ink** (navy-ink): all text on light surfaces, the day theme's accent (focus ring, selected ring, links), and the text on every Star Yellow fill in both themes.
-- **Slate Navy** (day-muted): secondary text on cream.
-- **Day Selection** (day-select): a navy tint at 8% over cream.
+### Status (day)
+Each status has a text strength (≥ 4.5:1, for words and small icons) and a livelier fill (≥ 3:1, for dots, rings, borders and meters).
+- **Fine**: ok-text / ok-fill.
+- **Needs a look**: warn-text / warn-fill. The landing deepens the text strength to warn-text-landing so it holds 4.5:1 on its tinted toasts; the app still ships warn-text.
+- **Broken**: crit-text / crit-fill.
+- **Not answering**: offline-text / offline-fill, with dashed borders.
 
-### Status (both themes; never decorative)
-- **Fine** (night-ok / day-ok): device rings and gauges that are healthy, the calm verdict dot, "routine" risk badge.
-- **Needs a look** (night-warn / day-warn): amber rings, gauges, "some risk" badge.
-- **Broken** (night-crit / day-crit): soft coral rings, the outer warning halo on a broken device, "risky" badge, destructive buttons.
-- **Silent** (night-offline / day-offline): devices that are not answering, plain map wires.
-
-The night status hues are pastel so they read on navy; the day hues are deepened so they pass contrast on cream. Pick the set that matches the theme; never mix.
+### Night theme
+The same roles under the same token names: **Night Ground** (night-ground), **Night Panel** (night-panel), **Night Panel Raised** (night-panel-raised), **Night Hairline** (night-line), **Night Rule** (night-rule), **Night Selection** (night-select), **Night Field Line** (night-field-line), **Cream Ink** (cream-ink) for text, **Night Mist** (night-muted) for secondary text. At night the accent is the star itself (focus ring, selected ring), and text on yellow is **Navy Ink** (navy-ink). Night status hues are pastel (night-ok, night-warn, night-crit, night-offline) so they read on navy; pick the set that matches the theme and never mix.
 
 ### Named Rules
-**The Lamp Rule.** Star Yellow is spent only on the primary action, counts and "needs you". If a screen has two yellow things that are not one of those, one of them is wrong.
+**The Lamp Rule.** Star yellow is spent only on the main action, counts, "needs you" and the verdict light. If an area has two yellow things that are not one of those, one of them is wrong.
 
-**The Said-Aloud Rule.** Green, amber and coral are status only and always travel with a word ("needs you", "1 needs a look", "Disk 94"). A coloured dot or ring is never the whole message.
+**The Said-Aloud Rule.** Green, amber, red and slate are status only, and always travel with a word ("Needs a look", "Disk 94% full"). A coloured dot or ring is never the whole message.
 
-**The Navy Ink Rule.** Text on a light surface (cream, paper, star yellow) is Navy Ink, never black.
+**The Ink-Not-Black Rule.** Text is warm near-black Ink, never #000; neutrals are warm sands and graphites, never cool greys.
 
 ## Typography
 
@@ -232,111 +264,128 @@ The night status hues are pastel so they read on navy; the day hues are deepened
 **Body Font:** Funnel Sans (with system-ui, -apple-system, Segoe UI)
 **Mono Font:** ui-monospace, Menlo (commands and codes only)
 
-**Character:** sister faces from one family; Display carries a little more shape for the sentences that matter, Sans stays plain and friendly for everything else. Both load through next/font as `--font-display` and `--font-sans`.
+**Character:** sister faces from one family. Display at a light weight carries the landing's big calm sentences and at a firm weight carries the app's verdict; Sans stays plain and friendly for everything else. Both load through next/font as `--font-display` and `--font-sans`.
 
 ### Hierarchy
-- **Display** (display): the verdict sentence ("2 things need you, 1 urgent" / "All good"). Drops to 19px on phones.
-- **Headline** (headline): the empty chat's greeting under the mascot.
-- **Title** (title): panel headings; the chat column's "Ask Nightlight" sits one step smaller at 17px.
-- **Title Small** (title-sm): sub-section headings inside panels and the device drawer.
-- **Body** (body): all UI text, buttons, nav, chat bubbles (bubbles open up to 1.55 line height for long answers).
-- **Body Small** (body-sm): details, approval-card terms, chips, legends.
-- **Label** (label): the sidebar's group label ("Add to your home"), sentence case, muted, untracked.
-- **Badge** (badge): count badges and risk badges; weight 700, tabular feel.
+- **Display** (450, clamp(2.9rem, 7vw, 6rem), 0.98): the landing hero only ("Go to sleep." / "It's got this."), the quiet half on its own line in Pencil.
+- **Headline** (450, clamp(1.9rem, 3vw, 2.75rem), 1.08): landing chapter headings, two-tone. Big statements and the closing call step up to clamp(2rem, 3.6vw, 3.25rem).
+- **Verdict** (650, 22px, 1.2): the app's verdict sentence ("4 things need you" / "All good"); 19px on phones.
+- **Title** (650, 18px, 1.3): panel headings in the app.
+- **Lede** (400, 1.1875rem, 1.5, max 40ch): the landing's opening paragraph, in Graphite.
+- **Body** (400, 15px, 1.5): all app UI text, buttons, chat. The landing reads at 16px with 17px chapter text, max 46ch.
+- **Body Small** (400, 13px): details, approval-card terms, chips, legends.
+- **Label** (600, 12.5px): menu group labels, sentence case, untracked.
+- **Badge** (700, 11.5px): counts and risk pills.
 
 ### Named Rules
-**The Sentence-First Rule.** The largest type on any app screen is a plain-language sentence about the home, set in Funnel Display at weight 650. Numbers and device names never outrank it.
+**The Sentence-First Rule.** The largest type on any app screen is a plain sentence about the home. Numbers and device names never outrank it.
 
-**The Wordmark-Is-Art Rule.** "nightlight" is never typed in a font. Use the outlined wordmark component (heavy "night", thin "light", the dot of the second i as the light); it follows `color` and takes its light from the logo-light token.
+**The Two-Tone Rule.** A landing heading says one thing in Ink and finishes it in Pencil ("It notices / often before things break"). Never a third colour, never gradient text.
+
+**The Wordmark-Is-Art Rule.** "nightlight" is never typed in a font. Use the outlined wordmark component (heavy "night", thin "light", the dot of the second i as the light).
 
 ## Layout
 
-**Shell (desktop, above 1180px):** three columns: a 236px sidebar, a fluid home column, and a chat column of 340 to 400px, full viewport height with each column scrolling on its own. The home column pads 22px 24px 32px and caps its content at 880px; its children stack with a 16px gap.
+**Landing:** one content column, max 1200px, centred with a fluid side gutter of clamp(16px, 4vw, 56px). The sticky header's frosted bar runs edge to edge, but its contents sit on the same 1200px column. The hero sets the headline left and the lede with actions right, both sitting on the headline's baseline, then a full-width framed dashboard starting above the fold. Chapters alternate text-left/canvas-right and flip; sections are separated generously (roughly 96 to 176px). Below 960px everything stacks to one column, and in a chapter the canvas sits between the words and the list that changes it.
 
-**Narrow desktop (901 to 1180px):** sidebar 216px, chat fixed at 340px, home column padding 18px.
+**App shell (desktop):** a calm header (wordmark, the dashed sample pill, the verdict when the strip is scrolled away, Add a device as the one yellow button, More), then the home column and the chat docked right at 340 to 400px. Each column scrolls on its own. Panels stack with a 16px gap.
 
-**Phones and narrow windows (900px and below):** one pane at a time. A top bar (wordmark, menu button) replaces the sidebar, which becomes a slide-in drawer (up to 300px or 84vw) over a navy scrim; a two-tab Home / Chat bar sits at the bottom with safe-area padding, the active tab marked by a 2px accent line on top. Icon buttons are 44px square. Inputs in the chat are 16px so iOS does not zoom.
+**Phones (900px and below in the app):** one pane at a time with a Home / Chat tab bar at the bottom, safe-area padded. Inputs are 16px so iOS does not zoom.
 
-**Map:** the house map canvas is min(64vh, 620px) tall, at least 360px; the filter row above it scrolls sideways with a soft fade at its right edge rather than wrapping. Below 700px the list view becomes a grid of tiles.
+**Touch:** on coarse pointers every control is at least 44px; the landing's product canvases keep their app-scale density for a mouse and grow for a finger.
 
-**Rhythm:** small steps of 4, 6, 8 and 10px inside components; 16px between panels; panels pad 16px 18px.
+**Rhythm:** small steps of 4, 6, 8 and 10px inside components; 16px between panels.
 
 ## Elevation & Depth
 
-A hybrid: depth is mostly tonal (ground, panel, raised panel), with one soft drop shadow shared by panels, cards, device tiles and floating toolbars. At night the shadow adds a faint top highlight and a deep navy fall-off; by day it is a short navy-tinted shadow. There is no shadow ladder: things are either on the ground or one step up.
+A hybrid, mostly tonal: paper ground, white card, raised paper on hover. One soft long shadow lifts panels, cards and tiles; a stronger lift marks something raised above its siblings (selected, opened, a sheet, a floating card). There is no ladder beyond that: things sit on the ground, lift one step, or float.
 
 ### Shadow Vocabulary
-- **Panel lift** (night: `0 1px 0 rgb(255 255 255 / .03) inset, 0 10px 28px -12px rgb(3 7 20 / .6)`; day: `0 1px 2px rgb(21 34 74 / .05), 0 10px 26px -14px rgb(21 34 74 / .22)`): panels, approval cards, modals, device tiles, the slide-in sidebar.
-- **Status halo** (`0 0 0 3px` of the status or accent colour at 15 to 35%): a broken device tile, a selected device tile, a picked option. A ring, not a lift.
-- **Verdict glow** (`0 0 0 4px` star at 22% plus `0 0 18px 2px` star at 55%, breathing to a wider, fainter glow over 3.2s): only on the verdict light when something needs you.
-- **Scrim** (navy `rgb(5 10 26 / .6)` with a 2 to 3px backdrop blur): behind modals and the phone sidebar.
+- **Card shadow** (`0 1px 2px rgb(26 26 24 / .04), 0 18px 40px -22px rgb(26 26 24 / .22)`; app `--shadow` is the shorter `0 12px 28px -16px` cut): panels, cards, device tiles, open accordion rows.
+- **Float shadow** (`0 2px 4px rgb(26 26 24 / .04), 0 28px 56px -24px rgb(26 26 24 / .3)`): cards floating over a canvas, the start dialog (deeper, `0 40px 80px -32px` at .4).
+- **Status halo** (`0 0 0 3px` of a status fill at 15 to 20%): a broken device tile. A ring, not a lift.
+- **Verdict glow** (`0 0 0 4px` star at 22% plus `0 0 18px 2px` star at 55%, breathing wider over 3.2s): only the verdict light when something needs you.
+- **Night panel lift** (`0 1px 0 rgb(255 255 255 / .03) inset, 0 10px 28px -12px rgb(3 7 20 / .6)`): the night theme's version of the card shadow.
 
 ### Named Rules
-**The Still Control Rule.** Effects never change how a control looks while it is being used. Glows, pulses and line animations live on indicators (the verdict light, a running step dot, a flowing map wire), never on a button, input or chip being pressed, typed into or chosen.
+**The Still Control Rule.** Effects never change how a control looks while it is being used. Glows, pulses, the cursor light and flowing wires live on indicators and the ground, never on a button, input or chip being pressed, typed into or chosen.
 
-**The One Glow Rule.** Only the verdict light glows. Every other emphasis is a ring or a border.
+**The One Glow Rule.** Only the verdict light glows. Every other emphasis is a ring, a border or a lift.
 
-All motion stops under reduced motion: the verdict glow, pulsing step dots, flowing wires and the sidebar slide.
+Under reduced motion every reveal shows in place, the verdict glow and flowing wires stop, and the custom cursor turns off.
 
 ## Shapes
 
-Soft, rounded and consistent. Controls (buttons, inputs, selects, nav items) take gently rounded 10px corners; surfaces (panels, cards, device tiles, the map canvas, modals) take 14px. Chat bubbles round to 16px with the corner nearest their speaker cut to 4px, so the tail points home. Chips, counts, risk badges and the sample label are full pills. Small insets (code blocks, check-up results) use 6 to 8px. Borders are hairlines (1px, 1.5px on device tiles); dashed borders mean "simulated" (the sample label, sample device tiles) or "drawn by Nightlight" (auto-made map links). Device icons sit in a circle whose 2.5px inner ring carries the status colour.
+Soft and consistent. App controls (buttons, inputs, selects, menu items) round to 10px; the landing's larger buttons and accordion rows to 12px; panels, cards and device tiles to 14px; product frames to 16px; chat bubbles to 18px with the corner nearest the speaker cut to 6px; the start dialog to 24px. Chips, counts, risk badges and the sample pill are full pills. Borders are hairlines (1px; 1.5px on device tiles). Dashed borders mean one of two things only: simulated (the sample pill, sample tiles) or not answering (an offline tile).
 
 ## Components
 
 ### Buttons
 Calm and solid; only one per area is yellow.
-- **Shape:** gently rounded (rounded.control), 7px 13px, weight 550.
-- **Default:** panel fill, Rule border, ink text; hover steps to the raised panel. Colour transitions at 150ms, nothing moves.
-- **Primary:** Star Yellow fill, Navy Ink text, no border, weight 650; hover to Star Hover. Disabled primary goes to the raised panel with muted text, not a faded yellow.
-- **Danger:** Broken-coral fill with Night Ground text at night and Paper text by day, only for removing a device after a confirm step.
-- **Focus:** a 2px accent outline offset by 2px (star at night, navy by day).
+- **Shape:** 10px in the app (7px 13px, weight 550); 12px and 48px tall on the landing (38 to 44px in the header).
+- **Main:** Star Yellow with a Star Edge border and Ink text, weight 600 to 650; hover to Star Hover. Disabled goes to Paper Raised with Graphite text, never a faded yellow.
+- **Default / Secondary:** Card White, Rule border, Ink text; hover to Paper Raised with Rule Hover border. Colour transitions at 150ms; nothing moves.
+- **Danger:** Broken red fill, only after a confirm step.
+- **Focus:** a 2px Ink outline offset 2 to 3px (the star at night).
 
-### Chips and segmented controls
-- **Chips:** full pills, 5px 13px, hairline border, weight 500. Selected: Selection fill, ink text, accent border, weight 600.
-- **Segmented (Map / List, Quick / Investigate deeply):** joined buttons with 8px outer corners; the chosen half takes the same Selection fill and accent border.
+### Chips
+Full pills, hairline Rule border, weight 500; hover takes Paper Raised and an Ink border. Used for suggested questions and filters.
 
 ### Inputs / Fields
-- **Style:** ground fill (one step below the panel they sit on), Rule border, 10px corners, 8px 11px. Selects carry a thin chevron.
-- **Focus:** the border disappears into a 2px accent outline at zero offset.
+Paper fill, Field Line border, 10px corners, 8px 11px. Focus drops the border into a 2px Ink outline at zero offset. Selects carry a thin chevron.
 
-### Navigation (sidebar)
-- **Items:** lucide icon at 18px and 1.75 stroke plus a label, 9px 10px, muted text; hover takes the raised panel and ink text.
-- **Selected:** Selection fill, ink text at weight 650, a 1px inset ring of the accent at 45%, the icon in the accent colour.
-- **Count:** a Star Yellow pill with Navy Ink figures at the end of the row.
-- **Order:** wordmark, the dashed "Sample home, simulated" pill, Home / Activity / Trust / Memory, the "Add to your home" group, then a foot (demo tools, theme switch, Save with Google, account) above a hairline.
+### Navigation
+- **Landing header:** sticky frosted bar (paper at 86% with a 12px blur): wordmark left, a segmented pill of section links centre (Graphite, hover to Paper Raised and Ink), Get started right. Below 960px the links fold away.
+- **App header:** wordmark, the dashed "Sample home · simulated" pill, the verdict pill when the strip is out of view, Add a device (yellow), and a More menu holding the side destinations, theme switch and account. Selected menu items take a faint ink selection fill with a thin accent ring.
 
-### Verdict strip (signature)
-A panel at the top of the home column. The sentence in Display type, its light to the left: a 12px Fine-green dot in a soft ring when all is well; a glowing Star Yellow dot and a star-tinted border when something needs you. Below a hairline, one row per item: status dot, device name in muted text, the plain sentence, and one button (the primary only for the item awaiting approval).
+### Accordion steps (landing)
+White rows with a hairline, 12px corners: a Graphite step number ("1.1"), a 600-weight title and a plus that turns to a cross when open. One open at a time; clicking the open row closes it; the body slides open on grid rows over 0.4s. Hover (pointer devices only) strengthens the border, warms a closed row a step and inks the number and icon. Opening a row changes the canvas beside it.
 
-### Device tile (map)
-A 200px panel tile with a 1.5px border: a circular icon whose ring is the status colour, the device name, three ring gauges (Disk, Mem, CPU) labelled under each, and a footer of app dots with a worded summary ("2 apps · needs you"). Broken tiles take a coral border and halo; selected tiles take an accent halo; sample tiles are dashed. A count mark sits on the top-right corner.
+### Product frame (landing signature)
+Every picture of the product sits in a 16px-rounded frame on Frame Paper with a dot grid, captioned "Sample home · simulated" bottom-left. Inside, the dashboard is drawn at app scale: verdict strip, device tiles on wires, the chat, the approval card, the trust ladder. Anything drawn as a button works. On a mouse, the pointer's position lights the dot grid near it: a soft star wash and the nearest dots turning gold, inside frames only.
+
+### Pointer (landing, mouse only)
+A 6px Ink dot with a paper edge sits exactly on the pointer; a 34px hairline ring trails it and stretches along its direction of travel. Over anything clickable the ring opens to 52px around it with no fill, so the control looks exactly like itself; over a text field the dot becomes a 2×20 caret; a press tightens the ring. Touch screens and reduced motion keep the system pointer.
+
+### Motion (landing)
+One authored moment: the home coming online. The hero headline rises line by line through a mask, the dashboard opens from a clipped inset, its wires spread out from the router, the tiles settle in from the centre and the reports arrive last (about 2s, nothing waits on it). Further down, headings reveal by line, chapter lists cascade and each canvas opens with its contents in order; on a desktop with a mouse the canvases drift ±36px against the scroll. Smooth scrolling (Lenis) glides wheels and trackpads; touch scrolls natively. Everything uses the expo ease-out and is visible without script, in print and under reduced motion.
+
+### Verdict strip (app signature)
+A panel at the top of the home. The sentence in Verdict type with its light to the left: a 12px green dot in a soft ring when all is well; a breathing Star Yellow light and a star-tinted border when something needs you. Below a hairline, one row per item: status, device, the plain sentence and one action.
+
+### Device tile
+A white tile with a 1.5px border: a circular icon whose 2px inner ring carries the status fill, the name with its purpose beneath in Graphite, the status word with its icon, and one plain line. Broken tiles take a red border and halo; offline tiles are dashed; a tile being checked takes an Ink border.
 
 ### Approval card
-A raised panel with a Rule border: what happens, what it touches, how to undo, and status in a two-column term list (92px terms), with a risk pill (safe / some risk / risky) and Approve (primary) beside Not now.
+A white card with a Rule border: what it will do, what happens, what it affects and whether it can be undone, as a term list (92px terms in Graphite), a risk pill (safe / some risk / risky), then the main action (Approve, yellow) beside Not now.
+
+### Start dialog
+Opened by Get started, centred on a softened ink scrim (bottom-anchored on phones). Paper surface, 24px corners, the wordmark on top, a Display-face question, a green "Nightlight is live" status line, then the start choices as white cards. Only the first card's button is yellow. Its content scrolls inside a still frame so Close stays in reach; Tab is kept inside and the page behind is inert.
 
 ### Chat
-The docked column on the panel colour, headed "Ask Nightlight" with a chat icon. The person's bubbles sit right on the raised panel; Nightlight's sit left on the ground colour. Earlier turns fade to 75% unless they still hold a waiting card. The work log is a collapsible hairline box in small muted type. Empty chat: the traced mascot, a Headline greeting, and full-width starter questions that take an accent border on hover. While working, the mascot switches to its thinking mood.
+The person's bubbles sit right on a faint ink tint; Nightlight answers as plain text up to 62ch, with its checked steps listed above in small Graphite type. Suggested questions are chips; the field and Send sit in one bordered row.
 
 ### Mascot
-Sadika's traced ninja with the star balloon, used as supplied in flat fills, idle or thinking. Never redrawn, restyled, outlined or given gradients beyond its own star halo.
+Sadika's traced ninja with the star balloon, used as supplied in flat fills (idle, working, done). Small and purposeful: the chat's empty state and working moments, never the subject of the landing. Never redrawn, restyled, outlined or given gradients beyond its own star halo.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** keep the palette to navy, star yellow and cream; use green, amber and soft coral only as status, and always with a word next to them.
-- **Do** spend Star Yellow only on the primary action, counts and "needs you".
-- **Do** show selection as the Selection navy step with a thin accent ring or border.
-- **Do** set every text on cream, paper or yellow in Navy Ink.
-- **Do** use the theme's own status set (pastel at night, deepened by day).
-- **Do** use lucide icons at 18px and 1.75 stroke in the shell.
-- **Do** use the outlined wordmark component and the supplied mascot art as they are.
-- **Do** mark anything simulated with a dashed border and the word "simulated" or "sample".
+- **Do** keep the day palette to paper, white, warm hairlines and Ink, with Star Yellow as the only non-status colour.
+- **Do** spend Star Yellow only on the main action, counts, "needs you" and the verdict light: one yellow button per area.
+- **Do** pair every status colour with a word, using the text strength for words and the fill for dots, rings and meters.
+- **Do** show the product inside a dot-grid frame labelled "Sample home · simulated" rather than describing it.
+- **Do** set landing headings two-tone, Ink then Pencil, at Funnel Display 450.
+- **Do** use Phosphor regular icons through the shared icon module, at one stroke weight.
+- **Do** give every control at least 44px on touch screens and a 2px Ink focus ring.
+- **Do** keep the night theme on the same token names, with its own pastel status set.
 
 ### Don't:
-- **Don't** use grey for selection, hover or borders; every neutral here is a navy or a warm sand.
-- **Don't** use black text on light surfaces.
-- **Don't** let a glow, pulse, lift or animation change how a button, input or chip looks while it is being used.
-- **Don't** put a status colour on anything that is not a status, or show a status by colour alone.
-- **Don't** set "nightlight" in live text or redraw the mascot.
-- **Don't** add a page-level toolbar of buttons above the home column; actions live in the sidebar, in the verdict strip beside the verdict, and next to the thing they act on.
+- **Don't** use #000 or cool greys; every neutral here is a warm sand, graphite or ink.
+- **Don't** put two yellow things in one area unless both are counts or "needs you".
+- **Don't** show a status by colour alone, or put a status colour on anything that is not a status.
+- **Don't** let a glow, pulse, cursor effect or animation change how a button, input or chip looks while it is being used.
+- **Don't** use Pencil for small text; it is for the large quiet half of a heading only.
+- **Don't** type "nightlight" in live text or redraw the mascot; don't make the mascot the subject of the landing.
+- **Don't** use duotone icons, Lucide, emoji or Unicode glyphs as icons.
+- **Don't** add 3D renders or pixel art.

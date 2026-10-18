@@ -6,6 +6,8 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
 gsap.registerPlugin(ScrollTrigger);
+// a phone's address bar showing and hiding changes the viewport height; don't recompute every trigger for it
+ScrollTrigger.config({ ignoreMobileResize: true });
 
 // One Lenis for the whole landing page, driven by GSAP's ticker so smooth
 // scrolling and ScrollTrigger never disagree about where the page is.
@@ -18,7 +20,8 @@ export function reducedMotion() {
 export function useSmoothScroll() {
   useEffect(() => {
     if (reducedMotion()) return;
-    const l = new Lenis({ lerp: 0.09, wheelMultiplier: 0.95 });
+    // a softer glide for wheels and trackpads; touch keeps the device's own native scrolling, which is the smoothest there
+    const l = new Lenis({ lerp: 0.075, wheelMultiplier: 1, smoothWheel: true, syncTouch: false });
     lenis = l;
     l.on("scroll", ScrollTrigger.update);
     const tick = (t: number) => l.raf(t * 1000);
@@ -58,7 +61,8 @@ export function holdSmoothScroll(held: boolean) {
 // Scrolls to an element, a selector or a y offset; jumps under reduced motion.
 export function scrollToTarget(target: string | HTMLElement | number) {
   if (lenis) {
-    lenis.scrollTo(target, { duration: 1.6, easing: (t) => 1 - Math.pow(1 - t, 4) });
+    // anchors land below the sticky header rather than under it
+    lenis.scrollTo(target, { duration: 1.4, offset: typeof target === "number" ? 0 : -80, easing: (t) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t)) });
     return;
   }
   if (typeof target === "number") window.scrollTo({ top: target });

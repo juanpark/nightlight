@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { SplitText } from "gsap/SplitText";
 import { useGSAP } from "@gsap/react";
 import { Logo } from "../../brand/Logo";
 import { Plus } from "../../icons";
@@ -25,7 +26,7 @@ import {
 import { Cursor } from "./Cursor";
 import s from "./Mono.module.css";
 
-gsap.registerPlugin(useGSAP, ScrollTrigger);
+gsap.registerPlugin(useGSAP, ScrollTrigger, SplitText);
 
 // "/": the landing page and sign-in in one, in the day dashboard's light monochrome. The hero is the dashboard on the
 // sample home; then the loop in four chapters, each a framed canvas of the app beside a list that chooses what the
@@ -35,6 +36,14 @@ const LINKS = [
   { href: "#how", label: "How it works" },
   { href: "#privacy", label: "Privacy" },
   { href: "#who", label: "Who it’s for" },
+];
+
+// the four steps the intro promises, each a way into its chapter
+const FOUR = [
+  { href: "#notices", label: "It notices" },
+  { href: "#explains", label: "It explains" },
+  { href: "#asks", label: "It asks" },
+  { href: "#trust", label: "Trust grows" },
 ];
 
 const SENT = [
@@ -135,24 +144,78 @@ export function MonoLanding() {
   const [level, setLevel] = useState(0);
   const onApproval = useCallback((a: ApprovalState) => setApproval(a), []);
 
+  // Motion: one authored moment, then quiet support. The hero is the home coming online: the headline rises line by
+  // line, the dashboard opens, the wires spread out from the router, the devices settle in and their reports arrive.
+  // Further down, each heading reveals by line, each chapter's list cascades and its canvas opens with its contents in
+  // order; on a desktop with a mouse the canvases drift a little against the scroll. Controls never move, everything
+  // is visible without script, and reduced motion keeps the page still.
   useGSAP(
     () => {
       const q = gsap.utils.selector(root);
+      const ease = "expo.out";
+      // a heading rising line by line through its own mask; re-split when the width changes so lines stay true
+      const splitLines = (el: Element, vars: gsap.TweenVars) =>
+        SplitText.create(el, {
+          type: "lines",
+          mask: "lines",
+          linesClass: "nl-line",
+          autoSplit: true,
+          onSplit: (self) => gsap.from(self.lines, { yPercent: 105, duration: 1.1, ease, stagger: 0.09, ...vars }),
+        });
       const mm = gsap.matchMedia();
+
       mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.from(q("[data-hero-rise]"), { y: 18, opacity: 0, duration: 1.1, ease: "expo.out", stagger: 0.07, delay: 0.1 });
-        gsap.from(q("[data-hero-canvas]"), { y: 48, opacity: 0, duration: 1.4, ease: "expo.out", delay: 0.35 });
-        q("[data-chapter]").forEach((el) => {
-          gsap.from(el.querySelectorAll("[data-canvas]"), {
-            y: 56,
-            opacity: 0,
-            duration: 1.2,
-            ease: "expo.out",
-            scrollTrigger: { trigger: el, start: "top 78%", once: true },
+        /* ---- the hero ---- */
+        const hero = gsap.timeline({ defaults: { ease } });
+        // split once the face has loaded so the lines are the real ones; until then the headline waits unseen
+        gsap.set(q("#hero-title"), { autoAlpha: 0 });
+        document.fonts.ready.then(() => {
+          q("#hero-title").forEach((el) => {
+            gsap.set(el, { autoAlpha: 1 });
+            splitLines(el, { delay: 0.1 });
           });
         });
-        q("[data-rise]").forEach((el) => {
-          gsap.from(el, { y: 24, opacity: 0, duration: 1, ease: "expo.out", scrollTrigger: { trigger: el, start: "top 86%", once: true } });
+        hero
+          .from(q("[data-hero-rise]:not(h1)"), { y: 16, opacity: 0, duration: 1, stagger: 0.07 }, 0.3)
+          .from(q(`.${s.heroFrame}`), { clipPath: "inset(7% 5% 0% 5% round 16px)", y: 40, opacity: 0, duration: 1.3, clearProps: "clipPath" }, 0.45)
+          .from(q(`.${s.heroFrame} .${s.appBar}, .${s.heroFrame} .${s.needsStrip}`), { y: -10, opacity: 0, duration: 0.8, stagger: 0.08 }, 0.85)
+          .from(q(`.${s.heroFrame} .${s.wires}`), { clipPath: "circle(0% at 50% 42%)", duration: 1.4, ease: "power2.inOut", clearProps: "clipPath" }, 1.0)
+          .from(q(`.${s.heroFrame} .${s.mapSpot} > *`), { scale: 0.92, opacity: 0, duration: 0.9, stagger: { each: 0.08, from: "center" } }, 1.05)
+          .from(q(`.${s.heroFrame} .${s.toasts} > *`), { y: 14, opacity: 0, duration: 0.8, stagger: 0.08 }, 1.5);
+
+        /* ---- chapters: heading, words, list, then the canvas opening with its contents ---- */
+        q("[data-chapter]").forEach((ch) => {
+          const st = { trigger: ch, start: "top 78%", once: true };
+          ch.querySelectorAll("h2").forEach((h) => splitLines(h, { scrollTrigger: st }));
+          gsap.from(ch.querySelectorAll(`.${s.body}`), { y: 18, opacity: 0, duration: 1, ease, delay: 0.15, scrollTrigger: st });
+          gsap.from(ch.querySelectorAll(`.${s.step}`), { y: 18, opacity: 0, duration: 0.9, ease, stagger: 0.07, delay: 0.25, scrollTrigger: st });
+          const fig = ch.querySelector("[data-canvas] figure");
+          if (!fig) return;
+          gsap
+            .timeline({ defaults: { ease }, scrollTrigger: st })
+            .from(fig, { clipPath: "inset(8% 6% 8% 6% round 16px)", y: 48, opacity: 0, duration: 1.3, clearProps: "clipPath" }, 0.1)
+            .from(fig.querySelectorAll(`.${s.swap} > *, .${s.privacyStage} > *`), { y: 22, opacity: 0, duration: 0.9, stagger: 0.09 }, 0.45);
+        });
+
+        /* ---- everything else that rises: headings by line, lists as lists, the rest one by one ---- */
+        q("h2[data-rise]").forEach((h) => splitLines(h, { scrollTrigger: { trigger: h, start: "top 86%", once: true } }));
+        const listed = q("li[data-rise]");
+        gsap.set(listed, { y: 24, opacity: 0 });
+        ScrollTrigger.batch(listed, {
+          start: "top 90%",
+          once: true,
+          onEnter: (els) => gsap.to(els, { y: 0, opacity: 1, duration: 0.9, ease, stagger: 0.08 }),
+        });
+        q("[data-rise]:not(h2):not(li)").forEach((el) => {
+          gsap.from(el, { y: 24, opacity: 0, duration: 1, ease, scrollTrigger: { trigger: el, start: "top 88%", once: true } });
+        });
+      });
+
+      // a desktop with a mouse: the canvases drift a little against the scroll, so the page has depth. Phones and
+      // tablets scroll natively and keep everything flat.
+      mm.add("(prefers-reduced-motion: no-preference) and (min-width: 961px) and (pointer: fine)", () => {
+        q("[data-chapter] [data-canvas]").forEach((c) => {
+          gsap.fromTo(c, { y: 36 }, { y: -36, ease: "none", scrollTrigger: { trigger: c, start: "top bottom", end: "bottom top", scrub: 0.6 } });
         });
       });
     },
@@ -223,26 +286,26 @@ export function MonoLanding() {
           </div>
         </section>
 
-        <section className={s.band} aria-labelledby="band-title">
-          <div className={s.bandInner}>
-            <div>
-              <h2 id="band-title" className={s.bandTitle}>
-                See it on a sample home.
-              </h2>
-              <p className={s.bandText}>Six simulated devices with a few everyday problems. Try every button.</p>
-            </div>
-            <AuthButtons styles={{ ...s, actions: s.bandActions }} demoOnly />
-          </div>
-        </section>
-
         <section id="how" className={s.intro} aria-labelledby="intro-title">
-          <h2 id="intro-title" className={s.h2Big} data-rise>
-            Run a Pi, a NAS or a game server at home? <span className={s.quiet}>Then you’re the IT person. Nightlight helps.</span>
-          </h2>
-          <p className={s.body} data-rise>
-            A small helper on each computer sends a short health report every minute. When something goes wrong, Nightlight
-            takes the same four steps.
-          </p>
+          <div className={s.introInner}>
+            <h2 id="intro-title" className={s.h2Big} data-rise>
+              Run a Pi, a NAS or a game server at home? <span className={s.quiet}>Then you’re the IT person. Nightlight helps.</span>
+            </h2>
+            <p className={s.body} data-rise>
+              A small helper on each computer sends a short health report every minute. When something goes wrong, Nightlight
+              takes the same four steps.
+            </p>
+            <ol className={s.introSteps} data-rise>
+              {FOUR.map((f, i) => (
+                <li key={f.href}>
+                  <a href={f.href} onClick={go(f.href)}>
+                    <span className={s.stepNum}>{i + 1}</span>
+                    {f.label}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </div>
         </section>
 
         <Chapter
