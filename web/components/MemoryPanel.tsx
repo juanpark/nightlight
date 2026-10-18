@@ -25,7 +25,7 @@ export default function MemoryPanel() {
         {data?.memories.length ? <button onClick={() => api("DELETE", "/api/me/memories").then(() =>
           setData({ ...data, memories: [] }))}>Forget everything</button> : null}
       </div>
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }

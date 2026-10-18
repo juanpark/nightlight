@@ -23,11 +23,28 @@ def _action(uid, aid):
     return db.action(uid, aid).get().to_dict()
 
 
+def test_the_report_right_after_a_job_is_never_throttled(client, started):
+    """A helper reports at once after finishing a job (round-4 VM: that report got 429 and the helper slept ~20 s with
+    its work channel closed, so the chat's next check waited past the in-turn wait). One early report per job result
+    goes through; another early one is still limited."""
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    r = client.post("/helper/jobs/wait?hold=1", json={}, headers={"X-Device-Token": dev["token"]})
+    assert [j["id"] for j in r.json()["jobs"]] == [a["id"]]
+    assert beat(client, dev["token"], ALLOW).status_code == 429  # no job finished yet: the gap still holds
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "ok", "state": "running"},
+                headers={"X-Device-Token": dev["token"]})
+    assert beat(client, dev["token"], ALLOW).status_code == 200  # the report after the job
+    assert beat(client, dev["token"], ALLOW).status_code == 429  # once per job result
+
+
 def test_approved_job_is_delivered_once_and_reported_by_its_device(client, started):
     dev = enrolled(client)
     assert beat(client, dev["token"], ALLOW).json()["jobs"] == []
     a = _propose(started, dev["deviceId"])
-    assert a["status"] == "pending" and a["realm"] == "real" and "docker start pi-grafana-1" in a["dryRun"]
+    assert a["status"] == "pending" and a["realm"] == "real" and a["command"] == "docker start pi-grafana-1"
     _again(dev["token"])
     assert beat(client, dev["token"], ALLOW).json()["jobs"] == []  # not approved yet: nothing handed over
     r = client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
@@ -45,7 +62,7 @@ def test_approved_job_is_delivered_once_and_reported_by_its_device(client, start
     done = _action(started, a["id"])
     assert done["result"]["ok"] is True and done["continuationTurnId"]
     turn = db.turns(started, "sess_test").document(done["continuationTurnId"]).get().to_dict()
-    assert turn["status"] == "queued" and "Restart a stopped container" in turn["input"]
+    assert turn["status"] == "queued" and "Restart an app (Docker)" in turn["input"]
     assert db.services(started, dev["deviceId"]).document("pi-grafana-1").get().to_dict()["status"] == "ok"
     again = client.post(f"/helper/jobs/{a['id']}/result", json={"ok": False, "summary": "x"},
                         headers={"X-Device-Token": dev["token"]})
@@ -202,7 +219,7 @@ def test_restart_a_failed_service_only_when_allowed(client, started):  # slice 1
     beat(client, dev["token"], facts)
     a = actions.propose(started, session_id="sess_test", turn_id="t_svc", generation=generation(started),
                         action_type="restart_service", device_id=dev["deviceId"], params={"unit": "pihole-FTL.service"})
-    assert a["status"] == "pending" and "sudo systemctl restart pihole-FTL.service" in a["dryRun"]
+    assert a["status"] == "pending" and a["command"] == "sudo systemctl restart pihole-FTL.service"
     with pytest.raises(ValueError, match="not_allowed_on_device"):
         actions.propose(started, session_id="sess_test", turn_id="t_svc2", generation=generation(started),
                         action_type="restart_service", device_id=dev["deviceId"], params={"unit": "ssh.service"})
@@ -305,3 +322,138 @@ def test_a_late_wait_never_clears_its_successors_lease(client, started, monkeypa
     monkeypatch.setattr(real, "_wait", slow_wait)
     real.wait_for_jobs(dev["token"], hold=1)
     assert tref.get().to_dict()["waitOwner"] == "wait_B"  # A didn't clear B's lease
+
+
+def test_a_running_but_unhealthy_container_is_flagged_and_can_be_restarted(client, started):
+    dev = enrolled(client)
+    sick = {**FACTS, "allowedJobs": {"restart_container": ["photos", "web"]},
+            "containers": [{"name": "photos", "image": "ghcr.io/immich-app/immich-server:v1", "state": "running",
+                            "status": "Up 3 days (unhealthy)"},
+                           {"name": "web", "image": "nginx:1", "state": "running", "status": "Up 2 days"}]}
+    beat(client, dev["token"], sick)  # an older helper: it would answer "already running"
+    svc = db.services(started, dev["deviceId"]).document(real._doc_id("photos")).get().to_dict()
+    finding = next(f for f in db.device(started, dev["deviceId"]).get().to_dict()["findings"]
+                   if f["check"] == "container_unhealthy")
+    assert svc["status"] == "warn" and finding["svcId"] == real._doc_id("photos")
+    restart = dict(session_id="sess_test", generation=generation(started), action_type="restart_container",
+                   device_id=dev["deviceId"], params={"container": "photos", "restart": True})
+    with pytest.raises(ValueError, match="helper_too_old"):
+        actions.propose(started, turn_id="t_old", **restart)
+    _again(dev["token"])
+    beat(client, dev["token"], {**sick, "helperVersion": real.UNHEALTHY_RESTART_FROM})
+    with pytest.raises(ValueError, match="needs_restart"):  # a start card can't be made for it
+        _propose(started, dev["deviceId"], "photos", turn="turn_start")
+    card = actions.propose(started, turn_id="turn_sick", **restart)
+    assert card["status"] == "pending" and card["command"] == "docker restart photos" and "docker" not in card["dryRun"]
+    with pytest.raises(ValueError, match="not_unhealthy"):  # and a restart only for an unhealthy one
+        actions.propose(started, turn_id="t_r", **{**restart, "params": {"container": "web", "restart": True}})
+
+
+def test_only_a_running_result_marks_a_service_recovered(client, started):  # Codex real/passkey rev2 #1
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    _again(dev["token"])
+    beat(client, dev["token"], ALLOW)
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "It is exited.", "state": "exited"},
+                headers={"X-Device-Token": dev["token"]})
+    assert db.services(started, dev["deviceId"]).document("pi-grafana-1").get().to_dict()["status"] == "warn"
+
+
+SICK = {**FACTS, "helperVersion": real.UNHEALTHY_RESTART_FROM, "allowedJobs": {"restart_container": ["photos"]},
+        "containers": [{"name": "photos", "image": "ghcr.io/immich-app/immich-server:v1", "state": "running",
+                        "status": "Up 3 days (unhealthy)"}]}
+
+
+def test_declining_a_real_restart_says_nothing_changed_and_what_the_device_reported(client, started):
+    dev = enrolled(client)
+    beat(client, dev["token"], SICK)
+    sid = client.post("/api/chat/sessions", json={}).json()["sessionId"]
+    a = actions.propose(started, session_id=sid, turn_id="turn_sick", generation=generation(started),
+                        action_type="restart_container", device_id=dev["deviceId"],
+                        params={"container": "photos", "restart": True})
+    cont = client.post(f"/api/actions/{a['id']}/decide", json={"decision": "deny"}).json()["continuationTurnId"]
+    text = db.turns(started, sid).document(cont).get().to_dict()["input"]
+    assert "nothing was changed" in text and "no job ran" in text and a["plan"] in text
+    assert 'Last known state of photos: needs a look (the device reported: "Up 3 days (unhealthy)")' in text
+    assert "stopped" not in text  # the label "Restart a stopped container" no longer frames a running one
+
+
+def _handed_over(client, started, sid="sess_test"):
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = actions.propose(started, session_id=sid, turn_id="turn_lost", generation=generation(started),
+                        action_type="restart_container", device_id=dev["deviceId"],
+                        params={"container": "pi-grafana-1"})
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    assert len(_deliver(client, dev)) == 1 and _action(started, a["id"])["status"] == "running"
+    return dev, a
+
+
+def _claimed_ago(uid, aid, minutes):
+    from datetime import datetime, timedelta, timezone
+    db.action(uid, aid).update({"claimedAt": datetime.now(timezone.utc) - timedelta(minutes=minutes)})
+
+
+def test_a_job_the_device_never_reports_ends_as_failed_with_a_plain_follow_up(client, started):
+    dev, a = _handed_over(client, started)
+    assert actions.expire_device_jobs(started, dev["deviceId"]) == 0  # still within its time
+    _claimed_ago(started, a["id"], 9)
+    assert actions.expire_device_jobs(started, dev["deviceId"]) == 0
+    _claimed_ago(started, a["id"], 11)
+    assert actions.expire_device_jobs(started, dev["deviceId"]) == 1
+    done = _action(started, a["id"])
+    assert done["status"] == "failed" and done["result"]["summary"] == actions.NO_REPORT
+    turn = db.turns(started, "sess_test").document(done["continuationTurnId"]).get().to_dict()
+    assert turn["status"] == "queued" and "didn't report back" in turn["input"]
+    assert actions.expire_device_jobs(started, dev["deviceId"]) == 0  # once
+    late = client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "Started.", "state": "running"},
+                       headers={"X-Device-Token": dev["token"]})
+    assert late.status_code == 200 and _action(started, a["id"])["status"] == "failed"  # the first ending stands
+
+
+def test_the_scheduled_sweep_ends_jobs_that_never_reported(client, started, monkeypatch):
+    from nightlight_api import archive, watch
+    dev, a = _handed_over(client, started)
+    _claimed_ago(started, a["id"], 11)
+    only = db.client().collection(f"sweepTest_{started}")  # just this device, not every test's on the emulator
+    only.document("d").set({"uid": started, "deviceId": dev["deviceId"]})
+    monkeypatch.setattr(watch, "registry", lambda: only)
+    monkeypatch.setattr(watch, "watch_registry", lambda: db.client().collection(f"sweepTestWatches_{started}"))
+    monkeypatch.setattr(watch, "_reconcile_count", lambda: None)
+    monkeypatch.setattr(archive, "purge_due", lambda: 0)
+    assert watch.sweep()["jobsWithoutReport"] == 1 and _action(started, a["id"])["status"] == "failed"
+
+
+def test_a_read_times_out_sooner_and_after_a_reset_writes_no_follow_up(client, started):
+    dev = enrolled(client)
+    beat(client, dev["token"], {**FACTS, "allowedJobs": {"diagnose": ["pi-grafana-1"]}})
+    a = actions.request_diagnosis(started, session_id="sess_test", turn_id="turn_read", generation=generation(started),
+                                  device_id=dev["deviceId"], target="pi-grafana-1")
+    _again(dev["token"])
+    beat(client, dev["token"], {**FACTS, "allowedJobs": {"diagnose": ["pi-grafana-1"]}})
+    actions.await_diagnosis(started, a["id"])  # the asking turn stopped waiting: a follow-up is wanted
+    _claimed_ago(started, a["id"], 4)
+    client.post("/api/demo/reset", json={})
+    assert actions.expire_unreported(started, a["id"]) is True
+    done = _action(started, a["id"])
+    assert done["status"] == "failed" and done["followUp"] == "skipped_after_reset" and "continuationTurnId" not in done
+
+
+def test_the_waiting_follow_up_finishes_instead_of_hanging(client, started, monkeypatch):
+    from fake_llm import FakeLlm
+    from nightlight_api import agent as agentlib
+    real_build = agentlib.build
+    monkeypatch.setattr(agentlib, "COUNTER", lambda req: 100)  # exact count, faked (as in test_chat)
+    monkeypatch.setattr(agentlib, "build", lambda ctx, continuation, model=None:
+                        real_build(ctx, continuation=continuation, model=FakeLlm()))
+    FakeLlm.behavior = None
+    sid = client.post("/api/chat/sessions", json={}).json()["sessionId"]
+    dev, a = _handed_over(client, started, sid)
+    cont = f"cont_{a['id']}"
+    assert client.post(f"/api/turns/{cont}/stream", json={}).status_code == 404  # not yet: the device may still answer
+    _claimed_ago(started, a["id"], 11)
+    r = client.post(f"/api/turns/{cont}/stream", json={})  # the browser asks again: the job ends and this answers
+    assert r.status_code == 200 and '"type": "done"' in r.text
+    assert _action(started, a["id"])["status"] == "failed"

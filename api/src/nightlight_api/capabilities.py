@@ -36,11 +36,17 @@ class Capability:
     # when a sample-home reset replaced the chat that asked: the device's own state is still recorded then, but
     # nothing new is created for the old conversation.
     on_result: Callable | None = None
+    # (tx, uid, action, device, services) -> result summary: a card the server carries out the moment it is approved
+    # (on_device False), inside the approving transaction, so no device ever claims it. Writes only.
+    on_approve: Callable | None = None
 
 
-def _card(device: dict, plan: str, what: str, undo: str, risk: str, svc_id: str | None = None) -> dict:
+def _card(device: dict, plan: str, what: str, undo: str, risk: str, svc_id: str | None = None,
+          command: str | None = None) -> dict:
+    """Card fields: `plan`, `dryRun` and `rollback` are plain sentences for the owner; `command`, when there is one,
+    is the exact command for whoever wants to see it (the card folds it away)."""
     return {"svcId": svc_id, "plan": plan, "dryRun": what, "rollback": undo, "blastRadius": [device["id"]],
-            "riskClass": risk}
+            "riskClass": risk, **({"command": command} if command else {})}
 
 
 # ------------------------------------------------------------------ builders (validation + the card)
@@ -74,11 +80,12 @@ def _update(c: Ctx):
         raise ValueError("up_to_date")
     if "signed" not in (d.get("allowedJobs") or {}).get("update", []):
         raise ValueError("update_by_hand" if not release.newer(d.get("helperVersion"), "0.8.99") else "updates_off")
-    return _card(d, f"Update the Nightlight helper on the {d.get('name')} from {d.get('helperVersion')} to "
-                    f"{offer['version']}.",
-                 "The helper downloads the new version, installs it only if Nightlight's signature checks out and it "
-                 "passes a self-test, then restarts itself.",
-                 "On the device: nightlight rollback (the previous version is kept).", "service"), \
+    return _card(d, f"Update the Nightlight helper on the {d.get('name')} (version {d.get('helperVersion')} to "
+                    f"{offer['version']}).",
+                 "The helper downloads the new version and installs it only if it is genuinely from Nightlight (its "
+                 "signature checks out) and it passes a self-test, then restarts itself.",
+                 "Yes: the previous version is kept; it can be put back on the device (run \"nightlight rollback\" "
+                 "there).", "service"), \
         {"version": offer["version"]}
 
 
@@ -86,24 +93,76 @@ def _diagnose(c: Ctx):
     target = c.params.get("target")
     real.diagnose_target_ok(c.device, c.services, target)
     logs = target in (c.device.get("allowedJobs") or {}).get("logs", [])
-    return _card(c.device, f"Look into {target} on the {c.device['name']} (read-only).",
+    return _card(c.device, f"Look into {target} on the {c.device['name']} (only looks, changes nothing).",
                  "Reads its status" + (" and its last log lines" if logs else "") + "; changes nothing.",
                  "Nothing to undo.", "read"), {"target": target}
 
 
+def _log_target(c: Ctx, exact: bool = False) -> str:
+    """The reported container or system service a "read logs" card names (when proposing, a service may be named
+    without ".service"; `exact` at approval: the card's own target, still reported, or nothing); ValueError(code)
+    when log reading can't be allowed for it here."""
+    d, target = c.device, c.params.get("target")
+    if d.get("manage") != "app":  # a strict device's permissions are set on the device itself
+        raise ValueError("strict_device" if d.get("manage") == "strict" else "update_helper")
+    if not isinstance(target, str) or not real.TARGET_NAME.fullmatch(target):
+        raise ValueError("bad_target")
+    known = real.log_targets(c.services.values())
+    target = target if target in known else None if exact else \
+        target + ".service" if target + ".service" in known else None
+    if target is None:
+        raise ValueError("no_such_target")
+    logs = (d.get("permissions") or real.DEFAULT_PERMISSIONS).get("logs", [])
+    if target in logs:
+        raise ValueError("already_allowed")
+    if len(logs) >= real.PERMISSION_TARGETS:
+        raise ValueError("too_many_targets")
+    return target
+
+
+def _allow_logs(c: Ctx):
+    target = _log_target(c)
+    return _card(c.device, f"Let Nightlight read the last log lines of {target} on the {c.device['name']}.",
+                 f"From now on, looking into {target} also reads its last 30 log lines (private values are hidden on "
+                 "the device before anything leaves it). Nothing on the device changes.",
+                 "Turn it off any time in the device's Settings, under Permissions.", "read"), {"target": target}
+
+
 def _inspect(c: Ctx):
     what = real.inspect_ok(c.device, c.params.get("what"))
-    return _card(c.device, f"Look around the {c.device['name']}: {', '.join(what)} (read-only).",
-                 "Runs the helper's fixed read-only checks; changes nothing.", "Nothing to undo.", "read"), \
+    return _card(c.device, f"Look around the {c.device['name']}: {', '.join(what)} (only looks, changes nothing).",
+                 "Runs Nightlight's standard checks; changes nothing.", "Nothing to undo.", "read"), \
         {"what": what}
+
+
+def _discover(c: Ctx):
+    from . import real, release
+    if c.device.get("manage") != "app":
+        raise ValueError("strict_device")  # a strict device looks only when someone runs it there
+    if release.newer(real.DISCOVER_FROM, c.device.get("helperVersion")):
+        raise ValueError("update_helper_first")
+    return _card(c.device, f"Look for other devices on the {c.device['name']}'s network (only looks, changes "
+                           "nothing).",
+                 "Lists what answers nearby: a guess at what each thing is, its maker and the services it offers. "
+                 "Addresses never leave the device; nothing joins your map until you add it under Found nearby.",
+                 "Nothing to undo.", "read"), {}
+
+
+def _mac_folders(c: Ctx):
+    if c.device.get("manage") != "app" or "mac" not in (c.device.get("os") or "").lower():
+        raise ValueError("not_applicable")
+    return _card(c.device, f"Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash on the "
+                           f"{c.device['name']} (sizes only).",
+                 "macOS asks once for each folder on the Mac: click Allow there.",
+                 "Turn it off any time in the device's Settings.", "read"), {}
 
 
 def _expert_read(c: Ctx):
     from . import expert
     clean = expert.read_params(c.uid, c.device, c.params.get("command"))
-    return _card(c.device, f"Run on the {c.device['name']} (read-only): {clean['command']}",
-                 "A read-only command under the investigation you signed; the device checks it is read-only.",
-                 "Nothing to undo.", "read"), clean
+    return _card(c.device, f"Run a check that only reads on the {c.device['name']}: {clean['command']}",
+                 "A command that only reads, under the deeper check you approved; the device itself checks it "
+                 "changes nothing.", "Nothing to undo.", "read", command=clean["command"]), clean
 
 
 def _expert_command(c: Ctx):
@@ -125,12 +184,40 @@ def _finish_removal(uid: str, a: dict) -> None:
 
 def _playbook_result(tx, uid: str, a: dict, device: dict, current: bool) -> list:
     """A playbook's checks came back: match causes in code; for the chat that asked, a card per allowed clean-up."""
-    from . import playbooks
-    book = playbooks.library().get(a.get("playbook"))
-    if not book or not a["result"]["ok"]:
+    from . import db, playbooks
+    from google.cloud import firestore
+    if not a["result"]["ok"]:
         return []
+    # Whatever the checks measured about the clean-ups is kept on the device, so a later card is never put up for one
+    # that would free nothing (real._fix_card).
+    sizes = playbooks.measure(a["result"].get("output") or "", a["params"].get("what"), device)
+    measured = {r: {"gb": gb, "at": firestore.SERVER_TIMESTAMP} for r, gb in sizes.items()}
+    writes = [(db.device(uid, device["id"]), {"spaceMeasured": measured}, True)] if measured else []
+    device = {**device, "spaceMeasured": {**(device.get("spaceMeasured") or {}), **measured}}
+    book = playbooks.library().get(a.get("playbook"))
+    if not book:
+        return writes
     a["result"]["playbook"] = playbooks.evaluate(book, a["result"].get("output") or "", device)
-    return playbooks.cards_for_findings(tx, uid, a, device) if current else []
+    return (playbooks.cards_for_findings(tx, uid, a, device) if current else []) + writes
+
+
+def _space_freed(tx, uid: str, a: dict, device: dict, current: bool) -> list:
+    """A clean-up ran: what it cleared now measures nothing, until the device's checks say otherwise."""
+    from . import db
+    from google.cloud import firestore
+    if not a["result"]["ok"]:
+        return []
+    return [(db.device(uid, device["id"]),
+             {"spaceMeasured": {a["params"]["recipe"]: {"gb": 0.0, "at": firestore.SERVER_TIMESTAMP}}}, True)]
+
+
+def _logs_allowed(tx, uid: str, a: dict, device: dict, services: list) -> str:
+    """The owner approved reading a target's logs: added to the device's permissions (with its Activity line)."""
+    target = _log_target(Ctx(uid, device, {s["id"]: s for s in services}, a["params"]), exact=True)
+    perms = {**real.DEFAULT_PERMISSIONS, **(device.get("permissions") or {})}
+    real.permission_writes(tx, uid, device["id"], device, services, {**perms, "logs": [*perms["logs"], target]})
+    return (f"Nightlight may now read the log lines of {target}. The device picks this up with its next report "
+            "(within about a minute); looking into it after that includes its last log lines.")
 
 
 def _store_grant(tx, uid: str, a: dict) -> list:
@@ -148,29 +235,34 @@ def _helper_updated(tx, uid: str, a: dict, device: dict, current: bool) -> list:
 
 def _service_recovered(tx, uid: str, a: dict, device: dict, current: bool) -> list:
     from . import db
-    if not a["result"]["ok"] or not a.get("svcId"):
-        return []
+    state = (a["result"].get("after") or {}).get("state")
+    if not a["result"]["ok"] or not a.get("svcId") or state not in ("running", "active"):
+        return []  # only a result that says it is running again counts as recovered
     # recovered: no new restart card until the device reports it failed again
     return [(db.services(uid, device["id"]).document(a["svcId"]),
              {"status": "ok", "detail": (a["result"].get("after") or {}).get("state"), "failed": False}, True)]
 
 
 REGISTRY: dict[str, Capability] = {c.name: c for c in (
-    Capability("restart_container", "Restart a stopped container", "card", _restart_container,
+    Capability("restart_container", "Restart an app (Docker)", "card", _restart_container,
                reports_state=True, on_result=_service_recovered),
-    Capability("restart_service", "Restart a stopped system service", "card", _restart_service,
+    Capability("restart_service", "Restart a stopped background service", "card", _restart_service,
                reports_state=True, on_result=_service_recovered),
-    Capability("fix", "Clean up space", "card", _fix),
-    Capability("update_helper", "Update the helper", "card", _update, on_result=_helper_updated),
+    Capability("fix", "Clean up space", "card", _fix, on_result=_space_freed),
+    Capability("update_helper", "Update the Nightlight helper", "card", _update, on_result=_helper_updated),
     Capability("remove_device", "Remove a device", "card", _remove, while_silent=True,
                after_approval=_finish_removal),
     Capability("diagnose", "Look into", "device", _diagnose, reads=True, keeps_output=True),
     Capability("inspect", "Look around", "device", _inspect, reads=True, keeps_output=True,
                on_result=_playbook_result),
-    Capability("expert_read", "Investigate (read-only command)", "device", _expert_read, reads=True,
+    Capability("discover", "Look for devices nearby", "card", _discover, reads=True),
+    Capability("allow_logs", "Allow reading an app's recent messages (logs)", "card", _allow_logs, on_device=False, while_silent=True,
+               on_approve=_logs_allowed),
+    Capability("mac_folders", "Measure the Mac's private folders", "card", _mac_folders, reads=True),
+    Capability("expert_read", "Deeper check (a command that only reads)", "device", _expert_read, reads=True,
                keeps_output=True),
-    Capability("expert_command", "Run a command you signed", "passkey", _expert_command, keeps_output=True),
-    Capability("expert_grant", "Investigate with commands (read-only, 15 minutes)", "passkey", _expert_grant,
+    Capability("expert_command", "Run a command you approved with your passkey", "passkey", _expert_command, keeps_output=True),
+    Capability("expert_grant", "Let Nightlight look deeper for 15 minutes (it can only look)", "passkey", _expert_grant,
                on_device=False, on_signed=_store_grant),
 )}
 

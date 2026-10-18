@@ -27,7 +27,7 @@ def _expire_lease(uid):
 def test_reset_stales_old_cards_and_reseeds(started):
     uid = started
     a = propose(uid)
-    actions.decide(uid, propose(uid)["id"], "approve")
+    actions.decide(uid, propose(uid, device="game-1")["id"], "approve")  # another job (the same one twice is one card)
     demo.inject(uid, "disk_full", "pi-1")
     out = demo.reset(uid)
     assert out["demoGeneration"] == 2 and generation(uid) == 2

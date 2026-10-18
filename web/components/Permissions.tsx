@@ -11,13 +11,16 @@ import type { Device, Permissions as Perms, Service } from "@/lib/types";
 // because without it Nightlight can't explain anything; "updates" too, since signed updates are how the helper gets
 // fixes without a terminal.
 type Preset = "watch" | "fix" | "custom";
-const WATCH: Perms = { ...DEFAULTS };
+// Reading recent log lines is part of watching (it is how Nightlight explains why something stopped); switch it off
+// below. Lines are scrubbed of secrets on the device before they leave.
+const watchAll = (targets: string[]): Perms => ({ ...DEFAULTS, logs: targets });
 const fixAll = (targets: string[], containers: string[], units: string[]): Perms => ({ diagnose: true, cleanup: true,
   updates: true, autoUpdate: true, logs: targets, restart_container: containers, restart_service: units });
-const PRESETS: { id: Preset; name: string; copy: string }[] = [
-  { id: "watch", name: "Just watch", copy: "Reports health and explains problems. Changes nothing." },
-  { id: "fix", name: "Watch and fix safe things", copy: "Also reads recent logs, restarts stopped apps and cleans up "
-    + "space, each after your OK. Keeps its helper up to date." },
+export const PRESETS: { id: Preset; name: string; copy: string }[] = [
+  { id: "watch", name: "Just watch", copy: "Reports health, reads apps' recent messages (logs) and explains problems. "
+    + "Changes nothing." },
+  { id: "fix", name: "Watch and fix safe things", copy: "Also reads apps' recent messages (logs), restarts stopped apps "
+    + "and cleans up space, each after your OK. Keeps its helper up to date." },
   { id: "custom", name: "Custom", copy: "Your own mix below." },
 ];
 const presetKey = (id: string) => `nl_preset_${id}`;
@@ -32,10 +35,10 @@ function Applies({ jobs = {} }: { jobs?: Record<string, string[]> }) {
   const rows = [
     jobs.diagnose?.length ? "Check why something stopped (reads status only)" : null,
     jobs.inspect?.length ? "Look around when asked: disk use, busiest programs, updates, network (reads only)" : null,
-    jobs.fix?.length ? "Clean up space after you approve (Trash, caches that rebuild themselves, unused images)" : null,
-    jobs.logs?.length ? `Read recent log lines of ${list(jobs.logs)}` : null,
+    jobs.fix?.length ? "Clean up space after you approve (Trash, caches that rebuild themselves, leftover app downloads)" : null,
+    jobs.logs?.length ? `Read the recent messages (log lines) of ${list(jobs.logs)}` : null,
     jobs.restart_container?.length ? `Restart ${list(jobs.restart_container)} after you approve` : null,
-    jobs.restart_service?.length ? `Restart the system service ${list(jobs.restart_service)} after you approve` : null,
+    jobs.restart_service?.length ? `Restart the built-in service ${list(jobs.restart_service)} after you approve` : null,
   ].filter(Boolean) as string[];
   return (
     <ul className="perm-list small">
@@ -87,7 +90,8 @@ export default function Permissions({ device, services }: { device: Device; serv
     ...want.restart_service])].sort();
   const targets = [...new Set([...containers, ...units, ...want.logs])].sort();
   const fix = fixAll(targets, containers, units);
-  const preset: Preset = samePerms(want, WATCH) ? "watch" : samePerms(want, fix) ? "fix" : "custom";
+  const watch = watchAll(targets);
+  const preset: Preset = samePerms(want, watch) ? "watch" : samePerms(want, fix) ? "fix" : "custom";
   // Permissions only change on a click: a preset chosen earlier never widens anything by itself. When apps appeared
   // after "Watch and fix safe things" was chosen, the person is told and taps it again to include them.
   const within = (a: string[], b: string[]) => a.every((x) => b.includes(x));
@@ -101,9 +105,9 @@ export default function Permissions({ device, services }: { device: Device; serv
         <h4>What Nightlight may do here</h4>
         <Applies jobs={jobs} />
         {device.manage === "strict"
-          ? <p className="small muted">Set on the device (strict): change permissions there
-              with <code>nightlight settings</code>. Presets are for devices managed from the app.</p>
-          : <p className="small muted">Update the helper to manage permissions from here. On the device, run
+          ? <p className="small muted">This device was set up to be changed only on the device itself (its
+              extra-cautious mode). To change what Nightlight may do, run <code>nightlight settings</code> there.</p>
+          : <p className="small muted">Update the helper to change these from here. Paste this on the device:
               <code className="perm-cmd">curl -fsSL {origin}/install.sh | sh</code></p>}
       </section>
     );
@@ -136,7 +140,7 @@ export default function Permissions({ device, services }: { device: Device; serv
   function pick(p: Preset) {
     try { localStorage.setItem(presetKey(device.id), p); } catch { /* remembered for this visit only */ }
     setChosen(p);
-    if (p === "watch") save(WATCH);
+    if (p === "watch") save(watch);
     else if (p === "fix") save(fix);
     else setOpen(true);
   }
@@ -161,19 +165,19 @@ export default function Permissions({ device, services }: { device: Device; serv
         onChange={(on) => edit({ ...want, diagnose: on })} />
 
       <Switch on={want.cleanup} label="Clean up space after you approve"
-        hint="(empty the Trash, clear caches that rebuild themselves, remove unused Docker images; a card each time)"
+        hint="(empty the Trash, clear caches that rebuild themselves, remove leftover app downloads no app uses; a card each time)"
         onChange={(on) => edit({ ...want, cleanup: on })} />
 
       <Switch on={want.updates} label="Install Nightlight updates from the app"
-        hint="(only versions signed by Nightlight; checked on the device)"
+        hint="(only genuine Nightlight versions; the device double-checks that itself)"
         onChange={(on) => edit({ ...want, updates: on, autoUpdate: on && want.autoUpdate })} />
-      {want.updates && <Switch on={want.autoUpdate} label="Install signed updates automatically"
+      {want.updates && <Switch on={want.autoUpdate} label="Install those updates automatically"
         hint="(otherwise you tap Update each time)" onChange={(on) => edit({ ...want, autoUpdate: on })} />}
 
-      <Switch on={allLogs} label="Read recent log lines" hint="(private details hidden on the device first)"
+      <Switch on={allLogs} label="Read apps' recent messages (log lines)" hint="(private details hidden on the device first)"
         disabled={targets.length === 0} onChange={(on) => edit({ ...want, logs: on ? targets : [] })} />
-      {targets.length === 0 && <div className="small muted perm-note">Nothing to read here yet: this appears when an
-        app or service on this device can be checked (containers, or a system service that stopped).</div>}
+      {targets.length === 0 && <div className="small muted perm-note">Nothing to read here yet: this appears once an
+        app on this device can be checked (a background app, or a built-in service that stopped).</div>}
       {targets.length > 0 && (
         <details className="perm-more small">
           <summary className="muted">{allLogs ? "For everything it checks" : want.logs.length
@@ -186,18 +190,19 @@ export default function Permissions({ device, services }: { device: Device; serv
       <div className="perm-group">
         <div>Restart a stopped app after you approve</div>
         {containers.length === 0 && units.length === 0 && (
-          <div className="small muted">Nothing to restart right now: this lists containers and services that stopped.</div>)}
+          <div className="small muted">Nothing to restart right now: apps and built-in services that stop show up here.</div>)}
         {containers.map((c) => <Switch key={c} on={want.restart_container.includes(c)} label={c}
           onChange={(on) => edit({ ...want, restart_container: toggle(want.restart_container, c, on) })} />)}
         {units.length > 0 && <>
-          {units.map((u) => <Switch key={u} on={want.restart_service.includes(u)} label={u} hint="(system service)"
+          {units.map((u) => <Switch key={u} on={want.restart_service.includes(u)} label={u} hint="(built-in background service)"
             onChange={(on) => edit({ ...want, restart_service: toggle(want.restart_service, u, on) })} />)}
-          <div className="small muted">Needs administrator rights on the device; see the README.</div>
+          <div className="small muted">Works only if the helper may act as administrator on the device without being
+            asked for a password. If it may not, the restart does nothing and the card says so.</div>
         </>}
       </div>
       </details>
 
-      {error && <p className="small" style={{ color: "var(--crit)" }}>{error}</p>}
+      {error && <p className="small" style={{ color: "var(--crit-ink)" }}>{error}</p>}
       <p className="small muted perm-foot">
         <span className={`dot ${inForce ? "ok" : "offline"}`} />
         {inForce ? "Applied" : "Waiting for the device…"}

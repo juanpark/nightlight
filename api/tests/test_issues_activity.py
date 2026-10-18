@@ -36,7 +36,7 @@ def test_known_problem_stops_lighting_orange_until_it_gets_worse(client, started
     beat(client, dev["token"], {**ONE_PROBLEM, "diskPct": 95.0})  # a new, worse problem still lights up
     assert _dev(started, dev)["status"] == "crit"
     summary = agentlib.fleet_summary(started, generation(started))
-    assert "1 known problem" in summary
+    assert "Known problems the owner has chosen to leave alone for now (not new): " in summary
 
 
 def test_snooze_runs_out(client, started):
@@ -61,7 +61,7 @@ def test_activity_records_real_devices_and_survives_reset(client, started):
     client.post("/api/demo/reset", json={})
     assert {"joined", "status_warn"} <= {e["kind"] for e in _events(started)}
     client.post("/helper/leave", json={}, headers={"X-Device-Token": dev["token"]})
-    assert "removed" in {e["kind"] for e in _events(started)}  # uninstalled by hand: archived, leaves the map
+    assert "uninstalled" in {e["kind"] for e in _events(started)}  # uninstalled by hand: stays on the map, offline
 
 
 def test_tags_are_saved_cleaned_and_shown_to_the_agent(client, started):

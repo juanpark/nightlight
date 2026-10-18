@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signInWithPopup, signOut, type AuthCredential, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
@@ -8,12 +8,16 @@ import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents,
 import { byDevice, needsYou, verdict, type Go, useDismissed } from "@/lib/needsYou";
 import NeedsList from "./NeedsList";
 import FoundNearby from "./FoundNearby";
+import { addable, useFound } from "@/lib/found";
 import { useEventNotifications, useNotifySetting } from "@/lib/notify";
 import WatchPanel from "./WatchPanel";
-import WatchedRow from "./WatchedRow";
 import AwayBanner from "./AwayBanner";
 import HomeView from "./map/HomeView";
-import DeviceDrawer from "./DeviceDrawer";
+import DeviceDrawer, { type Tab } from "./DeviceDrawer";
+import AccountSettings from "./AccountSettings";
+import Tour from "./Tour";
+import { restartTour } from "@/lib/tour";
+import { leaveLive, useLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -23,32 +27,54 @@ import FirstRun from "./FirstRun";
 import "@/app/mobile.css";
 import MemoryPanel from "./MemoryPanel";
 
-type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
+type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
 
-export default function Home({ user }: { user: User }) {
-  const uid = user.uid;
+// account: on a live demo machine, the machine's account, whose data this visit (its own throwaway user) sees
+export default function Home({ user, account }: { user: User; account?: string }) {
+  const live = !!account;
+  const uid = account ?? user.uid; // the data (Firestore users/{uid}/…)
+  const visit = user.uid; // what this browser remembers (tours, dismissed hints)
   const me = useUserDoc(uid);
   const gen = me?.demoGeneration;
   const now = useNow();
   const rawDevices = useDevices(uid, gen);
   const links = useLinks(uid, gen);
-  const devices = useMemo(() => rawDevices.map((d) => presented(d, now)), [rawDevices, now]);
+  const machine = useLive();
+  // on a live machine, a report from before this visit is the clean copy's: the device is still starting
+  const since = live ? machine.leaseStart ?? Infinity : undefined;
+  const devices = useMemo(() => rawDevices.map((d) => {
+    const p = presented(d, now);
+    return since !== undefined && d.realm === "real" && !((d.lastSeen?.getTime() ?? 0) > since)
+      ? { ...p, status: "offline" as const, health: "unknown" as const, findings: [], starting: true } : p;
+  }), [rawDevices, now, since]);
   const actions = useActions(uid, gen);
   const events = useEvents(uid, gen);
   const trust = useTrust(uid, gen);
   const watches = useWatches(uid);
   const discoveries = useDiscoveries(uid);
+  const found = useFound(discoveries, now);
   const release = useRelease();
   const expert = useExpertStatus();
   // Everything waiting for the person, derived once: tile marks, the device panel and the strip use the same items.
   const [dismissed] = useDismissed();
-  const needs = useMemo(() => needsYou({ devices, actions, trust, discoveries, release, expert, now, dismissed }),
-    [devices, actions, trust, discoveries, release, expert, now, dismissed]);
+  const needs = useMemo(() => needsYou({ devices, actions, trust, found: addable(found.items), release, expert, now,
+    dismissed }), [devices, actions, trust, found.items, release, expert, now, dismissed]);
   const marks = useMemo(() => byDevice(needs), [needs]);
-  const [drawerTab, setDrawerTab] = useState<"overview" | "about" | "settings">("overview");
+  const [drawerTab, setDrawerTab] = useState<Tab | null>(null); // null: the last tab used for that kind of device
   const notify = useNotifySetting();
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
+  const [app, setApp] = useState<string | null>(null); // one app on the selected device, opened on its own
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const closeDrawer = useCallback(() => {
+    // keyboard focus goes back to the device on the map, when it was in the panel
+    const back = selectedRef.current;
+    const inPanel = document.activeElement?.closest(".drawer.side");
+    setSelected(null); setApp(null);
+    if (inPanel && back) requestAnimationFrame(() =>
+      (document.querySelector(`.react-flow__node[data-id="${CSS.escape(back)}"]`) as HTMLElement | null)?.focus());
+  }, []);
   const [panel, setPanel] = useState<Panel>("none");
   const chat = useRef<ChatHandle>(null);
   const starting = useRef(false);
@@ -69,29 +95,51 @@ export default function Home({ user }: { user: User }) {
     finally { setSwitching(false); }
   }
 
-  const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const allTags = useMemo(() => [...new Set([...devices, ...watches].flatMap((d) => d.tags ?? []))].sort(),
-    [devices, watches]);
-  const visible = useMemo(() => tagFilter.length === 0 ? devices : devices.filter((d) => tagFilter.some((t) =>
-    t === "Sample" ? d.realm !== "real" : (d.tags ?? []).includes(t))), [devices, tagFilter]);
-  // Watched websites are never samples: under a filter they show only when they carry one of its tags.
-  const visibleWatches = tagFilter.length === 0 ? watches
-    : watches.filter((w) => tagFilter.some((t) => (w.tags ?? []).includes(t)));
   const resetting = me?.demo?.state === "resetting";
   // Phones show one pane at a time (Home or Chat, switched by the tab bar) and fold the header into a menu.
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
   const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
-  const toggle = (p: Panel) => { setMenu(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
+  const [more, setMore] = useState(false); // wide screens: the secondary header links, folded under More
+  useEffect(() => {
+    if (!more) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element).closest?.(".more")) setMore(false);
+    };
+    document.addEventListener("keydown", close); document.addEventListener("pointerdown", close);
+    return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close); };
+  }, [more]);
+  const toggle = (p: Panel) => { setMenu(false); setMore(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
   function go(g: Go) {
-    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.tab ?? "overview"); }
+    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.app ? "apps" : g.tab ?? null); setApp(g.app ?? null); }
     else if (g.to === "panel") setPanel(g.panel);
     else if (g.to === "chat") askChat(g.ask);
   }
 
+  // Save with Google links this visit to a Google account; one that already has its own home can't take it, so say
+  // so and offer to sign in to that account instead
+  const [linkTaken, setLinkTaken] = useState<AuthCredential | null | false>(false); // null: sign in afresh
+  const [linkExpired, setLinkExpired] = useState(false);
   async function saveWithGoogle() {
     const { auth } = await firebase();
-    if (auth.currentUser) await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e) => alertless(e));
+    if (!auth.currentUser) return;
+    await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e: { code?: string }) => {
+      if (e?.code === "auth/credential-already-in-use" || e?.code === "auth/email-already-in-use") {
+        setLinkExpired(false);
+        setLinkTaken(GoogleAuthProvider.credentialFromError(e as Parameters<typeof GoogleAuthProvider.credentialFromError>[0]));
+      }
+      else alertless(e);
+    });
+  }
+  // the anonymous visit stays until one of these succeeds
+  async function useTakenAccount() {
+    const { auth } = await firebase();
+    if (linkTaken) {
+      // the credential from the failed link can expire: then ask for a fresh Google sign-in instead
+      await signInWithCredential(auth, linkTaken).catch((e) => { alertless(e); setLinkTaken(null); setLinkExpired(true); });
+    } else {
+      await signInWithPopup(auth, new GoogleAuthProvider()).catch(alertless);
+    }
   }
 
   return (
@@ -101,27 +149,47 @@ export default function Home({ user }: { user: User }) {
         {user.isAnonymous
           ? <span className="pill">Sample home: simulated</span>
           : <button className="small" disabled={switching || !me} onClick={toggleSample}
-              title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
+              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide practice home" : "Practice home"}</button>}
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
-        <button onClick={() => toggle("trust")}>Trust</button>
-        <button onClick={() => toggle("activity")}>Activity</button>
-        <button onClick={() => toggle("memory")}>Memory</button>
-        <button onClick={() => toggle("add")}>Add a device</button>
+        <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
-        <button onClick={() => toggle("found")}>Found nearby</button>
-        <button onClick={() => toggle("demo")}>Demo tools</button>
+        <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
         {user.isAnonymous
-          ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
-          : <span className="small muted">{user.email}</span>}
-        <button onClick={async () => signOut((await firebase()).auth)}>Sign out</button>
+          && <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>}
+        <div className="more">
+          <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
+            onClick={() => setMore(!more)}>More</button>
+          <div className={`more-list ${more ? "open" : ""}`}>
+            <button onClick={() => toggle("trust")}>Trust</button>
+            <button onClick={() => toggle("activity")}>Activity</button>
+            {!live && <button onClick={() => toggle("memory")}>Memory</button>}
+            <button onClick={() => toggle("demo")}>Demo tools</button>
+            <button onClick={() => toggle("settings")}>Settings</button>
+            {!user.isAnonymous && <span className="small muted" title={user.email ?? undefined}>{user.email}</span>}
+            <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
+          </div>
+        </div>
         </nav>
       </header>
       <div className="main" data-pane={pane}>
         <section className="left">
-          <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
-          <div className="panel needs needs-strip">
+          {linkTaken !== false && (
+            <div className="panel" role="alert">
+              <p style={{ marginTop: 0 }}>That Google account already has its own Nightlight home, so this visit can&apos;t
+                be saved into it.</p>
+              <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="primary" onClick={useTakenAccount}>{linkExpired ? "Sign in with Google again"
+                  : "Sign in to that account instead"}</button>
+                <button onClick={() => setLinkTaken(false)}>Stay here</button>
+              </div>
+              {linkExpired && <p className="small" style={{ color: "var(--crit-ink)" }}>That sign-in expired. Sign in with
+                Google again.</p>}
+              <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
+            </div>)}
+          <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
+          <div className="panel needs needs-strip" data-tour="needs">
             <strong className="verdict">{verdict(needs)}</strong>
             <span className="spacer" />
             {notify.supported && (
@@ -130,44 +198,39 @@ export default function Home({ user }: { user: User }) {
                   ? "Notifications are blocked for this site in your browser settings"
                   : "Show a notification when something goes wrong, while this tab is open"}>
                 {notify.on ? "Notifying you" : "Notify me"}</button>)}
-            <button onClick={() => askChat("Is anything wrong at home?")}>Check-up now</button>
+            <button onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
             <div style={{ flexBasis: "100%" }}>
               <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
                 onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
             </div>
           </div>
-          {panel === "trust" && <TrustPanel trust={trust} />}
+          {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
-          {panel === "memory" && <MemoryPanel />}
+          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}
+            onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
+          {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
-          {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
+          {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby discoveries={discoveries} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
-          {(allTags.length > 0 || devices.some((d) => d.realm !== "real")) && (
-            <div className="chips" aria-label="Show only">
-              <button className={tagFilter.length === 0 ? "on" : ""} onClick={() => setTagFilter([])}>All</button>
-              {[...allTags, ...(devices.some((d) => d.realm !== "real") ? ["Sample"] : [])].map((t) => (
-                <button key={t} className={tagFilter.includes(t) ? "on" : ""} onClick={() =>
-                  setTagFilter((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t])}>{t}</button>
-              ))}
-            </div>
-          )}
-          <HomeView uid={uid} devices={visible} links={links} marks={marks} selected={selected} now={now}
-            onSelect={(id) => { setSelected(id); setDrawerTab("overview"); }} onAsk={askChat}
+          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
+          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
+          <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
+            onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
+            onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
             settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
-          <WatchedRow watches={visibleWatches} now={now} onAsk={(q) => askChat(q)} />
-          {selected && devices.find((d) => d.id === selected) && (
-            <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
-              needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
-              onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
-              onAsk={(q) => askChat(q)} onClose={() => setSelected(null)} />
-          )}
         </section>
+        {/* the device panel: from the left over the map's edge on a wide screen, a full-height sheet on a phone */}
+        {selected && devices.find((d) => d.id === selected) && (
+          <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
+            needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
+            onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
+            onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} hidden={pane === "chat"} />
+        )}
         <aside className="right">
-          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
+          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me}
+            onShowMap={() => { setPanel("none"); setPane("home"); }} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
@@ -175,7 +238,11 @@ export default function Home({ user }: { user: User }) {
           Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
         <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
       </nav>
-      {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
+      <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)
+        && (!live || machine.machineReady)}
+        state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
+          realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
+      {resetting && <div className="overlay"><div className="modal">Resetting the sample home…</div></div>}
     </div>
   );
 }

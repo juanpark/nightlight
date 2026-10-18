@@ -5,9 +5,13 @@ Every report carries: OS name, CPU architecture, CPU / memory / disk percentages
 image name and tag without any registry address or path, state, status text), the names of failed system services
 (and, on a Mac, of your own failing background items), how many software updates are waiting, two yes/no safety
 facts (administrator commands without a password; SSH password logins), what you allowed here, and up/down results
-for things you chose to have it watch. It never sends host names, IP or hardware addresses, files, environment
-variables or passwords. Log lines leave only for a container or service you allowed with `allow logs NAME`, and are
-scrubbed here first. It talks only HTTPS to the address you joined with.
+for things you chose to have it watch. It never sends its host name, IP or hardware addresses, files, environment
+variables or passwords. To draw lines between your devices it sends keyed fingerprints of local network addresses
+(its own, its router's, and those it backs up to or relies on), never the addresses themselves. Things it finds nearby
+are sent as a guess of what they are and their maker and model (only a known brand, and a model that is a known Apple
+model or looks like a product code), never their addresses; the names they announce ("Living Room") are sent only
+while your account shows names (on by default, a switch in Settings). Log lines leave only for a container or
+service you allowed with `allow logs NAME`, and are scrubbed here first. It talks only HTTPS to the address you joined with.
 
 By default it changes nothing. You can allow, per target and on this machine only: restarting a stopped Docker
 container, restarting a failed system service, and reading why something is down. Even then a change runs only
@@ -16,6 +20,7 @@ after you approve its card in the app; Nightlight sends a job name and target, n
 Usage:
   nightlight_helper.py enrol <API_URL> <CODE> [--name NAME]   # join with a one-time code from the app
   nightlight_helper.py pair <API_URL> [--web URL]              # or: show a code to approve in the app / by phone
+  nightlight_helper.py pair <API_URL> --web URL --browser --install  # the Mac installer: approve in the browser
   nightlight_helper.py install | uninstall | status            # run in the background (systemd / launchd)
   nightlight_helper.py settings                                # app-managed or strict; strict: what's allowed
   nightlight_helper.py once                                    # send one report
@@ -47,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.19"
+VERSION = "0.9.34"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -101,6 +106,9 @@ def _cpu_mem_uptime():
         cpu = min(round(load / (os.cpu_count() or 1) * 100, 1), 100.0)
     except (OSError, AttributeError):
         pass
+    busy = _cpu_busy(0.5)  # Linux: how busy the processor really is, not the load average dressed up as a percent
+    if busy is not None:
+        cpu = busy
     if sys.platform == "darwin":
         mem, up = _mac_mem_uptime()
         return cpu, mem, up
@@ -116,6 +124,33 @@ def _cpu_mem_uptime():
     except (OSError, KeyError, ValueError):
         pass
     return cpu, mem, up
+
+
+_PROC = "/proc"
+
+
+def _cpu_times():
+    """(idle ticks, all ticks) of the whole processor from /proc/stat, or None (not Linux)."""
+    try:
+        with open(f"{_PROC}/stat") as f:
+            fields = [int(x) for x in f.readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    if len(fields) < 4:
+        return None
+    return fields[3] + (fields[4] if len(fields) > 4 else 0), sum(fields[:8])
+
+
+def _cpu_busy(seconds):
+    """Percent of all cores busy over the next `seconds` (two /proc/stat reads), or None."""
+    a = _cpu_times()
+    if a is None or seconds <= 0:
+        return None
+    time.sleep(seconds)
+    b = _cpu_times()
+    if b is None or b[1] <= a[1]:
+        return None
+    return round(min(100.0, max(0.0, 100 * (1 - (b[0] - a[0]) / (b[1] - a[1])))), 1)
 
 
 def _mac_mem_uptime():
@@ -173,9 +208,9 @@ def _failed_units(timeout=20):
 _SLOW = {}  # slow checks are re-run at most hourly
 
 
-def _hourly(key, fn):
+def _hourly(key, fn, every=3600):
     hit = _SLOW.get(key)
-    if hit and time.time() - hit[0] < 3600:
+    if hit and time.time() - hit[0] < every:
         return hit[1]
     value = fn()
     _SLOW[key] = (time.time(), value)
@@ -244,13 +279,57 @@ def _ssh_password_login():
 
 def facts():
     cpu, mem, up = _cpu_mem_uptime()
-    return {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
-            "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
-            "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
-            "watchResults": _watch_results(), "failedAgents": _failed_agents(),
-            "manage": _manage(),
-            "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
-                       "sshPasswordLogin": _ssh_password_login()}}
+    out = {"helperVersion": VERSION, "os": _os_name(), "arch": platform.machine()[:16], "cpuPct": cpu,
+           "memPct": mem, "diskPct": _disk(), "uptimeSec": up, "containers": _containers(),
+           "failedUnits": _failed_units(), "updatesPending": _updates_pending(), "allowedJobs": _allowed(),
+           "watchResults": _watch_results(), "failedAgents": _failed_agents(),
+           "manage": _manage(),
+           "macFolders": _mac_folders_state(),
+           "safety": {"passwordlessSudo": _hourly("sudo", _passwordless_sudo),
+                      "sshPasswordLogin": _ssh_password_login()}}
+    net = _net()
+    if net:
+        out["net"] = net
+    machine = _hourly("machine", machine_fingerprint, every=86400)
+    if machine:
+        out["machine"] = machine
+    return out
+
+
+def machine_fingerprint():
+    """A fingerprint of this machine that survives reinstalling the helper, so a reinstall can continue the same
+    device on the map (the owner chooses, when approving it): SHA-256 of the machine's own id (macOS IOPlatformUUID,
+    Linux /etc/machine-id), never the id itself. The server keys it per account before keeping it. None if unknown."""
+    import hashlib
+    ident = None
+    if sys.platform == "darwin":
+        m = re.search(r'"IOPlatformUUID" = "([0-9A-Fa-f-]{36})"', _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]))
+        ident = m.group(1) if m else None
+    else:
+        for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            try:
+                with open(path) as f:
+                    v = f.read().strip()
+                if re.fullmatch(r"[0-9a-f]{32}", v):
+                    ident = v
+                    break
+            except OSError:
+                pass
+    if not ident:
+        return None
+    return hashlib.sha256(b"nightlight-machine:" + ident.lower().encode()).hexdigest()[:32]
+
+
+def _mac_folders_state():
+    """On a Mac: whether the private folders may be measured ("allowed"), were declined here ("declined"), or were
+    never asked (None). Elsewhere None. macOS's own answer per folder stays with macOS."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        v = _load().get("macPrivateFolders")
+    except (OSError, ValueError):
+        return None
+    return "allowed" if v is True else "declined" if v is False else None
 
 
 def _allowed():
@@ -365,6 +444,12 @@ def _container_state(name):
     return out[:32] or None
 
 
+def _container_health(name):
+    """"healthy", "unhealthy", "starting", or "" when the container has no health check."""
+    out = _run(["docker", "inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{end}}", name])
+    return out.strip()[:16]
+
+
 # ------------------------------------------------------------------ read-only looks (diagnose)
 # Scrubbed here, before anything leaves the device (the server scrubs again). Best effort: logs can contain things no
 # pattern recognises, which is why sending log lines needs its own `allow logs NAME`.
@@ -437,9 +522,14 @@ def _run_both(cmd, timeout=15, cap=256 * 1024):
     return b"".join(chunks)[:cap].decode("utf-8", "replace")
 
 
-EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was stopped forcibly (often out of memory, "
-                "or someone stopped it)", 143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was force-stopped (killed, or out of memory)",
+                143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
                 127: "couldn't find its program"}
+OOM_MEANING = "was force-stopped because it ran out of memory"
+KILLED_MEANING = ("was force-stopped: something killed it (a person, a program or the system); Docker didn't record "
+                  "it running out of memory")
+HEALTH_MEANING = {"unhealthy": "is running, but failing its health check", "starting": "is running, but its health "
+                  "check hasn't passed yet", "healthy": "is running and passing its health check"}
 
 
 def _look_container(name, logs):
@@ -452,14 +542,34 @@ def _look_container(name, logs):
     code = st.get("ExitCode")
     status = st.get("Status", "unknown")
     meaning = EXIT_MEANING.get(code, f"exited with code {code}") if status != "running" else "is running"
+    if status != "running" and st.get("OOMKilled"):
+        meaning = OOM_MEANING  # Docker saw the memory limit hit: say it plainly, not "killed, or out of memory"
+    elif status != "running" and code == 137:
+        meaning = KILLED_MEANING  # Docker recorded no out-of-memory: say what is known, the plain fact first
+    health = st.get("Health") if isinstance(st.get("Health"), dict) else {}
+    if status == "running" and health.get("Status") in HEALTH_MEANING:
+        meaning = HEALTH_MEANING[health["Status"]]
     lines = [f"status: {status}", f"exit code: {code} ({meaning})", f"out of memory: {'yes' if st.get('OOMKilled') else 'no'}",
              f"restarts: {restarts}", f"started: {st.get('StartedAt', '')[:19]}", f"stopped: {st.get('FinishedAt', '')[:19]}"]
+    if health.get("Status"):
+        lines.append(f"health check: {health['Status']}, failed {health.get('FailingStreak', 0)} times in a row")
+        last = (health.get("Log") or [{}])[-1] if isinstance(health.get("Log"), list) else {}
+        # what the check printed is log text: only with the logs permission
+        if logs and isinstance(last, dict) and str(last.get("Output") or "").strip():
+            lines.append(f"last health check said: {_one_line(str(last['Output']).strip(), 200)}")
     if st.get("Error"):
         lines.append(f"error: {st['Error'][:200]}")
-    summary = f"{name} {meaning}" + (", out of memory" if st.get("OOMKilled") else "")
+    summary = f"{name} {meaning}"
     if logs:
         lines += ["last log lines:", _tail(scrub(_run_both(["docker", "logs", "--tail", "30", "--timestamps", name]))[0])]
+    else:
+        lines.append(LOGS_NOT_ALLOWED)
     return summary, "\n".join(lines)
+
+
+# Said when the owner hasn't allowed reading this target's logs: what was not read, and which permission would allow it
+LOGS_NOT_ALLOWED = "last log lines: not read (reading this one's logs isn't allowed on this device: the \"read logs\" " \
+    "permission for it would allow it)"
 
 
 def _look_unit(name, logs):
@@ -470,11 +580,31 @@ def _look_unit(name, logs):
     if not info.get("ActiveState"):
         return None
     summary = f"{unit} is {info.get('ActiveState')} ({info.get('Result', '')}, exit status {info.get('ExecMainStatus')})"
+    why = _unit_meaning(info)
+    if why:
+        summary += f": it {why}"
     lines = [f"{k}: {v}" for k, v in info.items()]
     if logs:
         lines += ["last log lines:", _tail(scrub(_run_both(["journalctl", "-u", unit, "-n", "30", "--no-pager",
                                                             "-o", "short-iso"]))[0])]
+    else:
+        lines.append(LOGS_NOT_ALLOWED)
     return summary, "\n".join(lines)
+
+
+def _unit_meaning(info):
+    """What a stopped service's result and exit status mean, in words ("" when it is running or nothing is known)."""
+    if info.get("ActiveState") == "active":
+        return ""
+    result, code = info.get("Result", ""), info.get("ExecMainStatus", "")
+    if result == "oom-kill":
+        return OOM_MEANING
+    if result == "signal" and code == "9" or code == "137":
+        return EXIT_MEANING[137]
+    try:
+        return EXIT_MEANING.get(int(code), "") if result not in ("", "success") else ""
+    except ValueError:
+        return ""
 
 
 def look_into(target):
@@ -609,9 +739,206 @@ def _disk_places():
         if _mac_private_ok():
             places = _mac_private_places() + places
     else:
-        places = [("System logs", "/var/log"), ("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
+        places = [("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
                   ("Downloads", f"{h}/Downloads"), ("Temporary files", "/tmp"), ("npm cache", f"{h}/.npm")]
-    return places
+    return places  # /var/log is measured on its own (_logs), so one big log is named, not just "System logs"
+
+
+_LOGS = "/var/log"
+LOG_NAMES = 300  # at most this many names are looked at in /var/log, and in each big folder inside it
+BIG_LOG_MB = 100  # a log entry this big gets a line of its own
+
+
+def _size(mb):
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
+
+
+def _scan(folder):
+    """(name, is a folder, MB on disk) for what is right inside `folder`, or None when it can't be read. The folder
+    is pinned and no link is followed (a link counts 0); MB is None for a folder (measure it with `du`). Blocks really
+    used, so a sparse file (lastlog) doesn't look huge. Bounded: stops after LOG_NAMES names, or when the inspect
+    job's time is nearly up, without listing the rest."""
+    fd = _pin(folder)
+    if fd is None:
+        return None
+    out = []
+    try:
+        with os.scandir(fd) as names:
+            for entry in names:
+                if len(out) >= LOG_NAMES or _left(5) < 1:
+                    break
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    out.append((entry.name, True, None))
+                else:
+                    out.append((entry.name, False, round(st.st_blocks * 512 / 1024 ** 2)
+                                if stat.S_ISREG(st.st_mode) else 0))
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return out
+
+
+def _biggest_file(folder):
+    """(name, MB) of the biggest file right inside `folder` (pinned, no link followed), or None."""
+    files = [(mb, n) for n, is_dir, mb in _scan(folder) or [] if not is_dir and mb]
+    return max(files)[::-1] if files else None
+
+
+def _logs():
+    """What /var/log holds, the journal apart: (MB of everything else or None, MB of the journal or None, the biggest
+    few entries as (path, MB)). A big folder is named by its biggest file when that file is most of it, so the owner
+    sees the one log that grew (say an app's debug log), not just "System logs". Bounded: LOG_NAMES names per folder
+    and the inspect job's time budget."""
+    entries = _scan(_LOGS)
+    if entries is None:
+        return None, None, []
+    journal, total, rows = None, 0, []
+    for name, is_dir, mb in entries:
+        if _left(5) < 1:
+            break
+        if is_dir:
+            mb = _du(f"{_LOGS}/{name}")
+        if mb is None:
+            continue
+        if name == "journal":
+            journal = mb
+        else:
+            total += mb
+            rows.append((mb, name, is_dir))
+    big = []
+    for mb, name, is_dir in sorted(rows, reverse=True)[:5]:
+        if mb < BIG_LOG_MB or _left(5) < 1:
+            break
+        inside = _biggest_file(f"{_LOGS}/{name}") if is_dir else None
+        if inside and inside[1] * 2 >= mb:
+            name, mb = f"{name}/{inside[0]}", inside[1]
+        big.append((f"/var/log/{name}", mb))  # as the owner knows it (tests point _LOGS elsewhere)
+    return total, journal, big
+
+
+_ROOT = "/"
+_ROOT_SKIP = {"proc", "sys", "dev", "run", "tmp"}  # not on the disk (or measured on its own: Temporary files)
+_SYSTEM_TOP = {"usr", "boot", "etc", "bin", "sbin", "lib", "lib32", "lib64", "libx32"}  # the system itself: listed,
+# never named as "the biggest folder" to move or delete things from
+ROOT_MIN_MB = 50  # a main-disk folder smaller than this is not listed
+ROOT_DEPTH = 2  # how deep under each top folder sizes are taken (one `du` pass per top folder)
+
+
+DU_ROWS = 500  # sizes kept per top folder (the biggest ones): a tree with 100k folders can't fill the memory
+DU_BYTES = 16 * 1024 * 1024  # at most this much of du's output is read per top folder, then it is stopped
+DU_LINE = 8192  # a longer line (a strange name) is skipped, not kept
+
+
+def _du_cmd(depth):
+    return ["du", "-k", "-x", "-d", str(depth), "."]
+
+
+def _du_tree(path, depth=ROOT_DEPTH):
+    """({"." or "./a" or "./a/b": MB}, why) for a pinned folder and the folders up to `depth` levels inside it, in one
+    `du -x` pass that never follows links or leaves the folder's own disk. Bounded in time (the job's deadline), in
+    bytes read (DU_BYTES) and in what is kept (the DU_ROWS biggest folders and the total); du's complaints about
+    unreadable folders are discarded. ({}, why) when it couldn't be measured: why is "time", "too much output" or
+    "unreadable"."""
+    import heapq
+    import select
+    if _guarded(path) or _left(25) < 1:
+        return {}, "time"
+    fd = _pin(path)
+    if fd is None:
+        return {}, "unreadable"
+    try:
+        p = subprocess.Popen(_du_cmd(depth), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=(fd,),
+                             preexec_fn=lambda: os.fchdir(fd))
+    except OSError:
+        os.close(fd)
+        return {}, "unreadable"
+    os.close(fd)
+    keep, total, read, partial, why = [], None, 0, b"", None
+    out = p.stdout.fileno()
+    try:
+        while True:
+            left = _left(25)
+            if left <= 0 or not select.select([out], [], [], left)[0]:
+                why = "time"
+                break
+            block = os.read(out, 65536)
+            if not block:
+                break
+            read += len(block)
+            if read > DU_BYTES:
+                why = "too much output"
+                break
+            lines = (partial + block).split(b"\n")
+            partial = lines.pop()
+            if len(partial) > DU_LINE:
+                partial = b"\xff"  # never a valid row: the rest of that long line is skipped
+            for line in lines:
+                kb, _, rel = line.decode("utf-8", "replace").partition("\t")
+                if not kb.isdigit():
+                    continue
+                if rel == ".":
+                    total = int(kb)
+                elif rel.startswith("./"):
+                    heapq.heappush(keep, (int(kb), rel))
+                    if len(keep) > DU_ROWS:
+                        heapq.heappop(keep)  # the smallest goes
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.stdout.close()
+        p.wait()
+    if why or total is None:
+        return {}, why or "unreadable"
+    sizes = {rel: round(kb / 1024) for kb, rel in keep}
+    sizes["."] = round(total / 1024)
+    return sizes, None
+
+
+def _root_folders():
+    """The main disk's top folders by size (no other disk mounted inside is entered), the biggest folder that isn't
+    the system's own (followed down while one folder holds at least half of its parent), and how much of the used
+    space they account for. Returns ([(MB, "/name")], ("/path", MB) or None, MB measured, MB in use, [top folders
+    that couldn't be measured]) or None."""
+    try:
+        root_dev = os.lstat(_ROOT).st_dev
+        used = shutil.disk_usage(_ROOT).used // 1024 ** 2
+    except OSError:
+        return None
+    tops, trees, unmeasured = [], {}, []
+    for name, is_dir, _mb in sorted(_scan(_ROOT) or []):
+        if not is_dir or name in _ROOT_SKIP or _left(5) < 1:
+            continue
+        path = os.path.join(_ROOT, name)
+        try:
+            if os.lstat(path).st_dev != root_dev:
+                continue  # another disk mounted here: its space isn't this disk's
+        except OSError:
+            continue
+        tree, why = _du_tree(path)
+        if tree:
+            tops.append((tree["."], name))
+            trees[name] = tree
+        else:
+            unmeasured.append(("/" + name, why))
+    tops.sort(reverse=True)
+    biggest = None
+    for mb, name in tops:
+        if name in _SYSTEM_TOP:
+            continue
+        tree, rel, size = trees[name], ".", mb
+        for _ in range(ROOT_DEPTH):  # go one level down while a single folder holds at least half
+            kids = [(m, r) for r, m in tree.items() if r.startswith(rel + "/") and "/" not in r[len(rel) + 1:]]
+            if not kids or max(kids)[0] * 2 < size:
+                break
+            size, rel = max(kids)
+        biggest = ("/" + name + rel[1:], size)  # as the owner knows it (tests point _ROOT elsewhere)
+        break
+    return [(mb, "/" + name) for mb, name in tops], biggest, sum(mb for mb, _ in tops), used, unmeasured
 
 
 def _inspect_disk():
@@ -620,31 +947,221 @@ def _inspect_disk():
         mb = _du(path)
         if mb is not None and mb >= 50:
             rows.append((mb, label))
+    others, journal, big = (None, None, []) if sys.platform == "darwin" else _logs()
+    if others is not None and others >= 50:
+        rows.append((others, "System logs (not counting the journal)"))
     rows.sort(reverse=True)
-    lines = [f"{label}: {mb / 1024:.1f} GB" if mb >= 1024 else f"{label}: {mb} MB" for mb, label in rows[:12]]
-    if shutil.which("journalctl") and _left(10) >= 1:
+    lines = [f"{label}: {_size(mb)}" for mb, label in rows[:12]]
+    if journal is not None:
+        lines.append(f"System journal: {_size(journal)}")
+    elif shutil.which("journalctl") and _left(10) >= 1:
         j = _run(["journalctl", "--disk-usage"], timeout=_left(10)).strip()
         if j:
             lines.append("System journal: " + j.split("take up", 1)[-1].split("in the file system")[0].strip())
+    for path, mb in big:  # one line each, so a playbook (or the agent) can name the very log that grew
+        lines.append(f"Big log: {_one_line(path, 160).replace(': ', ' ')}: {_size(mb)}")
     if sys.platform == "darwin" and not _mac_private_ok():
         lines.append("Not checked (macOS privacy): Downloads, Desktop, Documents, Movies, Trash. Allow once at the Mac "
                      "with `nightlight settings`.")
+    elif sys.platform != "darwin":
+        lines += _root_lines()
     return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
 
 
-def _inspect_processes():
-    out = _run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]
+DU_WHY = {"time": "not measured in time", "too much output": "too many folders to measure",
+          "unreadable": "couldn't be read"}
+
+
+def _root_lines():
+    """Lines about the main disk as a whole, so the biggest folder is always named wherever it is (say /srv), and
+    space no measured folder accounts for is said, not guessed."""
+    found = _root_folders()
+    if found is None:
+        return []
+    tops, biggest, measured, used, unmeasured = found
+    name = lambda p: _one_line(p, 160).replace(": ", " ")
+    lines = []
+    if biggest and biggest[1] >= ROOT_MIN_MB:
+        lines.append(f"Biggest folder on the main disk: {name(biggest[0])}: {_size(biggest[1])}")
+    big = [f"{name(p)} {_size(mb)}" for mb, p in tops[:8] if mb >= ROOT_MIN_MB]
+    if big:
+        lines.append("Folders on the main disk: " + ", ".join(big))
+    missing = used - measured
+    if tops and missing >= 1024 and missing * 10 >= used * 3:
+        skipped = (", in " + ", ".join(f"{name(p)} ({DU_WHY.get(why, why)})" for p, why in unmeasured[:5])) \
+            if unmeasured else ""
+        lines.append(f"Not found in the measured folders: about {_size(missing)} of the {_size(used)} in use (in "
+                     f"folders the helper can't read{skipped}, or in deleted files a program still holds open)")
+    elif unmeasured:  # always said: a folder left out is never silently counted as small
+        lines.append("Not measured on the main disk: " + ", ".join(f"{name(p)} ({DU_WHY.get(why, why)})"
+                                                                     for p, why in unmeasured[:5]))
+    return lines
+
+
+CPU_SAMPLE = 1.0  # seconds between the two looks at what each program used
+TOP_CPU, TOP_MEM = 5, 8
+
+
+def _proc_table():
+    """{pid: (name, CPU ticks used so far, resident memory pages)} from /proc, or None (not Linux)."""
+    try:
+        pids = [p for p in os.listdir(_PROC) if p.isdigit()]
+    except OSError:
+        return None
+    out = {}
+    for pid in pids:
+        try:
+            with open(f"{_PROC}/{pid}/stat") as f:
+                raw = f.read()
+            name = raw[raw.index("(") + 1:raw.rindex(")")]
+            rest = raw[raw.rindex(")") + 2:].split()  # rest[0] is field 3 (state): utime 14, stime 15, rss 24
+            out[pid] = (name, int(rest[11]) + int(rest[12]), int(rest[21]))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _mem_total_kb():
+    try:
+        with open(f"{_PROC}/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _sampled_processes():
+    """Linux: (rows of (cpu % of one core, mem %, pid, name), processor busy % or None, seconds sampled), CPU measured
+    over the last CPU_SAMPLE seconds (two looks at /proc), not averaged over each program's lifetime as `ps` does,
+    so a program that just started spinning shows. None when /proc isn't there."""
+    first, t0, cpu0 = _proc_table(), time.monotonic(), _cpu_times()
+    if first is None:
+        return None
+    wait = _left(CPU_SAMPLE)
+    if wait > 0.05:
+        time.sleep(wait)
+    second, dt, cpu1 = _proc_table() or {}, time.monotonic() - t0, _cpu_times()
+    try:
+        hz, page = os.sysconf("SC_CLK_TCK"), os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        hz, page = 100, 4096
+    total = _mem_total_kb()
     rows = []
-    for line in out:
-        parts = line.split(None, 2)
-        if len(parts) == 3:
-            try:
-                rows.append((float(parts[1]), float(parts[0]), os.path.basename(parts[2])[:40]))
-            except ValueError:
-                pass
-    rows.sort(reverse=True)
-    return "Top programs by memory (memory %, CPU %, program):\n" + "\n".join(
-        f"{m:.1f}% mem, {c:.1f}% cpu, {name}" for m, c, name in rows[:10])
+    for pid, (name, ticks, rss) in second.items():
+        before = first.get(pid)
+        cpu = (ticks - before[1]) / hz / dt * 100 if before and before[0] == name and dt > 0.05 else 0.0
+        mem = rss * page / 1024 / total * 100 if total else 0.0
+        rows.append((max(0.0, cpu), mem, pid, name))
+    busy = None
+    if cpu0 and cpu1 and cpu1[1] > cpu0[1]:
+        busy = round(min(100.0, max(0.0, 100 * (1 - (cpu1[0] - cpu0[0]) / (cpu1[1] - cpu0[1])))))
+    return rows, busy, dt
+
+
+def _inspect_processes():
+    """The programs using the most processor right now and the most memory (both lists, so neither hides the
+    other), and how busy the whole processor is."""
+    head = []
+    sampled = _sampled_processes()
+    if sampled is not None:
+        rows, busy, dt = sampled
+        if busy is not None:
+            head.append(f"Processor busy right now: {busy}% of all {os.cpu_count() or '?'} cores")
+        how = f"CPU % of one core, measured over the last {dt:.1f} seconds" if dt > 0.05 else \
+            "CPU not measured (out of time)"
+    else:  # macOS: ps's CPU figure there is already a recent average
+        rows = []
+        for i, line in enumerate(_run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]):
+            parts = line.split(None, 2)
+            if len(parts) == 3:
+                try:
+                    rows.append((float(parts[0]), float(parts[1]), i, os.path.basename(parts[2])))
+                except ValueError:
+                    pass
+        how = "CPU % of one core, recent"
+    by_cpu = sorted((r for r in rows if r[0] >= 1), key=lambda r: r[0], reverse=True)[:TOP_CPU]
+    by_mem = sorted(rows, key=lambda r: r[1], reverse=True)[:TOP_MEM]
+    seen, shown = set(), []
+    for r in by_cpu + by_mem:
+        if r[2] not in seen:
+            seen.add(r[2])
+            shown.append(r)
+    where = _where_each([pid for _c, _m, pid, _n in shown]) if sampled is not None else {}
+    return "\n".join(head + [f"Top programs by processor and by memory (memory %, {how}, program"
+                             + (", and whether it runs inside an app's container or on the computer itself"
+                                if any(where.values()) else "") + "):"] + [
+        f"{m:.1f}% mem, {c:.1f}% cpu, {_one_line(name, 40)}" + (f" ({where[pid]})" if where.get(pid) else "")
+        for c, m, pid, name in shown])
+
+
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
+
+
+def _container_ids():
+    """{full container id: name} of the running containers ({} without Docker), to say which app a program is in."""
+    if not shutil.which("docker"):
+        return {}
+    out = {}
+    for line in _run(["docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"], timeout=max(_left(5), 1)
+                     ).splitlines()[:100]:
+        parts = line.split()
+        if len(parts) == 2 and _CONTAINER_ID.fullmatch(parts[0]):
+            out[parts[0]] = parts[1][:64]
+    return out
+
+
+# Control-group paths, as /proc/<pid>/cgroup shows them. A container: Docker ("docker-<id>.scope", "/docker/<id>"),
+# Podman ("libpod-<id>"), containerd and Kubernetes ("cri-containerd-", "/containerd/", "kubepods"), LXC ("/lxc/",
+# "lxc.payload"); systemd-machined guests and containers ("machine.slice"). The computer itself: the root, init, and
+# systemd's own system and user slices. Anything else is said as unknown, never guessed.
+# Matched on whole path components, so a host service named like a runtime ("docker-cleanup.service") stays a host
+# service.
+_CONTAINER_SCOPE = re.compile(r"(docker|libpod|cri-containerd|crio)-[0-9a-f]{12,64}(\.scope)?|"
+                              r"kubepods(-[A-Za-z0-9_-]+)?\.slice|kubepods|lxc\.payload\.[^/]+")
+_UNIT = re.compile(r".+\.(service|socket|mount|timer|target|path|swap|device|automount)")  # a systemd unit: never one
+
+
+def _in_container(path):
+    parts = [p for p in path.split("/") if p and not _UNIT.fullmatch(p)]
+    return any(_CONTAINER_SCOPE.fullmatch(p) for p in parts) or any(
+        a in ("docker", "lxc") and (b and (a == "lxc" or _CONTAINER_ID.fullmatch(b)))
+        for a, b in zip(parts, parts[1:]))
+_HOST_PATH = re.compile(r"/|/init\.scope|/system\.slice(/[^/]+\.(service|scope|mount|socket))?|/user\.slice(/.*)?")
+UNKNOWN_WHERE = "couldn't tell whether it runs inside an app"
+
+
+def _cgroup_where(text):
+    """("container", id or None) | ("machine", None) | ("host", None) | ("unknown", None) for one cgroup file."""
+    paths = [ln.split(":", 2)[2].strip() for ln in text.splitlines() if ln.count(":") >= 2]
+    if any(_in_container(p) for p in paths):
+        m = _CONTAINER_ID.search(text)
+        return "container", m.group(0) if m else None
+    if any("machine.slice" in p.split("/") for p in paths):
+        return "machine", None
+    if paths and all(_HOST_PATH.fullmatch(p) for p in paths):
+        return "host", None
+    return "unknown", None
+
+
+def _where_each(pids):
+    """Linux: {pid: where it runs}: inside a container (and which app's), on the computer itself, or unknown, from
+    its control group; None when that can't be read. A program on the computer itself is never part of an app,
+    whatever its name suggests."""
+    found = {}
+    for pid in pids:
+        try:
+            with open(f"{_PROC}/{pid}/cgroup") as f:
+                found[pid] = _cgroup_where(f.read(4096))
+        except (OSError, ValueError):
+            found[pid] = None
+    # Docker is asked for names only when a program is in a container with an id
+    names = _container_ids() if any(w and w[1] for w in found.values()) else {}
+    words = {"host": "on the computer itself, not inside any app", "unknown": UNKNOWN_WHERE,
+             "machine": "inside a virtual machine or system container"}
+    return {pid: None if w is None else f"inside app {names[w[1]]}" if w[0] == "container" and w[1] in names
+            else "inside a container" if w[0] == "container" else words[w[0]] for pid, w in found.items()}
 
 
 def _inspect_updates():
@@ -705,7 +1222,12 @@ def _inspect_load():
         one, five, fifteen = os.getloadavg()
     except OSError:
         return "Load: unknown"
-    return f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {os.cpu_count()} CPU cores"
+    cores = os.cpu_count() or 1
+    out = f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {cores} CPU cores"
+    if one >= cores:  # a load is a count of programs wanting the processor, not a percent: at or over the cores, they queue
+        out += (f"\nProcessor overloaded: over the last minute {one:.1f} programs on average wanted the processor at "
+                f"once, with {cores} core{'s' if cores != 1 else ''} to share")
+    return out
 
 
 def _inspect_failed():
@@ -958,16 +1480,47 @@ def _empty_dir(parts):
     return False, f"{len(errors)} item(s) couldn't be removed; first: {_why(err, path)}{more}"
 
 
+_SUDO_REFUSED = re.compile(r"^sudo: .*(a password is required|no new privileges|not in the sudoers|"
+                           r"is not allowed to)", re.I | re.M)
+
+
 def _fix_cmd(cmd, timeout=300):
+    """Runs a clean-up command. On failure, a reason only when it is known for sure (sudo refused), else "";
+    never the command's raw error text."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
-        return False, "it couldn't run"
-    if r.returncode != 0 and "password" in (r.stderr or "").lower():
-        return False, "this device needs a password for it (sudo)"
-    full = scrub(r.stderr or r.stdout or "")[0]  # scrub the whole text first, then pick the last line
-    said = _one_line((full.strip().splitlines() or [""])[-1], 140)
-    return r.returncode == 0, "" if r.returncode == 0 else f"it reported an error: {said or 'no details'}"
+        return False, ""
+    if r.returncode == 0:
+        return True, ""
+    if cmd[:1] == ["sudo"] and _SUDO_REFUSED.search(r.stderr or ""):  # sudo itself said no, before running anything
+        return False, "it needs administrator rights the helper doesn't have"
+    return False, ""  # the command's own error text stays on the device
+
+
+_ROOT_OK = {}  # the answer to "can the helper act as administrator?", and when it was asked
+
+
+def _can_be_root():
+    """True when the helper runs as root, or sudo works here without a password. Never under NoNewPrivileges (how
+    the installed Linux service runs): sudo can't work there, so clean-ups that need root are not offered at all.
+    `sudo -n` never prompts; it is asked at most once an hour."""
+    if os.geteuid() == 0:
+        return True
+    try:
+        with open("/proc/self/status") as f:
+            if any(ln.split() == ["NoNewPrivs:", "1"] for ln in f):
+                return False
+    except OSError:
+        pass
+    if time.time() - _ROOT_OK.get("at", 0) > 3600:
+        try:
+            ok = bool(shutil.which("sudo")) and subprocess.run(
+                ["sudo", "-n", "true"], capture_output=True, timeout=5, check=False).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        _ROOT_OK.update(ok=ok, at=time.time())
+    return _ROOT_OK["ok"]
 
 
 FIXES = {
@@ -981,8 +1534,10 @@ FIXES = {
                          "run": lambda: _empty_dir(["Library", "Developer", "Xcode", "DerivedData"])},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
                      "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
-    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
-    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")),
+    # These two need root: offered only when the helper can really use it (see _can_be_root)
+    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")) and _can_be_root(),
+                  "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
+    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")) and _can_be_root(),
                        "run": lambda: _fix_cmd(_as_root(["journalctl", "--vacuum-size=200M"]))},
 }
 
@@ -1015,7 +1570,8 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    text = (f"Done.{freed}" if ok else f"It didn't work: {_one_line(str(why), 300)}.{freed}").strip()
+    reason = f": {_one_line(str(why), 300)}" if why else ""
+    text = (f"Done.{freed}" if ok else f"Couldn't run that clean-up on this device{reason}.{freed}").strip()
     return ok, scrub(text)[0], None  # scrubbed again at the boundary
 
 
@@ -1479,14 +2035,22 @@ def run_readonly(params):
     cfg = _load()
     grant, signed, command = params.get("grant"), params.get("signed"), params.get("command")
     if not isinstance(grant, dict) or grant.get("mode") != "read-only":
+        _audit(f"Read-only command refused: there's no read-only investigation grant; asked: {_audit_cmd(command)}")
         return False, "Not run: there's no read-only investigation grant.", None
     why = expert_check(grant, signed, cfg, reusable=True)
     if why:
+        _audit(f"Read-only command refused: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run: {why}.", None
+    nonce = str(grant.get("nonce"))
+    if nonce not in _AUDITED_GRANTS:  # the grant line once per grant, then one line per command run under it
+        _AUDITED_GRANTS.add(nonce)
+        _audit(f"Investigation grant verified: {_audit_signer(cfg, grant)}; read-only until {_audit_time(grant)}")
     argv, why = readonly_command(command)
     if why:
+        _audit(f"Read-only command refused on this device: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run on this device: {why}.", None
-    return _execute(command, argv=argv)
+    _audit(f"Read-only command (grant {nonce[:6]}): running: {_audit_cmd(command)}")
+    return _execute(command, argv=argv, label="Read-only command")
 
 
 def run_expert(params):
@@ -1495,6 +2059,8 @@ def run_expert(params):
     payload, signed = params.get("payload"), params.get("signed")
     why = expert_check(payload, signed, cfg)
     if why:
+        _audit(f"Expert command refused: {why}; asked: "
+               f"{_audit_cmd(payload.get('command') if isinstance(payload, dict) else None)}")
         return False, f"Not run: {why}.", None
     taken = []
 
@@ -1510,11 +2076,145 @@ def run_expert(params):
         taken.append(True)
     _update_config(consume)
     if not taken:
+        _audit(f"Expert command refused: this signed command was already used; asked: {_audit_cmd(payload['command'])}")
         return False, "Not run: this signed command was already used.", None
-    return _execute(payload["command"], shell=True)
+    _audit(f"Expert command verified: {_audit_signer(cfg, payload)}, expires {_audit_time(payload)}; "
+           f"running: {_audit_cmd(payload['command'])}")
+    return _execute(payload["command"], shell=True, label="Expert command")
 
 
-def _execute(command, shell=False, argv=None):
+# The local audit trail: what ran here and on whose signature, readable at the device without trusting the cloud
+# (`nightlight audit`). One short line per step, in the helper's log and in an owner-only file in the app folder that
+# is kept under AUDIT_MAX bytes. Never the output, a token or the signature itself; the command is scrubbed.
+AUDIT_FILE = "expert-transcript.log"
+AUDIT_MAX = 256 * 1024
+_AUDITED_GRANTS = set()
+
+
+# Control characters (C0, C1, Unicode line/paragraph separators and direction overrides) could forge or hide entries.
+_AUDIT_CONTROLS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+# The value after a secret-bearing option or assignment, whole even when quoted with spaces or escaped quotes.
+_AUDIT_QUOTED_SECRET = re.compile(
+    r"((?:^|[\s'\"])(?:-{1,2}" + _SECRET_WORD + r"(?:\s*=\s*|\s+)|" + _SECRET_WORD + r"\s*[=:]\s*))"
+    r"('(?:[^']|'\\'')*'?|\"(?:\\.|[^\"\\])*\"?|\S+)", re.I)
+
+
+def _audit_clean(text, limit):
+    """One safe line: control characters gone, secret values hidden (whole quoted values too), then cut to limit."""
+    text = _CONTROLS.sub(" ", text)  # whole ANSI sequences first, so no "[2J" tail is left behind
+    text = " ".join(_AUDIT_CONTROLS.sub(" ", text).split())
+    text = scrub(_AUDIT_QUOTED_SECRET.sub(lambda m: m.group(1) + "[hidden]", text))[0]
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+_AUDIT_SECRET_NAME = re.compile(_SECRET_WORD, re.I)
+_AUDIT_SECRET_START = re.compile(r"(?:^|\s)(?:-{1,2}" + _SECRET_WORD + r"|" + _SECRET_WORD + r"\s*=)", re.I)
+
+
+def _audit_redact(command):
+    """Hide the whole value of a secret-bearing option (`--password VALUE`, `--token=VALUE`, `PASSWORD=VALUE`), as
+    the shell would split it. If it can't be split (an unterminated quote), everything after the first such option."""
+    import shlex
+    punct = set("();<>|&")
+    try:  # `;`, `&&`, `|`, `(`, `)` become tokens of their own, so `true;API_KEY=...` is seen as an assignment
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        m = _AUDIT_SECRET_START.search(command)
+        return command[:m.end()] + " [hidden]" if m else command
+    out, hide_next, changed = [], False, False
+    for t in tokens:
+        if set(t) <= punct:
+            out.append(t)
+            hide_next = False
+            continue
+        if hide_next:
+            out.append("__HIDDEN__")
+            hide_next, changed = False, True
+            continue
+        name, eq, _ = t.lstrip("-").partition("=")
+        if name and _AUDIT_SECRET_NAME.fullmatch(name) and (t.startswith("-") or eq):
+            if eq:
+                out.append(t.split("=", 1)[0] + "=__HIDDEN__")
+                changed = True
+                continue
+            hide_next = True
+        out.append(t)
+    if not changed:
+        return command  # shown exactly as signed
+    return " ".join(t if set(t) <= punct else shlex.quote(t) for t in out).replace("__HIDDEN__", "[hidden]")
+
+
+def _audit_cmd(command):
+    if not isinstance(command, str):
+        return "(none)"
+    return _audit_clean(_audit_redact(command).replace(_HOME, "~"), 300)
+
+
+def _audit_time(payload):
+    try:
+        return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(int(payload.get("expires"))))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"
+
+
+def _audit_signer(cfg, payload):
+    pinned = cfg.get("expert") or {}
+    fp = pinned.get("fingerprint") or key_fingerprint(pinned.get("pem", "")) or "?"
+    return (f"signed by the owner's passkey (key {str(fp)[:9]}), for this device, "
+            f"nonce {str(payload.get('nonce'))[:6]}")
+
+
+def _audit(line):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {_audit_clean(line, 900)}"  # the complete entry, for both sinks
+    print(line, flush=True)
+    try:
+        _audit_append(line)
+    except (OSError, SystemExit):  # the helper log above still has it; never stop the helper over this file
+        pass
+
+
+def _audit_append(line):
+    """Append to the owner-only audit file (folder 0700, file 0600, never through a link), kept within AUDIT_MAX."""
+    d = _own_dir(APP_DIR)
+    os.chmod(d, 0o700)
+    path = os.path.join(d, AUDIT_FILE)
+    data = (line + "\n").encode()
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+b") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError("not a regular file of this user")
+        os.fchmod(fd, 0o600)
+        if st.st_size + len(data) <= AUDIT_MAX:
+            f.write(data)
+            return
+        keep = max(AUDIT_MAX // 2 - len(data), 0)  # the newest half, with room for this entry
+        f.seek(max(st.st_size - keep, 0))
+        tail = f.read(keep)
+        if st.st_size > keep:
+            tail = tail.split(b"\n", 1)[-1]  # start at a whole line
+    tfd, tmp = tempfile.mkstemp(dir=d, prefix=".audit-")  # created 0600
+    with os.fdopen(tfd, "wb") as t:
+        t.write(tail + data)
+    os.replace(tmp, path)
+
+
+def audit_show(n=20):
+    """At the device: the last n expert entries (verified, refused, ran, finished)."""
+    try:
+        with open(os.path.join(_own_dir(APP_DIR), AUDIT_FILE), errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    if not lines:
+        print("No expert commands have been verified or refused on this device.")
+    for line in lines[-max(int(n), 1):]:
+        print(line)
+
+
+def _execute(command, shell=False, argv=None, label="Command"):
     """Run it (a shell only for a command the owner signed by itself; read-only ones run without a shell), keep a
     transcript on the device, and return the scrubbed output."""
     import shlex
@@ -1528,11 +2228,7 @@ def _execute(command, shell=False, argv=None):
         out, code = "(stopped after 60 seconds)", None
     except OSError as e:
         out, code = f"couldn't run it ({type(e).__name__})", None
-    try:  # a transcript stays on the device (owner-only folder)
-        with open(os.path.join(_own_dir(APP_DIR), "expert-transcript.log"), "a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} exit={code} $ {command}\n")
-    except OSError:
-        pass
+    _audit(f"{label} finished: exit code {code}" if code is not None else f"{label} finished: didn't finish ({out})")
     text, hidden = scrub(out.replace(_HOME, "~"))
     tail = _tail(text, lines=80, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
     return code == 0, f"Ran it (exit code {code})." if code is not None else "It didn't finish.", tail
@@ -1618,6 +2314,24 @@ def run_job(job, wait=5):
         ok, summary = remove_from_app()
         _RESTART.append("exit")  # nothing to restart into: the loop ends after reporting
         return ok, summary, None
+    if kind == "discover":
+        # Asked from the app: the owner's tap is the consent, on a device they let the app manage. A strict device
+        # only looks when someone runs `discover` here.
+        if _manage() != "app":
+            return False, "This device only looks for devices nearby when someone runs it there.", None
+        ok, n = discover(yes=True, quiet=True)
+        if not ok:
+            return False, "Looked nearby but couldn't send the list.", None
+        return True, (f"Found {n} thing(s) nearby; they're under Found nearby to add." if n
+                      else "Looked nearby: nothing new to suggest."), None
+    if kind == "mac_folders":
+        # Chosen by the owner in the app's setup card while they're at the Mac: the same yes as at install.
+        if sys.platform != "darwin":
+            return False, "Only a Mac has private folders to allow; nothing was done.", None
+        if _manage() != "app":
+            return False, "This Mac is set to strict: run `nightlight settings` on it to allow its folders.", None
+        _allow_mac_private()
+        return True, "macOS asked about your folders; click Allow on the Mac.", None
     if kind == "update_helper":
         return self_update(params.get("version") if isinstance(params, dict) else None)
     if kind == "fix":
@@ -1642,7 +2356,21 @@ def run_job(job, wait=5):
     state = _container_state(name)
     if state is None:
         return False, f"There is no container named {name} here, so nothing was done.", None
-    if state == "running":
+    if params.get("restart") is True:  # the owner approved a restart of a running, unhealthy container: only that
+        if state != "running":
+            return False, f"{name} has stopped since the card was approved ({state or 'gone'}), so nothing was " \
+                          "restarted. Ask Nightlight to start it.", state
+        if _container_health(name) != "unhealthy":
+            return True, f"{name} is healthy again, so nothing needed restarting.", state
+        _run(["docker", "restart", name], timeout=90)
+        time.sleep(wait)
+        state, health = _container_state(name), _container_health(name)
+        if state == "running" and health != "unhealthy":
+            return True, f"Restarted {name}; it was running {wait} seconds later" + (
+                f" and its health check says {health}." if health else "."), state
+        return False, f"Restarted {name}, but it is {state or 'not running'}" + (
+            f" and still {health}." if health else "."), state
+    if state == "running":  # a start was approved: never more than that
         return True, f"{name} was already running; nothing needed doing.", state
     _run(["docker", "start", name], timeout=60)
     time.sleep(wait)
@@ -1770,6 +2498,12 @@ def once():
         if isinstance(watch, list) and watch != cfg.get("watch"):
             wl = [w for w in watch if isinstance(w, dict)][:10]
             _update_config(lambda c: c.__setitem__("watch", wl))  # only this field; addresses stay local
+        key = body.get("netKey")
+        if isinstance(key, str) and NET_KEY_RE.fullmatch(key) and key != cfg.get("netKey"):
+            _update_config(lambda c: c.__setitem__("netKey", key))  # for fingerprints from the next report on
+        names = body.get("deviceNames") is True  # the owner's switch; an older server never says yes
+        if names != (cfg.get("deviceNames") is True):
+            _update_config(lambda c: c.__setitem__("deviceNames", names))
         jobs = body.get("jobs")
         for job in jobs if isinstance(jobs, list) else []:
             if isinstance(job, dict) and isinstance(job.get("id"), str) and ACTION_RE.fullmatch(job["id"]):
@@ -1850,8 +2584,9 @@ def run(every):
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
             sys.stdout.flush()
             os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
-        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure
-            time.sleep(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
+        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure. The work
+            # channel stays open meanwhile, so a check the owner's chat asks for still starts within a second.
+            _wait_and_claim(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
             continue
         wait = every if status == 200 else min(max(wait, every) * 2, 900)
         _wait_and_claim(wait)  # returns early after running a job: the change is then reported right away
@@ -1957,43 +2692,98 @@ def default_name():
     return (_os_name().split(" ")[0] or "Linux") + " computer"
 
 
-def pair(api, web=None, name=None):
-    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone."""
+PAIR_WAIT = 600
+BROWSER_WAIT = 900  # the Mac installer's path: signing in first can take a while (the server's code may end sooner)
+
+
+def _open_browser(url):
+    """Open the default browser on `url`. False if there is no way to."""
+    tool = "open" if sys.platform == "darwin" else shutil.which("xdg-open")
+    if not tool:
+        return False
+    try:
+        return subprocess.run([tool, url], capture_output=True, timeout=20, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _notify(text):
+    """A Mac notification for someone who isn't at a terminal (the installer's path). Best effort."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.run(["osascript", "-e", "on run argv", "-e", 'display notification (item 1 of argv) with title '
+                        '"Nightlight"', "-e", "end run", text], capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def pair(api, web=None, name=None, browser=False, then_install=False):
+    """Join by a code this device shows: the owner types it in the app or scans the QR with a phone. With `browser`
+    (the Mac installer: nobody at a terminal) the approval page opens by itself, and `then_install` sets up the
+    background service right after the approval, managed from the app."""
     api = check_api(api)
-    status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
+    if browser and not web:
+        sys.exit("--browser needs --web (the Nightlight web address).")
+    again = "Open the Nightlight installer again for a new code." if browser else "Run pair again for a new one."
+
+    def give_up(text):
+        if browser:
+            _notify(text)
+        sys.exit("  " + text)
+
+    start = {"name": (name or default_name())[:40], "os": _os_name(), "via": "installer" if browser else "command_line"}
+    machine = machine_fingerprint()
+    if machine:
+        start["machine"] = machine  # lets the owner continue this machine's device if it was on the map before
+    status, body = _post(api + "/helper/pair/start", start)
     if status != 201:
-        sys.exit(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
+        give_up(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
     code, interval = body["code"], max(int(body.get("interval", 3)), 2)
     print(f"\n  Your code:  {code}\n")
     if web:
         link = f"{web.rstrip('/')}/pair?code={code}"
         print(f"  Open Nightlight > Add a device > Enter code, or scan this with your phone:\n  {link}\n")
-        if shutil.which("qrencode"):
+        if browser:
+            if not _open_browser(link):
+                _notify(f"Open {link} to add this Mac.")
+        elif shutil.which("qrencode"):
             subprocess.run(["qrencode", "-t", "ANSIUTF8", link], check=False)
-    print("  Waiting for you to approve it (10 minutes)...")
-    deadline = time.time() + 600
+    wait = BROWSER_WAIT if browser else PAIR_WAIT
+    print(f"  Waiting for you to approve it ({wait // 60} minutes)...")
+    deadline = time.time() + wait
     while time.time() < deadline:
         time.sleep(interval)
         st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
         if st == 200 and res.get("token"):
             _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
-            print("  Approved. This device is now on your Nightlight map.")
+            print("  Approved. This device continues where it left off on your Nightlight map, history kept."
+                  if res.get("continued") else "  Approved. This device is now on your Nightlight map.")
+            if then_install:
+                try:
+                    install(manage="app")
+                except (SystemExit, OSError, subprocess.SubprocessError) as e:
+                    print(f"  Install failed: {e}")
+                    give_up("Approved, but the background service didn't start. Open the Nightlight installer again.")
+                if browser:
+                    _notify("This Mac is now on your Nightlight map.")
             return
         if st == 401:
-            sys.exit("  The code was declined or has expired. Run pair again for a new one.")
-    sys.exit("  The code expired. Run pair again for a new one.")
+            give_up("The code was declined or has expired. " + again)
+    give_up("The code expired. " + again)
 
 
 # ------------------------------------------------------------------ discovery (owner-run, reviewed here first)
-# What's nearby on this network. Addresses (IP, MAC) and names stay on this device; only a guess of what each thing is
-# ("Home Assistant", "Printer"), its maker and which known services answer are sent, and only the ones you pick.
+# What's nearby on this network. Addresses (IP, MAC) stay on this device; only a guess of what each thing is
+# ("Home Assistant", "Printer"), its maker and model, which known services answer and, while the account shows names,
+# the name it announces are sent, and only the ones you pick.
 
 PORTS = {22: "remote login (SSH)", 80: "web page", 443: "secure web page", 445: "file sharing", 631: "printer",
-         8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
+         7000: "AirPlay receiver", 8123: "Home Assistant", 25565: "Minecraft", 32400: "Plex"}
 MDNS = {"_home-assistant._tcp": "Home Assistant", "_plexmediasvr._tcp": "Plex", "_smb._tcp": "file sharing",
         "_ipp._tcp": "printer", "_printer._tcp": "printer", "_googlecast._tcp": "Chromecast / Google speaker",
         "_airplay._tcp": "AirPlay speaker or TV", "_hap._tcp": "HomeKit accessory", "_ssh._tcp": "remote login (SSH)",
-        "_raop._tcp": "AirPlay speaker"}
+        "_raop._tcp": "AirPlay speaker", "_companion-link._tcp": "Apple device", "_apple-mobdev2._tcp": "Apple device"}
 # A small, public table of makers by the first half of the hardware address (IEEE registry), common in homes.
 VENDORS = {"b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi", "28cdc1": "Raspberry Pi",
            "d83add": "Raspberry Pi", "2ccf67": "Raspberry Pi", "001132": "Synology", "245ebe": "QNAP",
@@ -2028,14 +2818,11 @@ def _neighbours():
 
 
 def _mdns():
-    """IP -> set of service kinds announced on the network (avahi on Linux; skipped elsewhere)."""
+    """IP -> set of service kinds announced on the network (asked of the system's mDNS service)."""
     out = {}
-    if not shutil.which("avahi-browse"):
-        return out
-    for line in _run(["avahi-browse", "-aprtk"], timeout=6).splitlines():
-        f = line.split(";")
-        if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS:
-            out.setdefault(f[7], set()).add(MDNS[f[4]])
+    for ip, kind, *_rest in _hourly("mdns", _mdns_records, every=60):
+        if kind in MDNS:
+            out.setdefault(ip, set()).add(MDNS[kind])
     return out
 
 
@@ -2072,45 +2859,433 @@ def _vendor(mac):
 def _guess(vendor, services, ports):
     """A plain-words guess of what something is, from what answers on it and who made it."""
     for service, name in (("Home Assistant", "Home Assistant"), ("Plex", "Plex media server"),
-                          ("Minecraft", "Minecraft server"), ("printer", "Printer"),
-                          ("file sharing", "File share (NAS or computer)")):
+                          ("Minecraft", "Minecraft server"), ("printer", "Printer"), ("router", "Router"),
+                          ("file sharing", "File share (NAS or computer)"), ("media server", "Media server")):
         if service in services:
             return name
-    if any("speaker" in x or "Chromecast" in x or "TV" in x for x in services):
+    if any("speaker" in x or "Chromecast" in x or "TV" in x or x == "media player" for x in services):
         return "Speaker or TV"
     if vendor in ("Raspberry Pi", "VMware virtual machine"):
         return vendor
     if 22 in ports:
         return "Computer (remote login)"
+    if "AirPlay receiver" in services:  # a Mac has this too, but also remote login (above)
+        return "Speaker or TV"
     if 80 in ports or 443 in ports:
         return "Device with a web page"
     return vendor or "Unknown device"
 
 
-def discover(yes=False):
+# Who made it and which model, as the things themselves announce it. Only outgoing questions, never a socket that
+# waits for others to call in (an unattended helper must never raise a firewall prompt): mDNS records come from the
+# system's own service (`dns-sd` on a Mac, avahi on Linux), and the router's UPnP description file is fetched from a
+# few well-known places on the router only. What they announce is free text a person may have typed ("Alex MacBook"),
+# so nothing of it leaves as written: the maker must be one of the brands below (sent as the table spells it), and the
+# model must be an Apple model from the table below or look like a product code ("HL-L2350DW", "DocuPrint CP115/118
+# w"). Anything else is dropped here, and the server checks the same rules again. Names (Bonjour instance names, a
+# UPnP friendlyName, host names) are a separate field, sent only while the owner shows names (`_seen_name`).
+
+IDENTIFY_BUDGET = 12  # seconds for the whole look at makers and models, start to finish
+MDNS_SECONDS = 3  # how long the mDNS listings run (side by side) before they are stopped
+DESCRIPTION_BYTES = 64 * 1024
+MDNS_ASK = ("_ipp._tcp", "_printer._tcp", "_airplay._tcp", "_raop._tcp", "_device-info._tcp", "_googlecast._tcp",
+            "_smb._tcp", "_hap._tcp", "_home-assistant._tcp", "_companion-link._tcp",
+            "_apple-mobdev2._tcp")
+# Where routers commonly keep their UPnP description (miniupnpd, Netgear, TP-Link, AVM, Broadcom/Realtek kits).
+UPNP_PLACES = ((1900, "/rootDesc.xml"), (5000, "/rootDesc.xml"), (49152, "/description.xml"), (2189, "/gatedesc.xml"),
+               (52869, "/picsdesc.xml"), (80, "/rootDesc.xml"), (49000, "/igddesc.xml"))
+UPNP_KIND = (("InternetGatewayDevice", "router"), ("MediaRenderer", "media player"),
+             ("MediaServer", "media server"), ("Printer", "printer"))
+APPLE_MODELS = (("MacBookPro", "MacBook Pro"), ("MacBookAir", "MacBook Air"), ("MacBook", "MacBook"),
+                ("Macmini", "Mac mini"), ("MacPro", "Mac Pro"), ("iMac", "iMac"), ("iPhone", "iPhone"),
+                ("iPad", "iPad"), ("AppleTV", "Apple TV"), ("AudioAccessory", "HomePod"), ("Mac", "Mac"))
+# Makers common in homes and small offices: how they announce themselves (lower case, punctuation as spaces; a longer
+# announcement that starts with one of these counts, "brother industries ltd") -> how Nightlight writes them. The
+# server keeps the same list (real.MAKERS).
+KNOWN_MAKERS = {
+    "apple": "Apple", "brother": "Brother", "canon": "Canon", "epson": "Epson", "seiko epson": "Epson", "hp": "HP",
+    "hewlett packard": "HP", "xerox": "Xerox", "fuji xerox": "Fuji Xerox", "fujifilm": "Fujifilm", "lexmark": "Lexmark",
+    "samsung": "Samsung", "kyocera": "Kyocera", "ricoh": "Ricoh", "konica minolta": "Konica Minolta", "sharp": "Sharp",
+    "oki": "OKI", "dell": "Dell", "pantum": "Pantum", "netgear": "Netgear", "tp link": "TP-Link", "asus": "ASUS",
+    "asustek": "ASUS", "linksys": "Linksys", "d link": "D-Link", "ubiquiti": "Ubiquiti", "avm": "AVM",
+    "synology": "Synology", "qnap": "QNAP", "western digital": "Western Digital", "wd": "Western Digital",
+    "seagate": "Seagate", "buffalo": "Buffalo", "asustor": "Asustor", "terramaster": "TerraMaster", "sonos": "Sonos",
+    "bose": "Bose", "sony": "Sony", "lg": "LG", "philips": "Philips", "signify": "Philips", "panasonic": "Panasonic",
+    "yamaha": "Yamaha", "denon": "Denon", "marantz": "Marantz", "onkyo": "Onkyo", "pioneer": "Pioneer",
+    "harman": "Harman", "roku": "Roku", "google": "Google", "amazon": "Amazon", "microsoft": "Microsoft",
+    "nintendo": "Nintendo", "raspberry pi": "Raspberry Pi", "huawei": "Huawei", "zte": "ZTE", "xiaomi": "Xiaomi",
+    "tenda": "Tenda", "mercusys": "Mercusys", "zyxel": "Zyxel", "eero": "eero", "arris": "Arris",
+    "technicolor": "Technicolor", "sagemcom": "Sagemcom", "cisco": "Cisco", "mikrotik": "MikroTik", "belkin": "Belkin",
+    "vizio": "Vizio", "tcl": "TCL", "hisense": "Hisense", "nvidia": "NVIDIA", "iptime": "ipTIME", "allradio": "allRadio"}
+# Words allowed in a model besides codes ("LaserJet Pro M404dn"): series names, never anything that is also a name.
+SERIES_WORDS = {"docuprint", "laserjet", "officejet", "deskjet", "envy", "pixma", "imageclass", "ecotank", "workforce",
+                "nighthawk", "archer", "deco", "orbi", "diskstation", "rackstation", "fritz", "box", "mycloud",
+                "readynas", "terastation", "linkstation", "airport", "bravia", "color", "colour", "pro", "plus",
+                "mini", "ultra", "series", "wireless", "multifunction", "mfp", "lite"}
+
+
+def _maker(text):
+    """The table's spelling of a known maker, or None for anything else."""
+    if not isinstance(text, str):
+        return None
+    words = " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+    return next((name for key, name in sorted(KNOWN_MAKERS.items(), key=lambda kv: -len(kv[0]))
+                 if words == key or words.startswith(key + " ")), None)
+
+
+# Hardware ids in a model field: hex pairs joined by - or : ("AA-BB-CC-DD-EE-12"), or a long run of hex digits.
+HARDWARE_SHAPE = re.compile(r"(?i)(?:\b|^)[0-9a-f]{2}(?:[-:][0-9a-f]{2}){2,}|[0-9a-f]{8,}")
+
+def _product_code(text):
+    """A model kept only when it looks like a product code: at most 40 characters and 5 words, with a digit somewhere;
+    each word made of letters, digits and / + - only, and either holding a digit, or a short all-capitals code, a single
+    letter, or a known series word. "Alex MacBook", host names and sentences never pass."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"(?i)\s+series$", "", " ".join(text.split()))
+    if scrub(text)[0] != text:
+        return None  # holds something the scrubber hides (an address, a key)
+    words = text.split(" ")
+    if not text or len(text) > 40 or len(words) > 5 or not re.search(r"\d", text):
+        return None
+    for w in words:
+        if not (w.lower() in SERIES_WORDS or (len(w) == 1 and w.isalnum()) or (
+                re.fullmatch(r"[A-Z0-9][A-Z0-9/+-]*[a-z]{0,3}", w) and not HARDWARE_SHAPE.search(w)
+                and (re.search(r"\d", w) or (w.isalpha() and w.isupper() and len(w) <= 6)))):
+            return None  # a word that isn't a code: a name, a host name, a hardware address
+    return text
+
+
+def _apple_model(code):
+    """ "Macmini9,1" -> "Mac mini"; an Apple model code we don't know -> None."""
+    if not isinstance(code, str):
+        return None
+    return next((words for prefix, words in APPLE_MODELS if re.fullmatch(prefix + r"\d+,\d+", code)), None)
+
+
+def _txt_about(kind, txt):
+    """{maker, model} as announced in one mDNS TXT record of a printer, an AirPlay speaker or TV, or an Apple device
+    (raw: `_keep` decides what may leave)."""
+    if kind in ("_ipp._tcp", "_printer._tcp"):
+        maker, model, ty = txt.get("usb_MFG"), txt.get("usb_MDL"), txt.get("ty") or ""
+        if not model and ty:  # "Brother HL-L2350DW series"
+            maker = maker or ty
+            model = ty
+        return {"maker": maker, "model": model}
+    if kind in ("_airplay._tcp", "_raop._tcp", "_device-info._tcp"):
+        code = txt.get("model") or txt.get("am")
+        if _apple_model(code):
+            return {"maker": "Apple", "model": _apple_model(code)}
+        if kind != "_device-info._tcp" and code and not re.fullmatch(r"[A-Za-z]+\d+,\d+", code):
+            return {"maker": txt.get("manufacturer"), "model": code}  # another maker's AirPlay speaker or TV
+    if kind == "_companion-link._tcp":  # iPhones, iPads, Macs and Apple TVs: only Apple announces this
+        return {"maker": "Apple", "model": _apple_model(txt.get("rpMd"))}
+    if kind == "_apple-mobdev2._tcp":  # iPhones and iPads; the name comes from the host ("Juans-iPhone")
+        return {"maker": "Apple"}
+    return {}
+
+
+def _unescape(text):
+    """DNS-SD escapes: "\\032" (a decimal byte) and "\\x" (a literal character)."""
+    return re.sub(r"\\(\d{3}|.)", lambda m: chr(int(m.group(1))) if m.group(1).isdigit() else m.group(1), text)
+
+
+def _txt(field):
+    """A TXT record as printed, '"ty=Brother HL" "txtvers=1"', as a dict."""
+    out = {}
+    for entry in re.findall(r'"((?:[^"\\]|\\.)*)"', field):
+        key, eq, value = _unescape(entry).partition("=")
+        if eq:
+            out.setdefault(key, value)
+    return out
+
+
+def _watch(cmds, seconds):
+    """Run listing commands that never end by themselves side by side for `seconds`, then stop them. Returns what
+    each printed by then (at most 256 KB each)."""
+    import select
+    procs = []
+    for cmd in cmds:
+        try:
+            procs.append(subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                          stderr=subprocess.DEVNULL))
+        except OSError:
+            pass
+    got = {p.stdout: [] for p in procs}
+    reading = list(got)
+    deadline = time.monotonic() + seconds
+    try:
+        while reading:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            for f in select.select(reading, [], [], left)[0]:
+                chunk = os.read(f.fileno(), 65536)
+                got[f].append(chunk)
+                if not chunk or sum(map(len, got[f])) > 256 * 1024:
+                    reading.remove(f)
+    except (OSError, ValueError):
+        pass
+    finally:
+        for p in procs:
+            try:
+                p.kill()
+                p.wait(timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            p.stdout.close()
+    return [b"".join(got[p.stdout]).decode("utf-8", "replace") for p in procs]
+
+
+def _dns_sd_zone(text, kind):
+    """[(host, kind, txt, instance name)] from `dns-sd -Z <kind>` output (zone-file lines: PTR, then SRV and TXT per
+    instance)."""
+    hosts, txts = {}, {}
+    for line in text.splitlines():
+        m = re.match(r"^(\S+)\s+(SRV|TXT)\s+(.*)$", line)
+        if not m:
+            continue
+        if m.group(2) == "SRV":
+            parts = m.group(3).split()
+            if len(parts) >= 4:
+                hosts[m.group(1)] = parts[3].rstrip(".")
+        else:
+            txts[m.group(1)] = _txt(m.group(3))
+    return [(host, kind, txts.get(owner, {}), _unescape(owner[:-len(kind) - 1] if owner.endswith("." + kind) else ""))
+            for owner, host in hosts.items()]
+
+
+def _mdns_records(seconds=MDNS_SECONDS):
+    """[(address, kind, txt, {"instance", "host"})] for services announced nearby, from the system's mDNS service (asked, not listened
+    for). Takes at most twice `seconds`: on Linux avahi resolves the addresses itself; on a Mac the listings run for
+    `seconds` and the host names are looked up in the time left."""
+    out = []
+    if shutil.which("avahi-browse"):
+        for line in _run(["avahi-browse", "-aprtk"], timeout=max(1.0, 2 * seconds)).splitlines():
+            f = line.split(";")
+            if len(f) >= 9 and f[0] == "=" and f[2] == "IPv4" and f[4] in MDNS_ASK and _private_v4(f[7]):
+                out.append((f[7], f[4], _txt(f[9]) if len(f) > 9 else {},
+                            {"instance": _unescape(f[3]), "host": f[6]}))
+        return out
+    if sys.platform != "darwin" or not shutil.which("dns-sd"):
+        return out
+    deadline = time.monotonic() + 2 * seconds
+    found = []
+    for kind, text in zip(MDNS_ASK, _watch([["dns-sd", "-Z", k, "local"] for k in MDNS_ASK], seconds)):
+        found += _dns_sd_zone(text, kind)
+    addresses = {}
+    for host in list(dict.fromkeys(f[0] for f in found))[:20]:
+        left = deadline - time.monotonic()
+        if left <= 0.2:
+            break
+        addresses[host] = _resolve(host, min(1.0, left))
+    return [(addresses[h], k, t, {"instance": i, "host": h}) for h, k, t, i in found
+            if _private_v4(addresses.get(h))]
+
+
+def _upnp_about(data):
+    """{maker, model, kind} as a UPnP description file announces them (raw: `_keep` decides what may leave). Only
+    UTF-8 (or ASCII) files are read, and one with a DOCTYPE or ENTITY is refused (entities can make a few bytes expand
+    without end): the check runs on the decoded text, so another encoding can't hide them. The friendlyName is a name
+    someone gave it: it leaves only while the owner shows names (see `_seen_name`)."""
+    import xml.etree.ElementTree as ET
+    if not data or len(data) > DESCRIPTION_BYTES or data[:2] in (b"\xfe\xff", b"\xff\xfe") or b"\0" in data:
+        return {}
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return {}
+    declared = re.match(r"\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']*)", text)
+    if (declared and declared.group(1).lower() not in ("utf-8", "us-ascii", "ascii")) \
+            or re.search(r"<!\s*(DOCTYPE|ENTITY)", text, re.I):
+        return {}
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except (ET.ParseError, ValueError):
+        return {}
+    device = next((e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "device"), None)
+    if device is None:
+        return {}
+    got = {}
+    for child in device:
+        key = child.tag.rsplit("}", 1)[-1]
+        if key in ("manufacturer", "modelName", "modelNumber", "deviceType", "friendlyName") \
+                and (child.text or "").strip():
+            got[key] = child.text.strip()[:100]
+    name, number = got.get("modelName", ""), got.get("modelNumber", "")
+    models = [" ".join(x for x in (name, number if number not in name else "") if x), name, number]
+    kind = next((w for t, w in UPNP_KIND if ":" + t + ":" in got.get("deviceType", "")), None)
+    return {"maker": got.get("manufacturer"), "model": next((m for m in models if _product_code(m)), None),
+            "kind": kind, "name": got.get("friendlyName")}
+
+
+def _fetch(host, port, path, deadline):
+    """The body of a plain HTTP GET, or b"" (an error, not 200, too big, or the deadline passed). Connecting,
+    sending and every read are held to the one deadline; the connection is closed when it passes."""
+    import socket as _s
+    left = deadline - time.monotonic()
+    if left <= 0.05:
+        return b""
+    data = b""
+    try:
+        with _s.create_connection((host, port), timeout=left) as sock:
+            sock.sendall(("GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n" % (path, host, port)).encode())
+            while len(data) <= DESCRIPTION_BYTES + 4096:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return b""  # out of time: what came so far is not used
+                sock.settimeout(left)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            else:
+                return b""  # too big to be a description
+    except (OSError, ValueError):
+        return b""
+    head, _sep, body = data.partition(b"\r\n\r\n")
+    return body if re.match(rb"HTTP/1\.[01] 200 ", head) else b""
+
+
+def _router_about(deadline):
+    """(router address, {maker, model, kind}) from its UPnP description, tried at a few well-known places on the
+    router only (plain outgoing requests, at most 1 s each); (None, {}) when there's no answer by `deadline`."""
+    gateway = _gateway(timeout=max(0.1, min(5.0, deadline - time.monotonic())))
+    if not _private_v4(gateway):
+        return None, {}
+    for port, path in UPNP_PLACES:
+        if deadline - time.monotonic() <= 0.2:
+            break
+        about = _upnp_about(_fetch(gateway, port, path, min(deadline, time.monotonic() + 1.0)))
+        if about.get("maker") or about.get("model"):
+            return gateway, about
+    return gateway, {}
+
+
+def _keep(mine, about):
+    """Keep the first maker and model that may leave the device: a known maker (as the table spells it) and a model
+    from the Apple table or shaped like a product code. An unknown maker means neither is kept."""
+    maker = _maker(about.get("maker"))
+    if not maker:
+        return
+    model = about.get("model") if isinstance(about.get("model"), str) else ""
+    if maker == "Apple":
+        model = model if model in {w for _p, w in APPLE_MODELS} else None  # only ever from the table
+    else:
+        for prefix in (about.get("maker") or "", maker):  # "FUJI XEROX DocuPrint CP115" made by FUJI XEROX
+            if prefix and model.lower().startswith(prefix.lower() + " "):
+                model = model[len(prefix) + 1:]
+        model = _product_code(model)
+    if model and not mine.get("model"):
+        mine["model"], mine["maker"] = model, maker
+    elif not mine.get("maker"):
+        mine["maker"] = maker
+
+
+def _seen_name(text):
+    """A name a thing announces ("Living Room", "Juans-MacBook-Pro"), as the owner would recognise it, or None. Sent
+    only while the owner shows names (on by default; a switch in Settings). Never anything holding an address or a
+    hardware id: a trailing "(1B:BE:CF)" is cut, and a name still holding one is dropped."""
+    if not isinstance(text, str):
+        return None
+    text = re.sub(r"\s*\((?:[0-9A-Fa-f]{2}[:-]){2,5}[0-9A-Fa-f]{2}\)$", "", " ".join(text.split()))
+    text = re.sub(r"(?i)\.local\.?$", "", text)
+    if not text or not text.isprintable() or scrub(text)[0] != text \
+            or re.search(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[:_-][0-9A-Fa-f]{2}){2,}(?![0-9A-Za-z])|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
+        return None
+    return text[:60].strip() or None
+
+
+def _name_from(mine, text, rank):
+    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2), then
+    a HomeKit bridge's name (3)."""
+    name = _seen_name(text)
+    if name and rank < mine.get("_rank", 9):
+        mine["name"], mine["_rank"] = name, rank
+
+
+def _identify(budget=IDENTIFY_BUDGET):
+    """{address: {"services": set, "maker", "model"}} for things that say who made them. One deadline covers it all,
+    from the mDNS listings to the last byte of the router's description; what doesn't fit is left out, and nothing
+    here can fail the look."""
+    deadline = time.monotonic() + budget
+    out = {}
+    try:
+        for ip, kind, txt, *label in _hourly("mdns", lambda: _mdns_records(min(MDNS_SECONDS, budget / 3)),
+                                             every=60):
+            mine = out.setdefault(ip, {"services": set()})
+            if kind in MDNS:
+                mine["services"].add(MDNS[kind])
+            _keep(mine, _txt_about(kind, txt))
+            label = label[0] if label and isinstance(label[0], dict) else {}
+            # A HomeKit bridge's instance names one of its plugins ("homebridge-dyson…"), not the machine itself.
+            _name_from(mine, label.get("instance"), 3 if kind == "_hap._tcp" else 0)
+            _name_from(mine, label.get("host"), 2)
+        router, about = _router_about(deadline)
+        if about:
+            mine = out.setdefault(router, {"services": set()})
+            if about.get("kind"):
+                mine["services"].add(about["kind"])
+            _keep(mine, about)
+            _name_from(mine, about.get("name"), 1)
+    except Exception:  # makers and models are a nicety: they never cost the look
+        pass
+    for mine in out.values():
+        mine.pop("_rank", None)
+    return out
+
+
+def discover(yes=False, quiet=False):
+    """Look for other things on this network and send what is picked (all of them with `yes`), without addresses.
+    Returns (sent, how many). `quiet`: run as a job from the app, nothing printed."""
+    say = (lambda *_a, **_k: None) if quiet else print
     cfg = _load()
+    about = _identify()  # first: whatever answers is then in the neighbour table too
     neigh, mdns = _neighbours(), _mdns()
-    ips = set(neigh) | set(mdns)
+    ips = set(neigh) | set(mdns) | {ip for ip in about if _private_v4(ip)}
     ports = _open_ports(ips)
-    known = {v.get("ip"): k for k, v in (cfg.get("found") or {}).items()}  # same thing, same id as last time
-    items, local = [], {}
+    ips = _one_per_machine(ips, neigh, lambda ip: len(ports.get(ip, [])) + len(mdns.get(ip, ())) + len(about.get(ip) or {}))
+    found = cfg.get("found") or {}
+    known = {v.get("ip"): k for k, v in found.items()}  # same thing, same id as last time
+    known_hw = {v["hw"]: k for k, v in found.items() if v.get("hw")}  # ... even at a new address
+    items, local, elsewhere = [], {}, set()
     for ip in sorted(ips):
         vendor = _vendor(neigh.get(ip))
-        services = sorted(mdns.get(ip, set()) | {PORTS[p] for p in ports.get(ip, [])})
-        if not services and not vendor:
+        told = about.get(ip) or {}
+        services = sorted(mdns.get(ip, set()) | told.get("services", set()) | {PORTS[p] for p in ports.get(ip, [])})
+        if not services and not vendor and not told.get("model"):
             continue  # nothing to say about it
-        cid = known.get(ip) or secrets_hex(6)
+        hw = hw_tag(cfg.get("netKey"), neigh.get(ip))  # the same thing after its address changes
+        at_ip = known.get(ip)
+        if at_ip and hw and found[at_ip].get("hw") not in (None, hw):
+            elsewhere.add(at_ip)  # another machine has that address now: the old thing isn't here
+            at_ip = None
+        cid = (hw and known_hw.get(hw)) or at_ip or secrets_hex(6)
         items.append({"cid": cid, "guess": _guess(vendor, services, ports.get(ip, [])), "vendor": vendor,
                       "services": services[:8], "ports": sorted(ports.get(ip, []))[:8]})
-        local[cid] = {"ip": ip, "ports": sorted(ports.get(ip, []))}
+        for k in ("maker", "model") + (("name",) if cfg.get("deviceNames") is True else ()):
+            if told.get(k):
+                items[-1][k] = told[k]
+        tag = net_tag(cfg.get("netKey"), ip)  # lets the app match it (say, your router) to lines on the map
+        if tag:
+            items[-1]["tag"] = tag
+        if hw:
+            items[-1]["hw"] = hw
+        before = found.get(cid) or {}
+        seen = set(ports.get(ip, [])) | (set(before.get("ports") or []) if hw and before.get("hw") == hw else set())
+        local[cid] = {"ip": ip, "ports": sorted(seen), **({"hw": hw} if hw else {})}  # a watch follows it when it moves
     if not items:
-        print("Didn't find anything to suggest on this network.")
-        return
-    print(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
+        say("Didn't find anything to suggest on this network.")
+        if not quiet:
+            return True, 0  # at a terminal nothing is sent unless picked
+        items = []  # asked from the app: an empty list replaces what an earlier look found
+    say(f"Found {len(items)} thing(s) nearby. Only what you pick is sent, without addresses:")
     for n, it in enumerate(items, 1):
-        print(f"  {n}. {it['guess']}" + (f" - {it['vendor']}" if it["vendor"] else "")
+        made = " ".join(x for x in (it.get("maker"), it.get("model")) if x) or it["vendor"]
+        say(f"  {n}. {it['guess']}" + (f" - {made}" if made else "")
               + (f" ({', '.join(it['services'])})" if it["services"] else ""))
-    if yes:
+    if yes or quiet:
         chosen = items
     else:
         try:
@@ -2122,15 +3297,17 @@ def discover(yes=False):
         else:
             nums = {int(x) for x in re.findall(r"\d+", ans)}
             chosen = [it for n, it in enumerate(items, 1) if n in nums]
-    if not chosen:
-        print("Nothing sent.")
-        return
+    if not chosen and not quiet:
+        say("Nothing sent.")
+        return True, 0
     picked = {it["cid"]: local[it["cid"]] for it in chosen}
-    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **picked}))
+    moved = {cid: {**found[cid], "ip": None} for cid in elsewhere - set(local)}  # its watch says "not reachable"
+    _update_config(lambda c: c.__setitem__("found", {**(c.get("found") or {}), **moved, **picked}))
     st, body = _post(check_api(cfg["api"]) + "/helper/discoveries", {"items": chosen[:30]},
                      {"X-Device-Token": cfg["token"]})
-    print(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
-          else f"Couldn't send ({st or 'network error'}).")
+    say(f"Sent {len(chosen)}. Open Nightlight to add them to your map." if st == 200
+        else f"Couldn't send ({st or 'network error'}).")
+    return st == 200, len(chosen[:30])
 
 
 def secrets_hex(n):
@@ -2150,6 +3327,9 @@ def _watch_results():
         port = w.get("port")
         if not target or type(port) is not int or port not in PORTS or port not in target.get("ports", []):
             continue  # only a port this device saw open on that thing, from the fixed list
+        if not target.get("ip"):
+            out.append({"cid": w["cid"], "up": False, "ms": None})  # not at its old address any more
+            continue
         t = time.time()
         try:
             with _s.create_connection((target["ip"], port), timeout=1):
@@ -2159,11 +3339,250 @@ def _watch_results():
     return out
 
 
+# ------------------------------------------------------------------ lines on the map, without addresses
+# Which of your devices rely on each other, told without any address leaving this one. Each private IPv4 address
+# (10/8, 172.16/12, 192.168/16) is replaced by a keyed fingerprint: HMAC-SHA256 with your account's own key (sent only
+# to your account's helpers), first 20 hex characters. Your devices give the same address the same fingerprint, so the
+# app can match "this Mac backs up to that NAS" without learning either address. Link-local (169.254/16), shared or
+# public addresses are left out: they say nothing stable about your own network.
+
+NET_PORTS = (445, 2049, 548, 873, 5432, 3306, 1883, 8123, 32400, 9000)  # services others rely on; never SSH (22)
+NET_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+NET_EVERY = 1800  # what this device relies on is looked up at most every 30 minutes
+_PRIVATE = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+
+
+def _private_v4(ip):
+    import ipaddress
+    try:
+        a = ipaddress.IPv4Address(ip if isinstance(ip, str) else "")
+    except ValueError:
+        return False
+    return any(a in ipaddress.IPv4Network(n) for n in _PRIVATE)
+
+
+def net_tag(key, ip):
+    """The keyed fingerprint of a private IPv4 address, or None for anything else."""
+    import hashlib
+    import hmac
+    if not _private_v4(ip) or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+        return None
+    return hmac.new(bytes.fromhex(key), ip.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def hw_tag(key, mac):
+    """The keyed fingerprint of a hardware (MAC) address, or None. It stays the same when the router hands the thing
+    a new IP address; a phone's private Wi-Fi address is usually fixed per network. Never the address itself."""
+    import hashlib
+    import hmac
+    if not isinstance(mac, str) or not re.fullmatch(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", mac) or int(mac[:2], 16) & 1 \
+            or mac == "00:00:00:00:00:00" or not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+        return None
+    return hmac.new(bytes.fromhex(key), b"hw:" + mac.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def _one_per_machine(ips, neigh, score):
+    """One address per hardware address: the neighbour table can still hold a thing's old addresses after the router
+    gave it a new one. Keeps the address that says the most (then the lowest, so it is stable)."""
+    best = {}
+    for ip in sorted(ips):
+        mac = neigh.get(ip)
+        if not mac:
+            best[ip] = ip
+        elif mac not in best or score(ip) > score(best[mac]):
+            best[mac] = ip
+    return set(best.values())
+
+
+def _own_ip():
+    """This device's address on the local network: the one it would use to reach the internet (a UDP "connect" only
+    picks the route; no packet is sent)."""
+    import socket as _s
+    s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+SELVES = 8  # own addresses reported at most (Wi-Fi, cable, Docker bridges, VPNs...)
+
+
+def _own_ips(timeout=3):
+    """Every private IPv4 address of this device, on every interface, the main one first: `ip` or /proc/net/fib_trie
+    on Linux, `ifconfig` on a Mac. Found nearby leaves out what is really one of your own devices."""
+    found = []
+    if sys.platform == "darwin":
+        found = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)", _run(["ifconfig"], timeout=timeout))
+    else:
+        found = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)/", _run(["ip", "-4", "-o", "addr"], timeout=timeout)
+                           if shutil.which("ip") else "")
+        if not found:
+            try:
+                with open("/proc/net/fib_trie") as f:
+                    lines = f.read().splitlines()
+                found = [lines[i - 1].split()[-1] for i, ln in enumerate(lines)
+                         if i and ln.strip() == "/32 host LOCAL" and lines[i - 1].split()]
+            except OSError:
+                pass
+    main = _own_ip()
+    return [ip for ip in dict.fromkeys([main] + found) if _private_v4(ip)][:SELVES]
+
+
+def _hex_v4(h):
+    """An IPv4 address as /proc/net prints it (hex, in this machine's byte order)."""
+    import socket as _s
+    import struct
+    return _s.inet_ntoa(struct.pack("=I", int(h, 16)))
+
+
+def _gateway(timeout=5):
+    try:
+        with open("/proc/net/route") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 4 and parts[1] == "00000000" and int(parts[3], 16) & 2:  # default route, via a gateway
+                    return _hex_v4(parts[2])
+        return None
+    except (OSError, ValueError):
+        pass
+    if sys.platform == "darwin":
+        m = re.search(r"gateway:\s*([\d.]+)", _run(["route", "-n", "get", "default"], timeout=timeout))
+        return m.group(1) if m else None
+    return None
+
+
+def _resolve(host, timeout=3):
+    """A host name to an IPv4 address, here on the device; None if it doesn't resolve in time."""
+    import socket as _s
+    import threading
+    if _private_v4(host):
+        return host
+    got = []
+    t = threading.Thread(target=lambda: got.append(_s.gethostbyname(host)), daemon=True)  # no timeout of its own
+    t.start()
+    t.join(timeout)
+    return got[0] if got else None
+
+
+def _mount_host(source):
+    """The server's name in a network mount source: //user@nas.local/share, nas:/export, afp_x@nas._afpovertcp..."""
+    if source.startswith("//"):
+        host = source[2:].split("/", 1)[0].rsplit("@", 1)[-1]
+    elif ":" in source:
+        host = source.split(":", 1)[0]
+    else:
+        return None
+    host = urllib.parse.unquote(host).split(":")[0]
+    return re.sub(r"\._[a-z-]+\._tcp(\.local)?\.?$", ".local", host).rstrip(".") or None
+
+
+def _time_machine_hosts(timeout=5):
+    if sys.platform != "darwin" or not shutil.which("tmutil"):
+        return []
+    urls = re.findall(r"^URL\s*:\s*(\S+)", _run(["tmutil", "destinationinfo"], timeout=timeout), re.M)
+    return [h for h in (_mount_host("//" + u.split("://", 1)[-1]) for u in urls) if h]
+
+
+def _drive_hosts(timeout=5):
+    if sys.platform == "darwin":
+        lines = [m.group(1) for m in (re.match(r"^(\S+) on .+ \((smbfs|afpfs|nfs|webdav)\b", ln)
+                                      for ln in _run(["mount"], timeout=timeout).splitlines()) if m]
+    else:
+        try:
+            with open("/proc/mounts") as f:
+                lines = [p[0] for p in (ln.split() for ln in f)
+                         if len(p) > 2 and p[2] in ("nfs", "nfs4", "cifs", "smb3")]
+        except OSError:
+            lines = []
+    return [h for h in map(_mount_host, lines) if h]
+
+
+def _connections(timeout=5):
+    """(remote address, port) of established TCP connections from here to a known service port."""
+    out = []
+    try:
+        with open("/proc/net/tcp") as f:
+            for line in f.read().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) > 3 and parts[3] == "01":  # ESTABLISHED
+                    ip, port = parts[2].split(":")
+                    out.append((_hex_v4(ip), int(port, 16)))
+    except (OSError, ValueError):
+        for line in _run(["netstat", "-an", "-p", "tcp"], timeout=timeout).splitlines():
+            parts = line.split()  # tcp4  0  0  192.168.1.5.51234  192.168.1.10.5432  ESTABLISHED
+            if len(parts) >= 6 and parts[0] == "tcp4" and parts[5] == "ESTABLISHED" and "." in parts[4]:
+                ip, port = parts[4].rsplit(".", 1)
+                if port.isdigit():
+                    out.append((ip, int(port)))
+    return [(ip, port) for ip, port in out if port in NET_PORTS]
+
+
+NET_BUDGET = 10  # seconds for the whole look (commands and name lookups); a report never waits longer for it
+NET_HOSTS = 8  # names looked up per kind: duplicates go first, then the list is cut
+
+
+def _relied_on(budget=NET_BUDGET):
+    """[(address, why)]: where this device backs up to, whose shared folders it mounts, which services it uses. One
+    deadline covers everything; what didn't fit in it is simply left out of this report."""
+    deadline = time.monotonic() + budget
+
+    def resolved(hosts, why):
+        out = []
+        for host in list(dict.fromkeys(hosts))[:NET_HOSTS]:
+            left = deadline - time.monotonic()
+            if left <= 0.2:
+                break
+            ip = _resolve(host, min(3, left))
+            if ip:
+                out.append((ip, why))
+        return out
+
+    def left():  # what a command may still take: the shared deadline, never more than 5 s
+        return max(0.5, min(5.0, deadline - time.monotonic()))
+
+    found = []
+    for step in (lambda: [(ip, "service:%d" % port) for ip, port in _connections(left())],
+                 lambda: resolved(_time_machine_hosts(left()), "time_machine"),
+                 lambda: resolved(_drive_hosts(left()), "network_drive")):
+        if deadline - time.monotonic() <= 0.5:
+            break
+        try:
+            found += [(ip, why) for ip, why in step() if ip]
+        except Exception:  # one probe failing never hides the others
+            pass
+    return found
+
+
+def _net():
+    """What the app needs to draw lines between your devices, as fingerprints; None before the key arrived."""
+    try:
+        key = _load().get("netKey")
+        if not isinstance(key, str) or not NET_KEY_RE.fullmatch(key):
+            return None
+        me = net_tag(key, _own_ip())
+        selves = [t for t in dict.fromkeys(net_tag(key, ip) for ip in _hourly("selves", _own_ips, every=300)) if t]
+        peers, seen = [], set()
+        for ip, why in _hourly("net", _relied_on, every=NET_EVERY):
+            tag = net_tag(key, ip)
+            if tag and tag != me and tag not in selves and (tag, why) not in seen and len(peers) < 20:
+                seen.add((tag, why))
+                peers.append({"tag": tag, "why": why})
+        return {"self": me, "selves": selves[:SELVES], "gateway": net_tag(key, _gateway()), "peers": peers}
+    except Exception:  # never let this cost a report
+        return None
+
+
 # ------------------------------------------------------------------ running in the background
 
 APP_DIR = (os.path.expanduser("~/Library/Application Support/Nightlight") if sys.platform == "darwin"
            else os.path.expanduser("~/.local/share/nightlight"))
 UNIT = "/etc/systemd/system/nightlight-helper.service"
+PKG_DIR = "/Library/Application Support/Nightlight"  # Nightlight.pkg's own Python and helper, shared by every user
+PKG_ID = "com.nightlight.installer"
 PLIST = os.path.expanduser("~/Library/LaunchAgents/com.nightlight.helper.plist")
 LABEL = "com.nightlight.helper"
 
@@ -2222,8 +3641,9 @@ def _unit_is_mine():
     return f"# nightlight-owner={os.getuid()}" in text or legacy
 
 
-def install(every=60):
-    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first."""
+def install(every=60, manage=None):
+    """Run the helper in the background from now on (and after restarts). Needs the device to be joined first.
+    `manage` ("app" or "strict") answers the permissions question without a terminal (the Mac installer)."""
     try:
         _load()
     except (OSError, ValueError):
@@ -2231,14 +3651,18 @@ def install(every=60):
     cfg = _load()
     if cfg.get("manage") not in ("app", "strict"):
         interactive = sys.stdin.isatty()
-        app = interactive and _ask("Let the Nightlight app manage what it may do on this device? You'll switch things "
-                                   "on and off in the app; every restart still asks you first. (n = strict: changes "
-                                   "only on this device)", True)
+        app = manage == "app" if manage else interactive and _ask(
+            "Let the Nightlight app manage what it may do on this device? You'll switch things on and off in the app; "
+            "every restart still asks you first. (n = strict: changes only on this device)", True)
         _update_config(lambda c: c.setdefault("manage", "app" if app else "strict"))
         print("Managed from the app." if app else "Strict: change permissions here with `nightlight settings`.")
     # The one moment someone is at this Mac's terminal: settle macOS's folder prompts now, not in a later visit.
+    # Without a terminal (the Mac installer) nothing is recorded: still not asked, so it can be offered later, and
+    # until then the private folders are never read.
     if sys.platform == "darwin" and sys.stdin.isatty() and "macPrivateFolders" not in _load():
         _ask_mac_private(True)
+    # The Python running this install also runs the service: from the Mac installer that is its own bundled Python,
+    # which signed updates leave in place (they replace only the helper file and restart with this same Python).
     script, py, home = _copy_self(), os.path.realpath(sys.executable), os.path.abspath(CONFIG_DIR)
     _link_command(script, py)
     every = max(int(every), 30)
@@ -2330,6 +3754,21 @@ def uninstall():
         except OSError:
             pass
     print("Uninstalled. Nothing of Nightlight is left running on this device.")
+    _pkg_leftovers()
+
+
+def _pkg_leftovers():
+    """Nightlight.pkg's shared folder needs an administrator to remove: removed when run as root, otherwise say how."""
+    if sys.platform != "darwin" or not os.path.isdir(PKG_DIR) or os.path.islink(PKG_DIR):
+        return
+    if os.geteuid() == 0:
+        shutil.rmtree(PKG_DIR)
+        subprocess.run(["pkgutil", "--forget", PKG_ID], capture_output=True, check=False)
+        print(f"Removed the Mac installer's files ({PKG_DIR}).")
+        return
+    print(f"The Mac installer's files are still in {PKG_DIR} (its own Python; nothing runs from it now). If nobody "
+          f"else on this Mac uses Nightlight, remove them with:\n  sudo rm -rf '{PKG_DIR}' && sudo pkgutil --forget "
+          f"{PKG_ID}")
 
 
 def _sudo_ok():
@@ -2457,14 +3896,18 @@ def _ask_mac_private(default_yes):
     own Allow prompts right away, so nobody has to come back to the terminal for this later."""
     if _ask("Let Nightlight measure Downloads, Desktop, Documents, Movies and the Trash (sizes only)? macOS will "
             "ask you to allow each one now; click Allow.", default_yes):
-        # The yes is recorded first: the privacy guard reads it, so only then can the folders be opened, which is
-        # what raises macOS's prompts now, while you're here to answer them.
-        _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
-        _inspect_until[0] = time.time() + 120
-        for _label, path in _mac_private_places():
-            _du(path)
+        _allow_mac_private()
     else:
         _update_config(lambda c: c.__setitem__("macPrivateFolders", False))  # a recorded no: not asked again
+
+
+def _allow_mac_private():
+    """Record the yes, then measure the private folders once so macOS raises its Allow prompts now. The yes comes
+    first: the privacy guard reads it, so only then can the folders be opened, while someone is there to answer."""
+    _update_config(lambda c: c.__setitem__("macPrivateFolders", True))
+    _inspect_until[0] = time.time() + 120
+    for _label, path in _mac_private_places():
+        _du(path)
 
 
 def settings():
@@ -2491,7 +3934,7 @@ def settings():
                 "rebuild themselves, remove unused Docker images)?", False):
             allow["fix"] = ["all"]
         for t in targets[:20]:
-            if _ask(f"  Read recent log lines of {t}?", False):
+            if _ask(f"  Read recent log lines of {t} (secrets are removed before they leave)?", True):
                 allow["logs"].append(t)
             kind = "restart_container" if t in [c["name"] for c in _containers()] else "restart_service"
             if _ask(f"  Restart {t} when it has stopped (after you approve)?", False):
@@ -2510,6 +3953,7 @@ def main():
     except (AttributeError, ValueError):
         pass
     p = argparse.ArgumentParser(description="Nightlight helper")
+    p.add_argument("--version", action="version", version=f"Nightlight helper {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enrol")
     e.add_argument("api")
@@ -2519,6 +3963,8 @@ def main():
     pa.add_argument("api")
     pa.add_argument("--web", default=None)
     pa.add_argument("--name", default=None)
+    pa.add_argument("--browser", action="store_true", help="open the approval page in the browser (Mac installer)")
+    pa.add_argument("--install", action="store_true", help="install the background service once approved")
     ins = sub.add_parser("install")
     ins.add_argument("--every", type=int, default=60)
     sub.add_parser("uninstall")
@@ -2527,6 +3973,8 @@ def main():
     sub.add_parser("version")
     ex = sub.add_parser("expert", help="switch expert sessions on (pin your passkey) or off, at this device")
     ex.add_argument("--off", action="store_true")
+    au = sub.add_parser("audit", help="show the last expert commands verified, refused and run on this device")
+    au.add_argument("-n", type=int, default=20)
     sub.add_parser("rollback", help="go back to the version before the last update")
     sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
@@ -2543,7 +3991,7 @@ def main():
     if a.cmd == "enrol":
         enrol(a.api, a.code, (a.name or default_name())[:40])
     elif a.cmd == "pair":
-        pair(a.api, a.web, a.name)
+        pair(a.api, a.web, a.name, a.browser, a.install)
     elif a.cmd == "install":
         install(a.every)
     elif a.cmd == "uninstall":
@@ -2554,6 +4002,8 @@ def main():
         print(VERSION)
     elif a.cmd == "expert":
         expert_setup(a.off)
+    elif a.cmd == "audit":
+        audit_show(a.n)
     elif a.cmd == "rollback":
         rollback()
     elif a.cmd == "settings":

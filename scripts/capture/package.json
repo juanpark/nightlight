@@ -1,0 +1,8 @@
+{
+  "name": "nightlight-capture",
+  "private": true,
+  "type": "module",
+  "description": "Records demo takes and README screenshots of the live app (anonymous sample home only)",
+  "scripts": { "capture": "node capture.mjs" },
+  "dependencies": { "playwright": "1.63.0" }
+}

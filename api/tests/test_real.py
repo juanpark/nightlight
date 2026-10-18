@@ -133,7 +133,8 @@ def test_silent_real_device_shows_offline(client, started):  # M3
     summary = agentlib.fleet_summary(started, generation(started))
     assert "NOT REPORTING" in summary
     line = next(line for line in summary.splitlines() if dev["deviceId"] in line)
-    assert "Health: offline" in line and "Pi-hole" not in line
+    # an offline device lists no stale problems (its apps list may still name Pi-hole: that's inventory, not health)
+    assert "Health: offline" in line and "Pi-hole" not in line.split(" Apps: ")[0]
     db.client().collection("helperTokens").document(real._sha(dev["token"])).update({"lastSeen": None})
     beat(client, dev["token"])  # a fresh report brings it back
     assert "NOT REPORTING" not in agentlib.fleet_summary(started, generation(started))

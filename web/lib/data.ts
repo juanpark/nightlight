@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Metrics, Note, PlaceDoc, Runbook, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -15,20 +15,26 @@ function plain<T>(id: string, data: DocumentData): T {
   return { id, ...(conv(data) as object) } as T;
 }
 
-function useCollection<T>(uid: string | null, path: string[]): T[] {
-  const [rows, setRows] = useState<T[]>([]);
+/** A collection's rows, and whether they have arrived for this path yet (rows for another path never show here). */
+function useCollectionState<T>(uid: string | null, path: string[]): { rows: T[]; loaded: boolean } {
+  const [got, setGot] = useState<{ key: string; rows: T[] } | null>(null);
   const key = path.join("/");
   useEffect(() => {
     if (!uid) return;
     let stop = () => {};
     firebase().then(({ db }) => {
       stop = onSnapshot(collection(db, "users", uid, ...(path as [string])), (snap) =>
-        setRows(snap.docs.map((d) => plain<T>(d.id, d.data()))));
+        setGot({ key, rows: snap.docs.map((d) => plain<T>(d.id, d.data())) }));
     });
     return () => stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, key]);
-  return rows;
+  return got?.key === key ? { rows: got.rows, loaded: true } : { rows: EMPTY as T[], loaded: false };
+}
+const EMPTY: never[] = [];
+
+function useCollection<T>(uid: string | null, path: string[]): T[] {
+  return useCollectionState<T>(uid, path).rows;
 }
 
 export function useUserDoc(uid: string | null): UserDoc | null | undefined {
@@ -48,7 +54,14 @@ const current = (gen: number | undefined) => (d: { realm?: string; demoGeneratio
   d.realm === "real" || d.demoGeneration === gen;
 
 export function useDevices(uid: string | null, gen: number | undefined): Device[] {
-  return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived).filter(current(gen));
+  // the server archives a watched thing you stop watching; ones stopped before it did are only revoked
+  return useCollection<Device>(uid, ["devices"]).filter((d) => !d.archived && !(d.kind === "watched" && d.revoked))
+    .filter(current(gen));
+}
+
+/** Names the person gave their places (one per router; unnamed ones are "Place 1", "Place 2"…). */
+export function usePlaces(uid: string | null): PlaceDoc[] {
+  return useCollection<PlaceDoc>(uid, ["places"]);
 }
 
 /** Lines between devices on the map (the sample home's go away with it). */
@@ -59,12 +72,15 @@ export function useLinks(uid: string | null, gen: number | undefined): Link[] {
 export function useServices(uid: string | null, deviceId: string | null): Service[] {
   return useCollection<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
 }
+export function useServicesState(uid: string | null, deviceId: string | null) {
+  return useCollectionState<Service>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "services"]);
+}
 
 /** A stored step: older messages have only name and args; textOffset/ok/ms arrived with the layered chat. */
 export interface PastStep { name: string; args?: Record<string, unknown>; summary?: string; details?: string;
-  textOffset?: number; ok?: boolean; ms?: number; unfinished?: boolean; actionId?: string }
-export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number;
-  mode?: "quick" | "investigate"; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
+  textOffset?: number; ok?: boolean; ms?: number; unfinished?: boolean; actionId?: string; callId?: string }
+export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number; turnId?: string;
+  mode?: "quick" | "investigate"; metrics?: Metrics; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
 
 /** A chat's saved messages, oldest first (read once when the chat opens). */
 export async function loadMessages(uid: string, sessionId: string): Promise<PastMessage[]> {
@@ -97,6 +113,13 @@ export function useExpertStatus(tick = 0): { enabled: boolean } | null {
 export function useProfile(uid: string | null, deviceId: string | null) {
   return useCollection<{ id: string; text: string; by: string; updatedAt: Date | null }>(
     uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "profile"]).find((p) => p.id === "main");
+}
+
+/** A device's saved fixes, most used first (a sample device's only from the current sample home). */
+export function useRunbooks(uid: string | null, deviceId: string | null, gen: number | undefined): Runbook[] {
+  return useCollection<Runbook>(uid && deviceId ? uid : null, ["devices", deviceId ?? "_", "runbooks"])
+    .filter((r) => r.demoGeneration == null || r.demoGeneration === gen)
+    .sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0));
 }
 
 /** A device's notebook, newest first. */

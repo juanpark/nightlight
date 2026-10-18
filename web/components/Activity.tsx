@@ -53,7 +53,8 @@ export default function Activity({ events, actions, devices }: {
 
   return (
     <div className="panel">
-      <h3>What happened</h3>
+      <h3 style={{ marginBottom: 2 }}>Activity</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>What happened, and who did it</p>
       <div className="filters">
         <select value={device} onChange={(e) => setDevice(e.target.value)} aria-label="Device">
           <option value="all">All devices</option>

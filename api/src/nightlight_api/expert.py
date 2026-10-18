@@ -59,6 +59,8 @@ def _ref(uid: str):
 
 
 def register_options(uid: str, request_origin: str | None) -> dict:
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     origin = _origin(request_origin)
     rp_id = urlparse(origin).hostname
     challenge = b64u(secrets.token_bytes(32))
@@ -70,6 +72,8 @@ def register_options(uid: str, request_origin: str | None) -> dict:
 
 def register(uid: str, credential: dict) -> dict:
     """Check the new passkey (webauthn library) and keep its public key as PEM, with a short fingerprint."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from webauthn import verify_registration_response
@@ -129,6 +133,7 @@ def card(device: dict, params: dict) -> tuple[dict, dict]:
               "dryRun": (why + " " if why else "") + "It runs only after you sign it with your passkey; the device "
                         "checks your signature itself. Valid for 15 minutes.",
               "rollback": "Depends on the command: read it before you sign. Commands that only read are safe.",
+              "command": payload["command"],
               "blastRadius": [device["id"]], "riskClass": "destructive"}
     return fields, {"command": payload["command"], "why": why, "payload": payload, "challenge": challenge_for(payload)}
 
@@ -143,8 +148,8 @@ def grant_card(device: dict, params: dict) -> tuple[dict, dict]:
     payload = {"device": device["id"], "mode": "read-only", "expires": int(time.time()) + GRANT_TTL,
                "nonce": b64u(secrets.token_bytes(12))}
     why = str(params.get("why") or "")[:300]
-    fields = {"svcId": None, "plan": f"Let Nightlight investigate the {device.get('name')} with read-only commands "
-                                     "for 15 minutes.",
+    fields = {"svcId": None, "plan": f"Let Nightlight look deeper into the {device.get('name')} for 15 minutes, "
+                                     "with commands that only look.",
               "dryRun": (why + " " if why else "") + "It may run commands that only read (system logs, disk use, "
                         "running programs, network) and shows you each one. The device itself refuses anything "
                         "that could change something or touch where secrets are kept.",
@@ -185,8 +190,11 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
         raise not_found()
     if a.get("status") != "pending":
         raise ApiError(409, "not_pending")
-    if not k.get("pem") or a["params"]["payload"]["expires"] < time.time():
-        raise ApiError(409, "expired" if k.get("pem") else "no_passkey")
+    if not k.get("pem"):
+        raise ApiError(409, "no_passkey")
+    if a["params"]["payload"]["expires"] < time.time():
+        _expire(uid, action_id)  # the card stops offering a tap that can only fail
+        raise ApiError(409, "expired")
     credential = {"id": k["credentialId"], "rawId": k["credentialId"], "type": "public-key",
                   "response": {**{x: assertion[x] for x in ("authenticatorData", "clientDataJSON", "signature")}}}
     try:
@@ -202,12 +210,27 @@ def sign(uid: str, action_id: str, assertion: dict) -> dict:
     from . import actions
     summary = None
     if not cap.on_device:  # it unlocks other jobs until its expiry
-        until = datetime.fromtimestamp(a["params"]["payload"]["expires"], timezone.utc)
-        summary = f"Investigation unlocked until {until:%H:%M} UTC."
+        left = max(1, round((a["params"]["payload"]["expires"] - time.time()) / 60))
+        summary = f"Investigation unlocked for the next {left} minute{'s' if left != 1 else ''}."
     out = actions.signed(uid, action_id, signed, summary)
     if v.new_sign_count:  # counterless passkeys stay at 0; recorded once the approval has committed
         _ref(uid).update({"signCount": v.new_sign_count})
     return out
+
+
+def _expire(uid: str, action_id: str) -> None:
+    """A passkey card whose signed window has passed becomes stale (only while it is still pending)."""
+    ref = db.action(uid, action_id)
+
+    @firestore.transactional
+    def run(tx):
+        a = ref.get(transaction=tx).to_dict() or {}
+        if a.get("status") == "pending":
+            tx.update(ref, {"status": "stale", "finishedAt": datetime.now(timezone.utc),
+                            "result": {"ok": False, "summary": "This card expired before it was signed. Ask again "
+                                                              "and Nightlight will put up a fresh one."}})
+
+    db.run_transaction(run)
 
 
 def grant_write(uid: str, a: dict) -> tuple:

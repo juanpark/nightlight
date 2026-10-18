@@ -1,6 +1,11 @@
 """Nightlight API: a house-sitter for home and small-office servers."""
 
-__version__ = "0.1.0"
+import os
+
+# The app's version (web and API share it; the repo's VERSION file) and the exact build (git commit), both stamped by
+# scripts/deploy_api.sh. The helper on devices has its own version (helper/nightlight_helper.py).
+__version__ = os.environ.get("APP_VERSION", "dev")
+__build__ = os.environ.get("GIT_SHA", "")
 
 
 def main() -> None:

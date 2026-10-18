@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from . import db, links, memory, sim, trust as trustlib
+from . import apps, db, links, memory, sim, trust as trustlib
 from .config import settings
 from .errors import ApiError, conflict, invalid, not_found
 from .ids import new_id
@@ -114,14 +114,47 @@ def _stale_pending(uid: str, op: str, generation: int, hook) -> None:
         _fenced(uid, op, generation, work)
 
 
+def _seed_history(tx, uid: str, generation: int, history: dict, names: dict) -> None:
+    """Notes, runbooks and finished jobs from the sample home's past, written in the same fenced transaction as its
+    devices and belonging to this generation (so the next reset clears them). The jobs are already done or failed and
+    carry no session or turn: nothing delivers them, runs them again, continues a chat or changes trust."""
+    now = _utcnow()
+
+    def where(x):
+        svc = x.get("svcId")
+        return ({"svcId": svc, "service": names[(x["deviceId"], svc)]} if svc else {}), \
+            now - timedelta(days=x["daysAgo"])
+
+    for x in history.get("notes", []):
+        svc, at = where(x)
+        tx.set(db.notes(uid, x["deviceId"]).document(new_id("note")),
+               {"text": x["text"], "by": x["by"], "at": at, "demoGeneration": generation, **svc})
+    for x in history.get("runbooks", []):
+        svc, at = where(x)
+        tx.set(db.device(uid, x["deviceId"]).collection("runbooks").document(new_id("rb")),
+               {"title": x["title"], "when": x["when"], "steps": deepcopy(x["steps"]), "createdBy": "nightlight",
+                "createdAt": at, "updatedAt": at, "uses": x.get("uses", 0),
+                "lastUsedAt": at if x.get("uses") else None, "demoGeneration": generation, **svc})
+    for x in history.get("jobs", []):
+        svc, at = where(x)
+        tx.set(db.actions(uid).document(new_id("act")),
+               {"type": x["type"], "deviceId": x["deviceId"], "params": {}, "svcId": x.get("svcId"),
+                "plan": x["plan"], "status": "done" if x["ok"] else "failed", "realm": "sim", "seeded": True,
+                "demoGeneration": generation, "decision": {"by": x["by"]}, "createdAt": at - timedelta(minutes=1),
+                "finishedAt": at, "result": {"ok": x["ok"], "summary": x["summary"]}})
+
+
 def _seed(uid: str, op: str, generation: int, template: str, hook) -> int:
     t = TEMPLATES[template]
     hook("seed")
 
     def work(tx):
+        names = {}  # (device id, service id) -> the service's name, for the history below
         for raw in t["devices"]:
             device = deepcopy(raw)
-            services = {svc.pop("id"): {**svc, "findings": svc.get("findings", [])}
+            services = {svc.pop("id"): {**svc, "findings": svc.get("findings", []),
+                                        **({"about": a} if not svc.get("about") and (a := apps.about(svc.get("image"),
+                                            svc.get("name"))) else {})}
                         for svc in deepcopy(device.pop("services"))}
             device_id = device.pop("id")
             device.update(version=1, simulated=True, demoGeneration=generation, lastSeen=firestore.SERVER_TIMESTAMP,
@@ -133,7 +166,9 @@ def _seed(uid: str, op: str, generation: int, template: str, hook) -> int:
             tx.set(db.device(uid, device_id), device)
             for svc_id, svc in services.items():
                 tx.set(db.services(uid, device_id).document(svc_id), {**svc, "demoGeneration": generation})
+                names[(device_id, svc_id)] = svc.get("name") or svc_id
         links.seed(tx, uid, generation, t.get("links", []))
+        _seed_history(tx, uid, generation, t.get("history") or {}, names)
         for action_type in sim.ACTIONS:
             tx.set(db.trust_doc(uid, "sim", action_type), trustlib.new_doc(action_type, generation))
 
@@ -158,7 +193,7 @@ def _finalize(uid: str, op: str, generation: int, hook) -> None:
 def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     # Real devices (helper-reported) belong to the owner, not to the demo: reset never touches them.
     old_devices = [s.reference for s in db.devices(uid).get() if s.to_dict().get("realm") != "real"]
-    service_refs = [s.reference for d in old_devices for sub in ("services", "notes", "profile")
+    service_refs = [s.reference for d in old_devices for sub in ("services", "notes", "profile", "runbooks")
                     for s in d.collection(sub).get()]
     _delete_older(uid, op, generation, service_refs, hook)
     _delete_older(uid, op, generation, old_devices, hook)
@@ -173,6 +208,10 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     _delete_older(uid, op, generation, [s.reference for s in db.trust(uid).get()], hook)
     _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("turnIndex").get()], hook)
     _stale_pending(uid, op, generation, hook)
+    # The sample home's seeded past jobs go with their generation (the log hides them anyway; this keeps them from
+    # piling up). Jobs the person ran in the demo are left as before.
+    _delete_older(uid, op, generation, [s.reference for s in db.actions(uid).where(
+        filter=FieldFilter("seeded", "==", True)).get()], hook)
     count = _seed(uid, op, generation, template, hook)
     _finalize(uid, op, generation, hook)
     return count

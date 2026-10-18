@@ -2,8 +2,32 @@ rules_version = '2';
 // Browsers may only read their own data. Every write goes through the API (Admin SDK), never the client.
 service cloud.firestore {
   match /databases/{database}/documents {
+    // A live demo machine: each visit signs in as its own Firebase user (live-...), mapped by the API in
+    // liveVisits/{visitUid} -> {slot, account, leaseId}. It reads the pool account's data only while that is the slot's
+    // current lease (custom sign-in, leased, not wiping, before both deadlines). The pool account itself never signs
+    // in, so a token for it (livePoolUids marks those uids) reads nothing.
+    function isPoolAccount(uid) {
+      return exists(/databases/$(database)/documents/livePoolUids/$(uid));
+    }
+    function visitReads(uid) {
+      let v = get(/databases/$(database)/documents/liveVisits/$(request.auth.uid)).data;
+      let s = get(/databases/$(database)/documents/livePool/$(v.slot)).data;
+      return request.auth.token.firebase.sign_in_provider == 'custom'
+        && v.account == uid
+        && request.auth.token.get('nl_slot', '') == v.slot
+        && request.auth.token.get('nl_lease', '-') == v.leaseId
+        && s.get('state', '') == 'leased'
+        && s.get('leaseId', '') == v.leaseId
+        && s.get('wiping', false) == false
+        && s.expiresAt > request.time
+        && s.hardExpiresAt > request.time;
+    }
     match /users/{uid}/{document=**} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && (
+        (request.auth.uid == uid && !isPoolAccount(uid))
+        || (request.auth.uid.matches('live-.*')
+            && exists(/databases/$(database)/documents/liveVisits/$(request.auth.uid))
+            && visitReads(uid)));
       allow write: if false;
     }
     match /{document=**} {

@@ -2,7 +2,7 @@
 
 **Short version.** Nightlight's cloud is a *messenger, not a master*. Today a device runs only a fixed, signed menu of
 jobs, so even a fully breached Nightlight cloud can't take over your machines. Expert work (anything a sysadmin would
-type) is the next step: commands the AI proposes, that run only after **your passkey** signs them on your own phone
+type) works the same way: commands the AI proposes run only after **your passkey** signs them on your own phone
 or laptop. The power of a sysadmin, with the keys in your pocket, not ours.
 
 ## The central tension: safety vs. power and convenience
@@ -36,7 +36,7 @@ loop, more than any single feature, is how the gap between safe and capable keep
 Juan's own setup (a folder of notes plus an AI in a terminal with his SSH keys) can fix almost anything. A product for
 people who have never opened a terminal should come close to that. Three ways to get there:
 
-| | A. Remote shell from the cloud | B. A fixed menu of skills (today) | C. Owner-signed expert sessions (next) |
+| | A. Remote shell from the cloud | B. A fixed menu of skills (today) | C. Owner-signed expert sessions (shipped) |
 |---|---|---|---|
 | What the AI can do | anything | named jobs: checks, restarts, clean-ups, updates, removal | anything it proposes, once you sign it |
 | Who holds the keys | our cloud | our cloud holds job names; the device holds the rules | **you** (a passkey on your phone/laptop); the device checks your signature |
@@ -61,7 +61,7 @@ businesses at once, through exactly this kind of central "run anything" channel.
 ## C: owner-signed expert sessions
 
 1. The owner registers a **passkey** for expert sessions (WebAuthn, the same Face ID / Touch ID / phone prompt as a
-   password-free login). Its public key is sent to each of their devices, which store it.
+   password-free login). On each device where the owner turns expert sessions on (`nightlight expert`, at the device), the helper fetches that public key after the owner compares its fingerprint, and stores it.
 2. In an expert session, Gemini investigates with the read-only checks and **proposes commands**, each with what it
    does and what could go wrong.
 3. The owner approves a command (or a short, time-boxed read-only bundle) with the passkey. The browser signs the exact
@@ -74,18 +74,31 @@ What this protects against: a breached cloud (can't sign), a stolen Nightlight s
 injection (a human signs every command). What it doesn't: an owner approving a harmful command they didn't read; the
 card shows the AI's explanation and a risk level to help, and read-only bundles are the default.
 
+## The trust ladder: freedom earned one kind of job at a time (sample home)
+
+Cards answer "may it do this, now?". The ladder answers "may it do this kind of job without asking next time?". Each
+kind of job has a level: **Always ask me**, **Ask me for new things**, **Just handle it and tell me**. After three
+approved successes of the same safe (routine) kind, such as a log clean-up, Nightlight offers to stop asking for it;
+the owner accepts or declines, and the Trust panel can move any kind back down. A failure moves a kind back a step on
+its own. Restarts and updates always ask, however often they went well (`trust.py`).
+
+It runs on the sample home only. On real devices every change still waits for a tap, because the fixed menu needs more
+hours behind it before we let it act alone there. That is the next step this design is built for, not a missing piece.
+
 ## How we got here (for the judges)
 
 1. Read-only monitoring and explanations (sample home).
 2. A fixed job menu on real devices, every change behind a card; strict vs app-managed devices.
 3. Signed helper updates from the app (offline release key).
 4. Playbooks: known problems handled the same way every time, without the AI.
-5. Next: owner-signed expert sessions (prototype in progress).
+5. Owner-signed expert sessions: shipped and tested (see [`PASSKEYS.md`](PASSKEYS.md) and [`SECURITY-MODEL.md`](SECURITY-MODEL.md)).
 
 ## Roadmap items that follow from this
 
-- Expert sessions: per-command and time-boxed signing, transcripts, and a "read-only" classifier for bundles.
+- Expert sessions: a "read-only" classifier for bundles (per-command signing, the 15-minute read-only grant and the
+  on-device audit log of signed commands have shipped).
 - Release signing in a hardware security module or a CI pipeline outside the cloud that talks to devices.
-- Installers (Mac `.pkg`, Raspberry Pi image) so the first install needs no terminal line.
+- Installers so the first install needs no terminal line: the Mac `.pkg` has shipped (unsigned until Developer ID
+  certificates arrive); a Raspberry Pi image and a Linux `.deb` are next.
 - Retention you choose per account (7 / 30 / 90 / 365 days) and cold archives in Cloud Storage.
 - Account deletion that purges everything at once.

@@ -49,7 +49,7 @@ export default function WatchPanel({ watches, now }: { watches: Watch[]; now: nu
           maxLength={120} aria-label="Tags" />
         <button className="primary" disabled={busy || full || !url.trim()}>{busy ? "Adding…" : "Watch it"}</button>
       </form>
-      {err && <p className="small" role="alert" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</p>}
       <div className="list" style={{ marginTop: 10 }}>
         {watches.map((w) => (
           <div key={w.id} className="item">

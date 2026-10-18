@@ -7,6 +7,11 @@ export const dynamic = "force-dynamic";
 export function GET() {
   return NextResponse.json({
     apiUrl: process.env.API_URL ?? "http://localhost:8080",
+    // this web app's version (the repo's VERSION file) and exact build (git commit), stamped by scripts/deploy_web.sh
+    version: process.env.APP_VERSION ?? "dev",
+    build: process.env.GIT_SHA ?? "",
+    // where Nightlight lives: passkeys belong to this address and work nowhere else (previews, other hosts)
+    appUrl: process.env.APP_URL ?? "https://nightlight-web-1032111130355.asia-northeast3.run.app",
     firebase: {
       apiKey: process.env.FIREBASE_API_KEY ?? "",
       authDomain: process.env.FIREBASE_AUTH_DOMAIN ?? "",

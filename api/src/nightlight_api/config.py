@@ -27,13 +27,15 @@ class Settings:
     # Trust: clean human-approved runs needed before a promotion offer.
     promotion_threshold: int = 3
 
-    # Model and cost guards (build plan §7). Default: Gemini 3.5 Flash-Lite, chosen on measured speed (16 Oct: about
-    # twice as fast as 3.8 Flash with equally plain answers). Prices: Agent Platform global list price per 1M tokens
-    # (3.5 Flash-Lite $0.30 / $2.50; 3.8 Flash $0.75 / $3.75), read 2026-10-16.
-    model: str = os.environ.get("MODEL", "gemini-3.5-flash-lite")
-    thinking_level: str = os.environ.get("THINKING_LEVEL", "MINIMAL")
-    price_in_per_m: float = float(os.environ.get("PRICE_IN_PER_M", "0.30"))
-    price_out_per_m: float = float(os.environ.get("PRICE_OUT_PER_M", "2.50"))
+    # Model and cost guards (build plan §7). Default: Gemini 3.8 Flash at low thinking (it rejects minimal), chosen 18
+    # Oct on measured reliability: the same 12 demo questions, 3 runs each, passed 26 of 36 on 3.5 Flash-Lite and 34 of
+    # 35 on 3.8 Flash, at about twice the time per answer (median 9.0 s vs 4.6 s) and 2.5 times the cost ($0.016 vs
+    # $0.0065). Prices: Agent Platform global list price per 1M tokens (3.5 Flash-Lite $0.30 / $2.50; 3.8 Flash
+    # $0.75 / $3.75), read 2026-10-16.
+    model: str = os.environ.get("MODEL", "gemini-3.8-flash")
+    thinking_level: str = os.environ.get("THINKING_LEVEL", "LOW")
+    price_in_per_m: float = float(os.environ.get("PRICE_IN_PER_M", "0.75"))
+    price_out_per_m: float = float(os.environ.get("PRICE_OUT_PER_M", "3.75"))
     max_input_tokens: int = int(os.environ.get("MAX_INPUT_TOKENS", "16000"))
     # Enforced by the API as a hard cap on output + thinking tokens combined (verified 2026-10-16).
     max_output_tokens: int = int(os.environ.get("MAX_OUTPUT_TOKENS", "1024"))
@@ -57,6 +59,18 @@ class Settings:
     # The scheduled sweep (`POST /internal/sweep`) must carry a Google identity token for this audience and account.
     sweep_audience: str = os.environ.get("SWEEP_AUDIENCE", "")
     sweep_invoker: str = os.environ.get("SWEEP_INVOKER", "")
+    # Live demo machines (live.py). LIVE_POOL="nl-live-1=judge-pool-1,..." (instance=pool account uid); empty = off.
+    live_pool: list[str] = field(default_factory=lambda: _list("LIVE_POOL"))
+    live_zone: str = os.environ.get("LIVE_ZONE", "asia-northeast3-a")
+    live_idle_seconds: int = int(os.environ.get("LIVE_IDLE_SECONDS", "900"))  # no heartbeat this long: released
+    live_max_seconds: int = int(os.environ.get("LIVE_MAX_SECONDS", "3600"))  # hard cap on one lease
+    live_per_ip: int = int(os.environ.get("LIVE_PER_IP", "2"))  # live leases one visitor address may hold at once
+    live_admissions_per_hour: int = int(os.environ.get("LIVE_ADMISSIONS_PER_HOUR", "4"))  # new leases per address
+    live_resets_per_lease: int = int(os.environ.get("LIVE_RESETS_PER_LEASE", "3"))  # Start fresh, per visit
+    live_eta_seconds: int = int(os.environ.get("LIVE_ETA_SECONDS", "60"))  # measured click-to-ready 48-59 s (18 Oct)
+    live_restore_seconds: int = int(os.environ.get("LIVE_RESTORE_SECONDS", "120"))  # Start fresh, click-to-ready 105-110 s (18 Oct)
+    # The service account that signs pool custom tokens through IAM signBlob (needs Token Creator on itself).
+    live_signer: str = os.environ.get("LIVE_SIGNER", "")
     memory_location: str = os.environ.get("MEMORY_BANK_LOCATION", "global")
     memory_fact_chars: int = 300
     release_dir: str = os.environ.get("RELEASE_DIR", "")  # the signed helper on offer (default: package "release/")
@@ -65,12 +79,17 @@ class Settings:
 
     # Investigate mode: a stronger model that thinks longer and may take many more steps (the person chose it).
     deep_model: str = os.environ.get("DEEP_MODEL", "gemini-3.8-flash")
-    deep_thinking: str = os.environ.get("DEEP_THINKING", "HIGH")
+    deep_thinking: str = os.environ.get("DEEP_THINKING", "MEDIUM")  # HIGH took up to 2 minutes for a first word
     deep_price_in_per_m: float = float(os.environ.get("DEEP_PRICE_IN_PER_M", "0.75"))
     deep_price_out_per_m: float = float(os.environ.get("DEEP_PRICE_OUT_PER_M", "3.75"))
     deep_max_output_tokens: int = int(os.environ.get("DEEP_MAX_OUTPUT_TOKENS", "4096"))
     deep_calls_per_turn: int = int(os.environ.get("DEEP_CALLS_PER_TURN", "24"))
     deep_turn_seconds: int = int(os.environ.get("DEEP_TURN_SECONDS", "240"))
+    quick_turn_seconds: int = int(os.environ.get("QUICK_TURN_SECONDS", "120"))
+    # A model call that sends nothing at all for this long is cancelled and retried once (Agent Platform has a
+    # latency tail: single Quick calls of 30-60 s with no thinking, where the usual call takes 2-5 s).
+    call_gap_seconds: float = float(os.environ.get("CALL_GAP_SECONDS", "30"))
+    deep_call_gap_seconds: float = float(os.environ.get("DEEP_CALL_GAP_SECONDS", "45"))
 
     @property
     def deep_c_max(self) -> float:
