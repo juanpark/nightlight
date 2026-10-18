@@ -8,6 +8,13 @@ import type { Action, LogJob, Service } from "@/lib/types";
 
 const BY = { you: "You approved", nightlight: "Nightlight, as you allowed", device: "The device" } as const;
 
+/** When a job happened: when it finished, else when it was decided, else when it was asked for; never 1 Jan 1970. */
+function when(j: LogJob, a: Action | undefined): string {
+  const t = [j.at ? new Date(j.at) : null, a?.finishedAt, a?.decidedAt, a?.createdAt]
+    .find((d) => d instanceof Date && d.getTime() > 0);
+  return t ? t.toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) + " · " : "";
+}
+
 export default function JobLog({ deviceId, actions, app }: { deviceId: string; actions: Action[]; app?: Service }) {
   const [loaded, setJobs] = useState<LogJob[] | null>(null);
   const jobs = loaded && app ? loaded.filter(aboutApp(app)) : loaded; // given an app, only the jobs about it
@@ -33,7 +40,7 @@ export default function JobLog({ deviceId, actions, app }: { deviceId: string; a
           <div className="logrow-body">
             <div><strong>{j.title}</strong>{j.service && <span className="pill" style={{ marginLeft: 6 }}>{j.service}</span>}</div>
             {j.summary && <div>{j.summary}</div>}
-            <div className="muted">{new Date(j.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · {BY[j.by] ?? j.by}</div>
+            <div className="muted">{when(j, actions.find((a) => a.id === j.actionId))}{BY[j.by] ?? j.by}</div>
             {(j.output || j.command) && (
               <details><summary className="muted">{j.command ? "Command and output" : "What it printed"}</summary>
                 {j.command && <code className="wl-cmd">{j.command}</code>}

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { Fingerprint, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { challengeFor, passkeyProblem, passkeysSupported, signWithPasskey, useAppHost } from "@/lib/passkey";
 import { useNow } from "@/lib/data";
@@ -101,9 +102,15 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   // on an expert card the command is the point; elsewhere the plan says it in words and the command is one tap away
   const showCommand = SIGNED.has(action.type) || action.type === "expert_read";
   const signedCard = SIGNED.has(action.type);
+  // how loud the card is: passkey and risky cards stand out, some-risk ones are amber, safe ones stay calm
+  const passkey = signedCard || action.type === "expert_read";
+  const level = passkey || action.riskClass === "destructive" ? "strong" : action.riskClass === "service" ? "some" : "calm";
   return (
-    <div className="card" data-tour="card">
+    <div className={`card level-${level}`} data-tour="card">
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {level === "strong" && (passkey
+          ? <Fingerprint className="card-icon" size={18} aria-label="Needs your passkey" />
+          : <ShieldAlert className="card-icon" size={18} aria-label="Risky" />)}
         <strong className="card-title">{action.plan}</strong>
         <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
       </div>

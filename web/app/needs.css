@@ -225,3 +225,11 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
   .card dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .card dd { margin-bottom: 6px; }
 }
+
+/* How loud a card is (ApprovalCard's level): safe stays calm, some risk gets an amber edge, risky and passkey cards a
+   red edge, a faint tint, a solid badge and a red primary button */
+.card.level-some { border-left: 4px solid var(--warn); }
+.card.level-strong { border-left: 4px solid var(--crit); background: color-mix(in srgb, var(--crit) 7%, var(--panel)); }
+.card.level-strong .card-icon { color: var(--crit-ink); flex: none; }
+.card.level-strong .risk { background: var(--crit-ink); color: var(--panel); }
+.card.level-strong .actions .primary { background: var(--crit-ink); color: var(--panel); }

@@ -170,7 +170,7 @@ export default function Home({ user, account }: { user: User; account?: string }
                 onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
             </div>
           </div>
-          {panel === "trust" && <TrustPanel trust={trust} />}
+          {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}

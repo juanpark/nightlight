@@ -74,6 +74,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   hidden?: boolean; // on a phone, the chat is showing instead
 }) {
   const { rows: services, loaded } = useServicesState(uid, device.id);
+  const failing = device.findings?.find((f) => f.check === "background_items_failing");
+  const failingItems = failing ? failing.evidence || failing.message : "";
   const fav = useFavorites(uid, device);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
@@ -192,8 +194,10 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           <div className="details small">
             <div><span className="muted">System</span>{device.os ?? "–"}</div>
             <div><span className="muted">Running for</span>{uptime(device.vitals?.uptime)}</div>
-            <div><span className="muted">Background apps</span>{device.containerCount != null
-              ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
+            {/* Docker containers only; the Mac's own background items (launchd) that keep failing are a finding */}
+            <div><span className="muted">Apps in containers</span>{device.containerCount
+              ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : device.containerCount === 0 ? "none" : "–"}</div>
+            {failingItems && <div><span className="muted">Background items failing</span>{failingItems}</div>}
             <div><span className="muted">Updates waiting</span>{device.updatesPending ?? "–"}</div>
             <div><span className="muted">Nightlight helper</span>{device.helperVersion ? `version ${device.helperVersion}` : "–"}
               {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
