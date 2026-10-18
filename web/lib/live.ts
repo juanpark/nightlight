@@ -21,14 +21,19 @@ export type LiveMe = { phase: "starting" | "reconnecting" | "stopping" | "restor
   scenario?: Scenario };
 export type Problem = { code: string; total?: number; inUse?: number };
 
-type State = { starting: boolean; problem: Problem | null; resumed: boolean; eta?: number; restore?: number; ended: boolean };
-let state: State = { starting: false, problem: null, resumed: false, ended: false };
+type State = { starting: boolean; problem: Problem | null; resumed: boolean; eta?: number; restore?: number; ended: boolean;
+  machineReady: boolean; leaseStart?: number }; // machineReady: the machine is up and nothing covers Home
+let state: State = { starting: false, problem: null, resumed: false, ended: false, machineReady: false };
 const listeners = new Set<() => void>();
 const set = (p: Partial<State>) => { state = { ...state, ...p }; listeners.forEach((l) => l()); };
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 export function useLive(): State { return useSyncExternalStore(subscribe, () => state, () => state); }
 export function clearProblem() { set({ problem: null, ended: false }); }
 export function resumedSeen() { set({ resumed: false }); }
+/** What LiveSession learns from the machine's state, for Home (the tour waits; old reports read as starting). */
+export function machineState(p: { machineReady: boolean; leaseStart?: number }) {
+  if (p.machineReady !== state.machineReady || (p.leaseStart && p.leaseStart !== state.leaseStart)) set(p);
+}
 
 /** Lease a machine (the visitor's own again if they still hold one) and sign in to it. */
 export async function startLive(scenario: Scenario) {
@@ -59,7 +64,7 @@ export async function startLive(scenario: Scenario) {
 /** Leave the machine: release it now, then sign out (back to the start screen). */
 export async function leaveLive(ended = false) {
   if (!ended) await api("POST", "/api/demo/live/end", {}).catch(() => {});
-  set({ ended, resumed: false });
+  set({ ended, resumed: false, machineReady: false, leaseStart: undefined });
   await signOut((await firebase()).auth).catch(() => {});
 }
 

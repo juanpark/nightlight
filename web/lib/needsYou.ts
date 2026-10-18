@@ -107,7 +107,7 @@ export function needsYou(i: NeedsInput): Need[] {
         at: i.now });
       continue;
     }
-    if (real && d.status === "offline" && !d.revoked) {
+    if (real && d.status === "offline" && !d.revoked && !d.starting) {
       const silentFor = d.lastSeen ? i.now - d.lastSeen.getTime() : 0;
       out.push({ id: `silent:${d.id}`, kind: "silent", priority: silentFor > 86400000 ? 1 : 2, deviceId: d.id,
         title: d.lastSeen ? `Hasn't reported for ${ago(silentFor)}` : "Hasn't reported yet",

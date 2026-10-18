@@ -63,6 +63,7 @@ export interface Device {
   realm?: "sim" | "real";
   demoGeneration?: number;
   lastSeen?: Date | null;
+  starting?: boolean; // page only: a live demo machine that hasn't reported since this visit began
   permissionsAt?: Date | null; // when the owner last changed the switches
   revoked?: boolean;
   allowedJobs?: Record<string, string[]>;
