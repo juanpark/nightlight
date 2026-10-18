@@ -111,7 +111,7 @@ flowchart LR
     SCH -->|"/internal/sweep, Google-signed token"| A
     AR -.->|"deploy"| A
     H -->|"report every minute<br/>outgoing HTTPS only"| A
-    A ==>|"job name + target, only after a tap;<br/>signed release"| H
+    A ==>|"answers the helper's outgoing request:<br/>job name + target only after a tap; signed release"| H
     H -.->|"fixed jobs, local allow-list"| S
 ```
 

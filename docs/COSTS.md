@@ -11,7 +11,7 @@ What we spent, where, how and why. **Measured** means a number our code or Googl
 |---|---|---|---|
 | Production model calls (all time) | **$2.17** spent, 689 calls | measured (budget ledger) | every real answer on the live app since launch: our tests, demos and visitors |
 | Development testing with real Gemini and cloud | **about $6.25** (roughly $6) | measured per run by our test harnesses | model choice, prompt rebuild, demo VM checks, demo VM pool build (details below) |
-| Cloud Run, Firestore, Scheduler, Secret Manager, Artifact Registry | close to $0 | estimate | the live app; it scales to zero when nobody uses it |
+| Cloud Run, Firestore, Scheduler, Cloud Build, Artifact Registry | close to $0 | estimate | the live app; it scales to zero when nobody uses it |
 | Demo VM pool (5 e2-small VMs, kept stopped) | about $0.03 per judge-hour while one runs; about $12/month standing (disks) + under $1/month (snapshots) | estimate (list price) | each judge gets their own real Linux server to watch Nightlight fix |
 | Hard cap on production model spend | **$35** | set in code | a runaway is impossible (see below) |
 
@@ -73,7 +73,7 @@ No per-service bill is broken out yet. These are list-price estimates.
 | Cloud Run (API and web) | close to $0 at idle | minimum instances = 0; billed only while serving requests. Keeping one instance warm on each service would cost about $1–3 a day. That decision is still open. |
 | Firestore | close to $0 | small documents, well inside the free daily quota at our traffic (not measured separately) |
 | Cloud Scheduler | close to $0 | one job every 5 minutes; a few jobs a month are free |
-| Secret Manager, Artifact Registry | cents | a few secrets; container images of a few hundred MB |
+| Cloud Build, Artifact Registry | cents | builds on each deploy; container images of a few hundred MB |
 | Demo VM pool (5 × e2-small, 20 GB disk each) | about $0.03 per judge-hour while one runs (VM about $0.02/hour + external IP; a restore adds seconds of an extra disk). Standing cost about $12/month for the 5 disks, under $1/month for golden snapshots. | list prices. VMs are kept stopped, so only disks are billed while idle. |
 
 **Why a pool, and why it can't run up a bill.** Each judge gets their own real machine. After use it is rolled back

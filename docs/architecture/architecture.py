@@ -75,6 +75,6 @@ with Diagram("", filename=str(OUT), outformat="png", show=False, direction="LR",
     build >> registry >> E(label="deploy", style="dotted") >> api
 
     helper >> E(label="report every minute\n(outgoing HTTPS only)", constraint="false") >> api
-    api >> E(label="job name + target, only after a tap;\nsigned release (helper checks signature)",
+    api >> E(label="answers the helper's own outgoing request:\njob name + target only after a tap;\nsigned release (helper checks signature)",
                 color=CONTROL, fontcolor=CONTROL, style="dashed") >> helper
     helper >> E(label="fixed jobs,\nlocal allow-list", style="dotted") >> apps
