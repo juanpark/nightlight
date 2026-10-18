@@ -16,6 +16,7 @@
   --logo-light: #f2b800;
   --glow-ink: #a87f00; /* the star as a ring or an icon on cream (≥ 3:1) */
   --field-line: #8f7c58; /* the outline of a field to type in or pick from: ≥ 3:1 on every surface */
+  --scrim: #0b1430; /* what dims the page behind a tour step: the night navy in both themes, never black */
   color-scheme: light;
   --radius: 14px;
   --font-ui: var(--font-sans, system-ui), system-ui, -apple-system, "Segoe UI", sans-serif;

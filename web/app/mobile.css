@@ -20,7 +20,8 @@
   .homemap .react-flow__controls-button { width: 44px; height: 44px; }
   .homemap .react-flow__controls-button svg { max-width: 16px; max-height: 16px; }
   .firstrun-line .linkish { display: inline-flex; align-items: center; min-height: 44px; }
-  .strip-head button, .needs-actions button { min-height: 44px; }
+  .strip-head button, .needs-actions button, .needs-device, button.dapps { min-height: 44px; }
+  .needs-device { margin-block: -10px; } /* the finger-sized hit area overlaps the air around the name, not the layout */
   /* the rest of what a finger taps: header pill and verdict, the chat's controls, the device panel's own */
   .sample-pill, .top-verdict, .wl-head, .card .actions button, .chat-input button, .drawer-actions button,
   .drawer .tabs button, .drawer-close, .star-btn:not(.small) { min-height: 44px; }
@@ -29,4 +30,5 @@
   .dtools button { min-height: 46px; } /* the toolbar sits outside the map's zoom, so leave a little room */
 }
 
-
+/* touch screens wider than a phone (tablets) get the same finger-sized links into a device */
+@media (pointer: coarse) { .needs-device, button.dapps { min-height: 44px; } .needs-device { margin-block: -10px; } }

@@ -23,6 +23,8 @@ const nodeTypes = { device: DeviceNode };
 const edgeTypes = { link: LinkEdge };
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 const stamp = (l: Link) => l.createdAt?.getTime() ?? 0;
+/** Fitting the map to the window keeps the zoom buttons' lane on the right free, so they never sit on a device */
+const FIT = { padding: { x: 0.08, y: 0.08, right: "64px" as const }, maxZoom: 1 };
 
 /** Where each device sits: its saved spot, nudged right when it would cover another; new ones in a row below. */
 function arrange(devices: Device[]): Map<string, { x: number; y: number }> {
@@ -210,7 +212,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   useEffect(() => {
     if (devices.length !== fitted.current && flow.current) {
       fitted.current = devices.length;
-      requestAnimationFrame(() => flow.current?.fitView({ padding: 0.08, maxZoom: 1, duration: 300 }));
+      requestAnimationFrame(() => flow.current?.fitView({ ...FIT, duration: 300 }));
     }
   }, [devices.length, nodes.length]);
 
@@ -387,7 +389,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         panOnDrag={!still} nodesDraggable={!still} nodesConnectable={!still}
         edgesFocusable={false} /* Tab goes device to device; a line is chosen by clicking it */
         panOnScroll zoomOnScroll={false} zoomOnPinch={!still} zoomOnDoubleClick={false}
-        fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }}>
+        fitView fitViewOptions={FIT}>
         {/* graph paper: fine squares, with a stronger line every fifth */}
         <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(128,142,190,.14)" />
         <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(128,142,190,.26)" />
