@@ -231,6 +231,14 @@ for connections, so the firewall never asks. The package is built, signed and no
 sha256 digests). Its shared files stay in `/Library/Application Support/Nightlight` after an uninstall; the uninstall
 prints the one administrator command that removes them.
 
+**Reinstalling keeps a device's history.** Uninstalling on the device (`nightlight uninstall`) leaves it on your map as
+offline, with everything Nightlight knows about it. Install again (the command line or the Mac installer) and the
+approval page asks *"This looks like your MacBook, last seen 10 minutes ago. Continue its history?"*: the same device
+comes back with its notes, saved fixes, past jobs and place on the map. The match is a hardware fingerprint hashed on
+the device and keyed per account on the server; it is only offered at your approval tap, never for a device that is
+still reporting, and never across accounts. Removing a device in the app is different: it archives it (and a reinstall
+before it's purged can still bring it back).
+
 When a device first connects, a one-time setup card asks what Nightlight may do there: Just watch, Watch and fix
 safe things (recommended), or Custom. On a device managed from the app, both presets include reading the recent log
 lines of the apps it has then, scrubbed on the device; you can switch that off per app.

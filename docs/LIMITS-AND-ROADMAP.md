@@ -130,10 +130,18 @@ judging model itself hitting Google's rate limit, because we ran both evaluation
 
 **Trying it yourself**
 
-- Linux and Mac: a one-line install today. The Mac installer package and its build pipeline exist
-  (`scripts/build_mac_pkg.sh`), but shipping a signed, notarized package waits on Developer ID certificates; until then
-  macOS needs an "Open Anyway" step, and we do not recommend it to anyone who would not do that knowingly. Windows is
-  unsupported.
+- Linux and Mac: a one-line install, or on a Mac the installer package (no Terminal), offered under Add a device
+  behind a plain warning that it isn't signed yet. Tested Sunday on a 2015 Intel MacBook Pro on macOS 10.15: the first
+  build refused to install (its floor was macOS 11 although the bundled Intel Python needs only 10.15); fixed the same
+  hour. The package supports macOS 10.15+ on Intel and Apple silicon. Signing and notarization wait on Developer ID
+  certificates; until then macOS needs a right-click > Open (or "Open Anyway") step. Windows is unsupported.
+- Switching how a device is installed keeps its history: on that Sunday test the command-line helper was uninstalled
+  (the device stayed on the map, offline, history kept), the installer was run, and the approval page offered
+  "This looks like your MacBook… Continue its history?". One device came back online with its notes, saved fixes,
+  jobs and place on the map; Activity recorded "Helper reinstalled (installer); history kept". The match uses a
+  hardware fingerprint hashed on the device and keyed per account on the server, is offered only at the owner's
+  approval tap, never for a device that is still reporting, and never across accounts. Typed-code pairing (no
+  approval tap) still always adds a new device.
 - If a visitor's Google account already owns a Nightlight account, linking the anonymous demo visit to it fails
   silently; sign in first.
 - Live demo machines for judges: a pool of 5 real VMs, one per judge, kept stopped until asked for. Measured Sunday:
