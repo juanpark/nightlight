@@ -149,7 +149,7 @@ cat > "$STAGE/distribution.xml" <<XML
   <title>Nightlight</title>
   <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
   <domains enable_localSystem="true"/>
-  <volume-check><allowed-os-versions><os-version min="11.0"/></allowed-os-versions></volume-check>
+  <volume-check><allowed-os-versions><os-version min="10.15"/></allowed-os-versions></volume-check>
   <choices-outline><line choice="default"><line choice="$PKG_ID"/></line></choices-outline>
   <choice id="default"/>
   <choice id="$PKG_ID" visible="false"><pkg-ref id="$PKG_ID"/></choice>
