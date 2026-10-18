@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GoogleAuthProvider, linkWithPopup, signOut, type User } from "firebase/auth";
+import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signOut, type AuthCredential, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
@@ -116,9 +116,22 @@ export default function Home({ user, account }: { user: User; account?: string }
     else if (g.to === "chat") askChat(g.ask);
   }
 
+  // Save with Google links this visit to a Google account; one that already has its own home can't take it, so say
+  // so and offer to sign in to that account instead
+  const [linkTaken, setLinkTaken] = useState<AuthCredential | null | false>(false);
   async function saveWithGoogle() {
     const { auth } = await firebase();
-    if (auth.currentUser) await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e) => alertless(e));
+    if (!auth.currentUser) return;
+    await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e: { code?: string }) => {
+      if (e?.code === "auth/credential-already-in-use" || e?.code === "auth/email-already-in-use")
+        setLinkTaken(GoogleAuthProvider.credentialFromError(e as Parameters<typeof GoogleAuthProvider.credentialFromError>[0]));
+      else alertless(e);
+    });
+  }
+  async function useTakenAccount() {
+    const { auth } = await firebase();
+    if (linkTaken) await signInWithCredential(auth, linkTaken).catch(alertless);
+    else { await signOut(auth); } // no credential to reuse: back to the start screen, where Sign in with Google is
   }
 
   return (
@@ -128,7 +141,7 @@ export default function Home({ user, account }: { user: User; account?: string }
         {user.isAnonymous
           ? <span className="pill">Sample home: simulated</span>
           : <button className="small" disabled={switching || !me} onClick={toggleSample}
-              title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
+              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide practice home" : "Practice home"}</button>}
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
@@ -141,11 +154,11 @@ export default function Home({ user, account }: { user: User; account?: string }
           <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
             onClick={() => setMore(!more)}>More</button>
           <div className={`more-list ${more ? "open" : ""}`}>
-            <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
+            <button onClick={() => toggle("trust")}>Trust</button>
             <button onClick={() => toggle("activity")}>Activity</button>
             {!live && <button onClick={() => toggle("memory")}>Memory</button>}
             <button onClick={() => toggle("demo")}>Demo tools</button>
-            <button data-tour="settings" onClick={() => toggle("settings")}>Settings</button>
+            <button onClick={() => toggle("settings")}>Settings</button>
             {!user.isAnonymous && <span className="small muted" title={user.email ?? undefined}>{user.email}</span>}
             <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
           </div>
@@ -154,6 +167,16 @@ export default function Home({ user, account }: { user: User; account?: string }
       </header>
       <div className="main" data-pane={pane}>
         <section className="left">
+          {linkTaken !== false && (
+            <div className="panel" role="alert">
+              <p style={{ marginTop: 0 }}>That Google account already has its own Nightlight home, so this visit can&apos;t
+                be saved into it.</p>
+              <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="primary" onClick={useTakenAccount}>Sign in to that account instead</button>
+                <button onClick={() => setLinkTaken(false)}>Stay here</button>
+              </div>
+              <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
+            </div>)}
           <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
           <div className="panel needs needs-strip" data-tour="needs">
             <strong className="verdict">{verdict(needs)}</strong>
@@ -208,7 +231,7 @@ export default function Home({ user, account }: { user: User; account?: string }
         && (!live || machine.machineReady)}
         state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
           realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
-      {resetting && <div className="overlay"><div className="modal">Starting the sample home fresh…</div></div>}
+      {resetting && <div className="overlay"><div className="modal">Resetting the sample home…</div></div>}
     </div>
   );
 }
