@@ -41,9 +41,12 @@ class Capability:
     on_approve: Callable | None = None
 
 
-def _card(device: dict, plan: str, what: str, undo: str, risk: str, svc_id: str | None = None) -> dict:
+def _card(device: dict, plan: str, what: str, undo: str, risk: str, svc_id: str | None = None,
+          command: str | None = None) -> dict:
+    """Card fields: `plan`, `dryRun` and `rollback` are plain sentences for the owner; `command`, when there is one,
+    is the exact command for whoever wants to see it (the card folds it away)."""
     return {"svcId": svc_id, "plan": plan, "dryRun": what, "rollback": undo, "blastRadius": [device["id"]],
-            "riskClass": risk}
+            "riskClass": risk, **({"command": command} if command else {})}
 
 
 # ------------------------------------------------------------------ builders (validation + the card)
@@ -77,11 +80,12 @@ def _update(c: Ctx):
         raise ValueError("up_to_date")
     if "signed" not in (d.get("allowedJobs") or {}).get("update", []):
         raise ValueError("update_by_hand" if not release.newer(d.get("helperVersion"), "0.8.99") else "updates_off")
-    return _card(d, f"Update the Nightlight helper on the {d.get('name')} from {d.get('helperVersion')} to "
-                    f"{offer['version']}.",
-                 "The helper downloads the new version, installs it only if Nightlight's signature checks out and it "
-                 "passes a self-test, then restarts itself.",
-                 "On the device: nightlight rollback (the previous version is kept).", "service"), \
+    return _card(d, f"Update the Nightlight helper on the {d.get('name')} (version {d.get('helperVersion')} to "
+                    f"{offer['version']}).",
+                 "The helper downloads the new version and installs it only if it is genuinely from Nightlight (its "
+                 "signature checks out) and it passes a self-test, then restarts itself.",
+                 "Yes: the previous version is kept; it can be put back on the device (run \"nightlight rollback\" "
+                 "there).", "service"), \
         {"version": offer["version"]}
 
 
@@ -89,7 +93,7 @@ def _diagnose(c: Ctx):
     target = c.params.get("target")
     real.diagnose_target_ok(c.device, c.services, target)
     logs = target in (c.device.get("allowedJobs") or {}).get("logs", [])
-    return _card(c.device, f"Look into {target} on the {c.device['name']} (read-only).",
+    return _card(c.device, f"Look into {target} on the {c.device['name']} (only looks, changes nothing).",
                  "Reads its status" + (" and its last log lines" if logs else "") + "; changes nothing.",
                  "Nothing to undo.", "read"), {"target": target}
 
@@ -126,8 +130,8 @@ def _allow_logs(c: Ctx):
 
 def _inspect(c: Ctx):
     what = real.inspect_ok(c.device, c.params.get("what"))
-    return _card(c.device, f"Look around the {c.device['name']}: {', '.join(what)} (read-only).",
-                 "Runs the helper's fixed read-only checks; changes nothing.", "Nothing to undo.", "read"), \
+    return _card(c.device, f"Look around the {c.device['name']}: {', '.join(what)} (only looks, changes nothing).",
+                 "Runs Nightlight's standard checks; changes nothing.", "Nothing to undo.", "read"), \
         {"what": what}
 
 
@@ -137,7 +141,8 @@ def _discover(c: Ctx):
         raise ValueError("strict_device")  # a strict device looks only when someone runs it there
     if release.newer(real.DISCOVER_FROM, c.device.get("helperVersion")):
         raise ValueError("update_helper_first")
-    return _card(c.device, f"Look for other devices on the {c.device['name']}'s network (read-only).",
+    return _card(c.device, f"Look for other devices on the {c.device['name']}'s network (only looks, changes "
+                           "nothing).",
                  "Lists what answers nearby: a guess at what each thing is, its maker and the services it offers. "
                  "Addresses never leave the device; nothing joins your map until you add it under Found nearby.",
                  "Nothing to undo.", "read"), {}
@@ -155,9 +160,9 @@ def _mac_folders(c: Ctx):
 def _expert_read(c: Ctx):
     from . import expert
     clean = expert.read_params(c.uid, c.device, c.params.get("command"))
-    return _card(c.device, f"Run on the {c.device['name']} (read-only): {clean['command']}",
-                 "A read-only command under the investigation you signed; the device checks it is read-only.",
-                 "Nothing to undo.", "read"), clean
+    return _card(c.device, f"Run a check that only reads on the {c.device['name']}: {clean['command']}",
+                 "A command that only reads, under the deeper check you approved; the device itself checks it "
+                 "changes nothing.", "Nothing to undo.", "read", command=clean["command"]), clean
 
 
 def _expert_command(c: Ctx):
@@ -239,25 +244,25 @@ def _service_recovered(tx, uid: str, a: dict, device: dict, current: bool) -> li
 
 
 REGISTRY: dict[str, Capability] = {c.name: c for c in (
-    Capability("restart_container", "Restart a stopped container", "card", _restart_container,
+    Capability("restart_container", "Restart an app (Docker)", "card", _restart_container,
                reports_state=True, on_result=_service_recovered),
-    Capability("restart_service", "Restart a stopped system service", "card", _restart_service,
+    Capability("restart_service", "Restart a stopped background service", "card", _restart_service,
                reports_state=True, on_result=_service_recovered),
     Capability("fix", "Clean up space", "card", _fix, on_result=_space_freed),
-    Capability("update_helper", "Update the helper", "card", _update, on_result=_helper_updated),
+    Capability("update_helper", "Update the Nightlight helper", "card", _update, on_result=_helper_updated),
     Capability("remove_device", "Remove a device", "card", _remove, while_silent=True,
                after_approval=_finish_removal),
     Capability("diagnose", "Look into", "device", _diagnose, reads=True, keeps_output=True),
     Capability("inspect", "Look around", "device", _inspect, reads=True, keeps_output=True,
                on_result=_playbook_result),
     Capability("discover", "Look for devices nearby", "card", _discover, reads=True),
-    Capability("allow_logs", "Allow reading logs", "card", _allow_logs, on_device=False, while_silent=True,
+    Capability("allow_logs", "Allow reading an app's recent messages (logs)", "card", _allow_logs, on_device=False, while_silent=True,
                on_approve=_logs_allowed),
     Capability("mac_folders", "Measure the Mac's private folders", "card", _mac_folders, reads=True),
-    Capability("expert_read", "Investigate (read-only command)", "device", _expert_read, reads=True,
+    Capability("expert_read", "Deeper check (a command that only reads)", "device", _expert_read, reads=True,
                keeps_output=True),
-    Capability("expert_command", "Run a command you signed", "passkey", _expert_command, keeps_output=True),
-    Capability("expert_grant", "Investigate with commands (read-only, 15 minutes)", "passkey", _expert_grant,
+    Capability("expert_command", "Run a command you approved with your passkey", "passkey", _expert_command, keeps_output=True),
+    Capability("expert_grant", "Let Nightlight look deeper for 15 minutes (it can only look)", "passkey", _expert_grant,
                on_device=False, on_signed=_store_grant),
 )}
 

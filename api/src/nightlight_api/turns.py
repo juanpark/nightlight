@@ -8,6 +8,7 @@ History is rebuilt from Firestore on every turn, so any instance can serve any t
 import asyncio
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -652,18 +653,83 @@ DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command", "check_sp
 DETAILS_CHARS = 2000
 
 
+# Codes a step can come back with, in the owner's words. The chat line never shows a raw code; the code itself stays
+# in the step's details for whoever wants it.
+REASON_WORDS = {
+    "strict_device": "This device only allows changes made on the device itself",
+    "update_helper": "The Nightlight helper on this device needs updating before this can be changed from the app",
+    "update_helper_first": "The Nightlight helper on this device needs updating first",
+    "helper_too_old": "The Nightlight helper on this device is too old for this; it needs updating first",
+    "update_by_hand": "The Nightlight helper on this device is too old to update itself; run the install line on it "
+                      "once",
+    "updates_off": "Updates from the app are switched off for this device",
+    "not_allowed_on_device": "You haven't allowed that on this device (see the device's Settings)",
+    "not_applicable": "That doesn't apply to this device",
+    "not_found": "Nightlight couldn't find that device",
+    "bad_target": "Nightlight couldn't tell which app or item that was meant for",
+    "no_such_target": "The device doesn't report anything by that name",
+    "no_such_container": "The device doesn't report an app by that name",
+    "unknown_target": "The device doesn't report anything by that name",
+    "unknown_service": "The device doesn't report anything by that name",
+    "not_failed": "That service isn't reported as stopped, so there is nothing to restart",
+    "not_unhealthy": "That app isn't reported as unhealthy, so a restart isn't needed",
+    "already_running": "It is already running",
+    "needs_restart": "It is running but unhealthy, so it needs a restart rather than a start",
+    "device_not_reporting": "The device isn't reporting right now",
+    "already_allowed": "That is already allowed",
+    "too_many_targets": "This device already allows that for as many items as it can",
+    "up_to_date": "The Nightlight helper there is already up to date",
+    "no_release": "There is no new helper version on offer",
+    "not_the_release_on_offer": "That isn't the helper version on offer right now",
+    "nothing_to_free": "Nothing to free there: it was measured as almost empty a short while ago",
+    "no_passkey": "A passkey needs to be set up first (open the device, then Settings, then Expert sessions)",
+    "needs_passkey": "This needs your passkey",
+    "expired": "That card expired",
+    "stale": "Things changed since, so that card is out of date",
+    "unknown_kind": "Nightlight doesn't know that kind of item",
+    "looks_secret": "It looked like a password, key or address, so it wasn't kept",
+    "too_frequent": "That was asked too recently; try again in a little while",
+    "research_limit": "Today's limit of web searches is reached",
+}
+STATUS_WORDS = {
+    "done": "Finished", "failed": "It didn't work", "refused": "Not allowed", "stale": "Out of date: things changed",
+    "denied": "You said not now", "approved": "Approved", "running": "Running now", "expired": "Expired",
+    "active": "On", "off": "Off", "unknown": "Not known yet", "nothing_to_free": REASON_WORDS["nothing_to_free"],
+}
+_CODE = re.compile(r"^[a-z]+(?:_[a-z0-9]+)+$")
+
+
+def _plain_reason(reason) -> tuple[str, str | None]:
+    """(plain words, details): a known code becomes a sentence; an unknown code a general line with the code kept in
+    the details; a reason already written in words stays as it is."""
+    text = str(reason)
+    if text in REASON_WORDS:
+        return REASON_WORDS[text], f"Code: {text}"
+    if _CODE.fullmatch(text):
+        return "That step couldn't be done here", f"Code: {text}"
+    if m := _CODE_IN_TEXT.search(text):  # words mixed with codes (e.g. a list of allowed job names): the words
+        lead = text[:m.start()].rstrip(" :,(")  # up to the first code, the full text in the details
+        return (f"{lead} (see the details)" if lead else "That step couldn't be done here"), text
+    return text, None
+
+
+_CODE_IN_TEXT = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
+
+
 def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     """One plain line about what a step found (shown live in the chat), plus optional details to expand. Built from
     the tool result, which is already scrubbed and bounded."""
     status, reason = resp.get("status"), resp.get("reason") or resp.get("error")
     if reason and status in (None, "error", "refused"):
-        return f"Couldn't: {reason}", None
+        words, code = _plain_reason(reason)
+        return f"Couldn't: {words}", code
     if status == "asked":
         return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
     if status in ("waiting", "safer_first"):
         job = resp.get("proposed") or {}
         if job.get("status") in ("done", "failed"):  # the safer step ran on its own: its outcome is the receipt
-            return f"The safer step first ({job['status']}): {job.get('result') or job.get('plan') or ''}", None
+            return f"The safer step first ({_status_words(job['status']).lower()}): " \
+                f"{job.get('result') or job.get('plan') or ''}", None
         lead = "A card for this was already waiting: " if status == "waiting" else "The safer step first: "
         return lead + (job.get("plan") or ""), None
     if name == "check_space" and status == "done" and "devices" in resp:
@@ -674,7 +740,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         bad = [d.get("name") for d in resp["devices"] if d.get("status") not in ("ok", None)]
         return f"{len(resp['devices'])} devices" + (f"; needs a look: {', '.join(bad[:4])}" if bad else "; all fine"), None
     if "events" in resp:
-        return f"{len(resp['events'])} recent events", None
+        return f"Looked at {len(resp['events'])} recent events", None
     if "vitals" in resp:
         v = resp.get("vitals") or {}
         book = resp.get("notebook") or {}
@@ -683,16 +749,16 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
                 f"memory {round(v['mem'])}%" if v.get("mem") is not None else None,
                 f"{len(resp.get('findings') or [])} problem(s)",
                 f"{notes} note(s) in its notebook" if notes else None,
-                f"{len(resp['runbooks'])} runbook(s)" if resp.get("runbooks") else None]
+                f"{len(resp['runbooks'])} saved fix(es)" if resp.get("runbooks") else None]
         return ", ".join(b for b in bits if b), None
     if name == "read_device_log" and "jobs" in resp:
         jobs = resp["jobs"]
-        return f"Read its log: {len(jobs)} past job(s)", \
+        return f"Read what was done there: {len(jobs)} past task(s)", \
             "\n".join(f"{j.get('at')} {j.get('title')}: {j.get('summary')}" for j in jobs)[:DETAILS_CHARS] or None
     if name == "use_runbook" and resp.get("runbook"):
         cards = len(resp.get("actionIds") or [])
-        return f"Runbook \"{resp['runbook']}\": " + (f"put up {cards} card(s) for your approval" if cards
-                                                     else f"result: {resp.get('status')}"), None
+        return f"Saved fix \"{resp['runbook']}\": " + (f"{cards} step(s) waiting for your OK" if cards
+                                                       else _status_words(resp.get("status")).lower()), None
     if name in ("run_playbook", "check_space") and resp.get("playbook"):
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
@@ -701,7 +767,8 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if name in DEVICE_READS and status in ("done", "failed"):
         out = resp.get("output") or ""
         first = next((ln for ln in out.splitlines()[1:] if ln.strip()), "")
-        return (resp.get("summary") or status) + (f": {first[:120]}" if first else ""), (out[:DETAILS_CHARS] or None)
+        return (resp.get("summary") or _status_words(status)) + (f": {first[:120]}" if first else ""), \
+            (out[:DETAILS_CHARS] or None)
     if name == "research" and resp.get("status") == "done":
         src = ", ".join(s.get("title") or "" for s in resp.get("sources") or [])
         return f"Searched the web: {len(resp.get('sources') or [])} source(s){': ' + src if src else ''}", \
@@ -709,12 +776,18 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if name == "how_nightlight_works" and resp.get("title"):
         return f"Read Nightlight's guide: {resp['title']}", resp.get("text")
     if status == "pending":
-        return "Put up a card for your approval", None
+        return "Waiting for your OK (card below)", None
     if status == "saved":
         return "Saved: " + str(resp.get("note") or resp.get("fact") or "")[:120], None
     if status:
-        return f"Result: {status}", None
+        return _status_words(status), None if status in STATUS_WORDS else f"Status: {status}"
     return "Done", None
+
+
+def _status_words(status) -> str:
+    """A step's status in plain words; an unknown one reads as a general line (its code goes to the details)."""
+    text = str(status or "")
+    return STATUS_WORDS.get(text) or ("Step finished" if _CODE.fullmatch(text) or not text else text)
 
 
 def _stop(uid: str, c: Claim, *, text: str | None, tool_calls: list, action_ids: list, metrics: dict | None = None):

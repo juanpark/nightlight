@@ -129,6 +129,7 @@ def card(device: dict, params: dict) -> tuple[dict, dict]:
               "dryRun": (why + " " if why else "") + "It runs only after you sign it with your passkey; the device "
                         "checks your signature itself. Valid for 15 minutes.",
               "rollback": "Depends on the command: read it before you sign. Commands that only read are safe.",
+              "command": payload["command"],
               "blastRadius": [device["id"]], "riskClass": "destructive"}
     return fields, {"command": payload["command"], "why": why, "payload": payload, "challenge": challenge_for(payload)}
 
@@ -143,8 +144,8 @@ def grant_card(device: dict, params: dict) -> tuple[dict, dict]:
     payload = {"device": device["id"], "mode": "read-only", "expires": int(time.time()) + GRANT_TTL,
                "nonce": b64u(secrets.token_bytes(12))}
     why = str(params.get("why") or "")[:300]
-    fields = {"svcId": None, "plan": f"Let Nightlight investigate the {device.get('name')} with read-only commands "
-                                     "for 15 minutes.",
+    fields = {"svcId": None, "plan": f"Let Nightlight look deeper into the {device.get('name')} for 15 minutes, "
+                                     "with commands that only look.",
               "dryRun": (why + " " if why else "") + "It may run commands that only read (system logs, disk use, "
                         "running programs, network) and shows you each one. The device itself refuses anything "
                         "that could change something or touch where secrets are kept.",

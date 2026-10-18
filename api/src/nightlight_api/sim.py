@@ -145,7 +145,7 @@ def _rotate_logs_card(d, svcs):
     after_dev = deepcopy(d)
     _consumer(after_dev, "logs")["sizeGb"] = 0.0
     return {"svcId": DISK_SERVICE.get(d["id"]),
-            "plan": f"Compress and remove log files older than 7 days on the {d['name']}.",
+            "plan": f"Compress and remove activity files (logs) older than 7 days on the {d['name']}.",
             "dryRun": f"Would free about {round(logs['sizeGb'], 1)} GB ({before}% → {disk_pct(after_dev)}% full). "
                       "No running service is stopped.",
             "rollback": "Removed logs are moved to an archive for 24 hours (simulated). "
@@ -171,7 +171,7 @@ def _clear_images_card(d, svcs):
     after_dev = deepcopy(d)
     _consumer(after_dev, "images")["sizeGb"] = 0.0
     return {"svcId": DISK_SERVICE.get(d["id"]),
-            "plan": f"Remove the Docker images no app uses on the {d['name']}.",
+            "plan": f"Remove leftover app downloads (Docker images) no app uses on the {d['name']}.",
             "dryRun": f"Would free about {round(images['sizeGb'], 1)} GB ({before}% → {disk_pct(after_dev)}% full). "
                       "Logs and running apps are not touched.",
             "rollback": "Nothing to undo: an app downloads its image again if it ever needs it."}
@@ -333,10 +333,10 @@ def _restart_app_apply(d, svcs):
 
 
 ACTIONS = {
-    "rotate_logs": {"label": "Clean up old log files", "riskClass": "routine", "allowlisted": True,
+    "rotate_logs": {"label": "Clean up old activity files (logs)", "riskClass": "routine", "allowlisted": True,
                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _rotate_logs_card, "apply": _rotate_logs_apply,
                     "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
-    "clear_images": {"label": "Remove unused Docker images", "riskClass": "routine", "allowlisted": True,
+    "clear_images": {"label": "Remove leftover app downloads", "riskClass": "routine", "allowlisted": True,
                      "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _clear_images_card,
                      "apply": _clear_images_apply, "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
     "backup_world": {"label": "Back up the game world", "riskClass": "routine", "allowlisted": True,

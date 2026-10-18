@@ -437,7 +437,7 @@ def test_a_waiting_trust_offer_is_in_the_home_summary(client, started):
     assert "Trust offers" not in agentlib.fleet_summary(started, g)
     doc = {**trustlib.new_doc("rotate_logs", g), "offer": {"offerId": "offer_x", "demoGeneration": g, "text": "x"}}
     db.trust_doc(started, "sim", "rotate_logs").set(doc)
-    assert "Trust offers waiting for their answer in the Trust panel: Clean up old log files" in \
+    assert "Trust offers waiting for their answer in the Trust panel: Clean up old activity files (logs)" in \
         agentlib.fleet_summary(started, g)
 
 

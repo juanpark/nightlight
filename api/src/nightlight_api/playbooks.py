@@ -125,11 +125,11 @@ def measure(output: str, what: list, device: dict) -> dict[str, float]:
 def summary(result: dict) -> str:
     """The playbook's findings in plain sentences (for the chat follow-up and the agent)."""
     pb = result or {}
-    lines = [f"Playbook \"{pb.get('title')}\":"]
+    lines = [f"Checkup \"{pb.get('title')}\":"]
     for f in pb.get("found") or []:
         tail = ""
         if f.get("fix"):
-            tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("card")
+            tail = (" I've put up a card to " + (t := real.FIX[f["fix"]][0])[0].lower() + t[1:] + "." if f.get("card")
                     else " A clean-up exists, but it isn't available on this device." if f.get("fixUnavailable")
                     else " A clean-up exists, but \"clean up space\" isn't switched on for this device."
                     if not f.get("fixAllowed") else " A clean-up exists, but no card could be made right now.")
