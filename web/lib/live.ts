@@ -7,6 +7,9 @@ import { signInAnonymously, signInWithCustomToken, signOut } from "firebase/auth
 import { api, ApiError } from "./api";
 import { firebase } from "./firebase";
 
+/** One switch for the whole live-machine option (the start screen hides it when off). */
+export const LIVE_DEMO = true;
+
 export type Scenario = "none" | "crash" | "unhealthy" | "disk" | "leftovers";
 export const SCENARIOS: { id: Scenario; label: string }[] = [
   { id: "none", label: "Everything fine" }, { id: "crash", label: "An app has crashed" },
@@ -22,7 +25,8 @@ export type LiveMe = { phase: "starting" | "reconnecting" | "stopping" | "restor
 export type Problem = { code: string; total?: number; inUse?: number };
 
 type State = { starting: boolean; problem: Problem | null; resumed: boolean; eta?: number; restore?: number; ended: boolean;
-  machineReady: boolean; leaseStart?: number }; // machineReady: the machine is up and nothing covers Home
+  machineReady: boolean; leaseStart?: number; // machineReady: the machine is up and nothing covers Home
+  clicked?: number }; // when the visitor asked for a machine (the waiting screens count from here)
 let state: State = { starting: false, problem: null, resumed: false, ended: false, machineReady: false };
 const listeners = new Set<() => void>();
 const set = (p: Partial<State>) => { state = { ...state, ...p }; listeners.forEach((l) => l()); };
@@ -37,7 +41,7 @@ export function machineState(p: { machineReady: boolean; leaseStart?: number }) 
 
 /** Lease a machine (the visitor's own again if they still hold one) and sign in to it. */
 export async function startLive(scenario: Scenario) {
-  set({ starting: true, problem: null, ended: false });
+  set({ starting: true, problem: null, ended: false, clicked: Date.now() });
   const { auth } = await firebase();
   const made = !auth.currentUser;
   try {

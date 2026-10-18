@@ -310,6 +310,19 @@ const Chat = forwardRef<ChatHandle, {
           ))}
           <span className="mode-hint small muted">{MODES.find((m) => m.id === mode)?.hint}</span>
         </div>
+        {(() => {
+          // a long chat: older parts are left out of what the model sees (or, at the limit, it can't go on)
+          const last = [...turns].reverse().find((t): t is Extract<typeof t, { kind: "agent" }> => t.kind === "agent");
+          const full = last?.errorCode === "context_limit";
+          if (!last || last.busy || !(full || last.metrics?.longChat)) return null;
+          return (
+            <div className="chat-long small" role="status">
+              <span>{full ? "This chat is too long to go on. Start a new chat to keep asking."
+                : "This chat is getting long; older parts are left out of what I see. Start a new chat for a fresh start."}
+                {" "}Notes saved about your devices stay in their notebook (Knowledge tab).</span>
+              <button className="small" onClick={() => switchTo(null)}>New chat</button>
+            </div>);
+        })()}
         <form className="chat-input" data-tour="chat" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} />

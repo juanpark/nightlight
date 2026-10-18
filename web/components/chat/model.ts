@@ -19,7 +19,7 @@ export type Turn =
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
       past?: boolean; after?: string[]; ms?: number; metrics?: Metrics;
-      startedAt?: number; budget?: number; retryable?: boolean }; // budget: the seconds the server gives this answer
+      startedAt?: number; budget?: number; retryable?: boolean; errorCode?: string }; // budget: the seconds the server gives this answer
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -89,7 +89,7 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
       if (blocks.some((b) => b.kind === "card" && b.actionId === e.actionId)) return t;
       return { ...t, blocks: [...blocks, { kind: "card", actionId: e.actionId }] };
     case "error": // the turn is over: a step still waiting will never answer
-      return { ...stop(t), busy: t.busy, error: e.message || e.code, retryable: !!e.retryable };
+      return { ...stop(t), busy: t.busy, error: e.message || e.code, retryable: !!e.retryable, errorCode: e.code };
     case "done":
       return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
@@ -136,7 +136,7 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
     const after = prev?.kind === "agent"
       ? prev.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []) : undefined;
     out.push({ kind: "agent", key: m.id, mode: m.mode ?? "quick", blocks, busy: false, past: true,
-      error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
+      error: m.error?.message, errorCode: m.error?.code, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
 }

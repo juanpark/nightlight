@@ -1,10 +1,11 @@
 "use client";
-// The start screen: a live demo machine (a real VM, when the pool is on), the simulated home, or your own computer.
+// The start screen: your own computers first (the real thing), then the sample home, then (while LIVE_DEMO is on and
+// the pool has machines) a real cloud machine.
 import { useEffect, useState } from "react";
 import { GoogleAuthProvider, signInAnonymously, signInWithPopup } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
-import { clearProblem, minutes, SCENARIOS, startLive, useLive, type LiveStatus, type Problem, type Scenario } from "@/lib/live";
+import { clearProblem, LIVE_DEMO, startLive, useLive, type LiveStatus, type Problem } from "@/lib/live";
 
 function problemText(p: Problem): string | null {
   if (p.code === "live_all_busy") return null; // its own block below
@@ -18,11 +19,11 @@ export default function SignIn() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [status, setStatus] = useState<LiveStatus | null>(null);
-  const [scenario, setScenario] = useState<Scenario>("none");
   const live = useLive();
 
   // the live line, every 10 s while this screen is open (asking also frees machines whose visitors have left)
   useEffect(() => {
+    if (!LIVE_DEMO) return;
     let on = true;
     const load = () => api<LiveStatus>("GET", "/api/demo/live/status").then((s) => { if (on) setStatus(s); }, () => {});
     load();
@@ -42,7 +43,7 @@ export default function SignIn() {
     }
   }
 
-  const liveOn = !!status?.enabled;
+  const liveOn = LIVE_DEMO && !!status?.enabled;
   const busyAll = live.problem?.code === "live_all_busy";
   const total = live.problem?.total ?? status?.total;
   const said = live.problem && problemText(live.problem);
@@ -57,43 +58,37 @@ export default function SignIn() {
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
           for the next visitor.</p>}
 
+        <div className="start-option start-own">
+          <p><strong>The real Nightlight runs on your own computers.</strong> Sign in with Google and add your Mac or
+            Raspberry Pi in about two minutes: that&apos;s the full experience.</p>
+          <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
+        </div>
+
+        <div className="start-option">
+          <p>Just looking? A pretend home with a few devices and a problem or two to fix.</p>
+          <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant, simulated)</button>
+        </div>
+
         {busyAll ? (
           <div className="start-option" role="alert">
-            <p>All {total ?? "the"} live demo machines are in use right now. A machine is reset and freed within a few
-              minutes after each visit. Meanwhile:{" "}
-              <button className="linkish" disabled={off} onClick={() => go("demo")}>simulated home</button> or{" "}
-              <button className="linkish" disabled={off} onClick={() => go("google")}>your own computer</button>.</p>
+            <p className="small">All {total ?? "the"} cloud machines are in use right now. One is reset and freed within
+              a few minutes after each visit; the sample home above is instant.</p>
           </div>
         ) : liveOn && status && (
           <div className="start-option">
-            <p>This demo uses a real virtual machine in Google Cloud, with real apps running in containers, set up like
-              a small home server. It isn&apos;t your computer, but everything Nightlight does to it is real. Starting
-              your machine: about {minutes(status.etaSeconds ?? 60)}.</p>
-            <div className="start-row">
-              <button className="primary" disabled={off} onClick={() => startLive(scenario)}>
-                {live.starting ? "Starting your machine…" : "Start a live machine"}</button>
-              <label className="small muted">Start with{" "}
-                <select value={scenario} disabled={off} onChange={(e) => setScenario(e.target.value as Scenario)}>
-                  {SCENARIOS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                </select></label>
-            </div>
-            <p className="small muted" aria-live="polite">Live demo machines: {status.running} of {status.total} running
-              · {status.inUse} in use</p>
+            <p className="small">A real virtual machine in Google Cloud, set up like a small home server with something
+              already broken. It isn&apos;t your computer, but everything Nightlight does to it is real.</p>
+            <p className="small"><span className="pill">Limited</span> No passkeys, no adding devices, nothing nearby to
+              find.</p>
+            <button disabled={off} onClick={() => startLive("crash")}>
+              {live.starting ? "Starting your machine…" : "See it on a real cloud machine (about a minute)"}</button>
+            <p className="small muted" aria-live="polite">{status.free} of {status.total} free · reset to a clean copy
+              after you leave ({status.idleMinutes ?? 15} minutes without activity, at most {status.maxMinutes ?? 60}).</p>
           </div>
         )}
         {said && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{said}</p>}
 
-        <div className="start-option">
-          <p>{liveOn ? "Short on time? Try the fully simulated home instead (instant)." : "Try a fully simulated home (instant)."}</p>
-          <button className={liveOn ? "" : "primary"} disabled={off} onClick={() => go("demo")}>Open the simulated home</button>
-        </div>
-        <div className="start-option">
-          <p>Best of all: try it on your own computer or Raspberry Pi with your Google account (about two minutes;
-            read-only until you approve anything).</p>
-          <button disabled={off} onClick={() => go("google")}>Sign in with Google</button>
-        </div>
-        {liveOn && <p className="small muted">Your machine is reset to a clean copy after you leave
-          ({status?.idleMinutes ?? 15} minutes without activity, at most {status?.maxMinutes ?? 60} minutes).</p>}
+        <p className="small muted">Signed in to Nightlight before? Sign out or use a private window to see these choices.</p>
         {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
       </div>
     </div>

@@ -233,3 +233,7 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 .card.level-strong .card-icon { color: var(--crit-ink); flex: none; }
 .card.level-strong .risk { background: var(--crit-ink); color: var(--panel); }
 .card.level-strong .actions .primary { background: var(--crit-ink); color: var(--panel); }
+
+/* Start screen: your own computers first, highlighted; the live machine's waiting clock */
+.start-own { border: 2px solid var(--glow); background: color-mix(in srgb, var(--glow) 12%, var(--panel)); }
+.live-elapsed { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 4px 0; }
