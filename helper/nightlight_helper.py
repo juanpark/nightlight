@@ -2107,10 +2107,42 @@ def _audit_clean(text, limit):
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+_AUDIT_SECRET_NAME = re.compile(_SECRET_WORD, re.I)
+_AUDIT_SECRET_START = re.compile(r"(?:^|\s)(?:-{1,2}" + _SECRET_WORD + r"|" + _SECRET_WORD + r"\s*=)", re.I)
+
+
+def _audit_redact(command):
+    """Hide the whole value of a secret-bearing option (`--password VALUE`, `--token=VALUE`, `PASSWORD=VALUE`), as
+    the shell would split it. If it can't be split (an unterminated quote), everything after the first such option."""
+    import shlex
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        m = _AUDIT_SECRET_START.search(command)
+        return command[:m.end()] + " [hidden]" if m else command
+    out, hide_next, changed = [], False, False
+    for t in tokens:
+        if hide_next:
+            out.append("__HIDDEN__")
+            hide_next, changed = False, True
+            continue
+        name, eq, _ = t.lstrip("-").partition("=")
+        if name and _AUDIT_SECRET_NAME.fullmatch(name) and (t.startswith("-") or eq):
+            if eq:
+                out.append(t.split("=", 1)[0] + "=__HIDDEN__")
+                changed = True
+                continue
+            hide_next = True
+        out.append(t)
+    if not changed:
+        return command  # shown exactly as signed
+    return shlex.join(out).replace("__HIDDEN__", "[hidden]")
+
+
 def _audit_cmd(command):
     if not isinstance(command, str):
         return "(none)"
-    return _audit_clean(command.replace(_HOME, "~"), 300)
+    return _audit_clean(_audit_redact(command).replace(_HOME, "~"), 300)
 
 
 def _audit_time(payload):

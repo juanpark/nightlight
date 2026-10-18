@@ -365,6 +365,14 @@ def test_audit_hides_whole_quoted_secret_values(helper):  # codex audit P2 #2
     for cmd in ("mysql --password 'two words' -h db", 'curl --token "a \\" b c" x', "PASSWORD='it'\\''s me' run"):
         text = helper._audit_cmd(cmd)
         assert "[hidden]" in text and not any(w in text for w in ("words", " b c", "s me")), text
+    # codex recheck: split as the shell splits, so adjacent quoted/unquoted parts can't leak a piece
+    cases = {"mysql --password \"two \"'secret words' -h db": "mysql --password [hidden] -h db",
+             "mysql --password=two\\ secret\\ words -h db": "mysql --password=[hidden] -h db",
+             "env API_KEY=ab\"cd ef\"gh run": "env API_KEY=[hidden] run",
+             "mysql -h db --password 'never closed words": "mysql -h db --password [hidden]",
+             "rm -rf ~/.gradle/caches": "rm -rf ~/.gradle/caches"}
+    for cmd, want in cases.items():
+        assert helper._audit_cmd(cmd) == want, (cmd, helper._audit_cmd(cmd))
 
 
 def test_audit_file_is_owner_only_and_never_through_a_link(helper, tmp_path):  # codex audit P2 #3
