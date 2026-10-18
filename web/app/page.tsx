@@ -27,5 +27,5 @@ export default function Page() {
   if (!user) return <SignIn />;
   const known = user.isAnonymous ? false : onLive?.uid === user.uid ? onLive.live : null;
   if (known === null) return <div className="signin"><p className="muted">Loading…</p></div>;
-  return <>{known && <LiveSession key={user.uid} />}<Home user={user} /></>;
+  return <>{known && <LiveSession key={user.uid} />}<Home user={user} live={known} /></>;
 }
