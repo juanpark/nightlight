@@ -121,7 +121,9 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       if (m.text.slice(at, cut).trim()) blocks.push({ kind: "text", text: m.text.slice(at, cut) });
       at = cut;
       blocks.push(pastStep(s, devices));
-      if (s.actionId) blocks.push({ kind: "card", actionId: s.actionId });
+      // two steps can be answered by one card: it stays where it first appeared
+      if (s.actionId && !blocks.some((b) => b.kind === "card" && b.actionId === s.actionId))
+        blocks.push({ kind: "card", actionId: s.actionId });
     }
     if (m.text.slice(at).trim()) blocks.push({ kind: "text", text: m.text.slice(at) });
     for (const id of m.actionIds ?? []) {
