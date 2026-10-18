@@ -38,6 +38,46 @@ def test_a_spinning_program_shows_next_to_the_memory_hogs(helper, monkeypatch):
     assert "busy_cpu" in [f["cause"] for f in got["found"]] and "thumbnailer" in playbooks.summary(got)
 
 
+def test_each_program_says_whether_it_is_inside_an_app_or_on_the_computer(helper, monkeypatch, tmp_path):
+    """Round-4 VM: a host program named thumbnailer was tied to the photos app by its name, and restarting an
+    unrelated app was advised. The data now says where each program runs (its control group)."""
+    cid = "ab" * 32
+    for pid, cg in (("99", "0::/system.slice/nl-thumb1.service\n"),
+                    ("7", f"0::/system.slice/docker-{cid}.scope\n"),
+                    ("8", f"0::/system.slice/docker-{'cd' * 32}.scope\n")):
+        (tmp_path / pid).mkdir()
+        (tmp_path / pid / "cgroup").write_text(cg)
+    monkeypatch.setattr(helper, "_PROC", str(tmp_path))
+    first = {"99": ("thumbnailer", 0, 10), "7": ("postgres", 0, 9_000), "8": ("redis", 0, 8_000)}
+    second = {k: (n, t + (100 if n == "thumbnailer" else 0), r) for k, (n, t, r) in first.items()}
+    tables = iter([first, second])
+    monkeypatch.setattr(helper, "_proc_table", lambda: next(tables))
+    monkeypatch.setattr(helper, "_mem_total_kb", lambda: 1024 * 1024)
+    monkeypatch.setattr(helper, "_cpu_times", lambda: None)
+    monkeypatch.setattr(helper, "_container_ids", lambda: {cid: "notes-db"})
+    monkeypatch.setattr(helper, "CPU_SAMPLE", 0.1)
+    _until(helper)
+    out = helper._inspect_processes()
+    assert "thumbnailer (on the computer itself, not inside any app)" in out
+    assert "postgres (inside app notes-db)" in out and "redis (inside a container)" in out
+    got = playbooks.summary(playbooks.evaluate(playbooks.library()["slow"], out, {}))
+    assert "thumbnailer (on the computer itself, not inside any app) keeps a processor core busy" in got
+
+
+def test_where_a_program_runs_is_only_said_for_layouts_it_knows(helper):
+    cid = "ef" * 32
+    w = helper._cgroup_where
+    assert w("0::/system.slice/ssh.service\n") == ("host", None)
+    assert w("0::/\n") == ("host", None) and w("0::/init.scope\n") == ("host", None)
+    assert w("12:cpu,cpuacct:/user.slice/user-1000.slice/session-3.scope\n1:name=systemd:/user.slice\n")[0] == "host"
+    assert w(f"0::/system.slice/docker-{cid}.scope\n") == ("container", cid)
+    assert w(f"0::/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-{cid}.scope\n") == ("container", cid)
+    assert w("0::/kubepods.slice/kubepods-burstable.slice/cri-containerd-abc.scope\n") == ("container", None)
+    assert w("0::/lxc/101\n")[0] == "container" and w("0::/lxc.payload.web/init.scope\n")[0] == "container"
+    assert w("0::/machine.slice/machine-web.scope\n") == ("machine", None)
+    assert w("0::/something/else\n") == ("unknown", None) and w("") == ("unknown", None)
+
+
 def test_a_program_that_restarted_between_looks_is_not_blamed(helper, monkeypatch):
     tables = iter([{"7": ("old", 10_000, 1)}, {"7": ("new", 10_050, 1)}])  # the pid was reused
     monkeypatch.setattr(helper, "_proc_table", lambda: next(tables))
@@ -150,7 +190,9 @@ def _container_state(helper, monkeypatch, code, oom=False):
 def test_exit_137_is_said_plainly(helper, monkeypatch):
     _container_state(helper, monkeypatch, 137)
     summary, detail = helper._look_container("cache", logs=True)
-    assert summary == "cache was force-stopped (killed, or out of memory)"
+    # Docker recorded no out-of-memory: the plain fact leads (round 4: the answer said "stopped unexpectedly")
+    assert summary.startswith("cache was force-stopped: something killed it") and "didn't record" in summary
+    assert "exit code: 137 (was force-stopped: something killed it" in detail
     _container_state(helper, monkeypatch, 137, oom=True)
     assert helper._look_container("cache", logs=True)[0] == "cache was force-stopped because it ran out of memory"
 
@@ -160,6 +202,17 @@ def test_a_service_killed_by_a_signal_or_memory_is_said_plainly(helper):
         "was force-stopped (killed, or out of memory)"
     assert "ran out of memory" in helper._unit_meaning({"ActiveState": "failed", "Result": "oom-kill"})
     assert helper._unit_meaning({"ActiveState": "active", "Result": "success", "ExecMainStatus": "0"}) == ""
+
+
+def test_a_stopped_containers_finding_leads_with_what_its_exit_code_means():
+    from nightlight_api import real
+    found = real.checks({"containers": [{"name": "cache", "image": "redis:7", "state": "exited",
+                                         "status": "Exited (137) 55 seconds ago"},
+                                        {"name": "tasks", "image": "x:1", "state": "exited", "status": "Exited (3) 1 m"},
+                                        {"name": "new", "image": "x:1", "state": "created", "status": "Created"}]})
+    msgs = {f["message"] for f in found}
+    assert "cache isn't running: it was force-stopped (exit code 137: killed, or out of memory)." in msgs
+    assert "tasks isn't running: it exited with code 3." in msgs and "new isn't running." in msgs
 
 
 def test_logs_not_allowed_says_what_was_not_read_and_what_would_allow_it(helper, monkeypatch):

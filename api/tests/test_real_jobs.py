@@ -23,6 +23,23 @@ def _action(uid, aid):
     return db.action(uid, aid).get().to_dict()
 
 
+def test_the_report_right_after_a_job_is_never_throttled(client, started):
+    """A helper reports at once after finishing a job (round-4 VM: that report got 429 and the helper slept ~20 s with
+    its work channel closed, so the chat's next check waited past the in-turn wait). One early report per job result
+    goes through; another early one is still limited."""
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    r = client.post("/helper/jobs/wait?hold=1", json={}, headers={"X-Device-Token": dev["token"]})
+    assert [j["id"] for j in r.json()["jobs"]] == [a["id"]]
+    assert beat(client, dev["token"], ALLOW).status_code == 429  # no job finished yet: the gap still holds
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "ok", "state": "running"},
+                headers={"X-Device-Token": dev["token"]})
+    assert beat(client, dev["token"], ALLOW).status_code == 200  # the report after the job
+    assert beat(client, dev["token"], ALLOW).status_code == 429  # once per job result
+
+
 def test_approved_job_is_delivered_once_and_reported_by_its_device(client, started):
     dev = enrolled(client)
     assert beat(client, dev["token"], ALLOW).json()["jobs"] == []
