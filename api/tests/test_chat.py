@@ -579,7 +579,7 @@ def test_one_command_per_response_and_no_tools_while_retrying():  # Codex charte
         def __init__(self, name):
             self.name = name
     ctx = agentlib.TurnContext("u", "s", "t", 1, 1, "ip", deep=True)
-    _bm, _am, before_tool = agentlib.make_callbacks(ctx)
+    _bm, _am, before_tool, _at = agentlib.make_callbacks(ctx)
     assert before_tool(T("run_command"), {}, None) is None
     assert "one command at a time" in before_tool(T("run_command"), {}, None)["reason"]
     assert before_tool(T("get_device"), {}, None) is None  # other reads in the same response are fine

@@ -533,6 +533,57 @@ def names_on(user: dict) -> bool:
     return (user.get("settings") or {}).get("deviceNames", True) is not False
 
 
+def set_time_zone(uid: str, zone: str) -> dict:
+    """The owner's own time zone (an IANA name, "Asia/Seoul"): every time the agent reads or says is written in it. A
+    zone set here is explicit: the browser's zone (X-Time-Zone) never replaces it."""
+    from . import clock, live
+    live.forbid_pool(uid)
+    z = clock.valid(zone)
+    if not z:
+        raise ApiError(422, "invalid_time_zone")
+    db.user(uid).set({"settings": {"timeZone": z, "timeZoneAuto": False}}, merge=True)
+    return {"ok": True, "timeZone": z, "timeZoneAuto": False}
+
+
+def stored_zone(uid: str) -> str | None:
+    """The account's kept time zone (explicit or learned from the browser), outside any turn; None when unknown."""
+    from . import clock
+    return clock.valid(((db.user(uid).get().to_dict() or {}).get("settings") or {}).get("timeZone"))
+
+
+def account_settings(uid: str) -> dict:
+    s = (db.user(uid).get().to_dict() or {}).get("settings") or {}
+    return {"deviceNames": s.get("deviceNames", True) is not False, "timeZone": s.get("timeZone"),
+            "timeZoneAuto": bool(s.get("timeZone")) and s.get("timeZoneAuto") is not False}
+
+
+def turn_zone(uid: str, header: str | None, keep: bool) -> str | None:
+    """The zone a turn's times are written in. A zone the owner set wins; otherwise the browser's own (the
+    X-Time-Zone header, validated), which is also kept on the account when `keep` (a signed-in owner, not a live demo
+    machine or a one-click account) and the account has none yet or only one kept this way before. No usable zone:
+    None (times then read as UTC, labelled)."""
+    from . import clock
+    browser = clock.valid(header)
+    ref = db.user(uid)
+
+    @firestore.transactional
+    def run(tx):
+        s = ((ref.get(transaction=tx).to_dict() or {}).get("settings") or {})
+        stored = clock.valid(s.get("timeZone"))
+        if stored and s.get("timeZoneAuto") is False:
+            return stored
+        if not browser:
+            return stored
+        if keep and browser != stored:
+            tx.set(ref, {"settings": {"timeZone": browser, "timeZoneAuto": True}}, merge=True)
+        return browser
+
+    if not keep:  # header only, per request: nothing is written for these accounts
+        stored = clock.valid(((ref.get().to_dict() or {}).get("settings") or {}).get("timeZone"))
+        return browser or stored
+    return run(db.client().transaction())
+
+
 def found_name(text: str | None) -> str | None:
     """A name a thing announces, kept for the owner's own map: never one that holds an address, a hardware id or
     something the scrubber hid."""
