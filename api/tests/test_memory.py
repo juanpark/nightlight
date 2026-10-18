@@ -205,14 +205,20 @@ def test_slow_recall_is_skipped(client, started, mem, monkeypatch):
 
 # ------------------------------------------------------------------ reset and the API
 
-def test_reset_purges_memories(started, mem):
+def test_reset_keeps_an_owners_memories(started, mem):
+    mem.store[started] = ["kids play Minecraft"]
+    demo.reset(started)  # a signed-in owner (the default: fail safe) keeps what Nightlight remembered
+    assert mem.store[started] == ["kids play Minecraft"]
+
+
+def test_visitor_reset_purges_memories(started, mem):
     mem.store[started] = ["kids play Minecraft"]
     mem.store["someone_else"] = ["keep me"]
-    demo.reset(started)
+    demo.reset(started, anonymous=True)
     assert started not in mem.store and mem.store["someone_else"] == ["keep me"]
     assert ("purge", started, True, {"wait_for_completion": False}) in mem.calls
     mem.fail = True
-    assert demo.reset(started)["ok"] is True  # a purge failure never fails the reset
+    assert demo.reset(started, anonymous=True)["ok"] is True  # a purge failure never fails the reset
 
 
 def test_memories_api_is_per_uid(client, uid, mem):

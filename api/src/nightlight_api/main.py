@@ -139,15 +139,15 @@ def version():
 
 
 @app.post("/api/demo/start")
-def demo_start(body: StartBody, uid: str = Depends(current_uid)):
+def demo_start(body: StartBody, uid: str = Depends(current_uid), anon: bool = Depends(anonymous)):
     live.forbid_pool(uid)  # every rebuild entry point: a live machine's account has its own reset
-    return demo.start(uid, body.template)
+    return demo.start(uid, body.template, anonymous=anon)
 
 
 @app.post("/api/demo/template")
-def demo_template(body: StartBody, uid: str = Depends(current_uid)):
+def demo_template(body: StartBody, uid: str = Depends(current_uid), anon: bool = Depends(anonymous)):
     live.forbid_pool(uid)
-    return demo.switch(uid, body.template)
+    return demo.switch(uid, body.template, anonymous=anon)
 
 
 @app.post("/api/devices/{device_id}/layout")
@@ -424,9 +424,9 @@ def live_end(body: Empty, lease: tuple[str, str] = Depends(live_lease)):
 
 
 @app.post("/api/demo/reset")
-def demo_reset(body: Empty, uid: str = Depends(current_uid)):
+def demo_reset(body: Empty, uid: str = Depends(current_uid), anon: bool = Depends(anonymous)):
     live.forbid_pool(uid)  # a live demo machine's account is never rebuilt from the sample panel (it has its own reset)
-    return demo.reset(uid)
+    return demo.reset(uid, anonymous=anon)
 
 
 @app.post("/api/demo/inject", status_code=201)

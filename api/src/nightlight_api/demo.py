@@ -190,9 +190,29 @@ def _finalize(uid: str, op: str, generation: int, hook) -> None:
     db.run_transaction(run)
 
 
-def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
+def _carry_forward(uid: str, op: str, generation: int, refs: list, hook) -> None:
+    """Move kept chats into the new generation (the chat list and new messages only see the current one). An old
+    turn still running loses its lease here, so it stops instead of writing into the kept chat."""
+    for chunk in _chunks(refs, settings.reset_batch_size):
+        hook("batch")
+
+        def work(tx, chunk=chunk):
+            snaps = [r.get(transaction=tx) for r in chunk]
+            for r, s in zip(chunk, snaps, strict=True):
+                if s.exists and (s.to_dict() or {}).get("demoGeneration", 0) < generation:
+                    tx.update(r, {"demoGeneration": generation, "activeTurn": None})
+
+        _fenced(uid, op, generation, work)
+
+
+def _rebuild(uid: str, op: str, generation: int, template: str, hook, *, anonymous: bool = False) -> tuple[int, bool]:
+    """Returns (sample devices seeded, whether the owner's own things were kept). Only a pure sample visitor (an
+    anonymous account with no real device) loses its chats: anyone else's conversations are their own use of
+    Nightlight, not part of the sample home, so a rebuild (start, template switch, reset) never deletes them."""
+    devices = db.devices(uid).get()
+    keep_owner = not anonymous or any(s.to_dict().get("realm") == "real" for s in devices)
     # Real devices (helper-reported) belong to the owner, not to the demo: reset never touches them.
-    old_devices = [s.reference for s in db.devices(uid).get() if s.to_dict().get("realm") != "real"]
+    old_devices = [s.reference for s in devices if s.to_dict().get("realm") != "real"]
     service_refs = [s.reference for d in old_devices for sub in ("services", "notes", "profile", "runbooks")
                     for s in d.collection(sub).get()]
     _delete_older(uid, op, generation, service_refs, hook)
@@ -202,15 +222,18 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     _delete_older(uid, op, generation, [s.reference for s in db.events(uid).get()
                                         if s.to_dict().get("realm") != "real"], hook)  # real history stays
     old_sessions = [s.reference for s in db.sessions(uid).get()]
-    inner = [m.reference for s in old_sessions for sub in ("messages", "turns") for m in s.collection(sub).get()]
-    _delete_older(uid, op, generation, inner, hook)
-    _delete_older(uid, op, generation, old_sessions, hook)
+    if keep_owner:
+        _carry_forward(uid, op, generation, old_sessions, hook)  # messages, turns and turnIndex stay as they are
+    else:
+        inner = [m.reference for s in old_sessions for sub in ("messages", "turns") for m in s.collection(sub).get()]
+        _delete_older(uid, op, generation, inner, hook)
+        _delete_older(uid, op, generation, old_sessions, hook)
+        _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("turnIndex").get()], hook)
     _delete_older(uid, op, generation, [s.reference for s in db.trust(uid).get()], hook)
     # The sample home's simulated look nearby and its simulated installs (sample.py) go with their generation.
     _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("discoveries").get()
                                         if s.to_dict().get("simulated")], hook)
     _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("samplePairs").get()], hook)
-    _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("turnIndex").get()], hook)
     _stale_pending(uid, op, generation, hook)
     # The sample home's seeded past jobs go with their generation (the log hides them anyway; this keeps them from
     # piling up). Jobs the person ran in the demo are left as before.
@@ -218,14 +241,14 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
         filter=FieldFilter("seeded", "==", True)).get()], hook)
     count = _seed(uid, op, generation, template, hook)
     _finalize(uid, op, generation, hook)
-    return count
+    return count, keep_owner
 
 
 def _no_hook(_: str) -> None:
     pass
 
 
-def start(uid: str, template: str = "home-pi", hook=_no_hook) -> dict:
+def start(uid: str, template: str = "home-pi", hook=_no_hook, *, anonymous: bool = False) -> dict:
     """Give this user a sample home. Calling it again while the demo is ready changes nothing."""
     if template not in TEMPLATES:
         raise ApiError(422, "unknown_template")
@@ -234,29 +257,31 @@ def start(uid: str, template: str = "home-pi", hook=_no_hook) -> dict:
         began["devices"] = len(TEMPLATES[template]["devices"])
         return began
     op, generation = began
-    count = _rebuild(uid, op, generation, template, hook)
+    count, _ = _rebuild(uid, op, generation, template, hook, anonymous=anonymous)
     return {"ok": True, "demoGeneration": generation, "devices": count}
 
 
-def switch(uid: str, template: str, hook=_no_hook) -> dict:
+def switch(uid: str, template: str, hook=_no_hook, *, anonymous: bool = False) -> dict:
     """Show or hide the sample home (a rebuild under the barrier, like a reset, but memories are kept)."""
     if template not in TEMPLATES:
         raise ApiError(422, "unknown_template")
     op, generation = _begin(uid, template, only_if_missing=False)
-    count = _rebuild(uid, op, generation, template, hook)
+    count, _ = _rebuild(uid, op, generation, template, hook, anonymous=anonymous)
     return {"ok": True, "demoGeneration": generation, "devices": count, "template": template}
 
 
-def reset(uid: str, hook=_no_hook) -> dict:
+def reset(uid: str, hook=_no_hook, *, anonymous: bool = False) -> dict:
     snap = db.user(uid).get()
     if not snap.exists:
         raise not_found()
     template = snap.to_dict().get("template", "home-pi")
     op, generation = _begin(uid, template, only_if_missing=False)
-    _rebuild(uid, op, generation, template, hook)
-    # A reset is a fresh start, so what Nightlight remembered about this person goes too. Best effort and outside the
-    # reset's transactions: memory lives in Memory Bank, not Firestore, and a purge failure must not fail the reset.
-    memory.forget_all(uid)
+    _, kept = _rebuild(uid, op, generation, template, hook, anonymous=anonymous)
+    # A pure sample visitor's reset is a fresh start, so what Nightlight remembered about them goes too. An owner's
+    # memories are their own (Settings has "forget everything"). Best effort and outside the reset's transactions:
+    # memory lives in Memory Bank, not Firestore, and a purge failure must not fail the reset.
+    if not kept:
+        memory.forget_all(uid)
     return {"ok": True, "demoGeneration": generation}
 
 
