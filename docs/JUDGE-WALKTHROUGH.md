@@ -59,6 +59,9 @@ Good questions to try, with what a good answer looks like:
 
 ## Path C: your own computer or Raspberry Pi
 
+Works on Linux (including Raspberry Pi) and macOS 10.15+; Windows PCs, NAS boxes and routers are watched from one of
+those, not looked after directly ([`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)).
+
 1. **Sign in with Google**, then **Add a device**. Copy the one line into Terminal (Linux or Mac), or on a Mac use
    the **Mac installer** (it shows a warning first: the installer isn't signed by Apple yet; right-click → Open).
 2. Your device appears on the map within a minute, with disk, memory and apps, and **Found nearby** lists the

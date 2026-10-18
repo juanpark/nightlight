@@ -322,6 +322,7 @@ device, history and all; the owner chooses when approving.
 - Real-device jobs are the fixed list above plus passkey-signed expert commands. Everything else is explained, not
   changed.
 - The trust ladder (jobs running on their own) applies to the sample home only.
+- Which devices are looked after, which are only watched, and what comes next: [`docs/DEVICE-SUPPORT.md`](docs/DEVICE-SUPPORT.md).
 - The helper supports Linux (systemd) and macOS (launchd). **Windows is not supported**; a Windows PC can only be
   watched from another device (does it answer on the network).
 - Adding a Linux device needs one line in a terminal. Only the Mac has an installer; until it is notarized with a
