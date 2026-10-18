@@ -30,17 +30,23 @@ export function Cursor({ scope }: { scope: RefObject<HTMLElement | null> }) {
     const hx = gsap.quickTo(h, "x", { duration: 0.3, ease: "power3.out" });
     const hy = gsap.quickTo(h, "y", { duration: 0.3, ease: "power3.out" });
 
-    // each frame paints the light on its own dot grid, so it needs the light's position in its own coordinates
+    // each frame paints the light on its own dot grid, so it needs the light's position in its own coordinates. Only
+    // when the light or the page has moved, and all the measuring before any writing, so a frame costs one layout.
     const frames = Array.from(page.querySelectorAll<HTMLElement>(`.${s.frame}`));
+    let last = "";
     const shine = () => {
       const x = gsap.getProperty(h, "x") as number;
       const y = gsap.getProperty(h, "y") as number;
-      for (const f of frames) {
-        const r = f.getBoundingClientRect();
-        if (y < r.top - 320 || y > r.bottom + 320) continue;
+      const now = `${x}|${y}|${window.scrollY}`;
+      if (now === last) return;
+      last = now;
+      const rects = frames.map((f) => f.getBoundingClientRect());
+      frames.forEach((f, i) => {
+        const r = rects[i];
+        if (y < r.top - 320 || y > r.bottom + 320) return;
         f.style.setProperty("--lx", `${x - r.left}px`);
         f.style.setProperty("--ly", `${y - r.top}px`);
-      }
+      });
     };
     gsap.ticker.add(shine);
 

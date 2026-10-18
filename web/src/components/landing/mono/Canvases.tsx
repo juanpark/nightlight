@@ -27,31 +27,33 @@ function Status({ tone, word }: { tone: Tone; word?: string }) {
   );
 }
 
-function Frame({ children, label, className = "" }: { children: ReactNode; label: string; className?: string }) {
+function Frame({ children, label, className = "", note = "Sample home · simulated" }: { children: ReactNode; label: string; className?: string; note?: string }) {
   return (
     <figure className={`${s.frame} ${className}`} aria-label={label}>
       {children}
-      <figcaption className={s.frameNote}>Sample home · simulated</figcaption>
+      <figcaption className={s.frameNote}>{note}</figcaption>
     </figure>
   );
 }
 
-/* ---------- Hero: the home map, checked device by device ---------- */
+/* ---------- Hero: the home map, each device reporting in ---------- */
 
-type Device = { id: string; name: string; room: string; icon: IconType; x: number; y: number; tone: Tone; line: string };
+// The sample home exactly as the demo opens it (api template "home-pi"): names, purposes and findings are the seed's.
+// The map shows five of its six devices; the camera recorder, whose health is unknown, appears in "It notices".
+type Device = { id: string; name: string; room: string; icon: IconType; x: number; y: number; tone: Tone; line: string; short?: string };
 const HOME: Device[] = [
-  { id: "pi", name: "Raspberry Pi", room: "Attic", icon: Cpu, x: 17, y: 27, tone: "warn", line: "The disk is 94% full." },
-  { id: "mac", name: "Mac Mini", room: "Living room", icon: Computer, x: 83, y: 27, tone: "ok", line: "Photos and Home Assistant run fine." },
-  { id: "router", name: "Wi-Fi router", room: "Hall", icon: Router, x: 50, y: 42, tone: "ok", line: "Everyone is online." },
-  { id: "nas", name: "Home NAS", room: "Office", icon: Nas, x: 17, y: 75, tone: "ok", line: "Last backup ran at 01:30." },
-  { id: "game", name: "Minecraft server", room: "Kids’ room", icon: Gamepad, x: 83, y: 75, tone: "ok", line: "3 players earlier, no lag." },
+  { id: "pi", name: "Raspberry Pi", room: "VPN and car logger", icon: Cpu, x: 17, y: 27, tone: "crit", line: "The disk is 94% full.", short: "Disk 94% full" },
+  { id: "mac", name: "Mac Mini", room: "Home automation", icon: Computer, x: 83, y: 27, tone: "warn", line: "Immich, the photo app, says it’s unhealthy.", short: "Photo app unhealthy" },
+  { id: "router", name: "Router", room: "Internet", icon: Router, x: 50, y: 42, tone: "ok", line: "Connects everything to the internet." },
+  { id: "nas", name: "NAS", room: "Family photos", icon: Nas, x: 17, y: 75, tone: "warn", line: "Backups run, but nobody has tested a restore.", short: "Restore never tested" },
+  { id: "game", name: "Game server", room: "Minecraft world", icon: Gamepad, x: 83, y: 75, tone: "warn", line: "The world hasn’t been backed up in 9 days.", short: "No backup in 9 days" },
 ];
 const ROUND = ["router", "nas", "mac", "game", "pi"];
 const EVERY = 2600;
 
-function clock(i: number) {
-  const m = 2 * 60 + 3 + i * 2;
-  return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+// Each device sends a report every minute, so the newest is "just now" and the rest a minute apart.
+function ago(k: number) {
+  return k === 0 ? "Just now" : `${k} min ago`;
 }
 
 function Tile({ d, checking, compact }: { d: Device; checking?: boolean; compact?: boolean }) {
@@ -70,7 +72,7 @@ function Tile({ d, checking, compact }: { d: Device; checking?: boolean; compact
       <Status tone={d.tone} />
       {!compact && <p className={s.tileLine}>{d.line}</p>}
       <span className={s.tileCheck} aria-hidden="true">
-        Checking
+        Reported
       </span>
     </div>
   );
@@ -88,7 +90,7 @@ export function HeroCanvas() {
   const current = ROUND[step % ROUND.length];
   const shown = Array.from({ length: 4 }, (_, k) => {
     const i = step - k;
-    return { key: i, d: HOME.find((x) => x.id === ROUND[i % ROUND.length])!, time: clock(i) };
+    return { key: i, d: HOME.find((x) => x.id === ROUND[i % ROUND.length])!, time: ago(k) };
   });
   const router = HOME.find((d) => d.id === "router")!;
 
@@ -107,9 +109,9 @@ export function HeroCanvas() {
       <div className={s.heroBody}>
         <div className={s.needsStrip}>
           <span className={s.needsLight} aria-hidden="true" />
-          <span className={s.needsTitle}>1 thing needs you</span>
+          <span className={s.needsTitle}>4 things need you</span>
           <span className={s.needsCounts}>
-            <i data-tone="warn" /> 1 needs a look <i data-tone="ok" /> 4 fine
+            <i data-tone="crit" /> 1 broken <i data-tone="warn" /> 3 need a look
           </span>
           <span className={s.needsItem}>
             <b>Raspberry Pi</b> The disk is 94% full.
@@ -140,14 +142,14 @@ export function HeroCanvas() {
 
       <div className={s.toasts} aria-hidden="true">
         <p className={s.toastsHead}>
-          <span className={s.liveDot} /> Tonight’s checks
+          <span className={s.liveDot} /> Latest reports
         </p>
         <ol>
           {shown.map(({ key, d, time }) => (
             <li key={key} className={s.toast} data-tone={d.tone}>
               <time>{time}</time>
               <span className={s.toastName}>{d.name}</span>
-              <Status tone={d.tone} word={d.tone === "warn" ? "Disk 94% full" : undefined} />
+              <Status tone={d.tone} word={d.short} />
             </li>
           ))}
         </ol>
@@ -159,34 +161,34 @@ export function HeroCanvas() {
 /* ---------- 1. It notices ---------- */
 
 export type NoticeKey = "space" | "stops" | "backups" | "quiet";
+// Each one is a finding the sample home really has, with the evidence the app keeps for it.
 const NOTICES: Record<NoticeKey, { d: Device; headline: string; facts: string[]; meter?: { label: string; value: number; word: string } }> = {
   space: {
-    d: { ...HOME[0], line: "The disk is 94% full." },
-    headline: "The Raspberry Pi is almost out of space.",
-    facts: ["Old logs from the car-data logger: 5.2 GB", "Grew 3% since yesterday", "Full in about 4 days at this pace"],
+    d: HOME[0],
+    headline: "The Raspberry Pi’s disk is 94% full.",
+    facts: ["Old log files: 2.1 GB", "A backup of the car logger’s data: 1.4 GB", "Unused app downloads (Docker images): 0.9 GB"],
     meter: { label: "Disk", value: 94, word: "94% full" },
   },
   stops: {
-    d: { ...HOME[4], tone: "crit", line: "The game server stopped at 01:48." },
-    headline: "The Minecraft server stopped.",
-    facts: ["It ran out of memory and stopped", "Restarted on its own twice tonight", "Nobody was playing when it stopped"],
-    meter: { label: "Memory", value: 98, word: "98% before it stopped" },
+    d: HOME[1],
+    headline: "Immich, the photo app on the Mac Mini, says it’s unhealthy.",
+    facts: ["Its photo database isn’t answering", "Its health check failed 4 times in the last hour", "Notes from last time: this happens after a power cut"],
   },
   backups: {
-    d: { ...HOME[3], tone: "warn", line: "Backups haven’t run in 9 days." },
-    headline: "The NAS hasn’t backed up in 9 days.",
-    facts: ["The last backup finished on 9 October", "The backup drive is plugged in", "Photos changed since then: 214"],
+    d: HOME[4],
+    headline: "The Minecraft world hasn’t been backed up in 9 days.",
+    facts: ["Last world backup: 9 days ago", "Minecraft 1.21.5 is out (you have 1.21.4)", "2 of 10 players are online"],
   },
   quiet: {
-    d: { id: "cam", name: "Camera recorder", room: "Garage", icon: Camera, x: 0, y: 0, tone: "offline", line: "Not answering since 01:12." },
-    headline: "The camera recorder went quiet.",
-    facts: ["Silent since 01:12, for 58 minutes", "The router still sees it on Wi-Fi", "Every other device checks in"],
+    d: { id: "cam", name: "Camera recorder", room: "Front-door camera", icon: Camera, x: 0, y: 0, tone: "offline", line: "No report, so its health is unknown." },
+    headline: "The camera recorder isn’t reporting.",
+    facts: ["Without a report, its health is unknown", "The other five devices are still reporting", "On your own computers it also says since when"],
   },
 };
 
 export function NoticeCanvas({ which }: { which: NoticeKey }) {
   const n = NOTICES[which];
-  const needs = n.d.tone === "crit" ? "1 urgent thing needs you" : "1 thing needs you";
+  const needs = n.d.tone === "crit" ? "Broken" : n.d.tone === "offline" ? "Not reporting" : "Needs a look";
   return (
     <Frame label="A device that needs a look, as the dashboard shows it">
       <div className={s.stage}>
@@ -234,24 +236,25 @@ export function NoticeCanvas({ which }: { which: NoticeKey }) {
 export type ExplainKey = "words" | "checked" | "ask";
 
 // What the sample home answers. A question typed in your own words gets the last one: the demo is where it can answer.
+// Answers use only what the sample home holds: its findings, the Mac Mini's notes and saved fix, the game server's backup.
 const QA: { q: string; steps: string[]; answer: string }[] = [
   {
     q: "Is anything wrong at home?",
-    steps: ["Checked 6 devices", "Looked at the Pi’s biggest folders", "Read its notes from last time"],
+    steps: ["Checked 6 devices", "Looked at the Pi’s biggest folders"],
     answer:
-      "Just one thing. Your Raspberry Pi’s disk is 94% full, mostly old log files from the car-data logger: 5.2 GB from before September. Clearing them is safe, and I can show you exactly what would go first.",
+      "Four things. The most urgent: the Raspberry Pi’s disk is 94% full, mostly 2.1 GB of old log files that are safe to clear. Also, Immich on the Mac Mini says it’s unhealthy, the Minecraft world hasn’t been backed up in 9 days, and nobody has tested restoring the NAS backups.",
   },
   {
-    q: "Why is Minecraft laggy?",
-    steps: ["Checked the Minecraft server", "Read tonight’s player count", "Looked at its memory over the evening"],
+    q: "Why is Immich unhealthy?",
+    steps: ["Checked Immich on the Mac Mini", "Read its notes from last time", "Found the fix that worked before"],
     answer:
-      "It isn’t right now: 3 players were on earlier and there’s been no lag in the last hour. Around 20:40 it ran short on memory while the world was saving, which is when the kids would have noticed. If it happens again, I can suggest giving it more memory.",
+      "Its photo database isn’t answering: the health check failed 4 times in the last hour. My notes say this happens after a power cut, and 3 days ago restarting Immich fixed it. I can do that again if you approve.",
   },
   {
     q: "When was the Minecraft world last backed up?",
-    steps: ["Checked the Minecraft server", "Read the backup history on the NAS"],
+    steps: ["Checked the Minecraft server"],
     answer:
-      "Last night at 23:10, to the Home NAS. It backs up every night, and the last 7 backups all finished. The newest one is 1.8 GB.",
+      "9 days ago, which is longer than it should be. I can save a copy now, about 6.2 GB, and players can keep playing.",
   },
 ];
 
@@ -306,8 +309,8 @@ export function ExplainCanvas({ focus }: { focus: ExplainKey }) {
             ) : own ? (
               <div className={s.answer} data-part="words">
                 <p>
-                  On this page I can only talk about the sample home above. In the demo you can ask me that, or anything
-                  else, about six simulated devices.
+                  On this page I can only answer the suggested questions. In the demo you can ask me that, or anything
+                  else, about the six simulated devices.
                 </p>
                 <AuthButtons size="small" demoOnly styles={s} />
               </div>
@@ -364,11 +367,12 @@ export function ExplainCanvas({ focus }: { focus: ExplainKey }) {
 export type AskKey = "plan" | "dry" | "touch" | "undo";
 export type ApprovalState = "waiting" | "running" | "done" | "declined";
 
+// The card the sample home really shows for this job, with the app's own labels.
 const FACTS: { key: AskKey; term: string; text: string }[] = [
-  { key: "plan", term: "What I’ll do", text: "Delete the car-data logger’s log files older than 30 days." },
-  { key: "dry", term: "Dry run", text: "412 files, 5.2 GB. The disk goes from 94% to 61%." },
-  { key: "touch", term: "What it touches", text: "Only that one log folder. The VPN and the logger keep running." },
-  { key: "undo", term: "How to undo", text: "It can’t be undone, but only old logs go: nothing you use changes." },
+  { key: "plan", term: "Plan", text: "Compress and remove log files older than 7 days on the Raspberry Pi." },
+  { key: "dry", term: "What happens", text: "Frees about 2.1 GB (94% → 61% full). Nothing that’s running is stopped." },
+  { key: "touch", term: "Affects", text: "Raspberry Pi (sample, nothing real)" },
+  { key: "undo", term: "Can it be undone?", text: "Removed logs are kept in an archive for 24 hours." },
 ];
 
 export function AskCanvas({ focus, state, onChange }: { focus: AskKey; state: ApprovalState; onChange: (s: ApprovalState) => void }) {
@@ -408,13 +412,13 @@ export function AskCanvas({ focus, state, onChange }: { focus: AskKey; state: Ap
             {state === "running" && (
               <p className={s.result}>
                 <Mascot size={30} mood="working" className={s.resultMascot} />
-                Cleaning up 412 files…
+                Cleaning up old logs…
               </p>
             )}
             {state === "done" && (
               <p className={s.result} data-tone="ok">
                 <Mascot size={30} mood="done" className={s.resultMascot} />
-                Done. Freed 5.2 GB, and the disk is at 61%.{" "}
+                Done. Freed 2.1 GB on the Raspberry Pi (94% → 61% full).{" "}
                 <button type="button" className={s.link} onClick={() => onChange("waiting")}>
                   Show it again
                 </button>
@@ -422,7 +426,7 @@ export function AskCanvas({ focus, state, onChange }: { focus: AskKey; state: Ap
             )}
             {state === "declined" && (
               <p className={s.result}>
-                Okay, I won’t touch it. I’ll bring it up again if it gets worse.{" "}
+                Okay, I’ll leave it for now.{" "}
                 <button type="button" className={s.link} onClick={() => onChange("waiting")}>
                   Show the card again
                 </button>
@@ -515,7 +519,7 @@ export function TrustCanvas({ level, onLevel }: { level: number; onLevel: (n: nu
 
 export function PrivacyCanvas({ sent, never }: { sent: string[]; never: string[] }) {
   return (
-    <Frame label="What Nightlight sends, and what it never sends" className={s.privacyFrame}>
+    <Frame label="What Nightlight sends, and what it never sends" className={s.privacyFrame} note="On your own computers">
       <div className={s.privacyStage}>
         <div className={s.privacyCard}>
           <p className={s.floatHead}>Every minute, it sends</p>

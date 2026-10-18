@@ -37,28 +37,42 @@ const LINKS = [
   { href: "#who", label: "Who it’s for" },
 ];
 
-const SENT = ["CPU, memory and disk percentages", "Which services and containers run", "How many updates are waiting", "Two safety checks"];
-const NEVER = ["Host names or addresses", "Your files", "Passwords or keys", "Environment variables"];
+const SENT = [
+  "How busy it is, and how full its memory and disk are",
+  "The names of its apps, and which ones have stopped",
+  "How many updates are waiting",
+  "Two yes/no safety checks, like whether remote login accepts passwords",
+];
+const NEVER = ["Its own name or network addresses", "What’s inside your files", "Passwords or keys", "Your apps’ hidden settings"];
 
+// What each kind of setup really gets: computers with the helper are looked after; other boxes are only watched.
 const WHO = [
-  { who: "A family with a NAS full of photos", what: "Disk space and backups" },
-  { who: "A Raspberry Pi running the home VPN", what: "Services that stop" },
-  { who: "A Minecraft world hosted for the kids", what: "Lag, memory and restarts" },
-  { who: "A small office, or a dental clinic", what: "Updates and quiet devices" },
+  { who: "A Raspberry Pi running the home VPN", what: "Full disks and apps that stop" },
+  { who: "A Mac running photos and home automation", what: "Apps that stop, updates waiting" },
+  { who: "A Minecraft server for the kids", what: "Memory, disk space and apps that stop" },
+  { who: "A small office with a few computers", what: "Updates waiting, computers gone quiet" },
+  { who: "The router, NAS and printer", what: "Checked that they still answer" },
 ];
 
 type Item<K extends string> = { key: K; title: string; text: string };
 
-// One open at a time; opening an item changes what the chapter's canvas shows.
+// One open at a time; opening an item changes what the chapter's canvas shows. Clicking the open one closes it, and
+// the canvas keeps showing it.
 function Steps<K extends string>({ n, items, open, onOpen }: { n: number; items: Item<K>[]; open: K; onOpen: (k: K) => void }) {
+  const [shut, setShut] = useState<K | null>(null); // the item closed by hand; choosing any other opens again
+  const choose = (k: K) => {
+    if (k === open) return setShut(shut === k ? null : k);
+    setShut(null);
+    onOpen(k);
+  };
   return (
     <ul className={s.steps}>
       {items.map((it, i) => {
-        const on = it.key === open;
+        const on = it.key === open && shut !== open;
         const id = `step-${n}-${it.key}`;
         return (
           <li key={it.key} className={s.step} data-open={on || undefined}>
-            <button type="button" className={s.stepBtn} aria-expanded={on} aria-controls={id} onClick={() => onOpen(it.key)}>
+            <button type="button" className={s.stepBtn} aria-expanded={on} aria-controls={id} onClick={() => choose(it.key)}>
               <span className={s.stepNum}>
                 {n}.{i + 1}
               </span>
@@ -126,19 +140,19 @@ export function MonoLanding() {
       const q = gsap.utils.selector(root);
       const mm = gsap.matchMedia();
       mm.add("(prefers-reduced-motion: no-preference)", () => {
-        gsap.from(q("[data-hero-rise]"), { y: 18, autoAlpha: 0, duration: 1.1, ease: "expo.out", stagger: 0.07, delay: 0.1 });
-        gsap.from(q("[data-hero-canvas]"), { y: 48, autoAlpha: 0, duration: 1.4, ease: "expo.out", delay: 0.35 });
+        gsap.from(q("[data-hero-rise]"), { y: 18, opacity: 0, duration: 1.1, ease: "expo.out", stagger: 0.07, delay: 0.1 });
+        gsap.from(q("[data-hero-canvas]"), { y: 48, opacity: 0, duration: 1.4, ease: "expo.out", delay: 0.35 });
         q("[data-chapter]").forEach((el) => {
           gsap.from(el.querySelectorAll("[data-canvas]"), {
             y: 56,
-            autoAlpha: 0,
+            opacity: 0,
             duration: 1.2,
             ease: "expo.out",
             scrollTrigger: { trigger: el, start: "top 78%", once: true },
           });
         });
         q("[data-rise]").forEach((el) => {
-          gsap.from(el, { y: 24, autoAlpha: 0, duration: 1, ease: "expo.out", scrollTrigger: { trigger: el, start: "top 86%", once: true } });
+          gsap.from(el, { y: 24, opacity: 0, duration: 1, ease: "expo.out", scrollTrigger: { trigger: el, start: "top 86%", once: true } });
         });
       });
     },
@@ -181,8 +195,9 @@ export function MonoLanding() {
             </h1>
             <div className={s.heroSide}>
               <p className={s.lede} data-hero-rise>
-                Nightlight watches the NAS, the Raspberry Pi, the game server and the router. It tells you what’s wrong in
-                plain words, and never fixes anything without your yes.
+                Nightlight watches the computers you run at home, like a Raspberry Pi, a Mac or a game server, and checks
+                that your router and NAS still answer. It tells you what’s wrong in plain words, and never fixes anything
+                without your yes.
               </p>
               <div data-hero-rise>
                 <AuthButtons styles={s} />
@@ -195,14 +210,14 @@ export function MonoLanding() {
           </div>
           <div className={s.principles}>
             <p data-rise>
-              <strong>Asks before acting —</strong> Nothing changes without your yes, and every job says how risky it is
-              and how to undo it.
+              <strong>It asks first.</strong> Nothing changes without your yes, and every fix says how risky it is and
+              whether it can be undone.
             </p>
             <p data-rise>
-              <strong>Plain words —</strong> No error codes or dashboards to decode. Every state reads as a sentence first.
+              <strong>Plain words.</strong> You read “The Pi’s disk is 94% full”, not an error code.
             </p>
             <p data-rise>
-              <strong>Trust you set —</strong> On the sample home, routine fixes can run on their own once you say so. Your own
+              <strong>Trust you set.</strong> On the sample home, routine fixes can run on their own once you say so. Your own
               devices always ask.
             </p>
           </div>
@@ -214,7 +229,7 @@ export function MonoLanding() {
               <h2 id="band-title" className={s.bandTitle}>
                 See it on a sample home.
               </h2>
-              <p className={s.bandText}>Six simulated devices, one of them in trouble. Try every button.</p>
+              <p className={s.bandText}>Six simulated devices with a few everyday problems. Try every button.</p>
             </div>
             <AuthButtons styles={{ ...s, actions: s.bandActions }} demoOnly />
           </div>
@@ -222,29 +237,29 @@ export function MonoLanding() {
 
         <section id="how" className={s.intro} aria-labelledby="intro-title">
           <h2 id="intro-title" className={s.h2Big} data-rise>
-            Most homes now run a small data centre. <span className={s.quiet}>Nobody is on call for it. Nightlight is.</span>
+            Run a Pi, a NAS or a game server at home? <span className={s.quiet}>Then you’re the IT person. Nightlight helps.</span>
           </h2>
           <p className={s.body} data-rise>
-            A NAS full of photos, a Pi running the VPN, a game server for the kids, the router. Nightlight checks each one every
-            minute and follows the same four steps whenever something drifts.
+            A small helper on each computer sends a short health report every minute. When something goes wrong, Nightlight
+            takes the same four steps.
           </p>
         </section>
 
         <Chapter
           id="notices"
           title="It notices"
-          quiet="before anything breaks"
-          text="Every machine reports how it’s doing each minute. When something drifts, it lands at the top of your home as one sentence, with what it already found out."
+          quiet="often before things break"
+          text="When something goes wrong, it shows up at the top of your home as one plain sentence, with what Nightlight already found out."
           steps={
             <Steps
               n={1}
               open={notice}
               onOpen={setNotice}
               items={[
-                { key: "space", title: "Space running out", text: "Disks filling up, old logs and caches, Docker images. It names what takes the room, with sizes." },
-                { key: "stops", title: "Things that stop", text: "Containers, services, game servers, the home VPN. Before suggesting a restart it looks into why it stopped." },
-                { key: "backups", title: "Updates and backups", text: "One plain sentence when an update is waiting or a backup hasn’t run in days." },
-                { key: "quiet", title: "Devices gone quiet", text: "When a machine goes silent it says since when, and which neighbours still check in." },
+                { key: "space", title: "Space running out", text: "When a disk fills up, it lists what’s taking the room and how big each part is." },
+                { key: "stops", title: "Apps that stop", text: "When an app stops or says it’s unhealthy, it looks into why and reads its notes from last time before suggesting a restart." },
+                { key: "backups", title: "Backups and updates", text: "One plain sentence when an update is waiting or a backup is days old." },
+                { key: "quiet", title: "Devices gone quiet", text: "When a computer stops reporting, it says since when and whether your other computers still report." },
               ]}
             />
           }
@@ -256,7 +271,7 @@ export function MonoLanding() {
           flip
           title="It explains"
           quiet="in words anyone can follow"
-          text="Ask it anything about your home. It says what’s wrong, why it matters and what it already checked, without a single error code."
+          text="Ask about your home in your own words. It answers the same way, and shows what it checked."
           steps={
             <Steps
               n={2}
@@ -265,7 +280,7 @@ export function MonoLanding() {
               items={[
                 { key: "words", title: "Plain words", text: "Answers read like a note from someone who knows your house, not like a log file." },
                 { key: "checked", title: "Shows what it checked", text: "Each step it took is listed as it works, so you can see how it reached the answer." },
-                { key: "ask", title: "Ask about anything", text: "Why the game lags, when the last backup ran, what that new device is. Questions in your own words." },
+                { key: "ask", title: "Your own words", text: "Why an app is unhealthy, when the last backup ran, what that new thing on your network is." },
               ]}
             />
           }
@@ -274,9 +289,9 @@ export function MonoLanding() {
 
         <Chapter
           id="asks"
-          title="It asks first,"
-          quiet="every time it matters"
-          text="Nothing changes without your yes. Each fix comes as a card with the plan, a dry run, what it touches and how to undo it. Go on, approve this one."
+          title="It asks"
+          quiet="before it changes anything"
+          text="Each fix comes as a card: the plan, what will happen, what it affects and whether it can be undone. Nothing happens until you approve. Go on, approve this one."
           steps={
             <Steps
               n={3}
@@ -284,9 +299,9 @@ export function MonoLanding() {
               onOpen={setAsk}
               items={[
                 { key: "plan", title: "The plan", text: "One sentence on exactly what it will do, and to which device." },
-                { key: "dry", title: "A dry run", text: "It tries the job without changing anything first, so you see the result before saying yes." },
-                { key: "touch", title: "What it touches", text: "Which files, apps or services are involved, and what keeps running." },
-                { key: "undo", title: "How to undo", text: "How to take it back, or a plain warning when a job can’t be undone." },
+                { key: "dry", title: "What happens", text: "What it expects the result to be, worked out before anything changes." },
+                { key: "touch", title: "What it affects", text: "Which device is involved, and whether it’s one of yours or the sample." },
+                { key: "undo", title: "Can it be undone?", text: "How to take it back, or a plain warning when it can’t be." },
               ]}
             />
           }
@@ -298,7 +313,7 @@ export function MonoLanding() {
           flip
           title="Trust grows"
           quiet="one job at a time"
-          text="After the same safe fix a few times, it offers to handle that one job on its own. Trust is set per device and per job, and you can take it back any time."
+          text="After the same safe fix has worked 3 times with your OK, it offers to handle that one job on its own, and you can take it back any time. For now this is on the sample home only: on your own computers, every change waits for your tap."
           steps={
             <Steps
               n={4}
@@ -316,8 +331,9 @@ export function MonoLanding() {
               What leaves your house <span className={s.quiet}>and what never does</span>
             </h2>
             <p className={s.body} data-rise>
-              A small helper on each machine sends health numbers once a minute. It changes nothing by default, and on a real
-              device every restart waits for your tap, whatever the trust settings say.
+              A small helper on each computer sends a health report once a minute. It changes nothing by default, it can only
+              run the jobs you switched on for that computer, and every restart waits for your tap. Names that nearby devices
+              announce, like a TV called “Living Room”, show on your map; you can turn that off.
             </p>
           </div>
           <div data-rise>

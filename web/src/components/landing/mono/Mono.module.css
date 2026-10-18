@@ -1,25 +1,7 @@
 /* "/" in the day dashboard's world: warm near-black ink on a near-white cream, white cards on hairlines, the product
    framed on a dot grid. Star yellow only for the main action and "needs you"; status colours only with a word. */
 .page {
-  --bg: #fcfbf8;
-  --panel: #ffffff;
-  --panel-2: #f3f2ee;
-  --frame: #f4f3ef;
-  --line: #e8e6e0;
-  --line-strong: #cfccc3;
-  --ink: #1a1a18;
-  --muted: #5e5d58;
-  --quiet: #8a8882; /* the second half of a headline: large text, ≥ 3:1 on the ground */
-  --star: #fdd83a;
-  --star-hover: #ffe14f;
-  --star-ink: #8a6700; /* the star as text or a ring on white */
-  --dot: #d9d6cd;
-  --ok: #1d7a3c; --warn: #b85a00; --crit: #c0352b; --offline: #5e5d58;
-  --ok-fill: #22a447; --warn-fill: #d97706; --crit-fill: #ec3d32; --offline-fill: #8e8c86;
-  --logo-light: #f5c400;
-  --card-shadow: 0 1px 2px rgb(26 26 24 / .04), 0 18px 40px -22px rgb(26 26 24 / .22);
-  --float-shadow: 0 2px 4px rgb(26 26 24 / .04), 0 28px 56px -24px rgb(26 26 24 / .3);
-  --ease: cubic-bezier(.16, 1, .3, 1);
+  composes: tokens from "./tokens.module.css";
   --gutter: clamp(16px, 4vw, 56px);
   --max: 1200px;
 
@@ -61,20 +43,21 @@
   font: 600 1rem/1 var(--font-sans), system-ui, sans-serif; cursor: pointer; white-space: nowrap;
   transition: background-color .15s, border-color .15s, box-shadow .15s;
 }
-.primary { background: var(--star); color: var(--ink); border: 1px solid #e9c21f;
+.primary { background: var(--star); color: var(--ink); border: 1px solid var(--star-edge);
   box-shadow: 0 1px 0 rgb(255 255 255 / .6) inset, 0 6px 16px -8px rgb(160 120 0 / .45); }
 .primary:hover:not(:disabled) { background: var(--star-hover); }
 .secondary { background: var(--panel); color: var(--ink); border: 1px solid var(--line-strong);
   box-shadow: 0 1px 2px rgb(26 26 24 / .05); }
-.secondary:hover:not(:disabled) { background: var(--panel-2); border-color: #b9b5aa; }
+.secondary:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line-hover); }
 .primary:disabled, .secondary:disabled { cursor: default; opacity: .7; }
-.actionsSmall .primary { height: 38px; padding: 0 14px; font-size: .9375rem; border-radius: 10px; gap: 8px; }
+.actionsSmall .primary { height: 44px; padding: 0 14px; font-size: .9375rem; border-radius: 10px; gap: 8px; }
 .error { margin: 0; color: var(--crit); font-size: .9375rem; }
 
 /* ---------- nav ---------- */
 .nav {
   position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
-  gap: 16px; padding: 14px var(--gutter);
+  /* the frosted bar runs edge to edge; what's in it sits on the content column (var(--max), centred like the sections) */
+  gap: 16px; padding: 14px max(var(--gutter), (100% - var(--max)) / 2);
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
   border-bottom: 1px solid transparent;
@@ -120,12 +103,21 @@
 
 .steps { list-style: none; margin: 32px 0 0; padding: 0; display: grid; gap: 8px; max-width: 30rem; }
 .step { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  transition: border-color .2s, box-shadow .2s; }
+  transition: border-color .2s, box-shadow .2s, background-color .2s; }
+.stepTitle, .stepNum { transition: color .2s; }
+/* hover: the row answers the pointer the way the page's other controls do (a stronger hairline, ink for the title and
+   the +/×), and a closed row warms a step; only where hover exists, so a tap on a phone doesn't leave it lit */
+@media (hover: hover) {
+  .step:has(.stepBtn:hover) { border-color: var(--line-hover); }
+  .step:not([data-open]):has(.stepBtn:hover) { background: color-mix(in srgb, var(--panel-2) 55%, var(--panel)); }
+  .stepBtn:hover .stepIcon, .stepBtn:hover .stepNum { color: var(--ink); }
+}
+.stepBtn:active .stepTitle { color: var(--muted); }
 .step[data-open] { border-color: var(--line-strong); box-shadow: var(--card-shadow); }
 .stepBtn { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 14px; padding: 14px 16px;
   cursor: pointer; border-radius: 12px; }
 .stepBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-.stepNum { font-size: .8125rem; color: var(--quiet); min-width: 2em; font-variant-numeric: tabular-nums; }
+.stepNum { font-size: .8125rem; color: var(--muted); min-width: 2em; font-variant-numeric: tabular-nums; }
 .stepTitle { font-weight: 600; font-size: 1rem; flex: 1; }
 .stepIcon { color: var(--muted); transition: transform .35s var(--ease); }
 .step[data-open] .stepIcon { transform: rotate(45deg); color: var(--ink); }
@@ -163,7 +155,7 @@
 .canvasBtn { display: inline-flex; align-items: center; gap: 6px; font: 550 .8125rem/1.2 var(--font-sans), system-ui, sans-serif;
   padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); color: var(--ink);
   cursor: pointer; white-space: nowrap; transition: background-color .15s, border-color .15s; }
-.canvasBtn:hover { background: var(--panel-2); border-color: #b9b5aa; }
+.canvasBtn:hover { background: var(--panel-2); border-color: var(--line-hover); }
 .canvasBtn svg { transition: transform .25s var(--ease); }
 .canvasBtn:hover svg { transform: translateX(2px); }
 .heroBody { padding: 20px 20px 44px; display: grid; gap: 16px; }
@@ -176,7 +168,7 @@
 .needsTitle { font-family: var(--font-display), system-ui, sans-serif; font-weight: 600; font-size: 1.125rem; letter-spacing: -0.01em; }
 .needsCounts { display: inline-flex; align-items: center; gap: 6px; font-size: .8125rem; color: var(--muted); }
 .needsCounts i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-left: 6px; }
-.needsCounts i[data-tone="warn"] { background: var(--warn-fill); } .needsCounts i[data-tone="ok"] { background: var(--ok-fill); }
+.needsCounts i[data-tone="crit"] { background: var(--crit-fill); } .needsCounts i[data-tone="warn"] { background: var(--warn-fill); } .needsCounts i[data-tone="ok"] { background: var(--ok-fill); }
 .needsItem { font-size: .875rem; color: var(--ink); margin-left: auto; }
 .needsItem b { font-weight: 600; color: var(--muted); margin-right: 6px; font-size: .8125rem; }
 .needsStrip[data-compact] .needsItem { margin-left: 0; flex-basis: 100%; color: var(--muted); font-size: .9375rem; padding-left: 25px; }
@@ -219,7 +211,7 @@
 .toast { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 8px 10px;
   border-radius: 10px; font-size: .8125rem; background: var(--panel-2); animation: toastIn .6s var(--ease) both; }
 .toast:not(:first-child) { animation: none; }
-.toast[data-tone="warn"] { background: color-mix(in srgb, var(--star) 16%, var(--panel)); }
+.toast[data-tone="warn"], .toast[data-tone="crit"] { background: color-mix(in srgb, var(--star) 16%, var(--panel)); }
 .toast time { color: var(--muted); font-size: .75rem; }
 .toastName { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
@@ -263,7 +255,7 @@
   border-radius: 99px; background: var(--panel); color: var(--ink); cursor: pointer; text-align: left;
   transition: background-color .15s, border-color .15s; }
 .chip:hover { background: var(--panel-2); border-color: var(--ink); }
-.chatInput { display: flex; align-items: center; gap: 8px; padding: 5px 5px 5px 12px; border: 1px solid #8d8a82;
+.chatInput { display: flex; align-items: center; gap: 8px; padding: 5px 5px 5px 12px; border: 1px solid var(--field-line);
   border-radius: 10px; background: var(--panel); }
 .chatInput:focus-within { outline: 2px solid var(--ink); outline-offset: 0; border-color: transparent; }
 .chatInput input { all: unset; flex: 1; min-width: 0; font: 400 .9375rem/1.4 var(--font-sans), system-ui, sans-serif; color: var(--ink); }
@@ -272,7 +264,7 @@
 .srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .sendBtn { font: 600 .8125rem/1.2 var(--font-sans), system-ui, sans-serif; color: var(--ink); padding: 7px 12px; background: var(--ink);
   color: var(--bg); border: 1px solid var(--ink); border-radius: 8px; cursor: pointer; transition: background-color .15s; }
-.sendBtn:hover:not(:disabled) { background: #3a3935; }
+.sendBtn:hover:not(:disabled) { background: var(--ink-hover); }
 .sendBtn:disabled { background: var(--panel-2); border-color: var(--line); color: var(--muted); cursor: default; }
 /* the part the open list item talks about stays sharp; the rest steps back */
 .chat [data-part] { transition: opacity .35s, box-shadow .35s, background-color .35s; }
@@ -301,7 +293,7 @@
 .approvalActions { display: flex; gap: 8px; }
 .approve, .notNow { height: 40px; padding: 0 16px; border-radius: 10px; font: 600 .9375rem/1 var(--font-sans), system-ui, sans-serif;
   cursor: pointer; transition: background-color .15s, border-color .15s; }
-.approve { background: var(--star); color: var(--ink); border: 1px solid #e9c21f; }
+.approve { background: var(--star); color: var(--ink); border: 1px solid var(--star-edge); }
 .approve:hover { background: var(--star-hover); }
 .notNow { background: var(--panel); color: var(--ink); border: 1px solid var(--line-strong); }
 .notNow:hover { background: var(--panel-2); }
@@ -368,11 +360,11 @@
 /* a small star-yellow light with a thin gold edge (no black ring), so it holds on cream and on the yellow buttons */
 .cursorDot { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; border-radius: 50%; opacity: 0;
   width: 11px; height: 11px; background: var(--star); will-change: transform;
-  box-shadow: 0 0 0 1px #b38600, 0 0 14px 4px rgb(253 216 58 / .5);
+  box-shadow: 0 0 0 1px var(--star-deep), 0 0 14px 4px rgb(253 216 58 / .5);
   transition: opacity .2s, scale .3s var(--ease), box-shadow .3s; }
 .page[data-cursor-over="page"] .cursorDot, .page[data-cursor-over="control"] .cursorDot { opacity: 1; }
 /* over a control the light grows a little and glows warmer; it never fills or recolours the control */
-.page[data-cursor-over="control"] .cursorDot { scale: 1.45; box-shadow: 0 0 0 1px #b38600, 0 0 18px 6px rgb(253 216 58 / .6); }
+.page[data-cursor-over="control"] .cursorDot { scale: 1.45; box-shadow: 0 0 0 1px var(--star-deep), 0 0 18px 6px rgb(253 216 58 / .6); }
 .page[data-cursor-down] .cursorDot { scale: .7; }
 /* the big light: a soft star pool under the content, falling off on an eased curve so it has no edge. It shows on the
    ground here and continues inside each frame (below), so cards and controls are never tinted */
@@ -389,7 +381,7 @@
 .page[data-cursor] .frame::before { background: var(--light-pool) no-repeat
   calc(var(--lx, -999px) - 320px) calc(var(--ly, -999px) - 320px) / 640px 640px; }
 .page[data-cursor] .frame::after {
-  background: radial-gradient(circle at 1px 1px, #b38600 1px, transparent 1.4px) 8px 8px / 18px 18px;
+  background: radial-gradient(circle at 1px 1px, var(--star-deep) 1px, transparent 1.4px) 8px 8px / 18px 18px;
   -webkit-mask: radial-gradient(240px circle at var(--lx, -999px) var(--ly, -999px), #000, rgb(0 0 0 / .4) 40%, transparent);
   mask: radial-gradient(240px circle at var(--lx, -999px) var(--ly, -999px), #000, rgb(0 0 0 / .4) 40%, transparent); }
 .page[data-cursor-over="page"] .frame::before, .page[data-cursor-over="page"] .frame::after,
@@ -432,6 +424,27 @@
   .whoWhat { text-align: left; }
   .footer { grid-template-columns: 1fr; }
   .footerLinks { justify-self: start; }
+}
+
+/* touch: every control is at least 44px to a finger. The canvases keep their app-scale look for a mouse; on a touch
+   screen they grow, because the chapters invite you to tap them. 16px in the field so iOS doesn't zoom on focus. */
+@media (pointer: coarse) {
+  .brand { padding: 11px 0; }
+  .navLinks a { display: inline-flex; align-items: center; min-height: 44px; }
+  .canvasBtn { min-height: 44px; padding-inline: 14px; }
+  .chips { gap: 8px; }
+  .chip { min-height: 44px; padding: 10px 14px; }
+  .chatInput { min-height: 56px; padding-block: 6px; }
+  .chatInput input { align-self: stretch; font-size: 16px; }
+  .sendBtn { min-height: 44px; padding-inline: 16px; }
+  .approve, .notNow { height: 44px; }
+  .footerLinks { gap: 8px 24px; flex-wrap: wrap; }
+  .footerLinks a { display: inline-flex; align-items: center; min-height: 44px; }
+}
+
+/* print and anything that skips the scroll: every revealed section shows as it is */
+@media print {
+  .page [data-rise], .page [data-canvas], .page [data-hero-rise], .page [data-hero-canvas] { opacity: 1 !important; transform: none !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
