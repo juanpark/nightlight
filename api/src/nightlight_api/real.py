@@ -113,6 +113,8 @@ def tokens_ref():
 # ------------------------------------------------------------------ enrolment
 
 def create_code(uid: str) -> dict:
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     now = _now()
     hour = now.strftime("%Y%m%d%H")
@@ -233,6 +235,8 @@ def _pair_doc(tx, code: str):
 
 
 def pair_preview(uid: str, code: str) -> dict:
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     _count_check(uid)
     _, data = _pair_doc(None, code)
     if not data or data["status"] != "waiting":
@@ -242,6 +246,8 @@ def pair_preview(uid: str, code: str) -> dict:
 
 
 def pair_decide(uid: str, code: str, approve: bool) -> dict:
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     _count_check(uid)
 
     @firestore.transactional
@@ -352,6 +358,8 @@ def set_device_names(uid: str, on: bool) -> dict:
     """The owner's switch for names of things nearby. Turning it off also removes every name already kept: from the
     lists of what was found, and from watched things (one still called by its announced name goes back to its
     guess). New lists keep no names from the moment the switch is saved."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     db.user(uid).set({"settings": {"deviceNames": on}}, merge=True)
     if on:
         return {"ok": True, "deviceNames": True}
@@ -745,6 +753,8 @@ def leave(token: str, cleanup: str | None = None) -> dict:
 
 def remove_watched(uid: str, device_id: str) -> dict:
     """Take a device watched by a helper off the map: its helper stops checking it, and its place is freed."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     ref = db.device(uid, device_id)
 
     @firestore.transactional
@@ -771,6 +781,8 @@ def remove_watched(uid: str, device_id: str) -> dict:
 
 def revoke(uid: str, device_id: str) -> dict:
     """Revoke the device's token(s) and mark it offline, together, in one transaction."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     query = tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id))
 
     @firestore.transactional
@@ -1225,6 +1237,8 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
     what the device reported), automatic updates, and on a Mac the private folders (macOS asks right away, while the
     person is at the Mac). Runs once: a repeated or concurrent request gets the first one's result and never undoes
     what the owner changed in Settings since. Settings changes it later."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     from . import actions, release
     ref = db.device(uid, device_id)
 
@@ -1333,6 +1347,8 @@ def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = N
                     setup_attempt: str | None = None) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device
     reported. The helper applies them on its next report (and still checks each action itself)."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     ref = db.device(uid, device_id)
 
     @firestore.transactional

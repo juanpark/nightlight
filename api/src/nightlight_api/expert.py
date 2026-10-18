@@ -59,6 +59,8 @@ def _ref(uid: str):
 
 
 def register_options(uid: str, request_origin: str | None) -> dict:
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     origin = _origin(request_origin)
     rp_id = urlparse(origin).hostname
     challenge = b64u(secrets.token_bytes(32))
@@ -70,6 +72,8 @@ def register_options(uid: str, request_origin: str | None) -> dict:
 
 def register(uid: str, credential: dict) -> dict:
     """Check the new passkey (webauthn library) and keep its public key as PEM, with a short fingerprint."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from webauthn import verify_registration_response

@@ -181,5 +181,12 @@ def edit(uid: str, device_id: str, runbook_id: str, generation: int | None, titl
 
 def remove(uid: str, device_id: str, runbook_id: str, generation: int | None) -> dict:
     get(uid, device_id, runbook_id, generation)
-    _ref(uid, device_id).document(runbook_id).delete()
+    ref = _ref(uid, device_id).document(runbook_id)
+
+    @firestore.transactional
+    def run(tx):  # a transaction, so the request's fence (a live demo machine's lease) is checked with the delete
+        ref.get(transaction=tx)
+        tx.delete(ref)
+
+    db.run_transaction(run)
     return {"ok": True}
