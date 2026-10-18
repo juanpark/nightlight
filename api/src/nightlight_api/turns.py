@@ -32,8 +32,26 @@ ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server",
                 "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
 
 
-# Last resort only: agent.after_model already removes a card claim no card backs before it is shown.
-NO_CARD = "(Correction: no card was put up in this answer. Ask me again and I'll put it up.)"
+# Check-and-return for the one answer failure the harness can see without guessing at meaning: a final answer with no
+# words, or one the output limit cut off. The model is asked once more (a counted model call, no new checks); if that
+# fails too, the turn says so plainly.
+SHORTER = {"empty": "[Nightlight] Your last reply had no words for the person. Answer them now, briefly, from what "
+                    "you already found.",
+           "cut": "[Nightlight] Your last reply was cut off by the length limit. Answer again in fewer words, from "
+                  "what you already found."}
+NO_ANSWER = "I couldn't put an answer together this time. Please ask again."
+
+
+def unanswered(ev) -> str | None:
+    """Why the final model response of a run is not an answer ("empty" or "cut"), or None when it is one."""
+    if ev is None:
+        return "empty"
+    parts = (ev.content.parts if ev.content else None) or []
+    if any(p.function_call for p in parts):
+        return None
+    if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+        return "cut"
+    return None if any(p.text and p.text.strip() and not p.thought for p in parts) else "empty"
 
 
 def _utcnow() -> datetime:
@@ -303,6 +321,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     # leak through a partly-seen value. `shown` is exactly what the browser has; it is what we store and replay.
     raw, shown, tool_calls, first_text_ms = "", "", [], None
     finishing = False  # set once a terminal write has started; a stop after that changes nothing
+    no_answer = False  # the model was asked twice and gave no answer
     last_sent = time.monotonic()
 
     async def produce():
@@ -329,10 +348,24 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     author="user" if content.role == "user" else agent.name, content=content))
             prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
             message = types.Content(role="user", parts=[types.Part(text=prompt)])
-            async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                             run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                                  max_llm_calls=ctx.max_calls)):
-                await queue.put(("event", ev))
+            for attempt in range(2):
+                last = None  # the run's final model response: is it an answer?
+                async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                                 run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                                      max_llm_calls=ctx.max_calls)):
+                    if not ev.partial and not ev.get_function_responses():
+                        last = ev
+                        if unanswered(ev) == "cut":
+                            continue  # a cut-off answer is not shown; it is asked for again below
+                    await queue.put(("event", ev))
+                why = unanswered(last)
+                if why is None:
+                    break
+                if attempt == 1:
+                    await queue.put(("no_answer", None))
+                    break
+                ctx.retrying = True  # one more counted call, with no new checks
+                message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
             await queue.put(("error", e))
@@ -369,6 +402,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 raise item
             if kind == "end":
                 break
+            if kind == "no_answer":
+                no_answer = True
+                continue
             ev = item
             parts = (ev.content.parts if ev.content else None) or []
             if not ev.partial:
@@ -422,16 +458,12 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
-        if not ctx.actions and agentlib.claims_a_card(shown):
-            # A claim still got through (it shouldn't: after_model removes them), and no card was made in this
-            # answer: never leave that claim standing.
-            piece = "\n\n" + NO_CARD
-            shown += piece
-            yield out({"type": "text", "delta": piece})
-        if not shown.strip():
-            shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)
+        if no_answer or not shown.strip():
+            # Asked twice and still no answer: say so plainly, after whatever was already shown.
+            piece = ("\n\n" if shown.strip() else "") + NO_ANSWER
+            shown = (shown if shown.strip() else "") + piece
             first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
-            yield out({"type": "text", "delta": shown})
+            yield out({"type": "text", "delta": piece})
         text = shown  # exactly what the browser received; stored and replayed as-is
         metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
                    "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6)}
