@@ -11,8 +11,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from . import __build__, __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
-from .auth import current_uid, live_lease, owner_uid
+from . import __build__, __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sample, sim, trust as trustlib, turns, watch
+from .auth import anonymous, current_uid, live_lease, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
 from .ids import new_id
@@ -140,11 +140,13 @@ def version():
 
 @app.post("/api/demo/start")
 def demo_start(body: StartBody, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)  # every rebuild entry point: a live machine's account has its own reset
     return demo.start(uid, body.template)
 
 
 @app.post("/api/demo/template")
 def demo_template(body: StartBody, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)
     return demo.switch(uid, body.template)
 
 
@@ -423,12 +425,41 @@ def live_end(body: Empty, lease: tuple[str, str] = Depends(live_lease)):
 
 @app.post("/api/demo/reset")
 def demo_reset(body: Empty, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)  # a live demo machine's account is never rebuilt from the sample panel (it has its own reset)
     return demo.reset(uid)
 
 
 @app.post("/api/demo/inject", status_code=201)
 def demo_inject(body: InjectBody, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)
     return demo.inject(uid, body.kind, body.deviceId)
+
+
+class SampleAddBody(Strict):
+    os: Literal["linux", "mac"] = "linux"
+
+
+@app.post("/api/demo/add_device", status_code=201)
+def demo_add_device(body: SampleAddBody, uid: str = Depends(current_uid)):
+    """The sample home's "Add a device", simulated: the lines a real install prints and a pending pairing, approved
+    with GET/POST /api/demo/pair/{code} (the same shapes as the real pairing routes)."""
+    live.forbid_pool(uid)
+    return sample.add_device(uid, body.os, settings.app_url)
+
+
+@app.get("/api/demo/pair/{code}")
+def demo_pair_preview(code: str, uid: str = Depends(current_uid)):
+    return sample.pair_preview(uid, _pair_code(code))
+
+
+class SamplePairBody(Strict):
+    approve: bool
+
+
+@app.post("/api/demo/pair/{code}")
+def demo_pair_decide(code: str, body: SamplePairBody, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)
+    return sample.pair_decide(uid, _pair_code(code), body.approve)
 
 
 @app.post("/api/actions/{action_id}/decide")
@@ -914,10 +945,18 @@ class DiscoverBody(Strict):
 
 
 @app.post("/api/discover", status_code=202)
-def discover_everywhere(body: DiscoverBody, uid: str = Depends(owner_uid)):
+def discover_everywhere(body: DiscoverBody, uid: str = Depends(current_uid), anon: bool = Depends(anonymous)):
     """Look nearby on every network the owner has a device on: one device per router, or every device that can
-    (`everyDevice`: more complete, since each sees mostly what it talked to lately). The tap is the approval."""
-    return real.discover_everywhere(uid, body.everyDevice)
+    (`everyDevice`: more complete, since each sees mostly what it talked to lately). The tap is the approval.
+    When none of your own devices could look and the sample home is showing, its Raspberry Pi "looks" instead
+    (simulated, labelled so; sample.py). A one-click (anonymous) request only ever takes the simulated path: real
+    devices are scheduled for signed-in owners only."""
+    out = {"asked": [], "skipped": []} if anon else real.discover_everywhere(uid, body.everyDevice)
+    looked = None if out["asked"] else sample.discover(uid)
+    if looked:
+        out["asked"].insert(0, looked)
+    out["simulated"] = bool(looked)
+    return out
 
 
 @app.get("/api/found")
@@ -993,7 +1032,11 @@ def helper_discoveries(body: DiscoveriesBody, request: Request):
 
 @app.post("/api/discoveries/{helper_id}/{cid}/add", status_code=201)
 def add_found(helper_id: str, cid: str, body: AddFoundBody, uid: str = Depends(current_uid)):
-    if not re.fullmatch(r"dev_[0-9a-z]{26}", helper_id) or not re.fullmatch(r"[0-9a-f]{12}", cid):
+    if not re.fullmatch(r"[0-9a-f]{12}", cid):
+        raise not_found()
+    if re.fullmatch(r"[a-z]+-[0-9]{1,3}", helper_id):  # a sample device's simulated look (sample.py)
+        return sample.add_found(uid, helper_id, cid, scrub(body.name)[0] if body.name else None)
+    if not re.fullmatch(r"dev_[0-9a-z]{26}", helper_id):
         raise not_found()
     return real.add_found(uid, helper_id, cid, scrub(body.name)[0] if body.name else None)
 

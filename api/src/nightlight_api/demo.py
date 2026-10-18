@@ -206,6 +206,10 @@ def _rebuild(uid: str, op: str, generation: int, template: str, hook) -> int:
     _delete_older(uid, op, generation, inner, hook)
     _delete_older(uid, op, generation, old_sessions, hook)
     _delete_older(uid, op, generation, [s.reference for s in db.trust(uid).get()], hook)
+    # The sample home's simulated look nearby and its simulated installs (sample.py) go with their generation.
+    _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("discoveries").get()
+                                        if s.to_dict().get("simulated")], hook)
+    _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("samplePairs").get()], hook)
     _delete_older(uid, op, generation, [s.reference for s in db.user(uid).collection("turnIndex").get()], hook)
     _stale_pending(uid, op, generation, hook)
     # The sample home's seeded past jobs go with their generation (the log hides them anyway; this keeps them from
