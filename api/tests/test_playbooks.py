@@ -215,6 +215,7 @@ def test_one_big_log_is_named_and_the_journal_is_apart(helper, monkeypatch, tmp_
     monkeypatch.setattr(helper, "_LOGS", str(logs))
     monkeypatch.setattr(helper, "BIG_LOG_MB", 1)
     monkeypatch.setattr(helper, "_disk_places", lambda: [])
+    monkeypatch.setattr(helper, "_ROOT", str(tmp_path / "noroot"))  # the main-disk scan has its own tests
     monkeypatch.setattr(helper.sys, "platform", "linux")
     monkeypatch.setattr(helper, "_run", lambda *a, **k: pytest.fail("the journal is measured on disk"))
     helper._inspect_until[0] = __import__("time").time() + 30

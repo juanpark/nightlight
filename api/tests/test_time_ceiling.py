@@ -180,6 +180,43 @@ def test_a_slow_continuation_makes_no_claim_about_changes(client, started):
     assert "nothing was changed" not in ev[-1]["message"]
 
 
+def test_a_silent_investigate_call_is_not_busy(client, started):
+    # A timeout retries Investigate itself; it never brings in the Quick stand-in.
+    FakeLlm.behavior = b = _script("hang", _answer("The NAS is fine."))
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["type"] == "done" and said(ev) == "The NAS is fine."
+    assert [r.config.max_output_tokens for r in b.seen] == [settings.deep_max_output_tokens] * 2
+
+
+def test_a_silent_call_in_the_quick_stand_in_is_retried_once(client, started):
+    from test_investigate import _busy
+
+    seen = []
+
+    async def behave(llm_request, stream):
+        seen.append(llm_request)
+        if len(seen) == 1:
+            raise _busy()  # Investigate busy before anything: Quick stands in
+        if len(seen) == 2:
+            await asyncio.sleep(30)  # the stand-in's call goes silent: retried once
+        yield _answer("The NAS is fine.")
+    FakeLlm.behavior = behave
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["type"] == "done" and len(seen) == 3 and ev[-1]["metrics"]["slowCalls"] == 1
+    assert said(ev) == turns.QUICK_INSTEAD + "The NAS is fine."
+    seen.clear()
+
+    async def twice(llm_request, stream):  # a second silent call ends the turn: no third kind of retry
+        seen.append(llm_request)
+        if len(seen) == 1:
+            raise _busy()
+        await asyncio.sleep(30)
+        yield _answer("never")
+    FakeLlm.behavior = twice
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["code"] == "model_slow" and len(seen) == 3
+
+
 def test_no_hurry_left():
     assert not hasattr(agentlib, "HURRY") and not hasattr(settings, "deep_first_words_seconds")
     assert "spoke" not in agentlib.TurnContext.__dataclass_fields__

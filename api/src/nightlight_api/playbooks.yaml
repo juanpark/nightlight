@@ -9,7 +9,7 @@
 #   causes: tried in order; `match` runs per line, `size` (if captured) must reach `min_gb`
 #     say: plain words, {size} and other named groups are filled in
 #     fix: a helper clean-up (optional); advice: what the person can do themselves (optional)
-#   nothing: said when no cause matched
+#   nothing: said when no cause matched; or {mac: ..., other: ...} when it depends on the device's system
 
 - id: disk_full
   title: Disk filling up
@@ -22,6 +22,19 @@
       min_gb: 5
       say: "{name} is the biggest folder found ({size})."
       advice: Open it and sort by size; move or delete what you no longer need (Nightlight doesn't delete your own files).
+    # Linux: the main disk's biggest folder wherever it is (/srv, /opt, /home...), from one bounded `du -x` pass per
+    # top folder; the system's own folders (/usr, /boot...) are never named here.
+    - id: big_disk_folder
+      match: '^Biggest folder on the main disk: (?P<name>.+?): (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 2
+      say: "{name} is the biggest folder on the main disk ({size})."
+      advice: Move what you no longer need there to another disk, or delete it (Nightlight doesn't delete your own
+        files).
+    - id: unmeasured
+      match: '^Not found in the measured folders: about (?P<size>[\d.]+ [MG]B) of the (?P<used>[\d.]+ [MG]B) in use \((?P<where>.+)\)$'
+      min_gb: 1
+      say: About {size} of the {used} in use isn't in any folder the helper could measure ({where}).
+      advice: A program that still holds a deleted file open keeps its space until that program restarts.
     - id: gradle
       match: '^(?:Biggest folder: )?~/\.gradle: (?P<size>[\d.]+ [MG]B)$'
       min_gb: 2
@@ -97,7 +110,10 @@
       match: '^Not checked \(macOS privacy\)'
       say: Downloads, Desktop, Documents, Movies and the Trash weren't checked, because macOS asks the person at the Mac first.
       advice: To include them, run "nightlight settings" once at the Mac and click Allow when macOS asks.
-  nothing: None of the usual places is large. The space is probably in your own files (Documents, Movies, Photos).
+  nothing:
+    mac: None of the usual places is large. The space is probably in your own files (Documents, Movies, Photos).
+    other: None of the places measured is large, so the space is outside them (in a folder the helper can't read, or
+      on another disk).
 
 - id: slow
   title: Running slowly
@@ -115,7 +131,11 @@
       min_value: {cpu: 80}
       say: "{name} keeps a processor core busy ({cpu}% CPU)."
       advice: If {name} isn't doing something you asked for, quit or restart it.
-  nothing: No single program stands out right now; it may have been a short burst.
+    - id: overloaded
+      match: '^Processor overloaded: over the last minute (?P<load>[\d.]+) programs on average wanted the processor at once, with (?P<cores>\d+) cores?'
+      say: The processor is overloaded. Over the last minute, {load} programs on average wanted it at once, and it has
+        {cores} core(s), so programs wait their turn.
+  nothing: No single program stands out in this sample, and the processor isn't overloaded.
 
 - id: no_internet
   title: Internet problems

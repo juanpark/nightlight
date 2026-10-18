@@ -84,7 +84,7 @@ def test_a_real_warning_is_never_taken_for_a_note(client, started):  # Codex inv
         "Hold on: the Pi is still copying files. Leave it plugged in."
 
 
-def test_a_busy_model_ends_the_turn_with_a_plain_message_and_no_second_call(client, started):  # Codex #1
+def test_a_busy_model_ends_the_turn_with_a_plain_message(client, started):  # Codex #1
     calls = []
 
     async def behave(llm_request, stream):
@@ -93,10 +93,44 @@ def test_a_busy_model_ends_the_turn_with_a_plain_message_and_no_second_call(clie
         yield  # an async generator
     FakeLlm.behavior = behave
     ev = events(dig(client, new_session(client)))
+    # Investigate busy before anything ran: one Quick look, said as such (never hidden); busy there too: the error
+    assert said(ev) == "Investigate is busy right now, so here is a quick look instead.\n\n"
     assert ev[-1]["type"] == "error" and ev[-1]["code"] == "busy" and ev[-1]["retryable"] is True
-    assert ev[-1]["message"] == "Nightlight is busy right now. Try again in a minute, or ask in Quick mode."
-    assert len(calls) == 1  # no hidden second call to another model
-    FakeLlm.behavior = behave  # Quick mode: no pointing at Quick mode
+    assert ev[-1]["message"] == "Nightlight is busy right now. Try again in a minute."
+    assert len(calls) == 2  # Investigate's call, then one Quick call; no more
+    calls.clear()
+    FakeLlm.behavior = behave  # Quick mode: no pointing at Quick mode, no second call
     ev = events(client.post(f"/api/chat/sessions/{new_session(client)}/messages",
                             json={"text": "hi", "clientRequestId": str(uuid.uuid4())}))
     assert ev[-1]["code"] == "busy" and ev[-1]["message"] == "Nightlight is busy right now. Try again in a minute."
+    assert len(calls) == 1
+
+
+def test_investigate_busy_at_once_gives_a_quick_look_that_says_so(client, started):
+    deep = []
+
+    async def behave(llm_request, stream):
+        deep.append(llm_request.config.max_output_tokens == settings.deep_max_output_tokens)
+        if len(deep) == 1:
+            raise _busy()
+        yield _answer("The NAS is fine: its disk is 40% full.")
+    FakeLlm.behavior = behave
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["type"] == "done" and deep == [True, False]  # the second call is a Quick one
+    assert said(ev) == ("Investigate is busy right now, so here is a quick look instead.\n\n"
+                        "The NAS is fine: its disk is 40% full.")
+
+
+def test_busy_after_steps_ran_is_not_retried(client, started):
+    calls = []
+
+    async def behave(llm_request, stream):
+        calls.append(1)
+        if len(calls) == 1:
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(
+                function_call=types.FunctionCall(name="list_fleet", args={}))]), partial=False, usage_metadata=_usage())
+            return
+        raise _busy()
+    FakeLlm.behavior = behave
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["code"] == "busy" and len(calls) == 2 and "quick look" not in said(ev)

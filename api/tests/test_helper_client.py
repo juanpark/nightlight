@@ -350,10 +350,11 @@ def test_look_into_needs_local_permission_and_reads_only(helper, monkeypatch):
     assert helper.look_into("grafana")[0] is False and calls == []  # not allowed: nothing runs
     helper.set_allowed("diagnose", "grafana", True)
     ok, summary, out = helper.look_into("grafana")
-    assert ok and "out of memory" in summary and "last log lines" not in out  # logs need their own permission
+    assert ok and "out of memory" in summary and "line" not in out.split("last log lines:")[1].split("(")[0]
+    assert "last log lines: not read" in out  # logs need their own permission, and the result says so
     helper.set_allowed("logs", "grafana", True)
     ok, summary, out = helper.look_into("grafana")
-    assert "last log lines" in out and "x1" not in out
+    assert "last log lines:\n" in out and "not read" not in out and "x1" not in out
     assert all(c[0] == "docker" and c[1] in ("inspect", "logs") for c in calls)  # read-only commands only
     job = {"id": "act_" + "b" * 26, "type": "diagnose", "params": {"target": "grafana; rm -rf /"}}
     assert helper.run_job(job)[0] is False

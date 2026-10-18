@@ -30,7 +30,8 @@ APP = "nightlight"
 ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server",
                 "update_app", "restart_container",
                 "restart_service",
-                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
+                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook",
+                "allow_log_reading"}
 
 
 # Check-and-return for the one answer failure the harness can see without guessing at meaning: a final answer with no
@@ -69,6 +70,9 @@ def unanswered(ev) -> str | None:
     if ev.finish_reason == types.FinishReason.MAX_TOKENS:
         return "cut"
     return None if any(p.text and p.text.strip() and not p.thought for p in parts) else "empty"
+
+
+QUICK_INSTEAD = "Investigate is busy right now, so here is a quick look instead.\n\n"
 
 
 def _utcnow() -> datetime:
@@ -359,65 +363,87 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         pass
                 ctx.fleet, ctx.memories = await asyncio.gather(
                     asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, ctx.memory_epoch))
-            agent = agentlib.build(ctx, continuation=continuation, model=model)
-            sessions = InMemorySessionService()
-            runner = Runner(app_name=APP, agent=agent, session_service=sessions)
-            adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
-            for content in await asyncio.to_thread(history, uid, c):
-                await sessions.append_event(adk_session, Event(
-                    author="user" if content.role == "user" else agent.name, content=content))
-            prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
-            message = types.Content(role="user", parts=[types.Part(text=prompt)])
             loop = asyncio.get_running_loop()
-            attempt = 0  # 1 once the answer-only retry (SHORTER) is running
-            slow_retried = False  # the one retry after a silent call has been used
-            while True:
-                run =runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                       run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                            max_llm_calls=ctx.max_calls))
-                # The silence timer runs only while a model call is in flight (callbacks switch it), never while a
-                # tool works. When it fires, this task is cancelled inside the call and `watch` reports it expired.
-                watch = asyncio.timeout(None)
-                ctx.watch_call = lambda active: watch.reschedule(
-                    loop.time() + ctx.call_gap_seconds if active else None)
-                try:
-                    async with watch:
-                        await _forward(run, attempt)
-                except TimeoutError:
-                    if not watch.expired():
-                        raise
-                    ctx.watch_call = lambda active: None
-                    # Counted and reserved like any call; its reservation is kept in full (never reconciled),
-                    # since Gemini may still bill a call we stopped waiting for.
-                    if ctx.reservations:
-                        ctx.reservations.pop()
-                    ctx.metrics["slowCalls"] = ctx.metrics.get("slowCalls", 0) + 1
-                    # One retry per turn, and only inside the normal call limit (not during the answer-only
-                    # retry, which is already the one call past it). Otherwise the turn ends saying so.
-                    if slow_retried or ctx.retry_from is not None or ctx.metrics["modelCalls"] >= ctx.max_calls:
-                        await queue.put(("slow", None))
-                        return
-                    slow_retried = True
-                    message = types.Content(role="user", parts=[types.Part(text=CARRY_ON)])
-                    continue
-                finally:
-                    ctx.watch_call = lambda active: None
-                why = unanswered(last_final[0])
-                if why is None:
-                    break
-                if attempt == 1:
-                    await queue.put(("no_answer", None))
-                    break
-                attempt = 1
-                ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
-                message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
+            # Each extra attempt happens at most once per turn, whichever run it falls in: the answer-only retry
+            # (SHORTER), the retry after a silent call (CARRY_ON), and Quick standing in for a busy Investigate.
+            used = {"answer": False, "slow": False}
+
+            async def run_once() -> bool:
+                """One agent run over the question; False when the turn must end as model_slow."""
+                agent = agentlib.build(ctx, continuation=continuation, model=model)
+                sessions = InMemorySessionService()
+                runner = Runner(app_name=APP, agent=agent, session_service=sessions)
+                adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
+                for content in await asyncio.to_thread(history, uid, c):
+                    await sessions.append_event(adk_session, Event(
+                        author="user" if content.role == "user" else agent.name, content=content))
+                prompt = c.turn["input"] if kind == "user" else \
+                    f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
+                message = types.Content(role="user", parts=[types.Part(text=prompt)])
+                answer_only = False  # this run's current ADK run is the answer-only retry
+                while True:
+                    run = runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                           run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                                max_llm_calls=ctx.max_calls))
+                    # The silence timer runs only while a model call is in flight (callbacks switch it), never
+                    # while a tool works. When it fires, this task is cancelled inside the call and `watch` reports
+                    # it expired. A timeout is never "busy": it never brings in the Quick stand-in.
+                    watch = asyncio.timeout(None)
+                    ctx.watch_call = lambda active: watch.reschedule(
+                        loop.time() + ctx.call_gap_seconds if active else None)
+                    try:
+                        async with watch:
+                            await _forward(run, answer_only)
+                    except TimeoutError:
+                        if not watch.expired():
+                            raise
+                        # Counted and reserved like any call; its reservation is kept in full (never reconciled),
+                        # since Gemini may still bill a call we stopped waiting for.
+                        if ctx.reservations:
+                            ctx.reservations.pop()
+                        ctx.metrics["slowCalls"] = ctx.metrics.get("slowCalls", 0) + 1
+                        # One retry per turn, only inside the normal call limit, and not for the answer-only
+                        # retry (already the one call past it). Otherwise the turn ends saying so.
+                        if used["slow"] or ctx.retry_from is not None or ctx.metrics["modelCalls"] >= ctx.max_calls:
+                            return False
+                        used["slow"] = True
+                        message = types.Content(role="user", parts=[types.Part(text=CARRY_ON)])
+                        continue
+                    finally:
+                        ctx.watch_call = lambda active: None
+                    why = unanswered(last_final[0])
+                    if why is None:
+                        return True
+                    if answer_only or used["answer"]:
+                        await queue.put(("no_answer", None))
+                        return True
+                    answer_only = used["answer"] = True
+                    ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
+                    message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
+
+            try:
+                finished = await run_once()
+            except Exception as e:
+                # Investigate's model is out of capacity before anything was said or done: the same question gets a
+                # Quick look instead, and the answer says so first. Busy later (after steps ran) fails as before.
+                if not (ctx.deep and not continuation and forwarded[0] == 0 and agentlib.model_busy(e)):
+                    raise
+                ctx.deep = False
+                ctx.retry_from = None
+                ctx.reservations.clear()  # the refused call's reservation stays spent (its usage is unknown)
+                await queue.put(("notice", QUICK_INSTEAD))
+                finished = await run_once()
+            if not finished:
+                await queue.put(("slow", None))
+                return
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
             await queue.put(("error", e))
 
     last_final = [None]  # the latest run's final model response
+    forwarded = [0]  # model events passed on: a busy model before any is the only time Quick stands in
 
-    async def _forward(run, attempt):
+    async def _forward(run, answer_only):
         """Forward one ADK run's events to the consumer, keeping its final model response in last_final."""
         last_final[0] = None
         try:
@@ -425,7 +451,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 if not ev.partial and not ev.get_function_responses():
                     last_final[0] = ev
                     calls = any(p.function_call for p in (ev.content.parts if ev.content else None) or [])
-                    if attempt == 1 and calls:
+                    if answer_only and calls:
                         # The answer-only retry asked for a tool: not an answer. ADK runs a call only
                         # after yielding it, so stopping here means nothing runs (before_tool refuses too).
                         last_final[0] = None
@@ -434,6 +460,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
                         if ev is None:
                             continue
+                if ev.author != "user" and any(p.text or p.function_call or p.function_response
+                                               for p in (ev.content.parts if ev.content else None) or []):
+                    forwarded[0] += 1  # the model said or did something
                 await queue.put(("event", ev))
         finally:
             await run.aclose()
@@ -476,6 +505,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             if kind == "slow":
                 slow = True
                 break
+            if kind == "notice":  # our own words, said before anything else (nothing has been shown yet)
+                raw = shown = item
+                first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
+                yield out({"type": "text", "delta": item})
+                continue
             ev = item
             parts = (ev.content.parts if ev.content else None) or []
             if not ev.partial:
