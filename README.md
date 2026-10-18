@@ -468,4 +468,4 @@ cause in [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md), and what it
 | Who | Role |
 |---|---|
 | Jeong Hwan Park | lead: product, backend, agent, helper |
-| Sadika | frontend and design |
+| Sadika Rahman | frontend and design |
