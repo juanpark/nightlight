@@ -54,8 +54,8 @@ export default function SignIn() {
       <div className="modal start">
         <div className="brand" style={{ justifyContent: "center" }}><span className="bulb" /> Nightlight</div>
         <h1>Nightlight for your servers and devices</h1>
-        <p className="muted">One friendly map of devices you run. Nightlight watches, explains in plain words, and helps
-          you fix things.</p>
+        <p className="muted">One friendly map of your devices. Nightlight watches, explains in plain words, and helps you
+          run things smoothly.</p>
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
           for the next visitor.</p>}
 
