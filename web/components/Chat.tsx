@@ -243,6 +243,12 @@ const Chat = forwardRef<ChatHandle, {
       }
     }
 
+    /** Asking again the question an answer was for (the nearest question above it), when there is one. */
+    const retry = (i: number) => {
+      const q = turns.slice(0, i).reverse().find((t) => t.kind === "user");
+      return q?.kind === "user" ? () => ask(q.text) : undefined;
+    };
+
     return (
       <>
         <div className="chat-log" ref={log} onScroll={(e) => {
@@ -264,14 +270,15 @@ const Chat = forwardRef<ChatHandle, {
               <button className="linkish" disabled={busy} onClick={() => { newChat(uid, generation); setTurns([]); }}>
                 Start a new chat</button></div>
           )}
-          {turns.map((t) => {
+          {turns.map((t, i) => {
             if (t.kind === "user") return <div key={t.key} className={`bubble user ${t.past ? "past" : ""}`}>{t.text}</div>;
             if (t.kind === "system") return <div key={t.key} className={`chat-system ${t.icon}`}>{t.text}</div>;
             const line = afterLine(t.after, actions, devices);
             return (
               <div key={t.key} className="turn-wrap">
                 {line && <div className="chat-system job">{line}</div>}
-                <TurnView turn={t} actions={actions} devices={devices} onFollowUp={followUp} />
+                <TurnView turn={t} actions={actions} devices={devices} onFollowUp={followUp}
+                  onRetry={i === turns.length - 1 && !busy ? retry(i) : undefined} />
               </div>
             );
           })}

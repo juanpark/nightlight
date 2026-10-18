@@ -11,16 +11,15 @@ export type Block =
   | { kind: "text"; text: string }
   | { kind: "step"; name: string; label: string; command?: string; status: StepStatus; summary?: string;
       details?: string; startedAt: number; ms?: number; callId?: string }
-  | { kind: "card"; actionId: string }
-  // "Let me check the Raspberry Pi." said just before a step: read as the first line of the work log, not as an answer
-  | { kind: "lead"; text: string };
+  | { kind: "card"; actionId: string };
 
 export type Turn =
   | { kind: "user"; key: string; text: string; past?: boolean }
   | { kind: "system"; key: string; text: string; icon: "mode" | "stopped" }
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
-      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics };
+      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics;
+      startedAt?: number; budget?: number; retryable?: boolean }; // budget: the seconds the server gives this answer
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -65,7 +64,8 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
   const last = blocks[blocks.length - 1];
   switch (e.type) {
     case "turn_start":
-      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode };
+      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode, startedAt: t.startedAt ?? Date.now(),
+        budget: e.budgetSeconds ?? t.budget };
     case "text":
       if (last?.kind === "text") blocks[blocks.length - 1] = { ...last, text: last.text + e.delta };
       else blocks.push({ kind: "text", text: e.delta });
@@ -89,7 +89,7 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
       if (blocks.some((b) => b.kind === "card" && b.actionId === e.actionId)) return t;
       return { ...t, blocks: [...blocks, { kind: "card", actionId: e.actionId }] };
     case "error": // the turn is over: a step still waiting will never answer
-      return { ...stop(t), busy: t.busy, error: e.message || e.code };
+      return { ...stop(t), busy: t.busy, error: e.message || e.code, retryable: !!e.retryable };
     case "done":
       return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
@@ -123,7 +123,9 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       if (m.text.slice(at, cut).trim()) blocks.push({ kind: "text", text: m.text.slice(at, cut) });
       at = cut;
       blocks.push(pastStep(s, devices));
-      if (s.actionId) blocks.push({ kind: "card", actionId: s.actionId });
+      // two steps can be answered by one card: it stays where it first appeared
+      if (s.actionId && !blocks.some((b) => b.kind === "card" && b.actionId === s.actionId))
+        blocks.push({ kind: "card", actionId: s.actionId });
     }
     if (m.text.slice(at).trim()) blocks.push({ kind: "text", text: m.text.slice(at) });
     for (const id of m.actionIds ?? []) {
@@ -137,14 +139,4 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
-}
-
-const LEAD = /^(Let me|I['’]ll) (check|look at|look into|see)[^.]{0,80}\.$/;
-
-/** A turn's blocks with its opening "Let me check…" sentence (only when it is the whole of the words before a step,
- * and that step comes right after) turned into a work-log line. Nothing else changes: other words are never removed. */
-export function withLead(blocks: Block[]): Block[] {
-  const [first, second] = blocks;
-  if (first?.kind !== "text" || second?.kind !== "step" || !LEAD.test(first.text.trim())) return blocks;
-  return [{ kind: "lead", text: first.text.trim() }, ...blocks.slice(1)];
 }
