@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signOut, type AuthCredential, type User } from "firebase/auth";
+import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signInWithPopup, signOut, type AuthCredential, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
@@ -118,20 +118,28 @@ export default function Home({ user, account }: { user: User; account?: string }
 
   // Save with Google links this visit to a Google account; one that already has its own home can't take it, so say
   // so and offer to sign in to that account instead
-  const [linkTaken, setLinkTaken] = useState<AuthCredential | null | false>(false);
+  const [linkTaken, setLinkTaken] = useState<AuthCredential | null | false>(false); // null: sign in afresh
+  const [linkExpired, setLinkExpired] = useState(false);
   async function saveWithGoogle() {
     const { auth } = await firebase();
     if (!auth.currentUser) return;
     await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e: { code?: string }) => {
-      if (e?.code === "auth/credential-already-in-use" || e?.code === "auth/email-already-in-use")
+      if (e?.code === "auth/credential-already-in-use" || e?.code === "auth/email-already-in-use") {
+        setLinkExpired(false);
         setLinkTaken(GoogleAuthProvider.credentialFromError(e as Parameters<typeof GoogleAuthProvider.credentialFromError>[0]));
+      }
       else alertless(e);
     });
   }
+  // the anonymous visit stays until one of these succeeds
   async function useTakenAccount() {
     const { auth } = await firebase();
-    if (linkTaken) await signInWithCredential(auth, linkTaken).catch(alertless);
-    else { await signOut(auth); } // no credential to reuse: back to the start screen, where Sign in with Google is
+    if (linkTaken) {
+      // the credential from the failed link can expire: then ask for a fresh Google sign-in instead
+      await signInWithCredential(auth, linkTaken).catch((e) => { alertless(e); setLinkTaken(null); setLinkExpired(true); });
+    } else {
+      await signInWithPopup(auth, new GoogleAuthProvider()).catch(alertless);
+    }
   }
 
   return (
@@ -172,9 +180,12 @@ export default function Home({ user, account }: { user: User; account?: string }
               <p style={{ marginTop: 0 }}>That Google account already has its own Nightlight home, so this visit can&apos;t
                 be saved into it.</p>
               <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button className="primary" onClick={useTakenAccount}>Sign in to that account instead</button>
+                <button className="primary" onClick={useTakenAccount}>{linkExpired ? "Sign in with Google again"
+                  : "Sign in to that account instead"}</button>
                 <button onClick={() => setLinkTaken(false)}>Stay here</button>
               </div>
+              {linkExpired && <p className="small" style={{ color: "var(--crit-ink)" }}>That sign-in expired. Sign in with
+                Google again.</p>}
               <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
             </div>)}
           <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
