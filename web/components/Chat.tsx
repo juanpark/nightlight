@@ -42,7 +42,7 @@ function BreakSomething({ devices, disabled, onAsk }: { devices: Device[]; disab
     setBusy(true); setNote(null);
     try {
       await api("POST", "/api/demo/inject", { kind: b.kind, deviceId: b.device });
-      setNote({ text: "Done. Nightlight hasn't been told; ask it.", ask: b.ask });
+      setNote({ text: "Done. Now ask Nightlight:", ask: b.ask });
     } catch (e) {
       setNote(e instanceof ApiError && e.status === 422
         ? { text: "That doesn't apply here right now. Reset the demo in Demo tools and try again.", ask: b.ask }

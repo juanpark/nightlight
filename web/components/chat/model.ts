@@ -42,6 +42,11 @@ export function label(name: string, args: Record<string, unknown> | undefined, d
     propose_command: `Preparing a command for the ${dev}`, update_profile: `Updating what I know about the ${dev}`,
     research: `Searching the web: ${(args?.question as string) ?? ""}`,
     link_devices: "Adding a line to your map",
+    rotate_logs: `Preparing a log clean-up for the ${dev}`, backup_world: `Preparing a backup on the ${dev}`,
+    restart_server: `Preparing a restart for the ${dev}`, clear_images: `Preparing a clean-up for the ${dev}`,
+    restart_app: `Preparing a restart for the ${dev}`, update_server: `Preparing an update for the ${dev}`,
+    use_runbook: `Following saved steps for the ${dev}`, read_device_log: `Reading recent log lines on the ${dev}`,
+    save_runbook: `Saving these steps for the ${dev}`,
   } as Record<string, string>)[name] ?? `Working on the ${dev}`;
 }
 
