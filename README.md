@@ -14,11 +14,10 @@ time.
 **Live app:** https://nightlight-web-1032111130355.asia-northeast3.run.app (one click, no account needed)
 
 Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterprise Productivity) by team **8yte**.
-Everything here was written during the hackathon window.
 
-**Trying it for the first time (judges start here):** [`docs/JUDGE-WALKTHROUGH.md`](docs/JUDGE-WALKTHROUGH.md).
-**What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).
-**Why a cloud service can be trusted with your machines:** [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);
+**Trying it for the first time (judges start here):** [`docs/JUDGE-WALKTHROUGH.md`](docs/JUDGE-WALKTHROUGH.md).  
+**What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).  
+**Why a cloud service can be trusted with your machines:** [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);  
 **passkeys for owners, step by step:** [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
 
 ## Try it in 30 seconds
@@ -52,8 +51,11 @@ Trust levels, in the words the app uses:
 | Ask me for new things | does familiar safe jobs on its own, asks about anything new (restarts and updates still ask) |
 | Just handle it and tell me | acts, then reports in plain words |
 
-The trust ladder runs on the sample home. On real devices every restart, clean-up or removal needs a tap, whatever the
-trust settings say. The one exception is a signed helper update, which may install on its own if you allowed that.
+The trust ladder is built and works end to end: three good runs of a safe job, an offer, your yes, and the next one
+runs on its own and says so; a failure moves it back a step. Today it is switched on for the sample home only, on
+purpose. On your real devices every restart, clean-up or removal still waits for your tap, whatever the trust settings
+say, until the fixed job list has more hours behind it. The one exception is a signed helper update, which may install
+on its own if you allowed that.
 
 ## What you get
 
