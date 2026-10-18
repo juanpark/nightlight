@@ -41,7 +41,7 @@ SUFFIX=${PREVIEW:-prod}-$(git rev-parse --short HEAD)-$(date +%H%M%S)
 gcloud run deploy nightlight-web --source web --project "$PROJECT" --region "$REGION" --revision-suffix "$SUFFIX" \
   --allow-unauthenticated --min-instances "${MIN_INSTANCES:-0}" --max-instances 3 --cpu 1 --memory 512Mi \
   ${PREVIEW:+--tag "$PREVIEW" --no-traffic} \
-  --set-env-vars "^@^API_URL=${API_URL}@FIREBASE_API_KEY=$(val apiKey)@FIREBASE_AUTH_DOMAIN=$(val authDomain)@FIREBASE_PROJECT_ID=$(val projectId)@FIREBASE_APP_ID=$(val appId)"
+  --set-env-vars "^@^APP_VERSION=$(cat VERSION)@GIT_SHA=$(git rev-parse --short HEAD)@API_URL=${API_URL}@FIREBASE_API_KEY=$(val apiKey)@FIREBASE_AUTH_DOMAIN=$(val authDomain)@FIREBASE_PROJECT_ID=$(val projectId)@FIREBASE_APP_ID=$(val appId)"
 if [ -z "$PREVIEW" ]; then
   gcloud run services update-traffic nightlight-web --project "$PROJECT" --region "$REGION" \
     --to-revisions "nightlight-web-${SUFFIX}=100"

@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from . import __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
+from . import __build__, __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
 from .auth import current_uid, live_lease, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
@@ -128,7 +128,14 @@ class PromotionBody(Strict):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": __version__}
+    return {"ok": True, "version": __version__, "build": __build__}
+
+
+@app.get("/api/version")
+def version():
+    """The app's version and build, and the helper version this API serves to devices (public)."""
+    offer = release.latest()
+    return {"app": __version__, "build": __build__, "helper": (offer or {}).get("version")}
 
 
 @app.post("/api/demo/start")
