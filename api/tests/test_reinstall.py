@@ -227,3 +227,119 @@ def test_stale_entry_cleanup_never_erases_a_fresh_archive_schedule(started):  # 
     dev.update({"archived": False})  # brought back: now the entry really is stale
     archive._drop_stale_entry(started, "dz1")
     assert not iref.get().exists
+
+
+# ------------------------------------------------------------------ what it watched comes back after a reinstall
+ROUTER = {"cid": "aaaaaaaaaaa1", "guess": "Router", "vendor": "Ubiquiti", "services": ["web page", "router"],
+          "ports": [80, 443], "hw": "1" * 20, "tag": "2" * 20}
+PRINTER = {"cid": "aaaaaaaaaaa2", "guess": "Printer", "vendor": None, "services": ["printer"], "ports": [631],
+           "hw": "3" * 20, "tag": "4" * 20}
+APP = {**FACTS, "helperVersion": "0.9.33", "manage": "app", "machine": MAC}
+PERMS = {"diagnose": True, "cleanup": True, "logs": ["pi-grafana-1"], "restart_container": ["pi-grafana-1"],
+         "restart_service": ["pihole-FTL.service"]}
+
+
+def _again(token):
+    db.client().collection("helperTokens").document(real._sha(token)).update({"lastSeen": None})
+
+
+def watching_then_quiet(client, uid):
+    """An app-managed device with permissions set in the app, watching a router and a printer, then gone quiet."""
+    dev = enrolled(client, "MacBook Pro")
+    h = {"X-Device-Token": dev["token"]}
+    assert beat(client, dev["token"], APP).status_code == 200
+    assert client.post(f"/api/devices/{dev['deviceId']}/permissions", json=PERMS).status_code == 200
+    assert client.post("/helper/discoveries", json={"items": [ROUTER, PRINTER]}, headers=h).status_code == 200
+    watched = [client.post(f"/api/discoveries/{dev['deviceId']}/{it['cid']}/add", json={"name": name}).json()["deviceId"]
+               for it, name in ((ROUTER, "Router"), (PRINTER, "Printer"))]
+    _again(dev["token"])
+    beat(client, dev["token"], {**APP, "watchResults": [{"cid": ROUTER["cid"], "up": True, "ms": 3},
+                                                       {"cid": PRINTER["cid"], "up": True, "ms": 5}]})
+    db.device(uid, dev["deviceId"]).update({"lastSeen": datetime.now(timezone.utc) - timedelta(hours=1)})
+    return dev, watched
+
+
+def continued(client, old):
+    p = pair(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True, "continueDevice": True})
+    new = poll(client, p).json()
+    assert new["deviceId"] == old["deviceId"] and new["continued"]
+    return new
+
+
+def test_a_continued_app_managed_device_keeps_its_permissions_and_watches_again(client, started):
+    old, watched = watching_then_quiet(client, started)
+    new = continued(client, old)
+    first = beat(client, new["token"], APP).json()  # a fresh helper: it found nothing nearby yet, so no results
+    assert {k: first["permissions"][k] for k in PERMS} == PERMS  # the app-side permissions carried over
+    assert db.device(started, old["deviceId"]).get().to_dict()["rewatch"]["state"] == "asked"
+    assert all(db.device(started, w).get().to_dict()["watchedBy"] == old["deviceId"] for w in watched)
+    _again(new["token"])
+    jobs = beat(client, new["token"], APP).json()["jobs"]
+    assert [j["type"] for j in jobs] == ["discover"]  # it looks nearby once, by itself
+    d = db.device(started, old["deviceId"]).get().to_dict()
+    assert not any(f["id"] == "f_rewatch" for f in d["findings"])  # no ask while the look is under way
+    again = [{**ROUTER, "cid": "bbbbbbbbbbb1", "tag": "9" * 20}, {**PRINTER, "cid": "bbbbbbbbbbb2"}]  # new ids
+    h = {"X-Device-Token": new["token"]}
+    assert client.post("/helper/discoveries", json={"items": again}, headers=h).status_code == 200
+    _again(new["token"])
+    body = beat(client, new["token"], APP).json()
+    assert sorted(body["watch"], key=lambda w: w["cid"]) == [{"cid": "bbbbbbbbbbb1", "port": 443},
+                                                            {"cid": "bbbbbbbbbbb2", "port": 631}]
+    _again(new["token"])
+    beat(client, new["token"], {**APP, "watchResults": [{"cid": "bbbbbbbbbbb1", "up": True, "ms": 2},
+                                                       {"cid": "bbbbbbbbbbb2", "up": True, "ms": 4}]})
+    for w in watched:
+        wd = db.device(started, w).get().to_dict()
+        assert wd["status"] == "ok" and wd["watchedBy"] == old["deviceId"]
+        assert wd["lastAnswerAt"] > datetime.now(timezone.utc) - timedelta(minutes=1)  # answering again
+    assert "rewatch" not in db.device(started, old["deviceId"]).get().to_dict()
+
+
+def test_a_continued_strict_device_asks_the_owner_to_watch_again(client, started):
+    old, watched = watching_then_quiet(client, started)
+    new = continued(client, old)
+    strict = {**APP, "manage": "strict"}
+    assert beat(client, new["token"], strict).json()["jobs"] == []
+    d = db.device(started, old["deviceId"]).get().to_dict()
+    ask = next(f for f in d["findings"] if f["id"] == "f_rewatch")
+    assert ask["message"].startswith("Reinstalled: re-allow watching Router and Printer?")
+    assert "nightlight discover" in ask["message"] and d["status"] == "warn"
+    assert not [a for a in db.actions(started).get() if a.to_dict().get("type") == "discover"
+                and a.to_dict().get("deviceId") == old["deviceId"] and a.to_dict().get("status") == "approved"]
+    # the owner runs `nightlight discover` there and picks them: they are checked again and the ask goes
+    h = {"X-Device-Token": new["token"]}
+    again = [{**ROUTER, "cid": "ccccccccccc1"}, {**PRINTER, "cid": "ccccccccccc2"}]
+    assert client.post("/helper/discoveries", json={"items": again}, headers=h).status_code == 200
+    _again(new["token"])
+    beat(client, new["token"], {**strict, "watchResults": [{"cid": "ccccccccccc1", "up": True, "ms": 2},
+                                                          {"cid": "ccccccccccc2", "up": False, "ms": None}]})
+    d = db.device(started, old["deviceId"]).get().to_dict()
+    assert not any(f["id"] == "f_rewatch" for f in d["findings"]) and "rewatch" not in d
+
+
+def test_a_look_that_misses_one_asks_about_that_one(client, started):
+    old, watched = watching_then_quiet(client, started)
+    new = continued(client, old)
+    beat(client, new["token"], APP)
+    h = {"X-Device-Token": new["token"]}
+    assert client.post("/helper/discoveries", json={"items": [{**ROUTER, "cid": "ddddddddddd1"}]},
+                       headers=h).status_code == 200  # the printer is switched off
+    _again(new["token"])
+    beat(client, new["token"], {**APP, "watchResults": [{"cid": "ddddddddddd1", "up": True, "ms": 2}]})
+    ask = next(f for f in db.device(started, old["deviceId"]).get().to_dict()["findings"] if f["id"] == "f_rewatch")
+    assert "re-allow watching Printer?" in ask["message"] and "Look nearby" in ask["message"]
+
+
+def test_a_new_device_is_unaffected(client, started):
+    old, watched = watching_then_quiet(client, started)
+    p = pair(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True})  # "Add as a new device"
+    new = poll(client, p).json()
+    assert new["deviceId"] != old["deviceId"]
+    body = beat(client, new["token"], APP).json()
+    assert body["watch"] == [] and body["jobs"] == []
+    d = db.device(started, new["deviceId"]).get().to_dict()
+    assert "rewatch" not in d and not any(f["id"] == "f_rewatch" for f in d["findings"])
+    assert all(db.device(started, w).get().to_dict()["watchedBy"] == old["deviceId"] for w in watched)
+    assert "rewatch" not in db.device(started, old["deviceId"]).get().to_dict()
