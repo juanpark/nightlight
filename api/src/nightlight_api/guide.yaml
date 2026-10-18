@@ -60,9 +60,13 @@ what_the_helper_does:
     restarting a stopped app (container) or background service, and safe clean-ups (empty the Trash, clear caches
     that rebuild themselves, remove leftover app downloads), installing signed helper updates and removing itself. Restarts,
     clean-ups and removal need your approval (a card or your confirmation in the app); updates install when you tap
-    Update, or by themselves if you switched that on. It can't run any other command (unless you set up expert
-    sessions on that device, where each command needs your passkey), open a remote shell, or move your files; it reads file contents only for recent log lines of apps you allowed. The cloud sends job names,
-    never commands, and the device checks every job against what its owner allowed. Approval cards protect against
+    Update, or by themselves if you switched that on. It can't run any other command, open a remote shell, or move
+    your files; it reads file contents only for recent log lines of apps you allowed. The one exception is expert
+    sessions, which are off unless you set them up on that device: then a command that changes something runs only
+    if you signed that exact command with your passkey, and read-only commands run during an investigation you
+    approved with one passkey tap (15 minutes, no further taps; the device itself refuses anything that isn't
+    read-only). Apart from those passkey-signed requests, the cloud sends job names, never commands, and the device
+    checks every job against what its owner allowed. Approval cards protect against
     mistakes; the real limit is what the device itself allows, which a hacked account or server can't widen beyond
     what the device's owner delegated.
     The helper runs on Macs and Linux machines (a Raspberry Pi, a Linux server or NAS). Windows isn't supported yet;

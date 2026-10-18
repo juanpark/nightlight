@@ -40,11 +40,15 @@ FIX = {  # recipe -> (title, what happens in plain words, undo, the exact comman
                   "Nothing to undo: npm downloads packages again when needed.", "npm cache clean --force"),
     "xcode_build_data": ("Clear Xcode's temporary build files", "Empties Xcode's build folder (DerivedData)",
                          "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower).", None),
-    "docker_prune": ("Remove leftover app downloads", "Removes old versions of app downloads (Docker images) left "
-                     "over from updates that no app uses", "Nothing to undo: apps in use and their downloads are "
-                     "not touched.", "docker image prune -f"),
-    "apt_clean": ("Clear downloaded system updates", "Removes update files the system already installed",
-                  "Nothing to undo: installed software is not touched.", "sudo apt-get clean"),
+    "docker_prune": ("Remove leftover app downloads", "Removes app downloads (Docker images) that have no name "
+                     "and that no app uses: mostly old versions left over from updates, but also unnamed images "
+                     "someone built on this device", "Can't be undone for what it removes, but apps in use and "
+                     "named images are not touched; an unnamed image you built yourself would have to be built "
+                     "again.", "docker image prune -f"),
+    "apt_clean": ("Clear downloaded system updates", "Removes the saved installation downloads (package files), "
+                  "including ones that were downloaded but never installed",
+                  "Nothing to undo: installed software stays exactly as it is; anything still needed is downloaded "
+                  "again.", "sudo apt-get clean"),
     "journal_vacuum": ("Shrink the system's event diary (log)", "Keeps only the newest 200 MB of the system's record "
                        "of events", "Can't be undone: older entries are deleted.",
                        "sudo journalctl --vacuum-size=200M"),

@@ -73,8 +73,9 @@
     - id: docker_images
       match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[kMG]?B)'
       min_gb: 0.3
-      say: Old app downloads (Docker images) take up to {size} that no app uses. The clean-up removes only leftovers
-        from updates; anything else stays (check it with "docker image ls" before removing what you built yourself).
+      say: App downloads (Docker images) that no app uses take up to {size}. The clean-up removes the unused ones
+        that have no name, mostly old versions left over from updates, but also unnamed images built on this device;
+        named images stay. If you build images yourself, check them with "docker image ls" first.
       fix: docker_prune
     - id: apt
       match: '^Package cache \(apt\): (?P<size>[\d.]+ [MG]B)'

@@ -707,7 +707,13 @@ def _plain_reason(reason) -> tuple[str, str | None]:
         return REASON_WORDS[text], f"Code: {text}"
     if _CODE.fullmatch(text):
         return "That step couldn't be done here", f"Code: {text}"
+    if m := _CODE_IN_TEXT.search(text):  # words mixed with codes (e.g. a list of allowed job names): the words
+        lead = text[:m.start()].rstrip(" :,(")  # up to the first code, the full text in the details
+        return (f"{lead} (see the details)" if lead else "That step couldn't be done here"), text
     return text, None
+
+
+_CODE_IN_TEXT = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
 
 
 def _commentary(name: str, resp: dict) -> tuple[str, str | None]:

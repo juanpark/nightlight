@@ -42,6 +42,15 @@ def test_reasons_already_in_words_stay_as_they_are():
     assert line == "Couldn't: the device isn't reporting right now" and details is None
 
 
+def test_words_mixed_with_codes_read_plainly_with_the_list_in_details():
+    reason = "a step's job must be one of: backup_world, clear_images, restart_app"
+    for resp in ({"status": "refused", "reason": reason}, {"status": "error", "reason": "bad: some_code here"}):
+        line, details = turns._commentary("save_runbook", resp)
+        assert not SNAKE.search(line) and details == resp["reason"], line
+    assert turns._commentary("save_runbook", {"status": "refused", "reason": reason})[0] == \
+        "Couldn't: a step's job must be one of (see the details)"
+
+
 def test_saved_fixes_not_runbooks():
     line, _ = turns._commentary("use_runbook", {"runbook": "Clear old app downloads", "actionIds": ["a", "b"]})
     assert line == "Saved fix \"Clear old app downloads\": 2 step(s) waiting for your OK"

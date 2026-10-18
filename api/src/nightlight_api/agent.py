@@ -950,7 +950,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
             code = str(e).split(":")[0]
             return {"status": "refused", "reason": {
                 "looks_secret": "it looked like a password, key or address",
-                "too_many_runbooks": f"this device already has {runbooks.PER_DEVICE} runbooks; the owner can delete "
+                "too_many_runbooks": f"this device already has {runbooks.PER_DEVICE} saved fixes; the owner can delete "
                                      "old ones",
                 "unknown_service": "that device has no service by that name",
                 "steps": f"give 1 to {runbooks.STEPS} steps, each one a {{\"say\": ...}} object",
@@ -958,7 +958,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                 "unknown_job": "a step's job must be one of: " + ", ".join(sorted(runbooks.JOBS)),
                 "command": "a step's command is one plain command line",
                 "empty": "the title, when and every step's say need some words"}.get(code, code)}
-        return {"status": "saved", "note": f"runbook \"{rb['title']}\"", "runbookId": rb["id"]}
+        return {"status": "saved", "note": f"saved fix \"{rb['title']}\"", "runbookId": rb["id"]}
 
     async def save_runbook(device_id: str, title: str, when: str, steps: list[dict], tool_context: ToolContext,
                            service: str = "") -> dict:
