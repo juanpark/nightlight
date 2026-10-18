@@ -27,13 +27,52 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
-ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server", "restart_container",
+ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server",
+                "update_app", "restart_container",
                 "restart_service",
-                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
+                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook",
+                "allow_log_reading"}
 
 
-# Last resort only: agent.after_model already removes a card claim no card backs before it is shown.
-NO_CARD = "(Correction: no card was put up in this answer. Ask me again and I'll put it up.)"
+# Check-and-return for the one answer failure the harness can see without guessing at meaning: a final answer with no
+# words, or one the output limit cut off. The model is asked once more (a counted model call, no new checks); if that
+# fails too, the turn says so plainly.
+SHORTER = {"empty": "[Nightlight] Your last reply had no words for the person. Answer them now, briefly, from what "
+                    "you already found.",
+           "cut": "[Nightlight] Your last reply was cut off by the length limit. Answer again in fewer words, from "
+                  "what you already found."}
+NO_ANSWER = "I couldn't put an answer together this time. Please ask again."
+# A model call that stays silent past its gap (agent.TurnContext.call_gap_seconds) is cancelled and asked once more;
+# a second silent call ends the turn with SLOW: honest failure, never a quietly thinner answer.
+CARRY_ON = "[Nightlight] Your last reply took too long and was cancelled. Carry on from where you were."
+SLOW = "Gemini is slow right now; nothing was changed. Please ask again."
+SLOW_UNSURE = "Gemini is slow right now, so I couldn't finish this answer. Please ask again."
+
+
+def _without_text(ev):
+    """A copy of a cut-off response without its visible words (function calls and thoughts kept), or None when
+    nothing else is left."""
+    parts = [p for p in (ev.content.parts if ev.content else None) or [] if not (p.text and not p.thought)]
+    if not any(p.function_call for p in parts):
+        return None
+    out = ev.model_copy(deep=True)
+    out.content.parts = parts
+    return out
+
+
+def unanswered(ev) -> str | None:
+    """Why the final model response of a run is not an answer ("empty" or "cut"), or None when it is one."""
+    if ev is None:
+        return "empty"
+    parts = (ev.content.parts if ev.content else None) or []
+    if any(p.function_call for p in parts):
+        return None
+    if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+        return "cut"
+    return None if any(p.text and p.text.strip() and not p.thought for p in parts) else "empty"
+
+
+QUICK_INSTEAD = "Investigate is busy right now, so here is a quick look instead.\n\n"
 
 
 def _utcnow() -> datetime:
@@ -214,6 +253,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
                 "role": "assistant", "text": text, "seq": seq, "turnId": c.turn_id, "attempt": c.attempt,
                 "toolCalls": [_stored_step(t, error) for t in tool_calls],
                 "actionIds": action_ids, "demoGeneration": c.generation, "mode": c.turn.get("mode", "quick"),
+                "metrics": metrics,  # the receipt under the answer (steps, time, model, cost) survives a reload
                 **({"error": error} if error else {}),
                 "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": _keep_until()})
             update["finalMessageId"] = msg_id
@@ -232,7 +272,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
 def history(uid: str, c: Claim) -> list[types.Content]:
     """Recent messages as model contents, oldest first, excluding everything from the current turn."""
     msgs = [m.to_dict() for m in db.messages(uid, c.session_id).get()]
-    msgs = [m for m in msgs if m.get("turnId") != c.turn_id]
+    msgs = [m for m in msgs if m.get("turnId") != c.turn_id and m.get("text")]  # a wordless record isn't history
     msgs.sort(key=lambda m: m["seq"])
     picked, chars = [], 0
     for m in reversed(msgs[-settings.history_messages:]):
@@ -280,7 +320,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     try:
         yield sse({"type": "turn_start", "turnId": c.turn_id, "attempt": c.attempt,
                    "messageId": c.turn.get("userMessageId"), "at": _iso(_utcnow()),
-                   "mode": c.turn.get("mode", "quick"), **({"replay": True} if c.mode == "replay" else {})})
+                   "mode": c.turn.get("mode", "quick"), "budgetSeconds": _budget(c),
+                   **({"replay": True} if c.mode == "replay" else {})})
     except (asyncio.CancelledError, GeneratorExit):
         if c.mode == "run":  # claimed but stopped before anything ran (replayed or failed turns are already over)
             _stop(uid, c, text=None, tool_calls=[], action_ids=[])
@@ -303,6 +344,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     # leak through a partly-seen value. `shown` is exactly what the browser has; it is what we store and replay.
     raw, shown, tool_calls, first_text_ms = "", "", [], None
     finishing = False  # set once a terminal write has started; a stop after that changes nothing
+    no_answer = False  # the model was asked twice and gave no answer
+    slow = False  # a model call stayed silent twice: the turn ends with a plain error
     last_sent = time.monotonic()
 
     async def produce():
@@ -320,22 +363,110 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         pass
                 ctx.fleet, ctx.memories = await asyncio.gather(
                     asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, ctx.memory_epoch))
-            agent = agentlib.build(ctx, continuation=continuation, model=model)
-            sessions = InMemorySessionService()
-            runner = Runner(app_name=APP, agent=agent, session_service=sessions)
-            adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
-            for content in await asyncio.to_thread(history, uid, c):
-                await sessions.append_event(adk_session, Event(
-                    author="user" if content.role == "user" else agent.name, content=content))
-            prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
-            message = types.Content(role="user", parts=[types.Part(text=prompt)])
-            async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                             run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                                  max_llm_calls=ctx.max_calls)):
-                await queue.put(("event", ev))
+            loop = asyncio.get_running_loop()
+            # Each extra attempt happens at most once per turn, whichever run it falls in: the answer-only retry
+            # (SHORTER), the retry after a silent call (CARRY_ON), and Quick standing in for a busy Investigate.
+            used = {"answer": False, "slow": False}
+
+            async def run_once() -> bool:
+                """One agent run over the question; False when the turn must end as model_slow."""
+                agent = agentlib.build(ctx, continuation=continuation, model=model)
+                sessions = InMemorySessionService()
+                runner = Runner(app_name=APP, agent=agent, session_service=sessions)
+                adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
+                for content in await asyncio.to_thread(history, uid, c):
+                    await sessions.append_event(adk_session, Event(
+                        author="user" if content.role == "user" else agent.name, content=content))
+                prompt = c.turn["input"] if kind == "user" else \
+                    f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
+                message = types.Content(role="user", parts=[types.Part(text=prompt)])
+                answer_only = False  # this run's current ADK run is the answer-only retry
+                while True:
+                    run = runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                           run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                                max_llm_calls=ctx.max_calls))
+                    # The silence timer runs only while a model call is in flight (callbacks switch it), never
+                    # while a tool works. When it fires, this task is cancelled inside the call and `watch` reports
+                    # it expired. A timeout is never "busy": it never brings in the Quick stand-in.
+                    watch = asyncio.timeout(None)
+                    ctx.watch_call = lambda active: watch.reschedule(
+                        loop.time() + ctx.call_gap_seconds if active else None)
+                    try:
+                        async with watch:
+                            await _forward(run, answer_only)
+                    except TimeoutError:
+                        if not watch.expired():
+                            raise
+                        # Counted and reserved like any call; its reservation is kept in full (never reconciled),
+                        # since Gemini may still bill a call we stopped waiting for.
+                        if ctx.reservations:
+                            ctx.reservations.pop()
+                        ctx.metrics["slowCalls"] = ctx.metrics.get("slowCalls", 0) + 1
+                        # One retry per turn, only inside the normal call limit, and not for the answer-only
+                        # retry (already the one call past it). Otherwise the turn ends saying so.
+                        if used["slow"] or ctx.retry_from is not None or ctx.metrics["modelCalls"] >= ctx.max_calls:
+                            return False
+                        used["slow"] = True
+                        message = types.Content(role="user", parts=[types.Part(text=CARRY_ON)])
+                        continue
+                    finally:
+                        ctx.watch_call = lambda active: None
+                    why = unanswered(last_final[0])
+                    if why is None:
+                        return True
+                    if answer_only or used["answer"]:
+                        await queue.put(("no_answer", None))
+                        return True
+                    answer_only = used["answer"] = True
+                    ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
+                    message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
+
+            try:
+                finished = await run_once()
+            except Exception as e:
+                # Investigate's model is out of capacity before anything was said or done: the same question gets a
+                # Quick look instead, and the answer says so first. Busy later (after steps ran) fails as before.
+                if not (ctx.deep and not continuation and forwarded[0] == 0 and agentlib.model_busy(e)):
+                    raise
+                ctx.deep = False
+                ctx.retry_from = None
+                ctx.reservations.clear()  # the refused call's reservation stays spent (its usage is unknown)
+                await queue.put(("notice", QUICK_INSTEAD))
+                finished = await run_once()
+            if not finished:
+                await queue.put(("slow", None))
+                return
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
             await queue.put(("error", e))
+
+    last_final = [None]  # the latest run's final model response
+    forwarded = [0]  # model events passed on: a busy model before any is the only time Quick stands in
+
+    async def _forward(run, answer_only):
+        """Forward one ADK run's events to the consumer, keeping its final model response in last_final."""
+        last_final[0] = None
+        try:
+            async for ev in run:
+                if not ev.partial and not ev.get_function_responses():
+                    last_final[0] = ev
+                    calls = any(p.function_call for p in (ev.content.parts if ev.content else None) or [])
+                    if answer_only and calls:
+                        # The answer-only retry asked for a tool: not an answer. ADK runs a call only
+                        # after yielding it, so stopping here means nothing runs (before_tool refuses too).
+                        last_final[0] = None
+                        break
+                    if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+                        ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
+                        if ev is None:
+                            continue
+                if not ev.partial and ev.author != "user" and any(
+                        (p.text and p.text.strip() and not p.thought) or p.function_call or p.function_response
+                        for p in (ev.content.parts if ev.content else None) or []):
+                    forwarded[0] += 1  # the model said something the person saw, or did something
+                await queue.put(("event", ev))
+        finally:
+            await run.aclose()
 
     async def keep_lease():
         while True:
@@ -369,6 +500,17 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 raise item
             if kind == "end":
                 break
+            if kind == "no_answer":
+                no_answer = True
+                continue
+            if kind == "slow":
+                slow = True
+                break
+            if kind == "notice":  # our own words, said before anything else (nothing has been shown yet)
+                raw = shown = item
+                first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
+                yield out({"type": "text", "delta": item})
+                continue
             ev = item
             parts = (ev.content.parts if ev.content else None) or []
             if not ev.partial:
@@ -411,9 +553,12 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
                                **({"callId": rid} if rid else {}),
                                "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
-                    if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
+                    if part.function_response.name in ACTION_TOOLS and (resp.get("status") == "pending"
+                                                                        or resp.get("awaitingTap")):
                         ids = resp.get("actionIds") or [resp.get("actionId")]  # a runbook can put up several
-                        if step is not None:
+                        shown_ids = {i for t in tool_calls for i in (t.get("actionIds") or [t.get("actionId")])}
+                        ids = [i for i in ids if i not in shown_ids]  # a card sits after the first step that got it
+                        if step is not None and ids:
                             step["actionId"] = ids[0]  # the card sits right after its step
                             if len(ids) > 1:
                                 step["actionIds"] = ids
@@ -422,19 +567,31 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
-        if not ctx.actions and agentlib.claims_a_card(shown):
-            # A claim still got through (it shouldn't: after_model removes them), and no card was made in this
-            # answer: never leave that claim standing.
-            piece = "\n\n" + NO_CARD
-            shown += piece
-            yield out({"type": "text", "delta": piece})
-        if not shown.strip():
-            shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)
+        if slow:
+            # Gemini went silent twice: say so plainly after whatever was already shown. "Nothing was changed" is
+            # said only when provable: a person's question whose turn proposed nothing. A continuation narrates a
+            # job that may already have run, so it (and any turn with actions) makes no claim about changes.
+            provable = c.turn.get("kind") == "user" and not ctx.actions
+            err = {"code": "model_slow", "message": SLOW if provable else SLOW_UNSURE}
+            metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
+                       "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6),
+                       "budgetSeconds": ctx.turn_seconds}
+            finishing = True
+            # Stored even with no prose (text ""), so the steps, cards, receipt and error survive a reload.
+            await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else "", metrics=metrics,
+                                    tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
+            yield sse({"type": "error", **err, "retryable": True})
+            return
+        if no_answer or not shown.strip():
+            # Asked twice and still no answer: say so plainly, after whatever was already shown.
+            piece = ("\n\n" if shown.strip() else "") + NO_ANSWER
+            shown = (shown if shown.strip() else "") + piece
             first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
-            yield out({"type": "text", "delta": shown})
+            yield out({"type": "text", "delta": piece})
         text = shown  # exactly what the browser received; stored and replayed as-is
         metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
-                   "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6)}
+                   "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6),
+                   "budgetSeconds": ctx.turn_seconds}
         finishing = True
         await asyncio.to_thread(finish, uid, c, text=text, metrics=metrics, tool_calls=tool_calls,
                                 action_ids=[a["id"] for a in ctx.actions])
@@ -478,6 +635,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             task.cancel()
 
 
+def _budget(c: Claim) -> int:
+    """The turn's time budget in seconds, for the "Working… 45 s of 4 min" line (same as TurnContext.turn_seconds)."""
+    return settings.deep_turn_seconds if c.turn.get("mode") == "investigate" else settings.quick_turn_seconds
+
+
 CHAT_KEEP_DAYS = 30  # conversations are shown again when you come back, then expire (Firestore TTL on expiresAt)
 
 
@@ -486,7 +648,7 @@ def _keep_until():
     return datetime.now(timezone.utc) + timedelta(days=CHAT_KEEP_DAYS)
 
 
-DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command"}  # the device answers; slow ones finish in a follow-up
+DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command", "check_space"}  # the device answers; slow ones finish in a follow-up
 DETAILS_CHARS = 2000
 
 
@@ -498,6 +660,16 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         return f"Couldn't: {reason}", None
     if status == "asked":
         return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
+    if status in ("waiting", "safer_first"):
+        job = resp.get("proposed") or {}
+        if job.get("status") in ("done", "failed"):  # the safer step ran on its own: its outcome is the receipt
+            return f"The safer step first ({job['status']}): {job.get('result') or job.get('plan') or ''}", None
+        lead = "A card for this was already waiting: " if status == "waiting" else "The safer step first: "
+        return lead + (job.get("plan") or ""), None
+    if name == "check_space" and status == "done" and "devices" in resp:
+        rows = [f"{d.get('name')}: " + ", ".join(f"{u['what']} {u['sizeGb']} GB" for u in d.get("usedBy") or [])
+                for d in resp["devices"] if d.get("usedBy")]
+        return f"Measured the space on {len(rows)} device(s)", "\n".join(rows) or None
     if "devices" in resp:
         bad = [d.get("name") for d in resp["devices"] if d.get("status") not in ("ok", None)]
         return f"{len(resp['devices'])} devices" + (f"; needs a look: {', '.join(bad[:4])}" if bad else "; all fine"), None
@@ -521,7 +693,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         cards = len(resp.get("actionIds") or [])
         return f"Runbook \"{resp['runbook']}\": " + (f"put up {cards} card(s) for your approval" if cards
                                                      else f"result: {resp.get('status')}"), None
-    if name == "run_playbook" and resp.get("playbook"):
+    if name in ("run_playbook", "check_space") and resp.get("playbook"):
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
         return (f"Checkup done: {len(lines)} finding(s)" if lines else "Checkup done: nothing stood out"), \
@@ -571,6 +743,8 @@ def _stored_step(t: dict, error: dict | None) -> dict:
 def _ok(resp: dict) -> bool:
     """Whether a step worked, from the tool's own status (the chat marks failed steps; it never hides them)."""
     status = resp.get("status")
+    if status in ("waiting", "safer_first"):  # the step's outcome is the card it came back with
+        status = (resp.get("proposed") or {}).get("status")
     return not (status in ("error", "refused", "failed") or (status is None and (resp.get("reason") or resp.get("error"))))
 
 

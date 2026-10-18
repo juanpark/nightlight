@@ -102,23 +102,71 @@ def _read_context(tx, uid: str, device_id: str, action_type: str):
     return user_snap, device_snap, services, trust_ref, trust_snap
 
 
-def _waiting_card(tx, uid: str, device_id: str, action_type: str, params: dict, generation) -> dict | None:
-    """A card for the same job on the same device that is still waiting for the person, from any turn. Asking for the
-    same fix again (a second question, another chat) shows that card again instead of putting up a twin."""
+def _waiting_card(tx, uid: str, device_id: str, action_type: str, params: dict, generation,
+                  same_problem: set[str] = frozenset()) -> dict | None:
+    """A card on this device still waiting for the person, from any turn, for the same job or for another job that
+    answers the same problem (`same_problem`). Asking for a fix again (a second question, another chat, another way
+    to free the same disk) gets that card back, marked `waiting`, instead of a twin piling up."""
     q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
         filter=FieldFilter("status", "==", "pending"))
+    found = []
     for snap in q.get(transaction=tx):
         a = snap.to_dict()
-        if a.get("type") == action_type and (a.get("params") or {}) == (params or {}) \
-                and a.get("demoGeneration") == generation:
-            return dict(a, id=snap.id)
-    return None
+        if a.get("demoGeneration") != generation:
+            continue
+        if a.get("type") == action_type and (a.get("params") or {}) == (params or {}):
+            return dict(a, id=snap.id, waiting=True)
+        if a.get("type") != action_type and a.get("type") in same_problem:  # same job, other target: its own card
+            found.append(dict(a, id=snap.id, waiting=True))
+    return found[0] if found else None
+
+
+RECENT = timedelta(hours=6)  # how far back an earlier attempt still matters to a new proposal
+
+
+def _recent(a: dict, session_id: str | None) -> bool:
+    if session_id and a.get("sessionId") == session_id:
+        return True
+    at = a.get("finishedAt")
+    return isinstance(at, datetime) and datetime.now(timezone.utc) - at < RECENT
+
+
+def _ended(tx, uid: str, device_id: str, status: str, action_type: str, generation, session_id: str | None,
+           params: dict | None = None) -> dict | None:
+    """The latest recent job of this type on this device that ended with `status` (failed, denied), or None."""
+    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("status", "==", status))
+    hits = [a for a in (s.to_dict() for s in q.get(transaction=tx))
+            if a.get("type") == action_type and a.get("demoGeneration") == generation and _recent(a, session_id)
+            and (params is None or (a.get("params") or {}) == (params or {}))]
+    hits.sort(key=lambda a: a["finishedAt"] if isinstance(a.get("finishedAt"), datetime) else datetime.min.replace(
+        tzinfo=timezone.utc))
+    return hits[-1] if hits else None
+
+
+def _last_attempt(tx, uid: str, device_id: str, action_type: str, params: dict, generation,
+                  session_id: str | None) -> dict | None:
+    """When the same job on this device failed recently: how it ended, for the proposal's result (the model then
+    says it failed last time and why)."""
+    a = _ended(tx, uid, device_id, "failed", action_type, generation, session_id, params)
+    if not a:
+        return None
+    at = a.get("finishedAt")
+    return {"status": "failed", "reason": (a.get("result") or {}).get("summary") or "it didn't finish",
+            **({"minutesAgo": int((datetime.now(timezone.utc) - at).total_seconds() // 60)}
+               if isinstance(at, datetime) else {})}
 
 
 def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_type: str, device_id: str,
-            params: dict, fence=None, mode: str = "quick", ask: bool = False) -> dict:
+            params: dict, fence=None, mode: str = "quick", skip_safer: bool = False) -> dict:
     """Create (or find) the action for this logical operation. Sample-home jobs run at once when trust allows; a
     real device's capability follows its own approval rule (capabilities.py).
+
+    What comes back is the action, with at most these marks: `waiting` (a card for this, or for another fix for the
+    same problem, was already waiting: nothing new was made), `saferFirst` ({insteadOf, why}: a safer step comes
+    first, and this is its card; once it has run, or the person declined it or it failed recently, the job asked for
+    is proposed as usual; `skip_safer` when the person said to skip it), `lastAttempt` (the same job here failed
+    recently: how).
 
     `fence(tx)` lets the turn engine abort if its lease or attempt is no longer current.
     """
@@ -147,21 +195,45 @@ def propose(uid: str, *, session_id: str, turn_id: str, generation: int, action_
         existing = db.action(uid, aid).get(transaction=tx)
         if existing.exists:
             return dict(existing.to_dict(), id=aid)
-        if twin := _waiting_card(tx, uid, device_id, action_type, params, generation):
-            return twin
-        c = sim.card(device, _by_id(services), action_type, params)  # only a genuinely new proposal is validated
-        trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action_type, generation)
-        decision = trustlib.resolve(user, trust_doc, device, _service_doc(services, c["svcId"]), action_type, params)
-        action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device_id, "params": params,
-                  **c, "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
-                  "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
-                  "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now()}
-        if decision["auto"] and not ask:  # `ask`: always a card, whatever trust allows
-            return _finish(tx, uid, action, device, services, trust_doc, trust_ref, "approve", "auto", None)
-        tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
-        return action
+        first = None if skip_safer else sim.safer_first(device, _by_id(services), action_type)
+        if first and not any(_ended(tx, uid, device_id, s, first[0], generation, session_id)
+                             for s in ("denied", "failed")):  # declined or tried: never a trap
+            a = _create_sim(tx, uid, user, device, services, first[0], {}, generation, session_id, turn_id, mode)
+            return dict(a, saferFirst={"insteadOf": action_type, "why": first[1]})
+        return _create_sim(tx, uid, user, device, services, action_type, params, generation, session_id, turn_id,
+                           mode, trust_ref, trust_snap)
 
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+
+
+def _create_sim(tx, uid: str, user: dict, device: dict, services: list[dict], action_type: str, params: dict,
+                generation: int, session_id: str, turn_id: str, mode: str, trust_ref=None,
+                trust_snap=None) -> dict:
+    """Find or make one sample-home proposal inside the caller's transaction (no writes have happened yet)."""
+    device_id = device["id"]
+    key = proposal_key(generation, turn_id, device_id, sim.service_for(device, action_type), action_type, params)
+    aid = make_action_id(key)
+    existing = db.action(uid, aid).get(transaction=tx)
+    if existing.exists:
+        return dict(existing.to_dict(), id=aid)
+    if twin := _waiting_card(tx, uid, device_id, action_type, params, generation, sim.same_problem(action_type)):
+        return twin
+    last = _last_attempt(tx, uid, device_id, action_type, params, generation, session_id)
+    if trust_ref is None:
+        trust_ref = db.trust_doc(uid, "sim", action_type)
+        trust_snap = trust_ref.get(transaction=tx)
+    c = sim.card(device, _by_id(services), action_type, params)  # only a genuinely new proposal is validated
+    trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action_type, generation)
+    decision = trustlib.resolve(user, trust_doc, device, _service_doc(services, c["svcId"]), action_type, params)
+    action = {"id": aid, "proposalKey": key, "type": action_type, "deviceId": device_id, "params": params,
+              **c, "status": "pending", "demoGeneration": generation, "deviceVersion": device["version"],
+              "trustLevelAtProposal": decision["level"], "resolvedBy": decision["resolvedBy"], "realm": "sim",
+              "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now()}
+    if decision["auto"]:
+        action = _finish(tx, uid, action, device, services, trust_doc, trust_ref, "approve", "auto", None)
+    else:
+        tx.set(db.action(uid, aid), {k: v for k, v in action.items() if k != "id"})
+    return dict(action, lastAttempt=last) if last else action
 
 
 # ------------------------------------------------------------------ real devices: one pipeline for every capability
@@ -203,6 +275,7 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         approved = cap.approval == "device" or (origin == "app" and cap.approval == "card")
         if not approved and (twin := _waiting_card(tx, uid, device_id, name, clean, gen)):
             return twin
+        last = None if cap.reads else _last_attempt(tx, uid, device_id, name, clean, gen, session_id)
         a = {"id": aid, "proposalKey": key, "type": name, "deviceId": device_id, "params": clean, **fields,
              "status": "approved" if approved else "pending", "realm": "real", "demoGeneration": gen,
              "deviceVersion": device.get("version"), "trustLevelAtProposal": "ask", "resolvedBy": "real_device",
@@ -211,7 +284,7 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
             a["decision"] = {"by": "owner_allowed_on_device" if cap.approval == "device" else "user",
                              "decision": "approve"}
         tx.set(db.action(uid, aid), {k: v for k, v in a.items() if k != "id"})
-        return a
+        return dict(a, lastAttempt=last) if last else a
 
     a = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
     if a.get("status") == "approved" and cap.after_approval:
@@ -245,7 +318,7 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         device = dict(device_snap.to_dict(), id=action["deviceId"]) if device_snap.exists else None
         if action.get("realm") == "real":
             return _decide_real(tx, uid, action, device, decision, note,  # no trust ladder for real jobs (yet)
-                                _service_doc(services, action.get("svcId")))
+                                _service_doc(services, action.get("svcId")), services=services)
         service = _service_doc(services, action.get("svcId"))
         current_generation = action["demoGeneration"] == user.get("demoGeneration")
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action["type"],
@@ -270,7 +343,7 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
 
 
 def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str, note: str | None,
-                 service: dict | None = None):
+                 service: dict | None = None, services: list | None = None):
     """Approving a real-device job queues it for that device's helper (it runs there, later); declining ends it.
 
     A real device reports every minute, so its version can't fence the card; the helper re-checks the target on the
@@ -284,7 +357,22 @@ def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str,
     if device is None or device.get("revoked") and not (cap and cap.while_silent):
         tx.update(db.action(uid, a["id"]), {"status": "stale", "finishedAt": _now()})
         return 409, {"error": "conflict", "code": "stale", "actionId": a["id"]}
-    if decision == "approve":
+    if decision == "approve" and cap and cap.on_approve:
+        # The server carries it out now, in this transaction (e.g. a permission): it is never handed to a device
+        try:
+            summary = cap.on_approve(tx, uid, a, device, services or [])
+        except (ValueError, ApiError):  # overtaken since the card went up (allowed meanwhile, target gone)
+            tx.update(db.action(uid, a["id"]), {"status": "stale", "finishedAt": _now()})
+            return 409, {"error": "conflict", "code": "stale", "actionId": a["id"]}
+        a["status"], a["finishedAt"] = "done", _now()
+        a["result"] = {"ok": True, "summary": summary}
+        if a.get("sessionId"):
+            conversation.post(tx, uid, a, "job_finished", device["name"])
+        else:
+            a["followUp"] = "none"
+        a["response"] = {"actionId": a["id"], "status": "done",
+                         **({"continuationTurnId": a["continuationTurnId"]} if a.get("continuationTurnId") else {})}
+    elif decision == "approve":
         a["status"] = "approved"
         a["response"] = {"actionId": a["id"], "status": "approved"}
     else:
