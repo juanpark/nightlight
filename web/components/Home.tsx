@@ -333,7 +333,7 @@ export default function Home({ user, account }: { user: User; account?: string }
                 </div>
                 <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
               </div>
-              {needs.length > 0 && <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice plain
+              {needs.length > 0 && <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice plain fold
                 onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />}
             </section>
             {me && !live && !user.isAnonymous && <FirstRun uid={visit} devices={devices} discoveries={discoveries}

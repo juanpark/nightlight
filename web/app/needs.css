@@ -297,3 +297,22 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 .card.level-strong .card-icon { color: var(--crit-ink); flex: none; }
 .card.level-strong .risk { background: var(--crit-ink); color: var(--panel); }
 .card.level-strong .actions .primary { background: var(--crit-ink); color: var(--panel); }
+
+/* The strip folds (NeedsList fold): the worst item always shows; the rest open under one line that says what is
+   there ("2 more, 1 urgent · Game server, Raspberry Pi"). Height eases open on a 0fr → 1fr grid row. */
+.needs-more { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .26s cubic-bezier(.22, 1, .36, 1); }
+.needs-more > div { min-height: 0; overflow: hidden; }
+.needs-more[data-open] { grid-template-rows: 1fr; }
+.needs-more > div > .needs-item { border-top: 1px solid var(--line); }
+.needs-fold { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; margin: 0; padding: 10px 0 12px;
+  border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left;
+  font-size: 13.5px; font-weight: 550; color: var(--muted); }
+.needs-fold:hover:not(:disabled) { background: transparent; color: var(--ink); }
+.needs-fold-what { flex: 1; min-width: 0; }
+.needs-fold-urgent { color: var(--crit); font-weight: 650; }
+.needs-fold-names { font-weight: 400; }
+.needs-fold-cta { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); white-space: nowrap; }
+.needs-fold .caret { transform: rotate(90deg); transition: transform .2s ease-out; }
+.needs-fold[aria-expanded="true"] .caret { transform: rotate(-90deg); }
+.needs-fold:focus-visible { outline-offset: -2px; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .needs-more, .needs-fold .caret { transition: none; } }
