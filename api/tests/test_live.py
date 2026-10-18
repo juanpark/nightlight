@@ -476,3 +476,111 @@ def test_a_reset_cleanup_stops_when_a_release_takes_over(pool, monkeypatch):
     monkeypatch.setattr(live, "wipe", wipe_interrupted)
     live.reset_mine(got["slot"], got["leaseId"])  # returns; its cleanup stopped at the fence
     assert live.slots().document(got["slot"]).get().to_dict()["state"] == "releasing"
+
+
+# ------------------------------------------------------------------ rev3: Auth deletion marker, pool memory off, maintenance claim
+
+def test_a_delayed_auth_deletion_blocks_takeover_and_reuse_until_it_returns(pool, monkeypatch):
+    names, uids, calls = pool
+    _only_first_slot_free(names)
+    slot, uid = names[0], uids[0]
+    monkeypatch.setattr(live, "wipe", lambda u: None)
+    live.lease("v1", "ip1")
+    live.slots().document(slot).update({"expiresAt": NOW() - timedelta(seconds=1)})
+    during = {}
+
+    def slow_delete(u):  # the Firebase call is still in flight while others try to move the slot on
+        live.slots().document(slot).update({"releaseStartedAt": NOW() - timedelta(minutes=10)})
+        during["takeover"] = live._claim_release(slot)
+        during["marker"] = live.slots().document(slot).get().to_dict().get("authDeletion")
+        try:
+            live.lease("v2", "ip2")
+            during["lease"] = "granted"
+        except ApiError as e:
+            during["lease"] = e.code
+
+    monkeypatch.setattr(live, "reset_auth_user", slow_delete)
+    assert live._release(slot)
+    assert during["takeover"] is None and during["marker"] and during["lease"] == "live_all_busy"
+    d = live.slots().document(slot).get().to_dict()
+    assert d["state"] == "restoring" and "authDeletion" not in d  # cleared only after the call returned
+    _free_after_release(slot)
+    assert live.lease("v2", "ip2")["slot"] == slot
+
+
+def test_a_failed_auth_deletion_keeps_the_marker_and_the_slot_out_of_service(pool, monkeypatch):
+    names, uids, _ = pool
+    _only_first_slot_free(names)
+    slot = names[0]
+    monkeypatch.setattr(live, "wipe", lambda u: None)
+    got = live.lease("v1", "ip1")
+
+    def broken(u):
+        raise RuntimeError("auth down")
+
+    monkeypatch.setattr(live, "reset_auth_user", broken)
+    live.end(slot, got["leaseId"])
+    d = live.slots().document(slot).get().to_dict()
+    assert d["state"] == "maintenance" and d["authDeletion"]
+    with pytest.raises(ApiError):
+        live.lease("v2", "ip2")
+
+
+def test_a_stale_auth_marker_is_cleared_only_after_confirming_the_user_is_gone(pool, monkeypatch):
+    names, uids, _ = pool
+    slot = names[0]
+    live.slots().document(slot).set({"state": "free", "uid": uids[0],
+                                     "authDeletion": {"epoch": 3, "at": NOW() - timedelta(minutes=1)}})
+    assert live.resolve_stale_auth_deletion(slot) is False  # still fresh: may be in flight
+    live.slots().document(slot).update({"authDeletion.at": NOW() - timedelta(minutes=30)})
+    monkeypatch.setattr(live, "auth_user_exists", lambda u: True)
+    assert live.resolve_stale_auth_deletion(slot) is False  # not confirmed gone
+    monkeypatch.setattr(live, "auth_user_exists", lambda u: False)
+    assert live.resolve_stale_auth_deletion(slot) is True
+    assert "authDeletion" not in live.slots().document(slot).get().to_dict()
+
+
+def test_memory_is_off_for_pool_accounts_everywhere(pool, monkeypatch):
+    from nightlight_api import memory
+    monkeypatch.setattr(settings, "memory_bank_id", "bank-x")
+    uid = pool[1][0]
+    assert memory.enabled() and not memory.on_for(uid) and memory.on_for("someone-else")
+    assert memory.remember(uid, "the judge likes cats")["status"] == "off"
+    assert memory.forget_all(uid) is False  # no epoch bump, no purge from a request path
+
+
+def test_a_paused_forget_memories_request_from_an_old_visit_is_refused(pool, monkeypatch):
+    names, uids, _ = pool
+    got = live.lease("v1", "ip1")
+    admitted = live.slots().document(got["slot"]).get().to_dict()
+    monkeypatch.setattr(live, "wipe", lambda u: None)
+    live.end(got["slot"], got["leaseId"])
+    monkeypatch.setattr(live, "lease_doc", lambda s, lid, fresh=False: admitted)  # it passed auth earlier
+    c = _client_with(monkeypatch, {"uid": got["uid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
+                                   "firebase": {"sign_in_provider": "custom"}})
+    r = c.delete("/api/me/memories", headers={"Authorization": "Bearer x"})
+    assert r.status_code == 403 and r.json()["code"] == "memory_off_on_demo_machine"
+    r = c.get("/api/me/memories", headers={"Authorization": "Bearer x"})
+    assert r.json()["enabled"] is False and r.json()["memories"] == []
+
+
+def test_overlapping_maintenance_sweeps_never_steal_and_one_finishes(pool, monkeypatch):
+    names, uids, _ = pool
+    slot = names[0]
+    live.slots().document(slot).set({"state": "maintenance", "needsCleanup": True, "uid": uids[0], "epoch": 5})
+    first = live._claim_maintenance(slot)
+    assert first == 6
+    assert live._claim_maintenance(slot) is None  # a second sweep while the first works: no epoch bump
+    monkeypatch.setattr(live, "wipe", lambda u: None)
+    live.cleanup(slot, uids[0], first)
+    live._finish_maintenance(slot, first)
+    d = live.slots().document(slot).get().to_dict()
+    assert d["state"] == "free" and "maintClaim" not in d and d["epoch"] == 6
+
+
+def test_a_stale_maintenance_claim_can_be_taken_over(pool):
+    names, uids, _ = pool
+    slot = names[0]
+    live.slots().document(slot).set({"state": "maintenance", "needsCleanup": True, "uid": uids[0], "epoch": 5,
+                                     "maintClaim": {"epoch": 5, "at": NOW() - timedelta(minutes=30)}})
+    assert live._claim_maintenance(slot) == 6

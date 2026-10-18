@@ -100,7 +100,7 @@ def fence_holder() -> dict | None:
 @contextmanager
 def fenced(check):
     """Run the block with `check(tx)` at the start of every transaction (and `fence_now()` calls)."""
-    token = _fence.set({"check": check})
+    token = _fence.set({"check": check} if check else {})
     try:
         yield
     finally:

@@ -282,7 +282,7 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
                 return n, d, False
         if sum(1 for d in docs.values() if _live(d, now) and d.get("ipHash") == ip_hash) >= settings.live_per_ip:
             raise ApiError(429, "live_per_visitor_limit")
-        free = [n for n, d in docs.items() if d.get("state", "free") == "free"]
+        free = [n for n, d in docs.items() if d.get("state", "free") == "free" and not d.get("authDeletion")]
         if not free:
             return None, None, False
         adm_ref = db.client().collection("liveAdmissions").document(ip_hash)
@@ -545,7 +545,8 @@ def _claim_release(slot: str) -> dict | None:
         ref = slots().document(slot)
         d = ref.get(transaction=tx).to_dict() or {}
         expired = d.get("state") == "leased" and not _live(d, now)
-        stale = d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE
+        stale = d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE \
+            and not d.get("authDeletion")  # an Auth deletion may be in flight: resolve_stale_auth_deletion first
         if not (expired or stale):
             return None
         epoch = d.get("epoch", 0) + 1  # the visit is over: a new epoch, before any cleanup starts
@@ -584,7 +585,8 @@ def _release(slot: str) -> bool:
         cur = ref.get(transaction=tx).to_dict() or {}
         if cur.get("state") != "releasing" or cur.get("epoch") != epoch:
             return False  # someone else took this release over (stale-release takeover): theirs stands
-        tx.set(ref, {**after, "uid": d["uid"], "lastLeaseId": d.get("leaseId"), "restore": plan, "epoch": epoch})
+        tx.set(ref, {**after, "uid": d["uid"], "lastLeaseId": d.get("leaseId"), "restore": plan, "epoch": epoch,
+                     **({"authDeletion": cur["authDeletion"]} if cur.get("authDeletion") else {})})
         return True
 
     return db.run_transaction(finish)
@@ -596,8 +598,67 @@ def cleanup(slot: str, uid: str, epoch: int) -> None:
     newer cleanup owns the slot, or the slot serves a newer visit. Raises if any part fails."""
     with db.fenced(cleanup_check(slot, epoch)):
         wipe(uid)
-        db.fence_now()  # the Auth user is deleted only while this cleanup still owns a slot being cleaned
+        renew_maintenance_claim(slot, epoch)
+        _mark_auth_deletion(slot, epoch)  # fenced: only while this cleanup owns a slot being cleaned
+    reset_auth_user(uid)  # raises on anything but done / already gone: the marker then stays (no lease, no takeover)
+    _clear_auth_deletion(slot, epoch)
+
+
+AUTH_DELETION_STALE = timedelta(minutes=10)  # far beyond the Auth call's own timeout
+
+
+def _mark_auth_deletion(slot: str, epoch: int) -> None:
+    """Record the deletion in the transaction that authorises it. While the marker exists the slot is never leased and
+    its release is never taken over, so a deletion still in flight can't land on a newer visit of the same uid."""
+    @firestore.transactional
+    def run(tx):
+        ref = slots().document(slot)
+        ref.get(transaction=tx)  # the cleanup fence (db.run_transaction) has just checked epoch and state on it
+        tx.update(ref, {"authDeletion": {"epoch": epoch, "at": _now()}})
+    db.run_transaction(run)
+
+
+def _clear_auth_deletion(slot: str, epoch: int | None) -> None:
+    @firestore.transactional
+    def run(tx):
+        ref = slots().document(slot)
+        d = ref.get(transaction=tx).to_dict() or {}
+        m = d.get("authDeletion")
+        if m and (epoch is None or m.get("epoch") == epoch):
+            tx.update(ref, {"authDeletion": firestore.DELETE_FIELD})
+    with db.fenced(None):
+        db.run_transaction(run)
+
+
+def auth_user_exists(uid: str) -> bool:
+    from firebase_admin import auth as fb_auth
+    from .auth import _app
+    try:
+        fb_auth.get_user(uid, app=_app())
+        return True
+    except fb_auth.UserNotFoundError:
+        return False
+
+
+def resolve_stale_auth_deletion(slot: str) -> bool:
+    """A marker older than AUTH_DELETION_STALE (its worker died): delete again and confirm the user is gone, then clear
+    it. True when the slot has no marker left."""
+    d = slots().document(slot).get().to_dict() or {}
+    m = d.get("authDeletion")
+    if not m:
+        return True
+    if _now() - m["at"] < AUTH_DELETION_STALE:
+        return False
+    uid = d.get("uid") or pool().get(slot)
+    try:
         reset_auth_user(uid)
+        if auth_user_exists(uid):
+            return False
+    except Exception as e:
+        log.warning("live auth re-check %s failed: %s", slot, type(e).__name__)
+        return False
+    _clear_auth_deletion(slot, m.get("epoch"))
+    return True
 
 
 # ------------------------------------------------------------------ disk restore from the golden snapshot
@@ -691,7 +752,8 @@ def _restore_done(slot: str, r: dict) -> bool:
             return "pending"  # its cleanup is still running
         if d.get("state") == "restoring":
             tx.set(ref, {"state": "free", "freedAt": _now(), "lastLeaseId": d.get("lastLeaseId"),
-                         "lastRestoreSeconds": took, "epoch": d.get("epoch", 0)})
+                         "lastRestoreSeconds": took, "epoch": d.get("epoch", 0), "uid": d.get("uid"),
+                         **({"authDeletion": d["authDeletion"]} if d.get("authDeletion") else {})})
         else:  # maintenance (cleanup failed), or a lease that ended: the disk is clean, the slot stays as it is
             tx.update(ref, {"restore": firestore.DELETE_FIELD})
         return None
@@ -754,7 +816,7 @@ def wipe(uid: str) -> None:
     else:
         demo.start(uid, "empty")
     db.fence_now()
-    if memory.enabled() and not memory.forget_all(uid):
+    if not memory.purge_pool_account(uid):  # memory is off for pool uids; this only clears what predates that
         raise RuntimeError("memory_not_cleared")
     for w in watch.watches(uid).get():
         db.fence_now()
@@ -862,6 +924,11 @@ def sweep() -> dict:
                 _finish_maintenance(name, epoch)
             except Exception as e:
                 log.warning("live cleanup retry %s failed: %s", name, type(e).__name__)
+    for name in pool():
+        try:
+            resolve_stale_auth_deletion(name)
+        except Exception as e:
+            log.warning("live auth marker %s: %s", name, type(e).__name__)
     restored = advance_restores(budget=240)  # the scheduled request may run 15 min; a restore takes ~1-2
     stopped = []
     now = _now()
@@ -878,6 +945,21 @@ def sweep() -> dict:
     return {"enabled": True, "released": released, "restored": restored, "stoppedOrphans": stopped}
 
 
+MAINT_CLAIM_STALE = timedelta(minutes=10)
+
+
+def renew_maintenance_claim(slot: str, epoch: int) -> None:
+    """A long cleanup keeps its claim fresh (called between its steps) so no other sweep takes it over."""
+    @firestore.transactional
+    def run(tx):
+        ref = slots().document(slot)
+        d = ref.get(transaction=tx).to_dict() or {}
+        if (d.get("maintClaim") or {}).get("epoch") == epoch:
+            tx.update(ref, {"maintClaim.at": _now()})
+    with db.fenced(None):
+        db.run_transaction(run)
+
+
 def _claim_maintenance(slot: str) -> int | None:
     @firestore.transactional
     def run(tx):
@@ -885,8 +967,11 @@ def _claim_maintenance(slot: str) -> int | None:
         d = ref.get(transaction=tx).to_dict() or {}
         if d.get("state") != "maintenance" or not d.get("needsCleanup"):
             return None
+        claim = d.get("maintClaim")
+        if claim and claim["at"] > _now() - MAINT_CLAIM_STALE:
+            return None  # another worker holds a fresh claim: never steal its epoch
         epoch = d.get("epoch", 0) + 1
-        tx.update(ref, {"epoch": epoch})
+        tx.update(ref, {"epoch": epoch, "maintClaim": {"epoch": epoch, "at": _now()}})
         return epoch
     return db.run_transaction(run)
 
@@ -899,7 +984,8 @@ def _finish_maintenance(slot: str, epoch: int) -> None:
         if d.get("state") != "maintenance" or d.get("epoch") != epoch:
             return
         tx.update(ref, {"state": "restoring" if d.get("restore") else "free", "freedAt": _now(),
-                        "needsCleanup": firestore.DELETE_FIELD, "reason": firestore.DELETE_FIELD})
+                        "needsCleanup": firestore.DELETE_FIELD, "reason": firestore.DELETE_FIELD,
+                        "maintClaim": firestore.DELETE_FIELD})
     db.run_transaction(run)
 
 

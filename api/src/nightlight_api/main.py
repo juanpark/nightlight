@@ -554,11 +554,15 @@ def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(
 
 @app.get("/api/me/memories")
 def my_memories(uid: str = Depends(current_uid)):
+    if live.pool_slot(uid):  # a live demo machine's account keeps no memories
+        return {"enabled": False, "memories": [], "reason": "memory_off_on_demo_machine"}
     return {"enabled": memory.enabled(), "memories": memory.list_all(uid)}
 
 
 @app.delete("/api/me/memories")
 def forget_my_memories(uid: str = Depends(current_uid)):
+    if live.pool_slot(uid):
+        raise ApiError(403, "memory_off_on_demo_machine")
     return {"ok": memory.forget_all(uid) if memory.enabled() else True}
 
 

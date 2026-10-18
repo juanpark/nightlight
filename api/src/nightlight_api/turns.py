@@ -259,7 +259,7 @@ def sse(event: dict) -> str:
 
 async def _recall(uid: str, ep: int) -> list[str]:
     """Facts remembered about this person that relate to their message; [] if memory is off, slow or failing."""
-    if not memory.enabled():
+    if not memory.on_for(uid):
         return []
     try:
         if (facts := memory.cached(uid, ep)) is not None:
@@ -313,7 +313,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             if not continuation:
                 # One memory lookup per turn, in parallel with the fleet summary; both go into the instruction and
                 # so through the same exact token bound as everything else.
-                if memory.enabled():
+                if memory.on_for(uid):
                     try:
                         ctx.memory_epoch = await asyncio.to_thread(memory.epoch, uid)
                     except Exception:  # memory never breaks a turn
