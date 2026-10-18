@@ -33,8 +33,10 @@ remove_device:
     files and its key) and the device leaves the map. If it isn't reporting, its access is cut at once and the helper
     stops by itself when it next wakes up; to clean the files off it, run this on the device:
     curl -fsSL {web}/uninstall.sh | sh
-    A removed device's history, notes and activity are kept (archived) for 30 days, then deleted; "Forget for good"
-    deletes them at once. Adding the same machine again later makes it a new device.
+    A removed device's history, notes and activity are kept (archived) for 30 days, then deleted for good; the app
+    has no button to delete them sooner. Within those 30 days, installing the helper on the same machine again and
+    choosing "Continue its history" when you approve it brings the device back with its history; otherwise (or after
+    the 30 days) it joins as a new device.
 
 uninstall_by_hand:
   title: Uninstall the helper by hand
@@ -150,15 +152,18 @@ approvals_and_trust:
     Restarts, clean-ups and removals on a real device come as a card (what it will do, what it affects, whether it
     can be undone, and the exact command where there is one) and run only after you approve. Helper updates run when
     you tap Update, or by themselves if you allowed that. Earning trust step by step works only on the sample home
-    for now: there, after you approve the same safe kind of job a few times, Nightlight offers to do that kind on its
-    own and tell you afterwards; the Trust panel shows each kind's step and can move it back. On your own devices,
+    for now: there, after the same safe, routine kind of job (cleaning up logs, removing leftover app downloads,
+    backing up the game world) has gone well three times, Nightlight offers to do that kind on its own and tell you
+    afterwards. Restarts and updates never get that offer; they always ask. The Trust panel shows each kind's step
+    and can move it back, and a failure moves it back a step by itself (unless that level was pinned, which only
+    the API can do, not the app). On your own devices,
     every restart and clean-up asks you each time. Jobs that can't be undone always ask.
 
 sample_home:
   title: The sample home
   text: |
     A simulated home (a Raspberry Pi, a NAS, a game server...) to try Nightlight without installing anything. Show or
-    hide it from the menu; "Reset" starts it over. Real devices you add are never touched by a reset.
+    hide it from the menu; "Reset the sample home" (under More, Demo tools) starts it over. Real devices you add are never touched by a reset.
 
 expert_sessions:
   title: Expert sessions (real commands, signed with your passkey)

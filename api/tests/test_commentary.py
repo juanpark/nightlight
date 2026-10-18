@@ -53,5 +53,5 @@ def test_words_mixed_with_codes_read_plainly_with_the_list_in_details():
 
 def test_saved_fixes_not_runbooks():
     line, _ = turns._commentary("use_runbook", {"runbook": "Clear old app downloads", "actionIds": ["a", "b"]})
-    assert line == "Saved fix \"Clear old app downloads\": 2 step(s) waiting for your OK"
+    assert line == "Saved fix \"Clear old app downloads\": 2 steps waiting for your OK"
     assert "runbook" not in line.lower()

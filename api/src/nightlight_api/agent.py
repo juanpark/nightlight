@@ -468,6 +468,10 @@ def make_tools(ctx: TurnContext, read_only: bool):
                "risk": a["riskClass"]}
         if a.get("result"):
             out["result"] = a["result"]["summary"]
+        if (a.get("decision") or {}).get("by") == "auto":
+            # Trust let it run without a card: the chat step says so, and so should the answer.
+            out["ranOnItsOwn"] = ("No card: this ran on its own because the owner allowed this kind of job in Trust. "
+                                  "Say so plainly in your answer.")
         if a.get("waiting") or a.get("saferFirst"):
             # Nothing new was asked for: the card that came back is another job (or the same one, from earlier).
             job = {"job": a["type"], "status": a["status"], "plan": a["plan"], **({"result": out["result"]}
