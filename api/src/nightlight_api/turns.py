@@ -411,7 +411,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     if part.function_response.name in ACTION_TOOLS and (resp.get("status") == "pending"
                                                                         or resp.get("awaitingTap")):
                         ids = resp.get("actionIds") or [resp.get("actionId")]  # a runbook can put up several
-                        if step is not None:
+                        shown_ids = {i for t in tool_calls for i in (t.get("actionIds") or [t.get("actionId")])}
+                        ids = [i for i in ids if i not in shown_ids]  # a card sits after the first step that got it
+                        if step is not None and ids:
                             step["actionId"] = ids[0]  # the card sits right after its step
                             if len(ids) > 1:
                                 step["actionIds"] = ids
@@ -497,8 +499,11 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if status == "asked":
         return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
     if status in ("waiting", "safer_first"):
-        plan = (resp.get("proposed") or {}).get("plan") or ""
-        return ("A card for this was already waiting: " if status == "waiting" else "The safer step first: ") + plan, None
+        job = resp.get("proposed") or {}
+        if job.get("status") in ("done", "failed"):  # the safer step ran on its own: its outcome is the receipt
+            return f"The safer step first ({job['status']}): {job.get('result') or job.get('plan') or ''}", None
+        lead = "A card for this was already waiting: " if status == "waiting" else "The safer step first: "
+        return lead + (job.get("plan") or ""), None
     if name == "check_space" and status == "done" and "devices" in resp:
         rows = [f"{d.get('name')}: " + ", ".join(f"{u['what']} {u['sizeGb']} GB" for u in d.get("usedBy") or [])
                 for d in resp["devices"] if d.get("usedBy")]
@@ -576,6 +581,8 @@ def _stored_step(t: dict, error: dict | None) -> dict:
 def _ok(resp: dict) -> bool:
     """Whether a step worked, from the tool's own status (the chat marks failed steps; it never hides them)."""
     status = resp.get("status")
+    if status in ("waiting", "safer_first"):  # the step's outcome is the card it came back with
+        status = (resp.get("proposed") or {}).get("status")
     return not (status in ("error", "refused", "failed") or (status is None and (resp.get("reason") or resp.get("error"))))
 
 

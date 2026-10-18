@@ -100,13 +100,14 @@ def test_measured_measurements_are_kept_and_an_empty_cleanup_gets_no_card(client
     client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "Checked", "output": out},
                 headers={"X-Device-Token": dev["token"]})
     m = db.device(started, dev["deviceId"]).get().to_dict()["spaceMeasured"]
-    assert m["empty_trash"]["gb"] == 2.1 and m["docker_prune"]["gb"] == 0.0 and m["npm_cache"]["gb"] == 0.0
-    for recipe in ("docker_prune", "npm_cache"):
-        with pytest.raises(Outcome) as e:
-            _propose(started, "fix", device=dev["deviceId"], turn=f"t_{recipe}", params={"recipe": recipe})
-        assert str(e.value) == "nothing_to_free" and e.value.info["measuredGb"] == 0.0
-    assert _propose(started, "fix", device=dev["deviceId"], turn="t_trash",
-                    params={"recipe": "empty_trash"})["status"] == "pending"
+    assert m["empty_trash"]["gb"] == 2.1 and m["docker_prune"]["gb"] == 0.0
+    assert "npm_cache" not in m  # no line: unknown (small, or not measurable), never a zero
+    with pytest.raises(Outcome) as e:
+        _propose(started, "fix", device=dev["deviceId"], turn="t_docker", params={"recipe": "docker_prune"})
+    assert str(e.value) == "nothing_to_free" and e.value.info["measuredGb"] == 0.0
+    for recipe in ("empty_trash", "npm_cache"):
+        assert _propose(started, "fix", device=dev["deviceId"], turn=f"t_{recipe}",
+                        params={"recipe": recipe})["status"] == "pending"
     tools, _ = _tools(started, "turn_n1")
     r = _call(tools, "clean_up", device_id=dev["deviceId"], recipe="docker_prune")
     assert r["status"] == "nothing_to_free" and r["recipe"] == "docker_prune"
@@ -116,7 +117,7 @@ def test_measure_reads_sizes_and_missing_places(started):
     mac = {"os": "macOS 15"}
     got = playbooks.measure("Biggest known places (sizes):\nHomebrew cache: 900 MB\nNot checked (macOS privacy): "
                             "Downloads, Desktop, Documents, Movies, Trash.", ["disk"], mac)
-    assert got == {"brew_cleanup": 0.88, "xcode_build_data": 0.0, "npm_cache": 0.0}  # Trash wasn't looked at
+    assert got == {"brew_cleanup": 0.88}  # missing places stay unknown
     assert playbooks.measure("Docker disk use:\nImages  1  1  1GB  100B (0%)", ["docker"], mac) == \
         {"docker_prune": 0.0}  # bytes, never gigabytes
     assert playbooks.measure("", ["disk"], mac) == {}  # nothing said, nothing assumed
@@ -166,3 +167,23 @@ def test_update_plex_on_the_sample_home_is_a_real_card(started):
     assert _call(tools, "update_app", device_id="mac-1", app="plex")["status"] == "error"  # nothing newer now
     assert _call(tools, "update_app", device_id="pi-1", app="teslamate")["status"] == "error"  # no known version
     assert _call(tools, "update_app", device_id="game-1", app="minecraft")["status"] == "error"  # update_server's
+
+
+def test_a_waiting_update_for_one_app_never_answers_for_another(started):  # Codex contracts #3
+    db.services(started, "mac-1").document("homebridge").update({"updateAvailable": True,
+                                                                 "latestVersion": "2026-10-15", "version": "2026-10-01"})
+    plex = _propose(started, "update_app", device="mac-1", turn="turn_p1", params={"app": "plex"})
+    other = _propose(started, "update_app", device="mac-1", turn="turn_p2", params={"app": "homebridge"})
+    assert other["id"] != plex["id"] and not other.get("waiting") and other["params"] == {"app": "homebridge"}
+
+
+def test_a_failed_automatic_safer_step_is_a_failed_step(started):  # Codex contracts #2
+    from nightlight_api import trust as trustlib, turns
+    db.trust_doc(started, "sim", "backup_world").set({**trustlib.new_doc("backup_world", generation(started)),
+                                                       "level": "auto"})
+    db.device(started, "game-1").update({"simFailNext": "backup_world"})
+    tools, _ = _tools(started, "turn_af")
+    r = _call(tools, "restart_server", device_id="game-1")
+    assert r["status"] == "safer_first" and r["proposed"]["status"] == "failed" and not r["awaitingTap"]
+    assert "didn't respond" in r["proposed"]["result"]
+    assert turns._ok(r) is False and "(failed)" in turns._commentary("restart_server", r)[0]
