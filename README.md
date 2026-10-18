@@ -1,5 +1,10 @@
 # Nightlight
 
+![Live app version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnightlight-api-1032111130355.asia-northeast3.run.app%2Fapi%2Fversion&query=%24.app&label=app&color=2d3a5e) ![Live build](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnightlight-api-1032111130355.asia-northeast3.run.app%2Fapi%2Fversion&query=%24.build&label=build&color=596071) ![Helper served](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnightlight-api-1032111130355.asia-northeast3.run.app%2Fapi%2Fversion&query=%24.helper&label=helper&color=b8720a)
+
+*Read live from the deployed API (`/api/version`); the app's version is the repo's `VERSION` file and the build is the
+git commit it was deployed from. On a device: `nightlight --version`.*
+
 Nightlight is a house-sitter for the computers you run at home or in a small office, for people with no IT person.
 It shows every device and what runs on it on one map. It watches them, explains problems in plain words, and fixes
 them only with your permission, earning more freedom one kind of job at a time.

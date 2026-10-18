@@ -3953,6 +3953,7 @@ def main():
     except (AttributeError, ValueError):
         pass
     p = argparse.ArgumentParser(description="Nightlight helper")
+    p.add_argument("--version", action="version", version=f"Nightlight helper {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enrol")
     e.add_argument("api")
