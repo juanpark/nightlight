@@ -177,7 +177,7 @@ export function MonoLanding() {
         <section id="top" className={s.hero} aria-labelledby="hero-title">
           <div className={s.heroText}>
             <h1 id="hero-title" className={s.h1} data-hero-rise>
-              Your home’s computers, <span className={s.quiet}>looked after while you sleep.</span>
+              Go to sleep. <span className={s.quiet}>It’s got this.</span>
             </h1>
             <div className={s.heroSide}>
               <p className={s.lede} data-hero-rise>
