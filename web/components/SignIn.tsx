@@ -1,6 +1,6 @@
 "use client";
-// The start screen: your own computers first (the real thing), then the sample home, then (while LIVE_DEMO is on and
-// the pool has machines) a real cloud machine.
+// The start screen: the sample home first (instant, everything Nightlight does), then your own computers as the next
+// step, then (while LIVE_DEMO is on and the pool has machines) a real cloud machine.
 import { useEffect, useState } from "react";
 import { GoogleAuthProvider, signInAnonymously, signInWithPopup } from "firebase/auth";
 import { api } from "@/lib/api";
@@ -58,15 +58,17 @@ export default function SignIn() {
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
           for the next visitor.</p>}
 
-        <div className="start-option start-own">
-          <p><strong>The real Nightlight runs on your own computers.</strong> Sign in with Google and add your Mac or
-            Raspberry Pi in about two minutes: that&apos;s the full experience.</p>
-          <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
+        <div className="start-option start-sample">
+          <p><strong>Sit back and see everything Nightlight can do</strong></p>
+          <p className="small">A complete sample home, ready instantly: six devices, real problems to fix, cards to
+            approve, trust to earn. Everything you see is simulated; the AI answering you is real.</p>
+          <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant)</button>
         </div>
 
-        <div className="start-option">
-          <p>Just looking? A pretend home with a few devices and a problem or two to fix.</p>
-          <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant, simulated)</button>
+        <div className="start-option start-own">
+          <p><strong>Ready for the real thing?</strong> Sign in with Google and add your Mac or Raspberry Pi in about two
+            minutes.</p>
+          <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
         </div>
 
         {busyAll ? (
