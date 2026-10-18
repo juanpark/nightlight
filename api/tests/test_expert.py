@@ -370,7 +370,12 @@ def test_audit_hides_whole_quoted_secret_values(helper):  # codex audit P2 #2
              "mysql --password=two\\ secret\\ words -h db": "mysql --password=[hidden] -h db",
              "env API_KEY=ab\"cd ef\"gh run": "env API_KEY=[hidden] run",
              "mysql -h db --password 'never closed words": "mysql -h db --password [hidden]",
-             "rm -rf ~/.gradle/caches": "rm -rf ~/.gradle/caches"}
+             "rm -rf ~/.gradle/caches": "rm -rf ~/.gradle/caches",
+             # codex recheck 2: shell punctuation is its own token
+             "true;API_KEY=ab\"cd ef\"gh run": "true ; API_KEY=[hidden] run",
+             "cd /x && mysql --password 'a b' -e q": "cd /x && mysql --password [hidden] -e q",
+             "echo hi|TOKEN='a b' run": "echo hi | TOKEN=[hidden] run",
+             "(SECRET='a b' run)": "( SECRET=[hidden] run )"}
     for cmd, want in cases.items():
         assert helper._audit_cmd(cmd) == want, (cmd, helper._audit_cmd(cmd))
 

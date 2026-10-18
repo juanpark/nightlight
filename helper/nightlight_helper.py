@@ -2115,13 +2115,20 @@ def _audit_redact(command):
     """Hide the whole value of a secret-bearing option (`--password VALUE`, `--token=VALUE`, `PASSWORD=VALUE`), as
     the shell would split it. If it can't be split (an unterminated quote), everything after the first such option."""
     import shlex
-    try:
-        tokens = shlex.split(command)
+    punct = set("();<>|&")
+    try:  # `;`, `&&`, `|`, `(`, `)` become tokens of their own, so `true;API_KEY=...` is seen as an assignment
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
     except ValueError:
         m = _AUDIT_SECRET_START.search(command)
         return command[:m.end()] + " [hidden]" if m else command
     out, hide_next, changed = [], False, False
     for t in tokens:
+        if set(t) <= punct:
+            out.append(t)
+            hide_next = False
+            continue
         if hide_next:
             out.append("__HIDDEN__")
             hide_next, changed = False, True
@@ -2136,7 +2143,7 @@ def _audit_redact(command):
         out.append(t)
     if not changed:
         return command  # shown exactly as signed
-    return shlex.join(out).replace("__HIDDEN__", "[hidden]")
+    return " ".join(t if set(t) <= punct else shlex.quote(t) for t in out).replace("__HIDDEN__", "[hidden]")
 
 
 def _audit_cmd(command):
