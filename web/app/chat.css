@@ -57,9 +57,14 @@
 
 .mode-switch { display: flex; align-items: center; gap: 0; flex-wrap: wrap; padding: 0 10px 6px; }
 .mode-switch button { font-size: 12px; padding: 4px 10px; border-radius: 0; }
-.mode-switch button:first-child { border-radius: 8px 0 0 8px; }
-.mode-switch button:nth-child(2) { border-radius: 0 8px 8px 0; margin-left: -1px; }
-.mode-switch button.on, .mode-switch button.on:hover { background: var(--select); color: var(--ink); border-color: var(--accent); font-weight: 650; position: relative; z-index: 1; }
+/* Segmented switches (Map / List / Status, Quick / Investigate): joined buttons rounded only at the outer ends; the
+   chosen one is filled with the opposite of the page (cream on navy at night, navy on cream by day). */
+.mode-switch button:first-of-type { border-radius: 8px 0 0 8px; }
+.mode-switch button:last-of-type { border-radius: 0 8px 8px 0; }
+.mode-switch button + button { margin-left: -1px; }
+.mode-switch button.on, .mode-switch button.on:hover { background: var(--ink); color: var(--bg); border-color: var(--ink);
+  font-weight: 650; position: relative; z-index: 1; }
+.mode-switch button.on svg { color: currentColor; }
 .mode-hint { flex-basis: 100%; padding-top: 4px; }
 .chat-mode { padding: 0 14px 12px; margin-top: -4px; }
 
