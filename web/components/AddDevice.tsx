@@ -88,7 +88,7 @@ function Reassure() {
     <div className="promise small">
       <ul>
         <li><strong>Watches, changes nothing.</strong> A fix or clean-up happens only after you tap Approve.</li>
-        <li><strong>Nothing can connect in to your computer.</strong> It only reaches out to Nightlight, so your
+        <li><strong>It opens no way in to your computer.</strong> It only reaches out to Nightlight, so your
           computer never shows a security pop-up about it.</li>
         <li><strong>Stays on the machine:</strong> its name and addresses on your network, files, passwords and keys.</li>
         <li><strong>One line removes it</strong>, or remove it from the app.</li>
