@@ -485,3 +485,42 @@ def test_a_watch_nobody_else_can_check_stays_and_the_ask_stays(client, started):
     beat(client, new["token"], {**strict, "watchResults": [{"cid": "6c6c6c6c6c61", "up": True, "ms": 2}]})
     ask = next(f for f in db.device(started, old["deviceId"]).get().to_dict()["findings"] if f["id"] == "f_rewatch")
     assert "re-allow watching Printer?" in ask["message"]
+
+
+def test_a_watcher_that_sees_it_on_another_port_keeps_it_and_checks_that_port(client, started):  # Codex handover #1
+    old, watched = watching_then_quiet(client, started)
+    mini = _mini(client)
+    _aged(started, watched)
+    _look(client, mini, [{**PRINTER, "cid": "5a5a5a5a5a51"}])
+    _look(client, old, [ROUTER, {**PRINTER, "ports": [80]}])  # same id, but 631 isn't open now
+    p = db.device(started, watched[1]).get().to_dict()
+    assert (p["watchedBy"], p["cid"], p["checkPort"]) == (old["deviceId"], PRINTER["cid"], 80)
+    assert not any("is now watched from" in m for m in _events(started, watched[1]))
+    _again(old["token"])
+    assert {"cid": PRINTER["cid"], "port": 80} in beat(client, old["token"], APP).json()["watch"]
+
+
+def test_an_offline_helper_never_takes_a_watch(client, started):  # Codex handover #2
+    old, watched = watching_then_quiet(client, started)
+    mini = _mini(client)
+    new = continued(client, old)
+    beat(client, new["token"], APP)
+    _aged(started, watched)
+    _look(client, mini, [{**PRINTER, "cid": "4a4a4a4a4a41"}])
+    db.device(started, mini["deviceId"]).update({"lastSeen": datetime.now(timezone.utc) - timedelta(hours=23)})
+    _look(client, new, [{**ROUTER, "cid": "4b4b4b4b4b41"}, {**PRINTER, "cid": "4b4b4b4b4b42", "ports": []}])
+    assert db.device(started, watched[1]).get().to_dict()["watchedBy"] == old["deviceId"]
+
+
+def test_a_check_from_before_the_reinstall_keeps_the_ask(client, started):  # Codex handover #3
+    old, watched = watching_then_quiet(client, started)  # both checked moments before the reinstall
+    mini = _mini(client)
+    new = continued(client, old)
+    strict = {**APP, "manage": "strict"}
+    beat(client, new["token"], strict)
+    _look(client, new, [])  # it finds nothing yet
+    _aged(started, watched[1:])
+    _look(client, mini, [{**PRINTER, "cid": "3a3a3a3a3a31"}])
+    assert db.device(started, watched[1]).get().to_dict()["watchedBy"] == mini["deviceId"]
+    ask = next(f for f in db.device(started, old["deviceId"]).get().to_dict()["findings"] if f["id"] == "f_rewatch")
+    assert ask  # the router isn't checked by the new install yet: the ask stays
