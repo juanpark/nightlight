@@ -180,7 +180,7 @@ export default function Home({ user, account }: { user: User; account?: string }
                   ? "Notifications are blocked for this site in your browser settings"
                   : "Show a notification when something goes wrong, while this tab is open"}>
                 {notify.on ? "Notifying you" : "Notify me"}</button>)}
-            <button onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
+            <button onClick={() => askChat("Is anything wrong with my servers?")}>Ask if anything&apos;s wrong</button>
             <div style={{ flexBasis: "100%" }}>
               <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
                 onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
