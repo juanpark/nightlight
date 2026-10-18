@@ -93,7 +93,16 @@ export default function Home({ user, account }: { user: User; account?: string }
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
   const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
-  const toggle = (p: Panel) => { setMenu(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
+  const [more, setMore] = useState(false); // wide screens: the secondary header links, folded under More
+  useEffect(() => {
+    if (!more) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element).closest?.(".more")) setMore(false);
+    };
+    document.addEventListener("keydown", close); document.addEventListener("pointerdown", close);
+    return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close); };
+  }, [more]);
+  const toggle = (p: Panel) => { setMenu(false); setMore(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
   function go(g: Go) {
     if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.app ? "apps" : g.tab ?? null); setApp(g.app ?? null); }
     else if (g.to === "panel") setPanel(g.panel);
@@ -116,18 +125,24 @@ export default function Home({ user, account }: { user: User; account?: string }
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
-        <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
-        <button onClick={() => toggle("activity")}>Activity</button>
-        {!live && <button onClick={() => toggle("memory")}>Memory</button>}
         <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
-        <button onClick={() => toggle("demo")}>Demo tools</button>
-        <button data-tour="settings" onClick={() => toggle("settings")}>Settings</button>
         {user.isAnonymous
-          ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
-          : <span className="small muted">{user.email}</span>}
-        <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
+          && <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>}
+        <div className="more">
+          <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
+            onClick={() => setMore(!more)}>More</button>
+          <div className={`more-list ${more ? "open" : ""}`}>
+            <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
+            <button onClick={() => toggle("activity")}>Activity</button>
+            {!live && <button onClick={() => toggle("memory")}>Memory</button>}
+            <button onClick={() => toggle("demo")}>Demo tools</button>
+            <button data-tour="settings" onClick={() => toggle("settings")}>Settings</button>
+            {!user.isAnonymous && <span className="small muted" title={user.email ?? undefined}>{user.email}</span>}
+            <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
+          </div>
+        </div>
         </nav>
       </header>
       <div className="main" data-pane={pane}>
