@@ -612,9 +612,117 @@ def _rebound(watched, items: list[dict], device_id: str) -> dict:
     return out
 
 
+CHECKED_LATELY = timedelta(minutes=10)  # a watcher that reported a check this recently is still checking it
+
+
+REPORTED_LATELY = timedelta(minutes=5)  # a helper silent longer than this is offline (as watch.SILENT_AFTER)
+
+
+def _checked_lately(d: dict, watcher: dict, now: datetime, proof: bool = False) -> bool:
+    """Whether the watcher reported a check of this thing lately, by its current install (a check from before a
+    reinstall says nothing about the new helper). As `proof` (to clear the ask after a reinstall), a check counts only
+    when the install's start is known: its `helperSince`, else when the ask began (`rewatch.at`)."""
+    last = d.get("lastSeen")
+    since = watcher.get("helperSince") or (watcher.get("rewatch") or {}).get("at")
+    if proof and not isinstance(since, datetime):
+        return False  # a device continued before either was kept: keep the ask
+    return isinstance(last, datetime) and now - last < CHECKED_LATELY \
+        and not (isinstance(since, datetime) and last <= since)
+
+
+def _check_port(d: dict, look: list[dict]) -> int | None:
+    """The port the watcher can check this thing on, from its look: the helper checks a thing only under the id it
+    found it by, and only on a port it saw open there. The configured port first, else another it saw."""
+    ports = next((it.get("ports") or [] for it in look if it.get("cid") == d.get("cid")), [])
+    return d.get("checkPort") if d.get("checkPort") in ports else next((p for p in WATCH_PORTS if p in ports), None)
+
+
+def _handover(on_map: dict, helpers: dict, looks: dict, now: datetime) -> dict:
+    """Watched things whose watcher can't check them, handed to another of the owner's own helpers that can: {doc id:
+    {the new watcher, its id for the thing, a port to check}}. A watcher can't check a thing when its latest look
+    shows no port to check on it (or doesn't show it at all) and it hasn't reported a check lately; another helper can
+    when its own look saw that exact thing (the hardware fingerprint; the address fingerprint only for a thing that has
+    none) with a port to check. That helper must be a working app-managed or strict device of this account (never a
+    watched or sample one) reporting now, on the same network, with room left. The first by (keeps the old port,
+    device id) wins, so it is deterministic. A watcher that still sees the thing, but on another port than the one
+    set, keeps it and checks that port instead ({doc id: {"checkPort"}}). `looks` is {helper id: items}, unexpired
+    only. Pure: the caller writes."""
+    out, load = {}, {}
+    for d in on_map.values():
+        if d.get("watchedBy") and not d.get("revoked"):
+            load[d["watchedBy"]] = load.get(d["watchedBy"], 0) + 1
+    taken = {(d.get("watchedBy"), d.get("cid")) for d in on_map.values() if not d.get("revoked")}
+    for wid in sorted(on_map):
+        d = on_map[wid]
+        watcher = d.get("watchedBy")
+        if d.get("archived") or d.get("revoked") or d.get("realm") != "real" or d.get("simulated") \
+                or watcher not in looks or _checked_lately(d, helpers.get(watcher) or {}, now):
+            continue  # its watcher hasn't looked lately (nothing to go on), or is checking it
+        mine = _check_port(d, looks[watcher])
+        if mine is not None:
+            if mine != d.get("checkPort"):
+                out[wid] = {"checkPort": mine}  # the current watcher can check it: it stays there
+            continue
+        hw, tag = (d.get("net") or {}).get("hw"), (d.get("net") or {}).get("self")
+        gate = ((helpers.get(watcher) or {}).get("net") or {}).get("gateway")
+        best = None
+        for hid in sorted(looks):
+            h = helpers.get(hid) or {}
+            if hid == watcher or h.get("kind") == "watched" or h.get("realm") != "real" or h.get("simulated") \
+                    or h.get("archived") or h.get("revoked") or h.get("uninstalled") \
+                    or h.get("manage") not in ("app", "strict") or load.get(hid, 0) >= WATCHED_PER_HELPER \
+                    or not (isinstance(h.get("lastSeen"), datetime) and now - h["lastSeen"] < REPORTED_LATELY):
+                continue
+            there = (h.get("net") or {}).get("gateway")
+            if (gate and there and gate != there) or (not hw and not (gate and there)):
+                continue  # another network (an address fingerprint alone could repeat on one)
+            for it in looks[hid]:
+                if (hid, it.get("cid")) in taken or not (it.get("hw") == hw if hw else tag and it.get("tag") == tag):
+                    continue
+                ports = it.get("ports") or []
+                port = d.get("checkPort") if d.get("checkPort") in ports else \
+                    next((p for p in WATCH_PORTS if p in ports), None)
+                if port is not None:
+                    rank = (port != d.get("checkPort"), hid)
+                    if best is None or rank < best[0]:
+                        best = (rank, {"watchedBy": hid, "cid": it["cid"], "checkPort": port})
+                    break
+        if best:
+            move = out[wid] = best[1]
+            taken.add((move["watchedBy"], move["cid"]))
+            load[move["watchedBy"]] = load.get(move["watchedBy"], 0) + 1
+            load[watcher] = load.get(watcher, 1) - 1
+    return out
+
+
+def _handed_words(tx, uid: str, on_map: dict, helpers: dict, handed: dict, now: datetime) -> None:
+    """Writes for each handover: its description names the new watcher (unless the owner wrote their own), a line in
+    Activity says why, and the old watcher's ask to re-allow watching goes once nothing it watches is left unchecked."""
+    handed = {wid: m for wid, m in handed.items() if "watchedBy" in m}  # not the ones that only changed port
+    for wid, move in sorted(handed.items()):
+        d = on_map[wid]
+        old, new = helpers.get(d["watchedBy"]) or {}, helpers.get(move["watchedBy"]) or {}
+        if d.get("purpose") == role_purpose(d.get("role", "other"), old.get("name")):
+            tx.update(db.device(uid, wid), {"purpose": role_purpose(d.get("role", "other"), new.get("name"))})
+        event(tx, uid, wid, "watcher_changed", "info",
+              f"{d.get('name') or 'A watched device'} is now watched from {new.get('name') or 'another of your devices'}"
+              f": {old.get('name') or 'the device that watched it'} couldn't reach it.")
+    for oid in sorted({on_map[w]["watchedBy"] for w in handed}):
+        o = helpers.get(oid) or {}
+        left = [d for i, d in on_map.items() if d.get("watchedBy") == oid and i not in handed and not d.get("revoked")
+                and d.get("checkPort") and not _checked_lately(d, o, now, proof=True)]
+        findings = o.get("findings") or []
+        if left or not (o.get("rewatch") or any(f.get("id") == "f_rewatch" for f in findings)):
+            continue  # its next report names only the ones still unchecked
+        rest = [f for f in findings if f.get("id") != "f_rewatch"]
+        tx.update(db.device(uid, oid), {"rewatch": firestore.DELETE_FIELD, "findings": rest,
+                                        **({"status": health_of(rest)} if o.get("lastSeen") is not None else {})})
+
+
 def save_discoveries(token: str, items: list[dict]) -> dict:
     """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list. Names are
-    kept only while the account shows them."""
+    kept only while the account shows them. A watched thing its watcher can't check any more, which this or another
+    of the owner's helpers saw with a port to check, is handed to that helper (_handover)."""
     @firestore.transactional
     def run(tx):
         uid, device_id = token_owner(tx, token)
@@ -623,27 +731,46 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
         names = names_on(db.user(uid).get(transaction=tx).to_dict() or {})
         name = (dsnap.to_dict() or {}).get("name", "A device")
         on_map = db.devices(uid).where(filter=FieldFilter("kind", "==", "watched")).get(transaction=tx)
+        helpers = {s.id: s.to_dict() or {} for s in db.devices(uid).get(transaction=tx)}
+        now = _now()
+        looks = {s.id: d.get("items") or [] for s in discoveries_ref(uid).get(transaction=tx) for d in [s.to_dict() or {}]
+                 if s.id != device_id and not (d.get("expiresAt") and d["expiresAt"] < now)}
         mapped = [w.to_dict() for w in watched]  # already on the map: stays "added" across rediscovery
         kept = [{**it, "name": found_name(it.get("name")) if names else None,
                  "added": any(_same_thing(w, it, device_id) for w in mapped if not w.get("revoked"))} for it in items]
         taken = {(w.to_dict().get("net") or {}).get("hw") for w in on_map} - {None}
         moved = _rebound(watched, kept, device_id)
+        looks[device_id] = kept
+        handed = _handover({w.id: {**w.to_dict(), **moved.get(w.id, {})} for w in on_map}, helpers, looks, now)
         rw = (dsnap.to_dict() or {}).get("rewatch")
         if isinstance(rw, dict) and rw.get("state") != "unmatched" and \
                 any(w.to_dict().get("checkPort") and not w.to_dict().get("revoked") and w.id not in moved
+                    and w.id not in handed
                     and not any(it.get("cid") == w.to_dict().get("cid") for it in kept) for w in watched):
             tx.update(dsnap.reference, {"rewatch": {**rw, "state": "unmatched"}})  # the owner is asked about the rest
+        movers = [m for m in handed.values() if "watchedBy" in m]  # the rest only check another port
+        added = {(m["watchedBy"], m["cid"]) for m in movers}  # on the map now: not offered in Found nearby
+        for hid in sorted({m["watchedBy"] for m in movers} - {device_id}):
+            tx.update(discoveries_ref(uid).document(hid), {"items": [
+                {**it, "added": True} if (hid, it.get("cid")) in added else it for it in looks[hid]]})
+        kept = [{**it, "added": True} if (device_id, it.get("cid")) in added else it for it in kept]
         tx.set(discoveries_ref(uid).document(device_id), {
             "items": kept, "by": device_id, "byName": name,
-            "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
+            "at": firestore.SERVER_TIMESTAMP, "expiresAt": now + DISCOVERY_TTL})
         for w in on_map:
-            update = {**moved.get(w.id, {}), **_filled_in(w.to_dict(), device_id, kept, taken)}
+            update = {**moved.get(w.id, {}), **handed.get(w.id, {}), **_filled_in(w.to_dict(), device_id, kept, taken)}
             if update:
                 tx.update(w.reference, update)
+        _handed_words(tx, uid, {w.id: w.to_dict() for w in on_map}, helpers, handed, now)
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
-        return {"ok": True, "items": len(items)}
+        if movers:
+            links.mark_due(tx, uid)  # its line now runs to the new watcher's router
+        return uid, bool(movers), {"ok": True, "items": len(items)}
 
-    return db.run_transaction(run)
+    uid, handed, result = db.run_transaction(run)
+    if handed:
+        links.infer_quietly(uid)
+    return result
 
 
 WATCH_PORTS = (8123, 32400, 25565, 445, 631, 443, 80, 22, 7000)  # checked on the first one it answers; AirPlay last
