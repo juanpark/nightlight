@@ -101,7 +101,7 @@ export default function AccountSettings({ me, anonymous, live = false, onSave, o
         settings can&apos;t be changed here. On your own account this is a switch.</p>}
       {!live && !anonymous && <TimeZone me={me} />}
       {anonymous && <p id="names-demo" className="small muted">Settings are for your own account.{" "}
-        <button className="linkish small" onClick={onSave}>Save with Google</button> to change them.</p>}
+        <button className="linkish small" onClick={onSave}>Sign in with Google</button> to change them.</p>}
       {err && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</p>}
       <p className="small setting-help"><button className="small" onClick={onTour}>Show the tour again</button>{" "}
         <span className="muted">A short walk through what each part of the screen does.</span></p>

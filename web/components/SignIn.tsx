@@ -69,9 +69,9 @@ export default function SignIn() {
         </div>
 
         <div className="start-option start-sample">
-          <p><strong>Just looking?</strong> Take the full tour in a simulated sample home, instantly.</p>
-          <p className="small">Six devices, problems to fix, cards to approve, trust to earn. Everything you see is
-            simulated; the AI answering you is real.</p>
+          <p><strong>Just looking?</strong> Take a guided tour of a sample home.</p>
+          <p className="small">The devices are pretend; Nightlight&apos;s AI is real, so each answer takes a few seconds (we
+            cover the cost).</p>
           <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant)</button>
         </div>
 

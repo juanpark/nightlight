@@ -268,7 +268,7 @@ export default function AddDevice({ anonymous, live = false, onSave, devices }: 
       setCode(c);
     } catch (e) {
       setErr(e instanceof ApiError && e.code === "sign_in_required"
-        ? "Real devices need a Google account. Use Save with Google first."
+        ? "Real devices need a Google account. Use Sign in with Google first."
         : e instanceof ApiError && e.status === 429
           ? "That's a lot of codes in one hour. Please wait a little and try again."
           : "Couldn't get a code. Please try again.");
