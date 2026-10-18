@@ -173,6 +173,7 @@ ordinary approval cards have no second factor: a signed-in session can tap Appro
 
 | Next | Why |
 |---|---|
+| A Mac menu-bar app for the helper: status at a glance, its version, Open Nightlight, pause, uninstall | today the helper is an invisible background service; owners asked where to see it and its version (`nightlight --version` and the app's Settings show it now) |
 | Structured findings with evidence citations: each finding cites the step id it came from; the UI shows the evidence beside each claim | closes the last gap between words and tools (limit 1 above) |
 | `check_speed` and `alternatives` tools; `needs_measurement` on clean-ups | "slow" and "safer option" become measured answers, and a clean-up is never offered on nothing |
 | Per-call timeout and a visible time budget in both modes | an honest "Nightlight is slow right now" instead of a thinner answer |
