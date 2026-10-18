@@ -1,7 +1,8 @@
 "use client";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { loadMessages } from "@/lib/data";
-import { chatSession, newChat, savedSession } from "@/lib/session";
+import { chatSession, newChat, openSession, pickSession } from "@/lib/session";
+import Conversations from "./chat/Conversations";
 import { api, ApiError, stream } from "@/lib/api";
 import { followBegin, followEnd, followReset, followStep, followText } from "@/lib/follow";
 import type { Action, Device, StreamEvent } from "@/lib/types";
@@ -107,7 +108,10 @@ const Chat = forwardRef<ChatHandle, {
     // Answers belong to this account and home: a new one (or leaving) makes the map forget what older answers lit.
     const life = useRef(0); // which account-and-home this chat is for; work begun for an earlier one is dropped
     useEffect(() => { life.current++; followReset(); return () => { life.current++; followReset(); }; }, [uid, generation]);
-    // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
+    // The open conversation comes back when the chat opens (kept 30 days): this browser's, else the account's latest.
+    // A reset (new generation) starts clean.
+    const [pick, setPick] = useState(0); // bumped to load another conversation
+    const [open, setOpen] = useState<string | null>(null);
     useEffect(() => {
       setTurns([]);
       saved.current.clear();
@@ -121,15 +125,22 @@ const Chat = forwardRef<ChatHandle, {
         queued.current = [];
         for (const q of waiting) followUpRef.current(q.turnId, q.retries);
       };
-      const sid = savedSession(uid, generation);
-      if (!sid) { ready(); return () => { cancelled = true; }; }
-      loadMessages(uid, sid).then((msgs) => {
+      setOpen(null);
+      openSession(uid, generation).then((sid) => {
+        if (cancelled) return [];
+        setOpen(sid);
+        return sid ? loadMessages(uid, sid) : [];
+      }).then((msgs) => {
         if (cancelled) return;
         for (const m of msgs) if (m.turnId) saved.current.add(m.turnId);
         if (msgs.length) setTurns((cur) => [...fromHistory(msgs, devicesRef.current), ...cur]);
       }).catch(() => {}).finally(ready);
       return () => { cancelled = true; };
-    }, [uid, generation]);
+    }, [uid, generation, pick]);
+    const switchTo = (sid: string | null) => {
+      if (sid) pickSession(uid, generation, sid); else newChat(uid, generation);
+      setPick((n) => n + 1);
+    };
 
     const update = (k: string, fn: (t: AgentTurn) => AgentTurn) =>
       setTurns((cur) => cur.map((t) => t.kind === "agent" && t.key === k ? fn(t) : t));
@@ -194,6 +205,7 @@ const Chat = forwardRef<ChatHandle, {
       let sid: string;
       try {
         sid = await chatSession(uid, generation);
+        setOpen(sid);
       } catch {
         setTurns((cur) => [...cur, { kind: "agent", key: key(), mode, blocks: [], busy: false,
           error: "Couldn't start the chat. Please try again." }]);
@@ -251,6 +263,7 @@ const Chat = forwardRef<ChatHandle, {
 
     return (
       <>
+        <Conversations uid={uid} generation={generation} open={open} disabled={busy} onPick={switchTo} />
         <div className="chat-log" ref={log} onScroll={(e) => {
           const el = e.currentTarget;
           nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -267,7 +280,7 @@ const Chat = forwardRef<ChatHandle, {
           )}
           {turns.some((t) => "past" in t && t.past) && (
             <div className="chat-past-note small muted">Earlier in this chat (kept 30 days) ·{" "}
-              <button className="linkish" disabled={busy} onClick={() => { newChat(uid, generation); setTurns([]); }}>
+              <button className="linkish" disabled={busy} onClick={() => switchTo(null)}>
                 Start a new chat</button></div>
           )}
           {turns.map((t, i) => {
