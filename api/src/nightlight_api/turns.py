@@ -29,8 +29,11 @@ from .redact import scrub, scrub_value
 APP = "nightlight"
 ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server", "restart_container",
                 "restart_service",
-                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
+                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook",
+                "allow_log_reading"}
 
+
+QUICK_INSTEAD = "Investigate is busy right now, so here is a quick look instead.\n\n"
 
 # Last resort only: agent.after_model already removes a card claim no card backs before it is shown.
 NO_CARD = "(Correction: no card was put up in this answer. Ask me again and I'll put it up.)"
@@ -320,19 +323,39 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         pass
                 ctx.fleet, ctx.memories = await asyncio.gather(
                     asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, ctx.memory_epoch))
-            agent = agentlib.build(ctx, continuation=continuation, model=model)
-            sessions = InMemorySessionService()
-            runner = Runner(app_name=APP, agent=agent, session_service=sessions)
-            adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
-            for content in await asyncio.to_thread(history, uid, c):
-                await sessions.append_event(adk_session, Event(
-                    author="user" if content.role == "user" else agent.name, content=content))
-            prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
-            message = types.Content(role="user", parts=[types.Part(text=prompt)])
-            async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                             run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                                  max_llm_calls=ctx.max_calls)):
-                await queue.put(("event", ev))
+            forwarded = 0
+
+            async def run_once():
+                nonlocal forwarded
+                agent = agentlib.build(ctx, continuation=continuation, model=model)
+                sessions = InMemorySessionService()
+                runner = Runner(app_name=APP, agent=agent, session_service=sessions)
+                adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
+                for content in await asyncio.to_thread(history, uid, c):
+                    await sessions.append_event(adk_session, Event(
+                        author="user" if content.role == "user" else agent.name, content=content))
+                prompt = c.turn["input"] if kind == "user" else \
+                    f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
+                message = types.Content(role="user", parts=[types.Part(text=prompt)])
+                async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                                 run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                                      max_llm_calls=ctx.max_calls)):
+                    if ev.author != "user" and any(p.text or p.function_call or p.function_response
+                                                   for p in (ev.content.parts if ev.content else None) or []):
+                        forwarded += 1  # the model said or did something
+                    await queue.put(("event", ev))
+
+            try:
+                await run_once()
+            except Exception as e:
+                # Investigate's model is out of capacity before anything was said or done: the same question gets a
+                # Quick look instead, and the answer says so first. Busy later (after steps ran) fails as before.
+                if not (ctx.deep and not continuation and forwarded == 0 and agentlib.model_busy(e)):
+                    raise
+                ctx.deep = False
+                ctx.reservations.clear()  # the refused call's reservation stays spent (its usage is unknown)
+                await queue.put(("notice", QUICK_INSTEAD))
+                await run_once()
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
             await queue.put(("error", e))
@@ -369,6 +392,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 raise item
             if kind == "end":
                 break
+            if kind == "notice":  # our own words, said before anything else (nothing has been shown yet)
+                raw = shown = item
+                first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
+                yield out({"type": "text", "delta": item})
+                continue
             ev = item
             parts = (ev.content.parts if ev.content else None) or []
             if not ev.partial:

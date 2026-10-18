@@ -245,7 +245,7 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         device = dict(device_snap.to_dict(), id=action["deviceId"]) if device_snap.exists else None
         if action.get("realm") == "real":
             return _decide_real(tx, uid, action, device, decision, note,  # no trust ladder for real jobs (yet)
-                                _service_doc(services, action.get("svcId")))
+                                _service_doc(services, action.get("svcId")), services=services)
         service = _service_doc(services, action.get("svcId"))
         current_generation = action["demoGeneration"] == user.get("demoGeneration")
         trust_doc = trust_snap.to_dict() if trust_snap.exists else trustlib.new_doc(action["type"],
@@ -270,7 +270,7 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
 
 
 def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str, note: str | None,
-                 service: dict | None = None):
+                 service: dict | None = None, services: list | None = None):
     """Approving a real-device job queues it for that device's helper (it runs there, later); declining ends it.
 
     A real device reports every minute, so its version can't fence the card; the helper re-checks the target on the
@@ -284,7 +284,22 @@ def _decide_real(tx, uid: str, action: dict, device: dict | None, decision: str,
     if device is None or device.get("revoked") and not (cap and cap.while_silent):
         tx.update(db.action(uid, a["id"]), {"status": "stale", "finishedAt": _now()})
         return 409, {"error": "conflict", "code": "stale", "actionId": a["id"]}
-    if decision == "approve":
+    if decision == "approve" and cap and cap.on_approve:
+        # The server carries it out now, in this transaction (e.g. a permission): it is never handed to a device
+        try:
+            summary = cap.on_approve(tx, uid, a, device, services or [])
+        except (ValueError, ApiError):  # overtaken since the card went up (allowed meanwhile, target gone)
+            tx.update(db.action(uid, a["id"]), {"status": "stale", "finishedAt": _now()})
+            return 409, {"error": "conflict", "code": "stale", "actionId": a["id"]}
+        a["status"], a["finishedAt"] = "done", _now()
+        a["result"] = {"ok": True, "summary": summary}
+        if a.get("sessionId"):
+            conversation.post(tx, uid, a, "job_finished", device["name"])
+        else:
+            a["followUp"] = "none"
+        a["response"] = {"actionId": a["id"], "status": "done",
+                         **({"continuationTurnId": a["continuationTurnId"]} if a.get("continuationTurnId") else {})}
+    elif decision == "approve":
         a["status"] = "approved"
         a["response"] = {"actionId": a["id"], "status": "approved"}
     else:

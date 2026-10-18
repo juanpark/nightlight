@@ -394,9 +394,15 @@ def make_tools(ctx: TurnContext, read_only: bool):
         out["services"] = [{k: s.get(k) for k in ("id", "name", "status", "version", "latestVersion",
                                                   "updateAvailable", "players", "lastBackupDaysAgo", "findings")
                             if s.get(k) is not None} for s in services]
+        # Current readings come first (above); what was written down earlier follows, each piece with its date and
+        # age, so an old note ("a 13 GB log") reads as history next to today's measurement, never as one.
+        out["readingsAsOf"] = d.get("lastSeen") or "now"
+        out["history"] = ("Written earlier (notebook, profile): each has its date and may be out of date; the "
+                          "readings above are current.")
         out["notebook"] = notebook.grouped(ctx.uid, device_id, ctx.generation)
         out["runbooks"] = runbooks.titles(ctx.uid, device_id, ctx.generation)
-        out["profile"] = (notebook.profile(ctx.uid, device_id) or {}).get("text")
+        prof = notebook.profile(ctx.uid, device_id)
+        out["profile"] = {"text": prof["text"], "written": notebook.written(prof.get("updatedAt"))} if prof else None
         if d.get("realm") != "real":  # sample devices: which tool fixes which problem, so the next step is explicit
             out["fixes_you_can_propose"] = sim.fixes(dict(snap.to_dict(), id=device_id),
                                                      {s["id"]: s for s in services})
@@ -428,7 +434,14 @@ def make_tools(ctx: TurnContext, read_only: bool):
                       "up_to_date": "its helper is already up to date",
                       "update_by_hand": "its helper is too old to update itself: run the install line on it once",
                       "updates_off": "updates from the app are switched off for this device",
-                      "no_release": "there is no helper release on offer"}.get(str(e))
+                      "no_release": "there is no helper release on offer",
+                      "already_allowed": "reading its logs is already allowed; the device picks that up with its "
+                                         "next report (within about a minute)",
+                      "strict_device": "this device's permissions are set on the device itself: there, "
+                                       "`nightlight allow logs NAME` allows reading one's logs",
+                      "no_such_target": "the device doesn't report anything by that name",
+                      "too_many_targets": "log reading is already allowed for as many things as a device can "
+                                          "have"}.get(str(e))
             return {"status": "error", "reason": reason or "not applicable to this device"}
         ctx.actions.append(a)
         out = {"status": a["status"], "actionId": a["id"], "plan": a["plan"], "dryRun": a["dryRun"],
@@ -537,7 +550,19 @@ def make_tools(ctx: TurnContext, read_only: bool):
                       "device_not_reporting": "the device isn't reporting right now",
                       "no_such_target": "the device doesn't report anything by that name"}.get(str(e))
             return {"status": "error", "reason": reason or "not applicable to this device"}
-        return _await_read(a)
+        out = _await_read(a)
+        return _with_log_access(out, device_id, target)
+
+    def _with_log_access(out: dict, device_id: str, target: str) -> dict:
+        """A look into a target whose logs the owner hasn't allowed says so in the result, with the way to ask for
+        it (a card), so the answer never ends at "check the logs yourself"."""
+        d = db.device(ctx.uid, device_id).get().to_dict() or {}
+        allowed = set((d.get("allowedJobs") or {}).get("logs", [])) | set((d.get("permissions") or {}).get("logs", []))
+        if target in allowed or f"{target}.service" in allowed:
+            return out
+        how = ("allow_log_reading puts up a card for the owner to allow it" if d.get("manage") == "app" else
+               "on this device, the owner allows it on the device itself: nightlight allow logs " + target)
+        return {**out, "logs": f"not read: reading the logs of {target} isn't allowed on this device; {how}"}
 
     def _read_result(doc: dict) -> dict:
         r = doc.get("result") or {}
@@ -696,6 +721,24 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     remove_device = _wrap(_remove_device_sync)
     action_tools.append(remove_device)
+
+    def _allow_log_reading_sync(device_id: str, target: str, tool_context: ToolContext) -> dict:
+        """Propose letting Nightlight read the last log lines of one container or system service on a REAL device
+        (an approval card; nothing on the device changes). Use it when look_into says that target's logs weren't
+        read because reading them isn't allowed. Once approved, the device picks it up with its next report (within
+        about a minute) and look_into then includes its last log lines.
+
+        Args:
+            device_id: the real device's id from list_fleet.
+            target: the container or system service name, exactly as get_device lists it.
+        """
+        return _propose("allow_logs", device_id, {"target": target})
+
+    async def allow_log_reading(device_id: str, target: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_allow_log_reading_sync, device_id, target, tool_context)
+
+    allow_log_reading.__doc__ = _allow_log_reading_sync.__doc__
+    action_tools.append(allow_log_reading)
 
     def _update_helper_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Propose updating the Nightlight helper on a REAL device to the signed release on offer (an approval card;
@@ -1301,7 +1344,8 @@ TOOL_NAMES = ("list_fleet", "get_device", "get_recent_events", "look_into", "run
               "how_nightlight_works", "run_command", "update_profile", "link_devices", "read_device_log",
               "save_runbook", "rotate_logs", "backup_world", "restart_server", "restart_app", "clear_images",
               "update_server", "restart_container", "restart_service", "clean_up", "remove_device", "update_helper",
-              "use_runbook", "start_investigation", "propose_command", "fixes_you_can_propose")
+              "use_runbook", "start_investigation", "propose_command", "fixes_you_can_propose",
+              "allow_log_reading")
 SENTENCE_END = re.compile(r"[.!?…][\"')\]]*(?=\s|$)")
 
 
