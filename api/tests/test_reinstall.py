@@ -524,3 +524,24 @@ def test_a_check_from_before_the_reinstall_keeps_the_ask(client, started):  # Co
     assert db.device(started, watched[1]).get().to_dict()["watchedBy"] == mini["deviceId"]
     ask = next(f for f in db.device(started, old["deviceId"]).get().to_dict()["findings"] if f["id"] == "f_rewatch")
     assert ask  # the router isn't checked by the new install yet: the ask stays
+
+
+def test_without_helper_since_the_ask_start_dates_the_install(client, started):  # Codex handover #4
+    from google.cloud import firestore
+    old, watched = watching_then_quiet(client, started)  # both checked moments before the reinstall
+    mini = _mini(client)
+    new = continued(client, old)
+    db.device(started, old["deviceId"]).update({"helperSince": firestore.DELETE_FIELD})  # continued before it was kept
+    beat(client, new["token"], {**APP, "manage": "strict"})
+    _look(client, new, [])
+    _aged(started, watched[1:])
+    _look(client, mini, [{**PRINTER, "cid": "2a2a2a2a2a21"}])
+    assert db.device(started, watched[1]).get().to_dict()["watchedBy"] == mini["deviceId"]
+    d = db.device(started, old["deviceId"]).get().to_dict()
+    assert "rewatch" in d and any(f["id"] == "f_rewatch" for f in d["findings"])
+
+
+def test_with_no_install_start_known_no_check_clears_the_ask(started):
+    now = datetime.now(timezone.utc)
+    router = {"watchedBy": "mac", "checkPort": 443, "lastSeen": now}
+    assert real._checked_lately(router, {}, now) and not real._checked_lately(router, {}, now, proof=True)

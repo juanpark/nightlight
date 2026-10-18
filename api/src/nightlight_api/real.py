@@ -618,10 +618,14 @@ CHECKED_LATELY = timedelta(minutes=10)  # a watcher that reported a check this r
 REPORTED_LATELY = timedelta(minutes=5)  # a helper silent longer than this is offline (as watch.SILENT_AFTER)
 
 
-def _checked_lately(d: dict, watcher: dict, now: datetime) -> bool:
+def _checked_lately(d: dict, watcher: dict, now: datetime, proof: bool = False) -> bool:
     """Whether the watcher reported a check of this thing lately, by its current install (a check from before a
-    reinstall says nothing about the new helper)."""
-    last, since = d.get("lastSeen"), watcher.get("helperSince")
+    reinstall says nothing about the new helper). As `proof` (to clear the ask after a reinstall), a check counts only
+    when the install's start is known: its `helperSince`, else when the ask began (`rewatch.at`)."""
+    last = d.get("lastSeen")
+    since = watcher.get("helperSince") or (watcher.get("rewatch") or {}).get("at")
+    if proof and not isinstance(since, datetime):
+        return False  # a device continued before either was kept: keep the ask
     return isinstance(last, datetime) and now - last < CHECKED_LATELY \
         and not (isinstance(since, datetime) and last <= since)
 
@@ -706,7 +710,7 @@ def _handed_words(tx, uid: str, on_map: dict, helpers: dict, handed: dict, now: 
     for oid in sorted({on_map[w]["watchedBy"] for w in handed}):
         o = helpers.get(oid) or {}
         left = [d for i, d in on_map.items() if d.get("watchedBy") == oid and i not in handed and not d.get("revoked")
-                and d.get("checkPort") and not _checked_lately(d, o, now)]
+                and d.get("checkPort") and not _checked_lately(d, o, now, proof=True)]
         findings = o.get("findings") or []
         if left or not (o.get("rewatch") or any(f.get("id") == "f_rewatch" for f in findings)):
             continue  # its next report names only the ones still unchecked
