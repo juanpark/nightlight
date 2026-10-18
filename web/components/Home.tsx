@@ -88,6 +88,7 @@ export default function Home({ user, account }: { user: User; account?: string }
     }
   }, [me, user.isAnonymous]);
   const sampleOn = me?.template !== "empty";
+  const sampleShown = !live && (user.isAnonymous || sampleOn); // Demo tools only work on the sample home
   const [switching, setSwitching] = useState(false);
   async function toggleSample() {
     setSwitching(true);
@@ -148,8 +149,8 @@ export default function Home({ user, account }: { user: User; account?: string }
         <div className="brand"><span className="bulb" /> Nightlight</div>
         {user.isAnonymous
           ? <span className="pill">Sample home: simulated</span>
-          : <button className="small" disabled={switching || !me} onClick={toggleSample}
-              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide practice home" : "Practice home"}</button>}
+          : !live && <button className="small" disabled={switching || !me} onClick={toggleSample}
+              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide the sample home" : "Try the sample home"}</button>}
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
@@ -165,7 +166,7 @@ export default function Home({ user, account }: { user: User; account?: string }
             <button onClick={() => toggle("trust")}>Trust</button>
             <button onClick={() => toggle("activity")}>Activity</button>
             {!live && <button onClick={() => toggle("memory")}>Memory</button>}
-            <button onClick={() => toggle("demo")}>Demo tools</button>
+            {sampleShown && <button onClick={() => toggle("demo")}>Demo tools</button>}
             <button onClick={() => toggle("settings")}>Settings</button>
             {!user.isAnonymous && <span className="small muted" title={user.email ?? undefined}>{user.email}</span>}
             <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
@@ -206,7 +207,7 @@ export default function Home({ user, account }: { user: User; account?: string }
           </div>
           {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
-          {panel === "demo" && <DemoTools devices={devices} />}
+          {panel === "demo" && sampleShown && <DemoTools devices={devices} />}
           {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}
             onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
           {panel === "memory" && !live && <MemoryPanel />}
