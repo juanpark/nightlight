@@ -294,10 +294,14 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
       if (!f || !el || !p) return;
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height) return; // the map isn't on screen (a phone showing the chat)
+      // the part of the map actually visible: the pane it scrolls in, and the window, may cut it off
+      const pane = el.closest(".left")?.getBoundingClientRect();
+      const top = Math.max(0, pane?.top ?? 0, r.top) - r.top, bottom = Math.min(innerHeight, pane?.bottom ?? innerHeight, r.bottom) - r.top;
+      if (bottom - top < 120) return; // hardly any map on screen: leave it be
       const { x, y, zoom } = f.getViewport();
       const m = 16, sx = p.x * zoom + x, sy = p.y * zoom + y - 14 * zoom, w = NODE_W * zoom, h = (NODE_H + 14) * zoom;
       const dx = sx < m ? m - sx : sx + w > r.width - m ? r.width - m - (sx + w) : 0;
-      const dy = sy < m ? m - sy : sy + h > r.height - m ? r.height - m - (sy + h) : 0;
+      const dy = sy < top + m ? top + m - sy : sy + h > bottom - m ? bottom - m - (sy + h) : 0;
       if (!dx && !dy) return;
       const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       f.setViewport({ x: x + dx, y: y + dy, zoom }, { duration: still ? 0 : 450 });
