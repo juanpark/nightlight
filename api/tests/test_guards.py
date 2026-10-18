@@ -164,6 +164,25 @@ def test_bound_input_reports_what_it_left_out():
     assert done == {"shortened": True, "trimmed": False}
 
 
+def test_reductions_are_on_the_receipt_even_when_the_turn_then_fails(monkeypatch):
+    monkeypatch.setattr(agentlib, "COUNT_RETRY_SECONDS", 0)
+    metrics, calls = {}, []
+
+    def counter(r):  # over the limit once (history is dropped), then the counter breaks for good
+        calls.append(1)
+        if len(calls) == 1:
+            return 99999
+        raise RuntimeError("network")
+    with pytest.raises(ApiError) as e:
+        agentlib.bound_input(Req(10, 3000), counter=counter, metrics=metrics)
+    assert e.value.code == "size_check_failed" and metrics == {"longChat": True}
+
+    metrics = {}
+    with pytest.raises(ApiError) as e:  # never fits: everything older shortened and dropped, then refused
+        agentlib.bound_input(_investigation(steps=16), counter=lambda r: 99999, limit=16000, metrics=metrics)
+    assert e.value.code == "context_limit" and metrics == {"stepsShortened": True, "longChat": True}
+
+
 def test_unfittable_request_fails_closed():
     with pytest.raises(ApiError) as e:
         agentlib.bound_input(Req(1, 40000), counter=lambda r: 20000)

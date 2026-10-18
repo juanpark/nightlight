@@ -1358,21 +1358,25 @@ def _count(req, counter) -> int:
     raise AssertionError("unreachable")
 
 
-def bound_input(req, counter=None, limit: int | None = None) -> dict:
+def bound_input(req, counter=None, limit: int | None = None, metrics: dict | None = None) -> dict:
     """Guarantee the complete request fits the limit by exact count. Over it, older tool results in this turn are
     shortened first, then the oldest chat history is dropped; only a request that still can't fit is refused (the
-    current question with its newest step alone over the limit). Returns what was done: {"shortened", "trimmed"}."""
+    current question with its newest step alone over the limit). Returns what was done: {"shortened", "trimmed"}.
+
+    Each reduction is also recorded in `metrics` (the turn's receipt) the moment it happens, as stepsShortened /
+    longChat, so a turn that then fails (size_check_failed, context_limit) still stores them."""
     limit = limit or settings.max_input_tokens
     counter = counter or COUNTER
+    metrics = {} if metrics is None else metrics
     done = {"shortened": False, "trimmed": False}
     for _ in range(50):
         n = _count(req, counter)
         if n <= limit:
             return done
         if _shorten_older_results(req, n - limit):
-            done["shortened"] = True
+            done["shortened"] = metrics["stepsShortened"] = True
         elif _trim_oldest(req):
-            done["trimmed"] = True
+            done["trimmed"] = metrics["longChat"] = True
         else:
             break
     raise ApiError(422, "context_limit")
@@ -1528,11 +1532,9 @@ def make_callbacks(ctx: TurnContext):
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
             scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
-        done = await asyncio.to_thread(bound_input, llm_request, None, ctx.max_input_tokens)
-        if done["trimmed"]:
-            ctx.metrics["longChat"] = True  # older chat was left out of this call: the receipt says so gently
-        if done["shortened"]:
-            ctx.metrics["stepsShortened"] = True  # older step outputs were shortened in the request
+        # Older chat left out (longChat) or older step outputs shortened (stepsShortened) go on the receipt as they
+        # happen, also when the turn then fails.
+        await asyncio.to_thread(bound_input, llm_request, None, ctx.max_input_tokens, ctx.metrics)
         await reserve_call(ctx)
         ctx.watch_call(True)  # the call itself starts now: its silence is timed from here
         return None
