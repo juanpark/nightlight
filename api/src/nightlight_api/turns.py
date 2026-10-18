@@ -27,7 +27,8 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
-ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server", "restart_container",
+ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server",
+                "update_app", "restart_container",
                 "restart_service",
                 "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
 

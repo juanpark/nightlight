@@ -485,6 +485,22 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     restart_server.__doc__ = _restart_server_sync.__doc__
 
+    def _update_app_sync(device_id: str, app: str, tool_context: ToolContext) -> dict:
+        """Propose updating an app on a sample device to its newer version (get_device lists each app's version and
+        latestVersion). The app is unavailable for about a minute; its data is kept. Always needs approval. For the
+        game server use update_server (it backs the world up first).
+
+        Args:
+            device_id: the sample device's id, for example "mac-1".
+            app: the app's id exactly as get_device lists it, for example "plex".
+        """
+        return _propose("update_app", device_id, {"app": app})
+
+    async def update_app(device_id: str, app: str, tool_context: ToolContext) -> dict:
+        return await asyncio.to_thread(_update_app_sync, device_id, app, tool_context)
+
+    update_app.__doc__ = _update_app_sync.__doc__
+
     def _clear_images_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Propose removing Docker images no app uses on a sample device (an alternative to clearing its logs when it
         is full). Nothing to undo: an app downloads its image again if it needs it. Always needs approval.
@@ -726,7 +742,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
 
     action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync,
                                        _restart_app_sync, _clear_images_sync, _update_server_sync)]
-    action_tools.insert(2, restart_server)
+    action_tools[2:2] = [restart_server, update_app]
     action_tools.append(restart_container)
     action_tools.append(restart_service)
 

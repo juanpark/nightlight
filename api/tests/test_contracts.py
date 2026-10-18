@@ -150,3 +150,19 @@ def test_check_space_on_a_real_device_runs_what_it_offers(client, started, monke
     beat(client, none["token"], FACTS)
     r = _call(tools, "check_space", device_id=none["deviceId"])
     assert r["status"] == "error" and r["not_offered"] == ["disk", "home", "docker"]
+
+
+# ------------------------------------------------------------------ 6. sample-home app updates
+
+def test_update_plex_on_the_sample_home_is_a_real_card(started):
+    tools, _ = _tools(started, "turn_u1")
+    r = _call(tools, "update_app", device_id="mac-1", app="plex")
+    assert r["status"] == "pending" and "1.41.2 → 1.41.3" in r["plan"] and r["risk"] == "service"
+    code, body = actions.decide(started, r["actionId"], "approve")
+    assert body["status"] == "done"
+    plex = db.services(started, "mac-1").document("plex").get().to_dict()
+    assert plex["version"] == "1.41.3" and plex["updateAvailable"] is False and plex["image"].endswith(":1.41.3")
+    tools, _ = _tools(started, "turn_u2")
+    assert _call(tools, "update_app", device_id="mac-1", app="plex")["status"] == "error"  # nothing newer now
+    assert _call(tools, "update_app", device_id="pi-1", app="teslamate")["status"] == "error"  # no known version
+    assert _call(tools, "update_app", device_id="game-1", app="minecraft")["status"] == "error"  # update_server's
