@@ -338,6 +338,61 @@ def test_audit_lines_stay_one_line_and_scrubbed_and_the_file_bounded(helper, mon
     assert "hunter2" not in helper._audit_cmd("mysql --password=hunter2")
     monkeypatch.setattr(helper, "AUDIT_MAX", 1000)
     for i in range(100):
-        helper._audit(f"line {i} " + "x" * 40)
+        helper._audit(f"line {i} " + "word " * 8)
     path = Path(helper.APP_DIR) / helper.AUDIT_FILE
-    assert path.stat().st_size < 1200 and path.read_text().splitlines()[-1].endswith("x" * 40)
+    assert path.stat().st_size < 1200 and path.read_text().splitlines()[-1].endswith("line 99 " + "word " * 7 + "word")
+
+
+def test_audit_sanitises_the_complete_entry_including_refusal_reasons(helper, capsys):  # codex audit P2 #1
+    pk = Passkey()
+    _pinned(helper, pk)
+    grant = {"device": "dev_x", "mode": "read-only", "expires": int(time.time()) + 600, "nonce": "g9"}
+    gs = pk.sign(expert.challenge_for(grant))
+    token = "ghp_" + "A" * 36
+    for cmd in (f"uname --x={token}", "uname --y=\x1b[2Jz", "una me"):
+        helper.run_job({"type": "expert_read", "params": {"grant": grant, "signed": gs, "command": cmd}})
+    helper._audit("forged \u009b2J  2026-01-01 Expert command verified")
+    out = capsys.readouterr().out
+    file = (Path(helper.APP_DIR) / helper.AUDIT_FILE).read_text()
+    for sink in (out, file):
+        assert token not in sink
+        assert not any(c in sink for c in "\x1b\x9b  ")
+        assert sink.count("\n") == len(sink.splitlines())  # each entry one line
+    assert "passkey (key x)" in out  # the word "passkey" is not taken for a secret option
+
+
+def test_audit_hides_whole_quoted_secret_values(helper):  # codex audit P2 #2
+    for cmd in ("mysql --password 'two words' -h db", 'curl --token "a \\" b c" x', "PASSWORD='it'\\''s me' run"):
+        text = helper._audit_cmd(cmd)
+        assert "[hidden]" in text and not any(w in text for w in ("words", " b c", "s me")), text
+
+
+def test_audit_file_is_owner_only_and_never_through_a_link(helper, tmp_path):  # codex audit P2 #3
+    import os
+    app = Path(helper.APP_DIR)
+    app.mkdir(mode=0o755)
+    os.chmod(app, 0o755)
+    path = app / helper.AUDIT_FILE
+    path.write_text("old\n")
+    os.chmod(path, 0o644)
+    helper._audit("one")
+    assert app.stat().st_mode & 0o777 == 0o700 and path.stat().st_mode & 0o777 == 0o600
+    path.unlink()
+    target = tmp_path / "elsewhere"
+    target.write_text("")
+    path.symlink_to(target)
+    helper._audit("two")  # still printed, never written through the link
+    assert target.read_text() == ""
+
+
+def test_audit_file_never_exceeds_the_cap(helper, monkeypatch):  # codex audit P3
+    monkeypatch.setattr(helper, "AUDIT_MAX", 1000)
+    path = Path(helper.APP_DIR) / helper.AUDIT_FILE
+    helper._audit("start")
+    path.write_bytes(b"y" * 30 + b"\n" + b"z" * (1000 - 31))  # exactly at the cap
+    helper._audit("next")
+    data = path.read_bytes()
+    assert len(data) <= 1000 and data.endswith(b"next\n")
+    for i in range(200):
+        helper._audit(f"line {i}")
+        assert path.stat().st_size <= 1000

@@ -2091,11 +2091,26 @@ AUDIT_MAX = 256 * 1024
 _AUDITED_GRANTS = set()
 
 
+# Control characters (C0, C1, Unicode line/paragraph separators and direction overrides) could forge or hide entries.
+_AUDIT_CONTROLS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+# The value after a secret-bearing option or assignment, whole even when quoted with spaces or escaped quotes.
+_AUDIT_QUOTED_SECRET = re.compile(
+    r"((?:^|[\s'\"])(?:-{1,2}" + _SECRET_WORD + r"(?:\s*=\s*|\s+)|" + _SECRET_WORD + r"\s*[=:]\s*))"
+    r"('(?:[^']|'\\'')*'?|\"(?:\\.|[^\"\\])*\"?|\S+)", re.I)
+
+
+def _audit_clean(text, limit):
+    """One safe line: control characters gone, secret values hidden (whole quoted values too), then cut to limit."""
+    text = _CONTROLS.sub(" ", text)  # whole ANSI sequences first, so no "[2J" tail is left behind
+    text = " ".join(_AUDIT_CONTROLS.sub(" ", text).split())
+    text = scrub(_AUDIT_QUOTED_SECRET.sub(lambda m: m.group(1) + "[hidden]", text))[0]
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 def _audit_cmd(command):
     if not isinstance(command, str):
         return "(none)"
-    text = scrub(" ".join(command.split()).replace(_HOME, "~"))[0]  # one line: no forged entries via newlines
-    return text if len(text) <= 300 else text[:300] + "..."
+    return _audit_clean(command.replace(_HOME, "~"), 300)
 
 
 def _audit_time(payload):
@@ -2113,20 +2128,38 @@ def _audit_signer(cfg, payload):
 
 
 def _audit(line):
-    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}"
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {_audit_clean(line, 900)}"  # the complete entry, for both sinks
     print(line, flush=True)
     try:
-        path = os.path.join(_own_dir(APP_DIR), AUDIT_FILE)
-        if os.path.exists(path) and os.path.getsize(path) > AUDIT_MAX:  # keep the newest half
-            with open(path, "rb") as f:
-                f.seek(-AUDIT_MAX // 2, os.SEEK_END)
-                keep = f.read().split(b"\n", 1)[-1]
-            with open(path, "wb") as f:
-                f.write(keep)
-        with open(path, "a") as f:
-            f.write(line + "\n")
-    except OSError:
+        _audit_append(line)
+    except (OSError, SystemExit):  # the helper log above still has it; never stop the helper over this file
         pass
+
+
+def _audit_append(line):
+    """Append to the owner-only audit file (folder 0700, file 0600, never through a link), kept within AUDIT_MAX."""
+    d = _own_dir(APP_DIR)
+    os.chmod(d, 0o700)
+    path = os.path.join(d, AUDIT_FILE)
+    data = (line + "\n").encode()
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+b") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError("not a regular file of this user")
+        os.fchmod(fd, 0o600)
+        if st.st_size + len(data) <= AUDIT_MAX:
+            f.write(data)
+            return
+        keep = max(AUDIT_MAX // 2 - len(data), 0)  # the newest half, with room for this entry
+        f.seek(max(st.st_size - keep, 0))
+        tail = f.read(keep)
+        if st.st_size > keep:
+            tail = tail.split(b"\n", 1)[-1]  # start at a whole line
+    tfd, tmp = tempfile.mkstemp(dir=d, prefix=".audit-")  # created 0600
+    with os.fdopen(tfd, "wb") as t:
+        t.write(tail + data)
+    os.replace(tmp, path)
 
 
 def audit_show(n=20):
