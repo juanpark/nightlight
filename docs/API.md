@@ -8,7 +8,7 @@ shapes is in [`contracts/mocks/`](../contracts/mocks/), as consistent phases of 
 ## Basics
 
 - **Auth:** every `/api/*` call sends `Authorization: Bearer <Firebase ID token>`, except `GET /api/health`. The demo
-  signs in anonymously (Firebase), so judges never create an account. `/helper/*` routes use a device token
+  signs in anonymously (Firebase), so visitors never have to create an account. `/helper/*` routes use a device token
   (`X-Device-Token`) or a join code; `/internal/sweep` accepts only Cloud Scheduler's signed token.
 - **Owner gate:** routes marked *owner* need a non-anonymous (Google) sign-in; an anonymous token gets
   `403 sign_in_required`.

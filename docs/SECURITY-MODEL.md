@@ -2,7 +2,7 @@
 
 Nightlight is a cloud service that can act on people's real home and small-office servers. That is the whole point,
 and it is also the thing that must be designed most carefully. This page is the threat model and the layers that
-answer it, in plain words, for three readers: us later, the judges now, and anyone who runs the helper on a machine
+answer it, in plain words, for three readers: us later, people trying it now, and anyone who runs the helper on a machine
 they care about. Every statement describes the code in this repository; where it says "verified", a reference points
 at the code. Anything we could not re-check is marked *(unverified)*.
 
@@ -108,7 +108,7 @@ server-side revocation; see [`PASSKEYS.md`](PASSKEYS.md).
 
 ### 5. A curious demo visitor
 
-Judges can try Nightlight three ways, and none reaches anyone else's data:
+Anyone can try Nightlight three ways, and none reaches anyone else's data:
 
 - **Sample home:** a simulation under an anonymous Firebase identity. Anonymous users cannot create join codes,
   approve pairing or add watched websites (`403 sign_in_required`), so no real device can ever be tied to a demo visit.
@@ -117,7 +117,7 @@ Judges can try Nightlight three ways, and none reaches anyone else's data:
   current, and Firestore rules enforce the same (`firestore.rules`, `auth.py`). Visitors cannot unpair, replace or
   outlive the machine: pairing, removal, permissions, updates, settings and **passkeys** are refused for pool accounts
   (`POOL_DENY`, `POOL_FORBIDDEN_ACTIONS`, `live.forbid_pool`). When a visit ends (leave, 15 minutes idle, or 60 minutes
-  hard cap) the account is wiped and the VM's boot disk is **restored from a golden snapshot**, so nothing one judge
+  hard cap) the account is wiped and the VM's boot disk is **restored from a golden snapshot**, so nothing one visitor
   did reaches the next. A five-minute sweep stops any VM without a live lease.
 - **Your own machine:** sign in with Google and install the helper; everything above applies.
 

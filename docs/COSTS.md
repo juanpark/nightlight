@@ -12,7 +12,7 @@ What we spent, where, how and why. **Measured** means a number our code or Googl
 | Production model calls (all time) | **$2.17** spent, 689 calls | measured (budget ledger) | every real answer on the live app since launch: our tests, demos and visitors |
 | Development testing with real Gemini and cloud | **about $6.25** (roughly $6) | measured per run by our test harnesses | model choice, prompt rebuild, demo VM checks, demo VM pool build (details below) |
 | Cloud Run, Firestore, Scheduler, Cloud Build, Artifact Registry | close to $0 | estimate | the live app; it scales to zero when nobody uses it |
-| Demo VM pool (5 e2-small VMs, kept stopped) | about $0.03 per judge-hour while one runs; about $12/month standing (disks) + under $1/month (snapshots) | estimate (list price) | each judge gets their own real Linux server to watch Nightlight fix |
+| Demo VM pool (5 e2-small VMs, kept stopped) | about $0.03 per visitor-hour while one runs; about $12/month standing (disks) + under $1/month (snapshots) | estimate (list price) | each visitor gets their own real Linux server to watch Nightlight fix |
 | Hard cap on production model spend | **$35** | set in code | a runaway is impossible (see below) |
 
 Claude Code, Codex and Fable were our development tools only. They are not part of the product, and the team pays
@@ -57,9 +57,9 @@ Each run reported its own cost: Gemini's token counts × list price.
 | Eval on the rebuilt agent (90 runs) | $1.85 | check the new prompt | 81 of 90 passed |
 | Same eval on the old prompt (90 runs) | $1.97 | a fair comparison | also 81 of 90, but the new prompt was right about which device more often (6/6 vs 4/6) and cost a little less |
 | Demo VM: free-form test | ~$0.13 | does it work on a real server? | yes |
-| Demo VM: round 1 (23 questions) | ~$0.35 | test the judges' demo script on the VM | found leftovers to clean up (a pending card, a stuck job) |
-| Judge-style round 3 (25 questions, 6 Investigate) | total not recorded | rehearse what a judge would do | no errors, no rate limits; the most expensive turn was $0.032 |
-| Demo VM pool: build and tests | ~$0.15 | build 5 judge VMs, golden disk copies, lease and restore tests | restore and lease expiry work |
+| Demo VM: round 1 (23 questions) | ~$0.35 | test the demo script on the VM | found leftovers to clean up (a pending card, a stuck job) |
+| Visitor-style round 3 (25 questions, 6 Investigate) | total not recorded | rehearse what a first-time visitor would do | no errors, no rate limits; the most expensive turn was $0.032 |
+| Demo VM pool: build and tests | ~$0.15 | build 5 demo VMs, golden disk copies, lease and restore tests | restore and lease expiry work |
 
 Total for the measured runs: about $6.25 (roughly $6), all outside the app's own ledger. The eval judge (a second Gemini call that grades each answer) cost only
 about $0.03 per 90-run eval.
@@ -74,9 +74,9 @@ No per-service bill is broken out yet. These are list-price estimates.
 | Firestore | close to $0 | small documents, well inside the free daily quota at our traffic (not measured separately) |
 | Cloud Scheduler | close to $0 | one job every 5 minutes; a few jobs a month are free |
 | Cloud Build, Artifact Registry | cents | builds on each deploy; container images of a few hundred MB |
-| Demo VM pool (5 × e2-small, 20 GB disk each) | about $0.03 per judge-hour while one runs (VM about $0.02/hour + external IP; a restore adds seconds of an extra disk). Standing cost about $12/month for the 5 disks, under $1/month for golden snapshots. | list prices. VMs are kept stopped, so only disks are billed while idle. |
+| Demo VM pool (5 × e2-small, 20 GB disk each) | about $0.03 per visitor-hour while one runs (VM about $0.02/hour + external IP; a restore adds seconds of an extra disk). Standing cost about $12/month for the 5 disks, under $1/month for golden snapshots. | list prices. VMs are kept stopped, so only disks are billed while idle. |
 
-**Why a pool, and why it can't run up a bill.** Each judge gets their own real machine. After use it is rolled back
+**Why a pool, and why it can't run up a bill.** Each visitor gets their own real machine. After use it is rolled back
 to a clean disk copy. A lease ends after 15 minutes idle (60 minutes at most), and the 5-minute sweep stops any VM
 that has no lease, so nothing runs forever.
 
@@ -86,7 +86,7 @@ that has no lease, so nothing runs forever.
 |---|---|---|
 | Quick answer, 3.8 Flash | median about $0.016 | A/B test |
 | Quick answer, Flash-Lite | median about $0.0065 | A/B test |
-| Investigate (up to 24 steps, medium thinking) | up to about $0.03 per turn in practice | most expensive turn in judge round 3: $0.032 |
+| Investigate (up to 24 steps, medium thinking) | up to about $0.03 per turn in practice | most expensive turn in visitor round 3: $0.032 |
 
 **Why pay 2.5 times more per answer?** Flash-Lite answered wrongly or gave up on about 1 in 4 demo questions;
 3.8 Flash on about 1 in 35. For a tool that suggests fixes on someone's server, a wrong answer costs far more

@@ -1,4 +1,4 @@
-# Judge walkthrough
+# First-visit walkthrough
 
 The source of truth for how someone meets Nightlight for the first time: what to open, what to try, what they
 should see, and how long each step takes. The README, the deck, the demo video and the in-app nudges are written from
@@ -20,7 +20,7 @@ The start screen offers three ways in:
 A live line shows how many demo machines are running and in use. When all five are in use, the screen says so and
 offers the other two ways in.
 
-## Path A: a live machine (recommended for judges)
+## Path A: a live machine 
 
 1. **Choose a starting point** in "Start with": everything fine, an app crashed, an app unhealthy, the disk nearly
    full, or leftovers from updates. Then **Start a live machine**.

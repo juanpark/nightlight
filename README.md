@@ -15,7 +15,7 @@ time.
 
 Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterprise Productivity) by team **8yte**.
 
-**Trying it for the first time (judges start here):** [`docs/JUDGE-WALKTHROUGH.md`](docs/JUDGE-WALKTHROUGH.md).  
+**Trying it for the first time? Start here:** [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md).  
 **What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).  
 **Why a cloud service can be trusted with your machines:** [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);  
 **passkeys for owners, step by step:** [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
@@ -130,10 +130,10 @@ flowchart LR
     H -.->|"fixed jobs, local allow-list"| S
 ```
 
-### Demo machines for judges
+### Demo machines for visitors
 
-A judge who picks the live demo gets a real Linux virtual machine of their own, with real apps in containers. It is
-started on demand and restored from a clean disk copy after every visit, so nothing one judge does reaches the next.
+A visitor who picks the live demo gets a real Linux virtual machine of their own, with real apps in containers. It is
+started on demand and restored from a clean disk copy after every visit, so nothing one visitor does reaches the next.
 Each visit signs in as its own throwaway identity, which the server maps to that machine. A visit ends after 15
 idle minutes or 60 minutes in all, and a sweep every five minutes stops any machine without a visit. Measured: ready
 in about a minute; "Start fresh" in about two. The picture:
@@ -194,10 +194,10 @@ How the pieces talk:
 | **Agent Development Kit (ADK, Python)** | the agent loop, tools, and callbacks before and after each model call (cost reservation, size checks, scrubbing) | one place to bound every call |
 | **Agent Platform Memory Bank** | facts about the person, scoped to the verified user id, written only by the agent's `remember` tool, kept 180 days | memory that survives a cleared browser, without mining transcripts behind the person's back |
 | **Google Search grounding** | one grounded Gemini call for unknown errors, with sources | the agent should not guess at error messages it has never seen |
-| **Cloud Run** | the web app (Next.js) and the API (FastAPI); scale to zero, at most 3 instances each | the judges' link stays up at near-zero idle cost |
+| **Cloud Run** | the web app (Next.js) and the API (FastAPI); scale to zero, at most 3 instances each | the public link stays up at near-zero idle cost |
 | **Cloud Scheduler** | `POST /internal/sweep` every 5 minutes with a Google-signed token (audience and invoker checked) | silent devices and watched websites are noticed with nobody watching |
 | **Firestore** | devices, services, history (expires on its own), approval cards, trust, chats, activity, quotas | transactions make approvals and job hand-over exactly-once; listeners give the browser live data |
-| **Firebase Authentication** | Google sign-in, and anonymous sign-in for the one-click demo | judges never create an account; real devices are always tied to a Google account |
+| **Firebase Authentication** | Google sign-in, and anonymous sign-in for the one-click demo | visitors never have to create an account; real devices are always tied to a Google account |
 | **No stored secrets** | the API reaches Firestore, Gemini and Memory Bank as its own Cloud Run service account; there are no API keys, so nothing goes in Secret Manager. The only key in the browser is the Firebase web config, which is public by design. The helper's release-signing key stays offline on the team's machine | a compromised cloud has no key to leak and cannot sign a helper update |
 | **Firebase emulator** | the whole API test suite runs against the Firestore emulator | no cloud access needed to test |
 
@@ -415,7 +415,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
 | `docs/BENCHMARKS.md`, `scripts/bench.py` | measured latency and cost |
 | `docs/COSTS.md` | what we spent on Google Cloud and Gemini, the guards that cap it, and why |
-| `docs/JUDGE-WALKTHROUGH.md` | the first-visit walkthrough (live machine, simulated home, your own device): the source of truth for docs, deck and video |
+| `docs/WALKTHROUGH.md` | the first-visit walkthrough (live machine, simulated home, your own device): the source of truth for docs, deck and video |
 | `docs/LIMITS-AND-ROADMAP.md` | how we tested, known limits and their root causes, what comes next |
 | `docs/architecture/` | the architecture diagram as code |
 | `contracts/mocks/` | sample data for every state of the demo story |

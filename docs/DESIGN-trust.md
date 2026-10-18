@@ -85,7 +85,7 @@ its own. Restarts and updates always ask, however often they went well (`trust.p
 It runs on the sample home only. On real devices every change still waits for a tap, because the fixed menu needs more
 hours behind it before we let it act alone there. That is the next step this design is built for, not a missing piece.
 
-## How we got here (for the judges)
+## How we got here
 
 1. Read-only monitoring and explanations (sample home).
 2. A fixed job menu on real devices, every change behind a card; strict vs app-managed devices.

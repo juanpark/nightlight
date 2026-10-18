@@ -155,11 +155,11 @@ judging model itself hitting Google's rate limit, because we ran both evaluation
   approval tap) still always adds a new device.
 - If a visitor's Google account already owns a Nightlight account, linking the anonymous demo visit to it fails
   silently; sign in first.
-- Live demo machines for judges: a pool of 5 real VMs, one per judge, kept stopped until asked for. Measured Sunday:
+- Live demo machines: a pool of 5 real VMs, one per visitor, kept stopped until asked for. Measured Sunday:
   48–59 s from click to ready (22 runs); "Start fresh" restores the disk from a clean copy in 105–110 s (4 runs); a
-  judge leaving frees the machine in about a minute. Copying a VM per judge instead took about 70 s plus pairing, so we
+  visitor leaving frees the machine in about a minute. Copying a VM per visitor instead took about 70 s plus pairing, so we
   keep a stopped pool. Limits: 5 at once (a sixth is offered the simulated home or their own computer), one zone, no
-  waiting list; restores advance only when the 5-minute sweep or a status check runs; a judge's lease is kept alive by
+  waiting list; restores advance only when the 5-minute sweep or a status check runs; a visitor's lease is kept alive by
   the open tab, not by chatting.
 
 **Security and data** (details in `docs/SECURITY.md`): scrubbing of names, addresses and secrets is pattern-based and
@@ -178,7 +178,7 @@ ordinary approval cards have no second factor: a signed-in session can tap Appro
 | Structured findings with evidence citations: each finding cites the step id it came from; the UI shows the evidence beside each claim | closes the last gap between words and tools (limit 1 above) |
 | `check_speed` and `alternatives` tools; `needs_measurement` on clean-ups | "slow" and "safer option" become measured answers, and a clean-up is never offered on nothing |
 | Per-call timeout and a visible time budget in both modes | an honest "Nightlight is slow right now" instead of a thinner answer |
-| Investigate as a stated loop: hypotheses, each confirmed or ruled out by a named step | the judges' main ask |
+| Investigate as a stated loop: hypotheses, each confirmed or ruled out by a named step | the reviewers' main ask |
 | Linux `.deb`, a Docker image for NAS boxes, Windows helper, signed Mac package | installers without a terminal |
 | App updates on real devices with rollback to the previous image; a backup before any clean-up | the two jobs people ask for most |
 | Token rotation and expiry; account deletion; local-time dates; roles for family or office members | hygiene |
@@ -188,7 +188,7 @@ us: they print exactly what a person would have seen.
 
 ## Why the helper is Python for now
 
-- **One readable file.** The whole helper is a single Python file. An owner, or a judge, can open it and check exactly
+- **One readable file.** The whole helper is a single Python file. An owner can open it and check exactly
   what runs on their machine. That matters more to a trust product than speed.
 - **It already runs almost everywhere.** Raspberry Pi OS, Ubuntu and most Linux systems ship Python 3. Where one
   doesn't (minimal Debian, some NAS systems) or on a Mac, Nightlight brings its own copy: the same pinned
