@@ -180,7 +180,7 @@ export default function Home({ user }: { user: User }) {
       <Tour uid={uid} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)}
         state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
           realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
-      {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
+      {resetting && <div className="overlay"><div className="modal">Starting the sample home fresh…</div></div>}
     </div>
   );
 }
