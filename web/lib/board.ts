@@ -57,7 +57,7 @@ export function deviceBlock(d: Device, services: Service[] | null, now: number):
   else if (d.realm === "real") lines.push({ mark: "ok", label: "Reporting", value: `last report ${ago(d.lastSeen, now)}` });
   const fs = d.findings ?? [];
   const v = d.vitals ?? {};
-  if (v.uptime != null) lines.push(vital("Uptime", uptimeWords(v.uptime), fs.find((f) => f.check === "restart_overdue"), stale));
+  if (v.uptime != null) lines.push(vital("Running for", uptimeWords(v.uptime), fs.find((f) => f.check === "restart_overdue"), stale));
   if (v.diskPct != null) lines.push(vital("Disk", `${Math.round(v.diskPct)}% used`, fs.find((f) => f.check.startsWith("disk_over")), stale));
   if (v.mem != null) lines.push(vital("Memory", `${Math.round(v.mem)}% used`, fs.find((f) => f.check === "memory_high"), stale));
   if (v.cpu != null) lines.push(vital("CPU", `${Math.round(v.cpu)}% busy`, undefined, stale));

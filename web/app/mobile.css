@@ -11,22 +11,22 @@
 
   /* panels and the device drawer use the full width */
   .drawer { margin: 0; }
-  .needs-row { flex-wrap: wrap; }
   .tabs { overflow-x: auto; }
   .vitals { gap: 8px; }
 
   /* fingers: every control on the home is at least 44px tall */
-  .homebar .fpill, .view-switch button { min-height: 44px; padding-inline: 15px; }
+  .homebar .fpill, .view-switch button, .chat-mode button, .chat-tool { min-height: 44px; padding-inline: 15px; }
   .fmenu-panel label { min-height: 44px; }
   .homemap .react-flow__controls-button { width: 44px; height: 44px; }
   .homemap .react-flow__controls-button svg { max-width: 16px; max-height: 16px; }
   .firstrun-line .linkish { display: inline-flex; align-items: center; min-height: 44px; }
-  .needs-strip button, .needs-list button { min-height: 44px; }
+  .strip-head button, .needs-actions button { min-height: 44px; }
+  /* the rest of what a finger taps: header pill and verdict, the chat's controls, the device panel's own */
+  .sample-pill, .top-verdict, .wl-head, .card .actions button, .chat-input button, .drawer-actions button,
+  .drawer .tabs button, .drawer-close, .star-btn:not(.small) { min-height: 44px; }
+  .drawer-close, .star-btn:not(.small) { min-width: 44px; }
+  .wl-head { align-items: center; }
   .dtools button { min-height: 46px; } /* the toolbar sits outside the map's zoom, so leave a little room */
 }
 
-/* The map becomes a grid of tiles on phones (the desktop layout positions them by hand). */
-@media (max-width: 700px) {
-  .board { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .board .node { width: auto !important; position: relative; left: auto !important; top: auto !important; }
-}
+

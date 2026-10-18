@@ -1,5 +1,5 @@
 "use client";
-// Getting started: five steps derived from what already exists (nothing stored but "hide" and "skip"). No step
+// Getting started (signed-in owners; the sample home says so in the header's pill): five steps derived from what already exists (nothing stored but "hide" and "skip"). No step
 // blocks the app; it disappears when all are done or the person hides it. UX spec 2026-10-17 §3.1.
 import { useEffect, useState } from "react";
 import type { Go } from "@/lib/needsYou";
@@ -13,10 +13,9 @@ type State = "todo" | "doing" | "done";
 function read(k: string) { try { return localStorage.getItem(k); } catch { return null; } }
 function write(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* this visit only */ } }
 
-export default function FirstRun({ uid, anonymous, devices, discoveries, expert, onAdd, onWatch, onSample, onSave,
-  onGo }: {
-  uid: string; anonymous: boolean; devices: Device[]; discoveries: Discovery[]; expert: { enabled: boolean } | null;
-  onAdd: () => void; onWatch: () => void; onSample: () => void; onSave: () => void | Promise<void>; onGo: (g: Go) => void;
+export default function FirstRun({ uid, devices, discoveries, expert, onAdd, onWatch, onSample, onGo }: {
+  uid: string; devices: Device[]; discoveries: Discovery[]; expert: { enabled: boolean } | null;
+  onAdd: () => void; onWatch: () => void; onSample: () => void; onGo: (g: Go) => void;
 }) {
   const [hidden, setHidden] = useState(true); // until localStorage is read, so it never flashes
   const [skipped, setSkipped] = useState(false);
@@ -25,15 +24,6 @@ export default function FirstRun({ uid, anonymous, devices, discoveries, expert,
     setSkipped(read(`nl_firstrun_expert_skip_${uid}`) === "1");
   }, [uid]);
 
-  if (anonymous) {
-    return (
-      <div className="panel firstrun firstrun-line small" data-tour="try-own">
-        This is a sample home: the devices are simulated. Yours take about two minutes.
-        {/* sign in, then straight to the line for their own computer */}
-        <button className="small" onClick={async () => { await onSave(); onAdd(); }}>Try it on your own computer</button>
-      </div>
-    );
-  }
   const real = devices.filter((d) => d.realm === "real" && d.kind !== "watched");
   const first = real[0];
   const reported = real.find((d) => d.lastSeen);

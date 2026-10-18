@@ -4,7 +4,7 @@
 // what was done; Settings: what it may do).
 // UX spec 2026-10-17 §2.
 import { useEffect, useRef, useState } from "react";
-import { Star, Close as X } from "@/src/components/icons";
+import { Caret, Star, Close as X } from "@/src/components/icons";
 import { api } from "@/lib/api";
 import { Copy } from "./AddDevice";
 import { useServicesState } from "@/lib/data";
@@ -27,19 +27,11 @@ import AppDetail from "./AppDetail";
 import SetupCard from "./SetupCard";
 import MacFolders, { FOLDERS_FROM } from "./MacFolders";
 import { appIcon, deviceIcon } from "./map/kinds";
+import StatusWord, { deviceLine, deviceTone } from "./StatusWord";
+import Vitals, { vitalsHeadline } from "./Vitals";
 import { appOrder } from "@/lib/apps";
 
 export type Tab = "overview" | "apps" | "about" | "settings";
-
-function Vital({ label, value }: { label: string; value?: number | null }) {
-  return (
-    <div>
-      <div className="small muted">{label}</div>
-      <div><strong>{value == null ? "–" : `${Math.round(value)}%`}</strong></div>
-      <div className="bar"><i style={{ width: `${Math.min(100, value ?? 0)}%` }} /></div>
-    </div>
-  );
-}
 
 function uptime(sec?: number | null) {
   if (!sec) return "–";
@@ -102,6 +94,12 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
     return () => m.removeEventListener("change", on);
   }, []);
   const modal = phone && !hidden;
+  // Opening a device moves the keyboard into its panel (wherever it was opened from); closing it puts focus back.
+  useEffect(() => {
+    const back = document.activeElement as HTMLElement | null;
+    box.current?.focus({ preventScroll: true });
+    return () => { if (back?.isConnected && !document.activeElement?.closest(".react-flow__node")) back.focus({ preventScroll: true }); };
+  }, [device.id]);
   useEffect(() => {
     if (!modal) return;
     const behind = [...document.querySelectorAll<HTMLElement>(".shell > .top, .main > .left, .main > .right, .shell > .pane-tabs")];
@@ -132,7 +130,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
       <div className="tabs" role="tablist" aria-label={`About the ${device.name}`}>
         {tabs.map((t) => (
           <button key={t} role="tab" aria-selected={current === t} className={current === t ? "on" : ""}
-            onClick={() => pick(t)}>{TAB_NAME[t]}{t === "apps" && services.length > 0 &&
+            onClick={() => pick(t)} data-tour={t === "about" ? "drawer-knowledge" : undefined}>{TAB_NAME[t]}{t === "apps" && services.length > 0 &&
               <span className="tab-count">{services.length}</span>}</button>))}
       </div>
       <div className="drawer-body" role="tabpanel">
@@ -144,30 +142,40 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
 
       {current === "overview" && !watched && <>
         <SetupCard key={`setup:${device.id}`} device={device} actions={actions} onGo={onGo} />
-        <p className="drawer-status">{brief ? `Needs attention ${device.status === "crit" ? "now" : "soon"}.`
-          : statusSentence(device, Date.now(), removing)}</p>
-        <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp}
+        {/* one plain sentence first: how many things need you here (their rows carry the status), or how it is */}
+        <div className="drawer-verdict">
+          {needs.length > 0 && !removing
+            ? <p className="drawer-status">{needs.length === 1 ? "1 thing needs you here" : `${needs.length} things need you here`}</p>
+            : <>
+                <StatusWord tone={removing ? "later" : deviceTone(device)} word={removing ? "Being removed" : undefined} />
+                <p className="drawer-status">{brief ? deviceLine(device, Date.now()) : statusSentence(device, Date.now(), removing)}</p>
+              </>}
+        </div>
+        <NeedsList needs={needs} actions={actions} devices={devices} onGo={onGo} onFollowUp={onFollowUp} plain
           extra={(n) => urgent && real && n.kind === "critical" ? <IssueActions device={device} finding={urgent} /> : null} />
         <div className="drawer-actions">
-          <button className="primary" onClick={() => onAsk(`How is my ${device.name} doing?`)}>Ask about this device</button>
+          {/* the device's one primary action, unless a problem above already has it */}
+          <button className={needs.length ? "" : "primary"} onClick={() => onAsk(`How is my ${device.name} doing?`)}>
+            Ask about this device</button>
         </div>
         {favApps.length > 0 && (
           <section className="drawer-section">
             <h4>Your favorite apps here</h4>
             <AppGrid apps={favApps} fav={fav} onApp={openApp} />
           </section>)}
-        {real && device.status === "offline"
-          ? <p className="muted small">Last report {device.lastSeen ? device.lastSeen.toLocaleString() : "never"}: Nightlight
-              will check what happened when it&apos;s back.</p>
-          : <div className="vitals">
-              <Vital label="Disk" value={device.vitals?.diskPct} />
-              <Vital label="Memory" value={device.vitals?.mem} />
-              <Vital label="CPU" value={device.vitals?.cpu} />
-            </div>}
+        {/* one tap deeper: the numbers, the rest of the problems, the checkups and the history */}
+        <Fold title="How it's doing" hint={real && device.status === "offline" ? "Not reporting" : vitalsHeadline(device) ?? "All fine"}>
+          {real && device.status === "offline"
+            ? <p className="muted small">Last report {device.lastSeen ? device.lastSeen.toLocaleString() : "never"}: Nightlight
+                will check what happened when it&apos;s back.</p>
+            : <Vitals device={device} />}
+          {real && <DeviceHistory uid={uid} deviceId={device.id} />}
+        </Fold>
         <Problems device={device} skip={listed} onAsk={onAsk} />
-        {real && <Checkups uid={uid} generation={generation} deviceId={device.id}
-          actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />}
-        {real && <DeviceHistory uid={uid} deviceId={device.id} />}
+        {real && <Fold title="Checkups" hint="Known problems, checked step by step with no AI">
+          <Checkups uid={uid} generation={generation} deviceId={device.id}
+            actions={actions} cleanupOn={!!device.permissions?.cleanup || !!device.allowedJobs?.fix?.length} />
+        </Fold>}
       </>}
 
       {current === "apps" && (opened
@@ -285,7 +293,7 @@ function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClo
         : <strong style={{ fontSize: 18 }}>{device.name}</strong>}
       {real && !editing && <button className="linkish small" onClick={() => { setName(device.name); setEditing(true); }}>
         Rename</button>}
-      <span className={`pill ${real ? "live" : ""}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Sample"}</span>
+      <span className={`pill ${real ? "live" : "sample"}`}>{real ? (device.kind === "watched" ? "Watched" : "Live") : "Simulated"}</span>
       <span style={{ flex: 1 }} />
       {fav && <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />}
       <button className="drawer-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
@@ -333,9 +341,9 @@ function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) 
     const state = f.state ?? "new";
     return (
       <div key={f.id ?? i} className={`finding ${state !== "new" ? "is-known" : ""}`}>
-        <span className={`dot ${state !== "new" ? "offline" : f.severity === "info" ? "ok" : f.severity}`} />{" "}
-        {f.message} <span className="muted small">({f.evidence})</span>
-        {state !== "new" && <span className="pill" style={{ marginLeft: 6 }}>{state === "known" ? "Known" : "Snoozed"}</span>}
+        <StatusWord tone={state !== "new" ? "later" : f.severity === "crit" ? "crit" : f.severity === "warn" ? "warn" : "ok"}
+          word={state === "known" ? "Known" : state !== "new" ? "Snoozed" : f.severity === "info" ? "Good to know" : undefined} />
+        <span className="finding-text">{f.message}{f.evidence && <span className="muted small"> ({f.evidence})</span>}</span>
         {state === "new" && <button className="linkish small issue-actions"
           onClick={() => onAsk(`What should I do about this on my ${device.name}: ${f.message}`)}>What should I do?</button>}
         <IssueActions device={device} finding={f} />
@@ -345,14 +353,25 @@ function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) 
   };
   if (urgent && open.length === 0 && known.length === 0) return null; // the row at the top already says it all
   return (
-    <section className="drawer-section">
-      <h4>{urgent ? "Other problems" : "Problems"}</h4>
+    <Fold title={urgent ? "Other problems" : "Problems"} open={open.length > 0 && !urgent}
+      hint={open.length ? `${open.length} to look at` : known.length ? `${known.length} known or snoozed` : "None"}>
       {open.length === 0 && <p className="muted small">{urgent ? "Nothing else needs a look." : "Nothing needs a look."}</p>}
       {open.map(row)}
       {known.length > 0 && <button className="linkish small" onClick={() => setShowKnown(!showKnown)}>
         {showKnown ? "Hide" : `${known.length} known or snoozed`}</button>}
       {showKnown && known.map(row)}
-    </section>
+    </Fold>
+  );
+}
+
+/** A section folded to one line: its name and a few words about what's inside; opens in place. */
+function Fold({ title, hint, open, children }: { title: string; hint?: string; open?: boolean; children: React.ReactNode }) {
+  return (
+    <details className="fold" open={open}>
+      <summary><Caret className="caret" size={12} aria-hidden /><span className="fold-title">{title}</span>
+        {hint && <span className="fold-hint">{hint}</span>}</summary>
+      <div className="fold-body">{children}</div>
+    </details>
   );
 }
 

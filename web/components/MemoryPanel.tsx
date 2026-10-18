@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 
 interface Memories { enabled: boolean; memories: { id: string; fact: string; updatedAt: string | null }[] }
 
 export default function MemoryPanel() {
   const [data, setData] = useState<Memories | null>(null);
   const [err, setErr] = useState("");
+  const [sure, setSure] = useState(false); // forgetting can't be undone: one more tap
   const load = () => api<Memories>("GET", "/api/me/memories").then(setData)
-    .catch((e) => setErr(e instanceof ApiError ? e.code : "Something went wrong"));
+    .then(() => setErr(""), () => setErr("Couldn't load what Nightlight remembers. Try Refresh in a moment."));
   useEffect(() => { load(); }, []);
   return (
     <div className="panel">
@@ -22,8 +23,14 @@ export default function MemoryPanel() {
         : <div className="list">{data.memories.map((m) => <div key={m.id} className="item">• {m.fact}</div>)}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
         <button onClick={load}>Refresh</button>
-        {data?.memories.length ? <button onClick={() => api("DELETE", "/api/me/memories").then(() =>
-          setData({ ...data, memories: [] }))}>Forget everything</button> : null}
+        {data?.memories.length ? (sure
+          ? <>
+              <button className="danger" onClick={() => api("DELETE", "/api/me/memories").then(() => {
+                setData({ ...data, memories: [] }); setSure(false); }, () => setErr("Couldn't forget them. Please try again."))}>
+                Yes, forget everything</button>
+              <button onClick={() => setSure(false)}>Keep them</button>
+            </>
+          : <button onClick={() => setSure(true)}>Forget everything</button>) : null}
       </div>
       {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>

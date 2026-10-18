@@ -61,7 +61,7 @@ export default function StatusBoard({ uid, devices, watches, now, onSelect }: {
         <span className="small muted">From what each device last reported. No AI involved.</span>
         <span className="spacer" />
         <button className="small" onClick={() => navigator.clipboard.writeText(boardText(blocks, c, stamp))
-          .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => {})}>{copied ? "Copied" : "Copy"}</button>
+          .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => {})}>{copied ? "Copied" : "Copy as text"}</button>
       </div>
       <div className="sb-grid">{blocks.map((b) => <BlockView key={b.id} b={b} onSelect={b.id === "_websites" ? undefined : onSelect} />)}</div>
     </div>

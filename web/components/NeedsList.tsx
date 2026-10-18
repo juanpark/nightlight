@@ -8,12 +8,11 @@ import { useDismissed } from "@/lib/needsYou";
 import ApprovalCard from "./ApprovalCard";
 import { Copy } from "./AddDevice";
 import { ArrowText } from "@/src/components/icons";
+import StatusWord, { needTone } from "./StatusWord";
 
-const TONE = { 1: "crit", 2: "warn", 3: "offline" } as const;
-
-export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, max = 3, showDevice = false, extra }: {
+export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, max = 3, showDevice = false, plain = false, extra }: {
   needs: Need[]; actions: Action[]; devices: Device[]; onGo: (go: Go) => void; onFollowUp: (turnId: string) => void;
-  max?: number; showDevice?: boolean; extra?: (n: Need) => ReactNode; // more controls at the end of a row
+  max?: number; showDevice?: boolean; plain?: boolean; extra?: (n: Need) => ReactNode; // more controls at the end of a row
 }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -21,30 +20,39 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
   if (!needs.length) return null;
   const shown = all ? needs : needs.slice(0, max);
   const name = (id?: string) => devices.find((d) => d.id === id)?.name;
+  // one primary button per list: the worst item's; the rest stay quiet
+  const lead = shown[0]?.id;
+  const kind = (n: Need) => n.id === lead ? "primary small" : "small";
   return (
     <div className="needs-list">
-      {shown.map((n) => (
-        <div key={n.id}>
+      {shown.map((n) => {
+        const { tone, word } = needTone(n);
+        const device = showDevice ? name(n.deviceId) : undefined;
+        // the strip says it plainly; the exact figures ("/ at 94% of 6.4 GB") stay in the device panel
+        const detail = n.detail && !(plain && (n.kind === "critical" || n.kind === "approve")) ? n.detail : null;
+        return (
+        <div key={n.id} className="needs-item">
           <div className="needs-row">
-            <span className={`dot ${TONE[n.priority]}`} />
+            <StatusWord tone={tone} word={word} className="needs-status" />
             <span className="needs-text">
-              {showDevice && name(n.deviceId) && <span className="muted">{name(n.deviceId)}: </span>}
-              <ArrowText text={n.title} />{n.detail && <span className="muted small"> · <ArrowText text={n.detail} /></span>}
+              {device && n.deviceId && <button className="needs-device" onClick={() => onGo({ to: "drawer", deviceId: n.deviceId! })}
+                aria-label={`Open ${device}`}>{device}</button>}
+              <span className="needs-title"><ArrowText text={n.title} /></span>
+              {detail && <span className="needs-detail"><ArrowText text={detail} /></span>}
             </span>
+            <span className="needs-actions">
             {n.cta.go.to === "offer"
               ? <>
-                  <button className="primary small" onClick={() => offer(n.cta.go, true)}>Yes, handle it</button>
+                  <button className={kind(n)} onClick={() => offer(n.cta.go, true)}>Yes, handle it</button>
                   <button className="small" onClick={() => offer(n.cta.go, false)}>Keep asking me</button>
                 </>
-              : n.cta.go.to === "card"
-                ? <button className={`small ${n.priority < 3 ? "primary" : ""}`}
+              : n.cta.go.to === "card" || n.cta.go.to === "line"
+                ? <button className={kind(n)} aria-expanded={open === n.id}
                     onClick={() => setOpen(open === n.id ? null : n.id)}>{open === n.id ? "Hide" : n.cta.label}</button>
-                : n.cta.go.to === "line"
-                  ? <button className="small" onClick={() => setOpen(open === n.id ? null : n.id)}>
-                      {open === n.id ? "Hide" : n.cta.label}</button>
-                  : <button className="small" onClick={() => onGo(n.cta.go)}>{n.cta.label}</button>}
+                : <button className={kind(n)} onClick={() => onGo(n.cta.go)}>{n.cta.label}</button>}
             {n.kind === "duplicate" && <button className="small" onClick={() => dismiss(n.id)}>Keep both</button>}
             {extra?.(n)}
+            </span>
           </div>
           {open === n.id && n.cta.go.to === "line" && (
             <div className="needs-line small">
@@ -57,7 +65,8 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
             return <ApprovalCard action={a} device={devices.find((d) => d.id === a?.deviceId)} onFollowUp={onFollowUp} />;
           })()}
         </div>
-      ))}
+        );
+      })}
       {needs.length > max && <button className="linkish small" onClick={() => setAll(!all)}>
         {all ? "Show fewer" : `Show all ${needs.length}`}</button>}
     </div>

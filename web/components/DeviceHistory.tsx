@@ -27,6 +27,24 @@ function StatusStrip({ points, from, to }: { points: HistoryPoint[]; from: numbe
   );
 }
 
+const pct = (v: number | null | undefined) => v == null ? "–" : `${Math.round(v)}%`;
+
+/** One reading per step (the latest in each), newest first: the history as a short table. */
+function sample(points: HistoryPoint[], step: number): HistoryPoint[] {
+  const byStep = new Map<number, HistoryPoint>();
+  for (const p of points) byStep.set(Math.floor(p.at!.getTime() / step), p);
+  return [...byStep.values()].reverse();
+}
+
+/** The health strip in words: "All good for the last 24 hours" / "Needed attention 3 times in 7 days". */
+function healthWords(points: HistoryPoint[], range: string): string {
+  let times = 0;
+  points.forEach((p, i) => { if (p.status !== "ok" && points[i - 1]?.status === "ok") times++; });
+  if (points[0] && points[0].status !== "ok") times++;
+  return times === 0 ? `Healthy the whole time (${range}).`
+    : `Needed attention ${times === 1 ? "once" : `${times} times`} (${range}); the coloured marks above show when.`;
+}
+
 /** Disk, memory and CPU over the last day or week, for a real device. */
 export default function DeviceHistory({ uid, deviceId }: { uid: string; deviceId: string }) {
   const history = useHistory(uid, deviceId);
@@ -42,7 +60,7 @@ export default function DeviceHistory({ uid, deviceId }: { uid: string; deviceId
         <span className="small muted" style={{ fontWeight: 600 }}>History</span>
         <span className="tabs" role="group" aria-label="Time range">
           {(Object.keys(RANGES) as (keyof typeof RANGES)[]).map((k) => (
-            <button key={k} className={`small ${range === k ? "on" : ""}`} onClick={() => setRange(k)}>
+            <button key={k} className={`small ${range === k ? "on" : ""}`} aria-pressed={range === k} onClick={() => setRange(k)}>
               {RANGES[k].label}</button>))}
         </span>
       </div>
@@ -50,11 +68,24 @@ export default function DeviceHistory({ uid, deviceId }: { uid: string; deviceId
         ? <p className="small muted" style={{ margin: "4px 0" }}>History starts building now (one point every 5 minutes).</p>
         : <>
             <StatusStrip points={shown} from={from} to={to} />
+            <p className="small muted strip-words">{healthWords(shown, RANGES[range].label.toLowerCase())}</p>
             <div className="sparks">
               <Sparkline label="Disk" points={series("disk")} from={from} to={to} />
               <Sparkline label="Memory" points={series("mem")} from={from} to={to} />
               <Sparkline label="CPU" points={series("cpu")} from={from} to={to} />
             </div>
+            <details className="history-table small">
+              <summary>Show as a table</summary>
+              <table>
+                <thead><tr><th scope="col">Time</th><th scope="col">Health</th><th scope="col">Disk</th>
+                  <th scope="col">Memory</th><th scope="col">CPU</th></tr></thead>
+                <tbody>{sample(shown, range === "day" ? 3600000 : 12 * 3600000).map((p) => (
+                  <tr key={p.id}><td>{p.at!.toLocaleString([], range === "day" ? { hour: "numeric", minute: "2-digit" }
+                    : { weekday: "short", hour: "numeric" })}</td>
+                    <td>{STATUS_WORD[p.status as keyof typeof STATUS_WORD] ?? p.status}</td>
+                    <td>{pct(p.disk)}</td><td>{pct(p.mem)}</td><td>{pct(p.cpu)}</td></tr>))}</tbody>
+              </table>
+            </details>
           </>}
     </div>
   );

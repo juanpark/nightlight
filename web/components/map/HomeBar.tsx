@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Kinds, ListView as List, MapView as MapIcon, NeedsYou, Opens, Place as PlaceIcon, Star, StatusView, Tags,
   type IconType } from "@/src/components/icons";
 import { api } from "@/lib/api";
-import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, needsMe, NO_FILTER, starred, type Category, type Filter,
+import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, NO_FILTER, starred, type Category, type Filter,
   type Place } from "@/lib/homeFilter";
 import type { Need } from "@/lib/needsYou";
 import type { Device, Watch } from "@/lib/types";
@@ -57,7 +57,6 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
   const tags = [...new Set([...devices, ...watches].flatMap((d) => d.tags ?? []))].sort();
   // "Sample" separates the sample home from your own devices, so it only helps when both are on the map
   if (devices.some((d) => d.realm !== "real") && devices.some((d) => d.realm === "real")) tags.push("Sample");
-  const needing = devices.filter((d) => needsMe(d, marks)).length;
   const chosen = places.find((p) => p.id === filter.place);
   const renamable = chosen && chosen.id !== SAMPLE && chosen.id !== UNKNOWN;
   async function save() {
@@ -68,7 +67,7 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
   }
   return (
     <div className="homebar">
-      {devices.length > 0 && <div className="mode-switch view-switch" role="radiogroup" aria-label="Show your home as">
+      {devices.length > 0 && <div className="mode-switch view-switch" role="radiogroup" aria-label="Show your home as" data-tour="view-switch">
         <button role="radio" aria-checked={view === "map"} className={view === "map" ? "on" : ""} onClick={() => onView("map")}>
           <MapIcon size={15} /> Map</button>
         <button role="radio" aria-checked={view === "list"} className={view === "list" ? "on" : ""} onClick={() => onView("list")}>
@@ -77,10 +76,11 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
           title="Every check as a ✓ ! ✗ line, from what devices last reported"><StatusView size={15} /> Status</button>
       </div>}
 
+      <span className="hb-gap" aria-hidden />
       <div className="fgroup" role="group" aria-label="Show only">
         <button className={`fpill ${filter.needsMe ? "on" : ""}`} aria-pressed={filter.needsMe}
           onClick={() => onFilter({ ...filter, needsMe: !filter.needsMe })}>
-          <NeedsYou size={15} aria-hidden /> Needs you{needing > 0 && <span className="fcount">{needing}</span>}</button>
+          <NeedsYou size={15} aria-hidden /> Only what needs me</button>
         {(filter.favorites || devices.some(starred)) && (
           <button className={`fpill ${filter.favorites ? "on" : ""}`} aria-pressed={filter.favorites}
             onClick={() => onFilter({ ...filter, favorites: !filter.favorites })}>

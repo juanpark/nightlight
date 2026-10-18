@@ -20,6 +20,17 @@ const secs = (ms?: number) => ms == null ? "" : ms < 1000 ? `${ms} ms` : `${(ms 
 const modelName = (id: string) => id.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 const cents = (usd: number) => { const c = usd * 100; return c < 0.1 ? "under 0.1¢" : `${c.toFixed(c < 10 ? 1 : 0)}¢`; };
 
+/** What went wrong with an answer, as a sentence with a way on. The server's own sentences pass through; its short
+ *  codes ("rate_limited") and the browser's "connection problem" become plain words. */
+function plainError(e: string): string {
+  if (/[ .]/.test(e) && e !== "connection problem") return e;
+  if (e === "connection problem") return "Lost the connection to Nightlight. Check your internet, then ask again.";
+  if (/rate|too_many|quota/.test(e)) return "That's a lot of questions at once. Wait a minute, then ask again.";
+  if (/timeout|slow|deadline/.test(e)) return "Gemini is slow right now, so this answer stopped early. Ask again, or switch to Quick answers.";
+  if (/sign_in|auth|forbidden/.test(e)) return "Your sign-in ran out. Reload the page, then ask again.";
+  return "Nightlight couldn't finish this answer. Ask again in a moment.";
+}
+
 /** The receipt for an answer: how long it took, which model wrote it and what it cost. */
 function receipt(ms?: number, m?: Metrics): string {
   const slow = m?.slowCalls ? `${m.slowCalls} slow call${m.slowCalls === 1 ? "" : "s"} retried` : "";
@@ -56,8 +67,8 @@ function StepRow({ s, show }: { s: Step; show?: boolean }) {
   );
 }
 
-function WorkLog({ blocks, busy, investigate, ms, metrics, from, budget }: {
-  blocks: Block[]; busy: boolean; investigate: boolean; ms?: number; metrics?: Metrics; from?: number; budget?: number;
+function WorkLog({ blocks, busy, investigate, from, budget }: {
+  blocks: Block[]; busy: boolean; investigate: boolean; from?: number; budget?: number;
 }) {
   const [open, setOpen] = useState(investigate);
   const steps = blocks.filter((b): b is Step => b.kind === "step");
@@ -65,13 +76,12 @@ function WorkLog({ blocks, busy, investigate, ms, metrics, from, budget }: {
   // Folded, the log still lists every step with what came back (its outputs stay one tap away); open, it adds the
   // commentary said between steps.
   const visible = open ? blocks : blocks.filter((b) => b.kind === "step");
-  const paid = receipt(ms, metrics);
   return (
     <div className={`worklog ${open ? "open" : ""}`}>
       <button className="wl-head" onClick={() => setOpen(!open)} aria-expanded={open}>
         <Caret className="caret wl-chev" size={11} aria-hidden />
         {busy ? <>Working… {n}{from && budget ? <Elapsed from={from} budget={budget} /> : null}</>
-          : `What I checked · ${n}${paid ? ` · ${paid}` : ""}`}
+          : `What I checked · ${n}`}
       </button>
       {visible.length > 0 && (
         <div className="wl-body">
@@ -109,6 +119,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp, latest, h
   const parts: JSX.Element[] = [];
   let seg: Block[] = [];
   const lastStep = blocks.reduce((n, b, i) => b.kind === "step" ? i : n, -1);
+  const steps = blocks.filter((b) => b.kind === "step").length;
   const flush = (i: number) => {
     if (!seg.length) return;
     const blocks = seg;
@@ -116,8 +127,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp, latest, h
     if (blocks.some((b) => b.kind === "step")) {
       const isLast = i > lastStep; // the segment holding the last step carries the turn's totals
       parts.push(<WorkLog key={`log${i}`} blocks={blocks} busy={turn.busy && isLast}
-        investigate={turn.mode === "investigate"} ms={isLast ? turn.ms : undefined}
-        metrics={isLast ? turn.metrics : undefined} from={turn.startedAt} budget={turn.budget} />);
+        investigate={turn.mode === "investigate"} from={turn.startedAt} budget={turn.budget} />);
     } else {
       blocks.forEach((b, j) => b.kind === "text" && parts.push(<div key={`n${i}.${j}`} className="wl-note"><Markdown text={b.text.trim()} /></div>));
     }
@@ -141,14 +151,15 @@ export default function TurnView({ turn, actions, devices, onFollowUp, latest, h
     <div className={`turn agent ${turn.past ? "past" : ""}`}>
       {turn.mode === "investigate" && <span className="pill turn-mode">Investigated</span>}
       {parts}
-      {/* an answer with no steps still says what it took */}
-      {!turn.busy && lastStep < 0 && final >= 0 && receipt(turn.ms, turn.metrics) &&
-        <div className="wl-receipt small muted">Answered from what I know · {receipt(turn.ms, turn.metrics)}</div>}
+      {/* the receipt, small and quiet under the answer: steps, time, model, cost */}
+      {!turn.busy && final >= 0 && receipt(turn.ms, turn.metrics) &&
+        <div className="wl-receipt">{steps ? `${steps} step${steps === 1 ? "" : "s"}` : "Answered from what I know"}
+          {" · "}{receipt(turn.ms, turn.metrics)}</div>}
       {turn.busy && (final < 0 && lastStep < 0
         ? <div className="turn-mascot thinking"><Mascot size={MASCOT} mood="thinking" health={health} /> Thinking…</div>
         : <div className="turn-mascot"><Mascot size={MASCOT} mood="working" health={health} label="Nightlight is working" /></div>)}
-      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}
-        {turn.retryable && !turn.busy && onRetry && <>{" "}<button className="linkish small" onClick={onRetry}>Ask again</button></>}</div>}
+      {turn.error && <div className="turn-error small" role="alert">{plainError(turn.error)}
+        {!turn.busy && onRetry && <>{" "}<button className="linkish small" onClick={onRetry}>Ask again</button></>}</div>}
       {mood && <div className="turn-mascot"><Mascot key={mood} size={MASCOT} mood={mood} health={health} /></div>}
     </div>
   );

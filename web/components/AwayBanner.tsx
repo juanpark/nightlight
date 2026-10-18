@@ -39,7 +39,7 @@ export default function AwayBanner({ uid, events, onSummarise }: {
     <div className="panel away" role="status">
       <span>{count === 1 ? "1 thing happened" : `${count} things happened`} while you were away.</span>
       <span className="spacer" />
-      <button className="primary" onClick={() => {
+      <button onClick={() => {
         onSummarise("What happened while I was away? Keep it short.");
         setDismissed(true);
       }}>Summarise</button>

@@ -1,5 +1,5 @@
 "use client";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { Mascot } from "@/src/components/mascot/Mascot";
 import { Stopped, Switched, ToLatest } from "@/src/components/icons";
 import { loadMessages } from "@/lib/data";
@@ -90,8 +90,9 @@ const Chat = forwardRef<ChatHandle, {
   uid: string; actions: Action[]; devices: Device[]; disabled: boolean; generation?: number;
   onBusy?: (busy: boolean) => void; // so the header's mascot can watch the answer being written
   onShowMap?: () => void; // the context strip's device was tapped: bring the map into view
+  title?: ReactNode; end?: ReactNode; // the column's heading, and the control at the end of that row
 }>(
-  function Chat({ uid, actions, devices, disabled, generation, onBusy, onShowMap }, ref) {
+  function Chat({ uid, actions, devices, disabled, generation, onBusy, onShowMap, title, end }, ref) {
     const [turns, setTurns] = useState<Turn[]>([]);
     const [text, setText] = useState("");
     const [mode, setMode] = useState<Mode>("quick");
@@ -305,6 +306,7 @@ const Chat = forwardRef<ChatHandle, {
 
     return (
       <>
+        <div className="chat-head">{title}{end}</div>
         <Conversations uid={uid} generation={generation} open={open} disabled={busy} onPick={switchTo} />
         <ContextStrip devices={devices} onShow={onShowMap} />
         <div className="chat-log" ref={log} onScroll={(e) => {
@@ -341,13 +343,6 @@ const Chat = forwardRef<ChatHandle, {
           })}
           {behind && <button className="to-latest" onClick={toLatest}><ToLatest size={15} aria-hidden /> Jump to latest</button>}
         </div>
-        <div className="mode-switch" role="radiogroup" aria-label="How Nightlight answers">
-          {MODES.map((m) => (
-            <button key={m.id} role="radio" aria-checked={mode === m.id} className={mode === m.id ? "on" : ""}
-              onClick={() => pickMode(m.id)}>{m.name}</button>
-          ))}
-          {mode === "investigate" && <span className="mode-hint small muted">{MODES[1].hint}</span>}
-        </div>
         <form className="chat-input" data-tour="chat" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <textarea ref={box} rows={1} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} aria-label="Ask Nightlight" enterKeyHint="send"
@@ -361,6 +356,13 @@ const Chat = forwardRef<ChatHandle, {
                 Stop</button>
             : <button className="primary" disabled={disabled || !text.trim()}>Send</button>}
         </form>
+        <div className="mode-switch chat-mode" role="radiogroup" aria-label="How Nightlight answers" data-tour="mode-switch">
+          {MODES.map((m) => (
+            <button key={m.id} role="radio" aria-checked={mode === m.id} className={mode === m.id ? "on" : ""}
+              onClick={() => pickMode(m.id)}>{m.name}</button>
+          ))}
+          {mode === "investigate" && <span className="mode-hint small muted">{MODES[1].hint}</span>}
+        </div>
       </>
     );
   });

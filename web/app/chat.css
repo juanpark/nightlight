@@ -60,8 +60,8 @@
 .mode-switch button:first-child { border-radius: 8px 0 0 8px; }
 .mode-switch button:nth-child(2) { border-radius: 0 8px 8px 0; margin-left: -1px; }
 .mode-switch button.on, .mode-switch button.on:hover { background: var(--select); color: var(--ink); border-color: var(--accent); font-weight: 650; position: relative; z-index: 1; }
-.mode-hint { flex-basis: 100%; padding-top: 3px; }
-.mode-switch { padding-top: 8px; }
+.mode-hint { flex-basis: 100%; padding-top: 4px; }
+.chat-mode { padding: 0 14px 12px; margin-top: -4px; }
 
 /* Permission presets reuse the segmented control; the switches sit folded under them. */
 .presets { padding: 0 0 6px; }
@@ -101,17 +101,22 @@
 /* The question box: one line to start, growing with what is typed. */
 .chat-input { align-items: flex-end; }
 .chat-input textarea { flex: 1; resize: none; min-height: 40px; max-height: 132px; line-height: 1.45; overflow-y: auto; }
-.wl-receipt { margin: 4px 2px 0; }
+/* the receipt under an answer: proof for the curious, quiet for everyone else */
+.wl-receipt { margin: 2px 2px 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .chat-break { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .chat-break-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .chat-break p { margin: 0; }
 
-/* Conversations: switch between recent chats, or start a new one */
-.convos { border-bottom: 1px solid var(--line); padding: 8px 14px; }
-.convos-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-.convos-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 40vh; overflow: auto; }
-.convo { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; min-width: 0; }
-.convo[aria-current] { border-color: var(--accent); }
+/* Conversations: a quiet row under the heading, to switch between recent chats or start a new one */
+.convos { border-bottom: 1px solid var(--line); padding: 4px 10px; }
+.convos-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.chat-tool { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border: 0; background: transparent;
+  color: var(--muted); font-size: 13px; font-weight: 550; }
+.chat-tool:hover:not(:disabled), .chat-tool[aria-expanded="true"] { background: var(--panel-2); color: var(--ink); }
+.convos-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 4px; max-height: 40vh; overflow: auto; }
+.convo { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; min-width: 0;
+  border: 0; background: transparent; padding: 8px 10px; font-weight: 500; }
+.convo[aria-current] { background: var(--select); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .convo .muted { flex: none; }
 

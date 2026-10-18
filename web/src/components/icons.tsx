@@ -5,13 +5,13 @@ import type { IconProps } from "@phosphor-icons/react";
 import {
   AppWindow as PAppWindow, Archive as PArchive, ArrowLeft as PArrowLeft, ArrowRight, ArrowsClockwise, ArrowsLeftRight,
   ArrowCounterClockwise, ArrowDown, ArrowsOutCardinal, CaretDown, MapPin, SlidersHorizontal, Tag, Binoculars as PBinoculars, CaretRight, Check as PCheck, Clock, MinusCircle, StopCircle,
-  Broadcast, ChatCircle, CheckCircle, HourglassMedium, WarningCircle, Cloud as PCloud, Cpu as PCpu, Cube as PCube, Database as PDatabase, Desktop, DownloadSimple,
+  Broadcast, ChatCircle, ChatsCircle, CheckCircle, HourglassMedium, WarningCircle, Cloud as PCloud, Cpu as PCpu, Cube as PCube, Database as PDatabase, Desktop, DownloadSimple,
   Eye as PEye, FilmStrip, Fingerprint, Flask, GearSix, FlowArrow, Folder as PFolder, GameController, GitBranch as PGitBranch, Globe as PGlobe, HardDrive,
   HardDrives, House as PHouse, Image as PImage, Info as PInfo, Key, Laptop as PLaptop, List, ListBullets, ListChecks,
   Lock as PLock, MapTrifold, Moon as PMoon, Network as PNetwork, NotePencil, Plus as PPlus, Printer as PPrinter, Pulse,
   Question, SecurityCamera, Shield as PShield, ShieldCheck as PShieldCheck, ShieldWarning, ShippingContainer, SidebarSimple, SignOut,
   Signpost as PSignpost, SpeakerHifi, SquaresFour, Star as PStar, Sun as PSun, TerminalWindow, Trash as PTrash,
-  WifiHigh, X as PX,
+  WifiHigh, WifiSlash, Bell as PBell, X as PX, ExclamationMark, ClockCountdown,
 } from "@phosphor-icons/react/ssr";
 
 export type IconType = ComponentType<IconProps>;
@@ -32,6 +32,12 @@ const mark = (C: IconType): IconType => {
 export const ArrowTo = mark(ArrowRight);
 export const Caret = mark(CaretRight); // points down when its control is open (rotated in CSS)
 export const Check = mark(PCheck);
+// The four statuses, always drawn beside their word (StatusWord.tsx): ✓ Fine · ! Needs a look · ✗ Broken · Offline
+export const StatusFine = mark(PCheck);
+export const StatusLook = mark(ExclamationMark);
+export const StatusBroken = mark(PX);
+export const StatusOffline = line(WifiSlash);
+export const StatusLater = line(ClockCountdown);
 export const Stopped = line(StopCircle);
 export const Switched = line(ArrowsLeftRight);
 
@@ -46,9 +52,11 @@ export function ArrowText({ text }: { text: string }) {
 
 // Shell and controls
 export const Activity = line(Pulse);
+export const Bell = line(PBell);
 export const ArrowLeft = line(PArrowLeft);
 export const FoundNearby = line(PBinoculars);
 export const Chat = line(ChatCircle);
+export const Chats = line(ChatsCircle);
 export const Close = line(PX);
 export const DemoTools = line(Flask);
 export const Favorites = line(PStar);

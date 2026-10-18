@@ -34,7 +34,6 @@ export default function AppSheet({ uid, device: d, onApp, onOpen, onClose }: {
             return (
               <button key={s.id} className={`app-row ${s.status ?? "ok"}`} onClick={() => onApp(d.id, s.id)}>
                 <AppIcon size={16} aria-hidden /><span className="app-row-name">{s.name}</span>
-                {s.kind === "container" && <span className="pill">container</span>}
                 <span className={`dot ${s.status ?? "ok"}`} aria-label={s.status ?? "ok"} />
               </button>);
           })}

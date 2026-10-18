@@ -28,7 +28,9 @@ import { leaveLive, useLive } from "@/lib/live";
 import "@/app/mobile.css";
 import "@/app/shell.css";
 import MemoryPanel from "./MemoryPanel";
-import { Activity as ActivityIcon, DemoTools as FlaskConical, Globe, House, SignOutIcon as LogOut, Menu,
+import SamplePill from "./SamplePill";
+import Sheet from "./Sheet";
+import { Activity as ActivityIcon, Bell, DemoTools as FlaskConical, Globe, House, SignOutIcon as LogOut, Menu,
   Chat as MessageCircle, Moon, Memory as NotebookPen, HideChat as PanelRightClose, Plus, FoundNearby as Radar,
   Settings as Gear, Trust as ShieldCheck, Sun, Close as X, type IconType as LucideIcon } from "@/src/components/icons";
 import { Logo } from "@/src/components/brand/Logo";
@@ -37,6 +39,8 @@ import { MascotHead } from "@/src/components/mascot/MascotHead";
 import { display, sans } from "@/src/components/landing/fonts";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
+const PANEL_NAME: Record<Panel, string> = { none: "Home", trust: "Trust", activity: "Activity", demo: "Demo tools",
+  add: "Add a device", memory: "Memory", watch: "Watch a website", found: "Found nearby", settings: "Settings" };
 
 // account: on a live demo machine, the machine's account, whose data this visit (its own throwaway user) sees
 export default function Home({ user, account }: { user: User; account?: string }) {
@@ -74,16 +78,8 @@ export default function Home({ user, account }: { user: User; account?: string }
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
   const [app, setApp] = useState<string | null>(null); // one app on the selected device, opened on its own
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
-  const closeDrawer = useCallback(() => {
-    // keyboard focus goes back to the device on the map, when it was in the panel
-    const back = selectedRef.current;
-    const inPanel = document.activeElement?.closest(".drawer.side");
-    setSelected(null); setApp(null);
-    if (inPanel && back) requestAnimationFrame(() =>
-      (document.querySelector(`.react-flow__node[data-id="${CSS.escape(back)}"]`) as HTMLElement | null)?.focus());
-  }, []);
+  // the panel itself hands focus back to whatever opened it (a device on the map, a link in the strip)
+  const closeDrawer = useCallback(() => { setSelected(null); setApp(null); }, []);
   const [panel, setPanel] = useState<Panel>("none");
   const chat = useRef<ChatHandle>(null);
   const starting = useRef(false);
@@ -108,6 +104,31 @@ export default function Home({ user, account }: { user: User; account?: string }
   // Phones show one pane at a time (Home or Chat, switched by the tab bar) and fold the header into a menu.
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  // the menu: Esc closes it and hands focus back; arrows move between its items
+  function menuKeys(e: React.KeyboardEvent<HTMLDivElement>) {
+    const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")]
+      .filter((b) => b.getClientRects().length > 0);
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") { setMenu(false); moreBtn.current?.focus(); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    }
+  }
+  useEffect(() => {
+    if (menu) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("#more-menu button")?.focus());
+  }, [menu]);
+  // whether the verdict strip is on screen; when it isn't, the header carries the verdict
+  const stripRef = useRef<HTMLElement>(null);
+  const [stripSeen, setStripSeen] = useState(true);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) { setStripSeen(false); return; }
+    const io = new IntersectionObserver(([e]) => setStripSeen(e.isIntersecting), { threshold: 0.4 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [panel, pane]);
   // Wide screens can fold the chat into a slim rail; asking for it from anywhere unfolds it.
   const [folded, setFolded] = useFolded();
   const [chatBusy, setChatBusy] = useState(false);
@@ -121,11 +142,28 @@ export default function Home({ user, account }: { user: User; account?: string }
   };
   const showChat = () => { setPane("chat"); setFolded(false); };
   const askChat = (q: string) => { showChat(); chat.current?.ask(q); };
-  const open = (p: Panel) => { setMenu(false); setPane("home"); setPanel(p); };
+  // A panel replaces whatever was open over the home (the device panel included), so closing it lands on the home.
+  const open = (p: Panel) => { setMenu(false); setPane("home"); setSelected(null); setApp(null); setPanel(p); };
   const [theme, flipTheme] = useTheme();
+  // Back closes what is open over the home (a panel or a device) instead of leaving the app, which matters most on a
+  // phone where they fill the screen. The entry carries Next's own state so its router treats it as the same page.
+  const layerOpen = panel !== "none" || !!selected;
+  useEffect(() => {
+    if (!layerOpen) return;
+    history.pushState({ ...history.state, nlLayer: true }, "");
+    const back = () => { setPanel("none"); closeDrawer(); };
+    window.addEventListener("popstate", back);
+    return () => {
+      window.removeEventListener("popstate", back);
+      if (history.state?.nlLayer) history.back(); // closed with a button: drop the entry it added
+    };
+  }, [layerOpen, closeDrawer]);
   function go(g: Go) {
-    if (g.to === "drawer") { setPanel("none"); setSelected(g.deviceId); setDrawerTab(g.app ? "apps" : g.tab ?? null); setApp(g.app ?? null); }
-    else if (g.to === "panel") setPanel(g.panel);
+    // on a phone the device panel and the panels live in the Home pane, so a link from the chat switches to it
+    if (g.to === "drawer") { setMenu(false); setPane("home"); setPanel("none"); setSelected(g.deviceId);
+      // a link names its tab or means the problem itself (Overview); only a tap on the map reopens the last tab used
+      setDrawerTab(g.app ? "apps" : g.tab ?? "overview"); setApp(g.app ?? null); }
+    else if (g.to === "panel") open(g.panel);
     else if (g.to === "chat") askChat(g.ask);
   }
 
@@ -197,11 +235,14 @@ export default function Home({ user, account }: { user: User; account?: string }
     }
   }
 
+  const foundCount = addable(found.items).length;
+  const sample = user.isAnonymous || sampleOn;
+  // the More menu: everything that isn't the home itself, in the order an owner reaches for it
   const item = (p: Panel, label: string, Icon: LucideIcon, count?: number, tour?: string) => (
-    <button className={`side-item ${panel === p ? "on" : ""}`} aria-current={panel === p ? "page" : undefined}
+    <button role="menuitem" className={`more-item ${panel === p ? "on" : ""}`} aria-current={panel === p ? "page" : undefined}
       onClick={() => open(p)} data-tour={tour}>
       <Icon size={18} aria-hidden /> <span>{label}</span>
-      {!!count && <span className="side-count">{count}</span>}
+      {!!count && <span className="more-count" aria-label={`${count} new`}>{count}</span>}
     </button>
   );
 
@@ -209,45 +250,60 @@ export default function Home({ user, account }: { user: User; account?: string }
     <div className={`shell ${display.variable} ${sans.variable}`} data-theme={theme} data-chat={folded ? "folded" : undefined}>
       <header className="top">
         <Logo height={22} className="top-logo" />
-        <span className="spacer" />
-        <button className="icon-btn" aria-expanded={menu} aria-controls="side" onClick={() => setMenu(!menu)}
-          aria-label={menu ? "Close menu" : "Open menu"}>{menu ? <X size={20} /> : <Menu size={20} />}</button>
-      </header>
-      <aside id="side" className={`side ${menu ? "open" : ""}`}>
-        <div className="side-brand"><Logo height={26} /></div>
-        <button className="icon-btn side-close" aria-label="Close menu" onClick={() => setMenu(false)}><X size={20} /></button>
         {user.isAnonymous
-          ? <span className="side-sample" title="These devices are simulated, so you can try things safely">
-              <span className="dot sample" aria-hidden /> Sample home, simulated</span>
-          : <button className="side-sample as-button" disabled={switching || !me} onClick={toggleSample}
-              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide practice home" : "Practice home"}</button>}
-        <nav className="side-nav" aria-label="Main">
-          {item("none", "Home", House, needs.length)}
-          {item("activity", "Activity", ActivityIcon)}
-          {item("trust", "Trust", ShieldCheck, undefined, "trust")}
-          {!live && item("memory", "Memory", NotebookPen)}
-          <p className="side-label">Add to your home</p>
-          {item("add", "Add a device", Plus, undefined, "add-device")}
-          {item("watch", "Watch a website", Globe)}
-          {item("found", "Found nearby", Radar, addable(found.items).length, "found-nearby")}
-        </nav>
-        <div className="side-foot">
-          {item("demo", "Demo tools", FlaskConical)}
-          {item("settings", "Settings", Gear, undefined, "settings")}
-          <button className="side-item" onClick={flipTheme} aria-label={`Switch to ${theme === "night" ? "day" : "night"} theme`}>
-            {theme === "night" ? <Sun size={18} /> : <Moon size={18} />}
-            <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
-          <div className="side-account">
-            {user.isAnonymous
-              ? <button className="primary side-save" onClick={saveWithGoogle} disabled={saving}
-                  title="Keep this home by linking a Google account">{saving ? "Opening Google…" : "Save with Google"}</button>
-              : <span className="small muted side-email" title={user.email ?? undefined}>{user.email}</span>}
-            <button className="side-item" onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>
-              <LogOut size={18} /> <span>Sign out</span></button>
-          </div>
+          ? <SamplePill onTry={async () => { await saveWithGoogle(); open("add"); }} />
+          : <button className="sample-pill practice" disabled={switching || !me} onClick={toggleSample}
+              title="A safe pretend home to try fixes; your real devices aren't touched">
+              <span className="dot sample" aria-hidden />{sampleOn ? "Hide practice home" : "Practice home"}</button>}
+        {/* the verdict, here whenever the strip itself is out of sight (scrolled away, or a panel is open) */}
+        <button className="top-verdict" data-state={needs.length ? "needs" : "ok"} data-shown={stripSeen ? undefined : "yes"}
+          onClick={() => { setPanel("none"); setPane("home"); requestAnimationFrame(() =>
+            stripRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }}
+          tabIndex={stripSeen ? -1 : undefined} aria-hidden={stripSeen ? true : undefined}>
+          <span className="verdict-light" aria-hidden />{needs.length ? `${needs.length} need you` : "All good"}</button>
+        <span className="spacer" />
+        <button className="top-add" onClick={() => open("add")} data-tour="add-device" aria-current={panel === "add" ? "page" : undefined}>
+          <Plus size={18} aria-hidden /><span>Add a device</span></button>
+        <div className="more">
+          <button ref={moreBtn} className="top-more" aria-haspopup="menu" aria-expanded={menu} aria-controls="more-menu"
+            onClick={() => setMenu(!menu)} data-tour="more" aria-label="More" title="More">
+            <Menu size={18} aria-hidden /><span className="top-more-word">More</span>
+            {foundCount > 0 && <span className="more-dot" aria-label={`${foundCount} found nearby`} />}</button>
+          {menu && <>
+            <button className="more-scrim" aria-label="Close menu" tabIndex={-1} onClick={() => setMenu(false)} />
+            <div id="more-menu" className="more-menu" role="menu" aria-label="More" onKeyDown={menuKeys}>
+              {user.isAnonymous && <button role="menuitem" className="primary more-save" onClick={() => { setMenu(false); saveWithGoogle(); }}
+                disabled={saving} title="Keep this home by linking a Google account">{saving ? "Opening Google…" : "Save with Google"}</button>}
+              <p className="more-label">Your home</p>
+              {item("activity", "Activity", ActivityIcon)}
+              {item("trust", "Trust", ShieldCheck, undefined, "trust")}
+              {!live && item("memory", "Memory", NotebookPen)}
+              <p className="more-label">Add to your home</p>
+              <span className="more-phone">{item("add", "Add a device", Plus)}</span>
+              {!user.isAnonymous && <span className="more-phone">
+                <button role="menuitem" className="more-item" disabled={switching || !me} onClick={() => { setMenu(false); toggleSample(); }}>
+                  <House size={18} aria-hidden /><span>{sampleOn ? "Hide practice home" : "Practice home"}</span></button></span>}
+              {item("found", "Found nearby", Radar, foundCount, "found-nearby")}
+              {item("watch", "Watch a website", Globe)}
+              <hr />
+              {notify.supported && <button role="menuitemcheckbox" aria-checked={notify.on} className="more-item"
+                onClick={notify.toggle} title={notify.denied ? "Notifications are blocked for this site in your browser settings"
+                  : "Show a notification when something goes wrong, while this tab is open"}>
+                <Bell size={18} aria-hidden /><span>{notify.on ? "Notifying you" : "Notify me"}</span>
+                <span className={`more-switch ${notify.on ? "on" : ""}`} aria-hidden /></button>}
+              <button role="menuitem" className="more-item" onClick={flipTheme}>
+                {theme === "night" ? <Sun size={18} aria-hidden /> : <Moon size={18} aria-hidden />}
+                <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
+              {sample && item("demo", "Demo tools", FlaskConical)}
+              {item("settings", "Settings", Gear, undefined, "settings")}
+              <hr />
+              {!user.isAnonymous && <span className="small muted more-email" title={user.email ?? undefined}>{user.email}</span>}
+              <button role="menuitem" className="more-item" onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>
+                <LogOut size={18} aria-hidden /> <span>{live ? "Leave" : "Sign out"}</span></button>
+            </div>
+          </>}
         </div>
-      </aside>
-      {menu && <button className="side-scrim" aria-label="Close menu" onClick={() => setMenu(false)} />}
+      </header>
       <div className="main" data-pane={pane}>
         <section className="left">
           {notice && <div className="panel save-notice" role="status">
@@ -266,32 +322,30 @@ export default function Home({ user, account }: { user: User; account?: string }
                 Google again.</p>}
               <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
             </div>)}
-          {panel === "none" ? <>
-            <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
-            <div className="panel needs needs-strip" data-state={needs.length ? "needs" : "ok"} data-tour="needs">
-              <span className="verdict-light" aria-hidden />
-              <h1 className="verdict">{verdict(needs)}</h1>
-              <span className="spacer" />
-              {notify.supported && (
-                <button className={`small notify-toggle ${notify.on ? "on" : ""}`} onClick={notify.toggle}
-                  aria-pressed={notify.on} title={notify.denied
-                    ? "Notifications are blocked for this site in your browser settings"
-                    : "Show a notification when something goes wrong, while this tab is open"}>
-                  {notify.on ? "Notifying you" : "Notify me"}</button>)}
-              <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
-              {needs.length > 0 && <div className="needs-body">
-                <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
-                  onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />
-              </div>}
-            </div>
-            {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
-              expert={expert} onAdd={() => open("add")} onWatch={() => open("watch")} onSave={saveWithGoogle}
+          <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
+            <section ref={stripRef} className="panel needs-strip" data-state={needs.length ? "needs" : "ok"} data-tour="needs"
+              aria-labelledby="verdict">
+              <div className="strip-head">
+                <span className="verdict-light" aria-hidden />
+                <div className="verdict-text">
+                  <h1 className="verdict" id="verdict">{verdict(needs)}</h1>
+                  {!needs.length && <p className="verdict-sub">Nothing needs you right now. Nightlight keeps watching.</p>}
+                </div>
+                <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
+              </div>
+              {needs.length > 0 && <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice plain
+                onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />}
+            </section>
+            {me && !live && !user.isAnonymous && <FirstRun uid={visit} devices={devices} discoveries={discoveries}
+              expert={expert} onAdd={() => open("add")} onWatch={() => open("watch")}
               onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
             <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
               onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
               onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
               settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
-          </> : <div className="page">
+        </section>
+        {/* panels float over the home as a sheet from the right; the map stays where it was underneath */}
+        {panel !== "none" && <Sheet label={PANEL_NAME[panel]} onClose={() => setPanel("none")}>
             {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
             {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
             {panel === "demo" && <DemoTools devices={devices} />}
@@ -301,8 +355,7 @@ export default function Home({ user, account }: { user: User; account?: string }
             {panel === "watch" && <WatchPanel watches={watches} now={now} />}
             {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
             {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
-          </div>}
-        </section>
+        </Sheet>}
         {/* the device panel: from the left over the map's edge on a wide screen, a full-height sheet on a phone */}
         {panel === "none" && selected && devices.find((d) => d.id === selected) && (
           <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
@@ -317,14 +370,11 @@ export default function Home({ user, account }: { user: User; account?: string }
             <span className="rail-label">Chat</span>
             {waiting > 0 && <span className="rail-count"><b>{waiting}</b> to approve</span>}
           </button>
-          <div className="chat-head">
-            <MascotHead size={28} mood={headMood} />
-            <h2>Ask Nightlight</h2>
-            <button ref={foldBtn} className="chat-fold" onClick={() => fold(true)} title="Hide the chat"
-              aria-label="Hide the chat"><PanelRightClose size={18} aria-hidden /></button>
-          </div>
           <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me}
-            onBusy={setChatBusy} onShowMap={() => { setPanel("none"); setPane("home"); }} />
+            onBusy={setChatBusy} onShowMap={() => { setPanel("none"); setPane("home"); }}
+            title={<><MascotHead size={28} mood={headMood} /><h2>Ask Nightlight</h2></>}
+            end={<button ref={foldBtn} className="chat-fold" onClick={() => fold(true)} title="Hide the chat"
+              aria-label="Hide the chat"><PanelRightClose size={18} aria-hidden /></button>} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
@@ -371,6 +421,11 @@ function useTheme(): ["night" | "day", () => void] {
     return () => q.removeEventListener("change", read);
   }, []);
   const theme = picked ?? system;
+  // on the page too, so what sits outside the shell (the live machine bar, the tour) wears the same theme
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    return () => { delete document.documentElement.dataset.theme; };
+  }, [theme]);
   const flip = () => {
     const next = theme === "night" ? "day" : "night";
     setPicked(next);

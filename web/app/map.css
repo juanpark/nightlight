@@ -4,7 +4,8 @@
 .homebar .view-switch button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; font-size: 13px; } /* the same size as the pills beside it */
 /* the bar above the map (HomeBar.tsx): Map or List, the quick toggles, then one menu per kind of filter. It wraps
    onto a second line on narrow panes instead of scrolling choices out of sight. */
-.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; } /* wider gaps set the groups apart */
+.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.hb-gap { flex: 1; } /* wider gaps set the groups apart */
 .fgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .fpill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px; font-size: 13px;
   font-weight: 500; border-color: var(--line); white-space: nowrap; }
@@ -52,7 +53,7 @@
   background: transparent; gap: 0; min-height: 0; flex-wrap: nowrap; }
 
 /* a device */
-.dnode { position: relative; width: 200px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 9px 10px;
+.dnode { position: relative; width: 200px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 11px 12px;
   box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: box-shadow .15s; }
 .dnode.sample { border-style: dashed; }
 .dnode.warn { border-color: var(--warn-fill); }
@@ -74,16 +75,11 @@
 .dnode.compact .dicon.crit { box-shadow: inset 0 0 0 4px var(--crit-fill); }
 .dnode.compact .dicon.offline { box-shadow: inset 0 0 0 4px var(--offline-fill); }
 .dnode .needs-mark { position: absolute; top: -8px; right: -8px; }
-.dgauges { display: flex; justify-content: space-between; }
-.gauge { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); gap: 1px; }
-.gauge text { font-size: 11px; font-weight: 700; fill: var(--ink); }
-.g-track { fill: none; stroke: var(--line); stroke-width: 3.5; }
-.g-arc { fill: none; stroke: var(--ok-fill); stroke-width: 3.5; stroke-linecap: round; }
-.gauge.warn .g-arc { stroke: var(--warn-fill); }
-.gauge.crit .g-arc { stroke: var(--crit-fill); }
-.gauge.none .g-arc { stroke: none; }
-.dsilent { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; border-radius: 8px;
-  background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--offline-fill) 12%, transparent) 6px 12px); }
+/* its status in a word, then one plain line: its top problem, or "All good" */
+.dstate { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dline { font-size: 13px; line-height: 1.35; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.dnode.crit .dline, .dnode.warn .dline { color: var(--ink); }
 .dapps { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
   padding-top: 6px; }
 .dapps .dot { width: 7px; height: 7px; }
@@ -91,10 +87,7 @@
 .dnode.watched { gap: 4px; }
 .dnode.watched.router { border-width: 2px; border-color: var(--accent); }
 .dnode.watched.router.crit { border-color: var(--crit-fill); }
-.dwatch { font-size: 13px; padding-left: 40px; color: var(--ink); }
-.dwatch.crit { color: var(--crit-ink); font-weight: 600; }
-.dwatch.offline { color: var(--muted); }
-.dby { font-size: 11px; color: var(--muted); padding-left: 40px; }
+.dby { font-size: 12px; color: var(--muted); }
 .dapps .more { font-size: 10px; }
 .dapps-text { margin-left: auto; white-space: nowrap; }
 .dapps-text b { color: var(--warn-ink); font-weight: 600; }
@@ -140,7 +133,6 @@
 
 @media (max-width: 900px) {
   .hm-canvas { height: min(calc(100dvh - 320px), 440px); min-height: 340px; }
-  .hm-minimap { display: none; }
 }
 
 /* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
@@ -242,3 +234,27 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 /* the map library's credit link, readable in both themes */
 .react-flow__attribution { background: transparent; }
 .react-flow__attribution a { color: var(--muted); }
+
+/* The list view (Board.tsx): rows grouped by kind, the status in a word, one plain line, tap to open. */
+.dlist { display: flex; flex-direction: column; gap: 18px; }
+.dlist-group ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden; }
+.dlist-group li + li { border-top: 1px solid var(--line); }
+.dlist-kind { margin: 0 0 8px 2px; font: 600 12.5px/1.2 var(--font-ui); color: var(--muted); }
+.dlist-row { position: relative; display: grid; grid-template-columns: minmax(150px, 1.1fr) 8.75rem minmax(0, 2fr);
+  align-items: center; gap: 4px 16px; width: 100%; padding: 12px 40px 12px 16px; border: 0; border-radius: 0; text-align: left;
+  background: transparent; font-weight: 400; }
+.dlist-row:hover:not(:disabled) { background: var(--panel-2); }
+.dlist-row.sel { background: var(--select); box-shadow: inset 3px 0 0 var(--accent); }
+.dlist-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 650; }
+.dlist-line { color: var(--muted); overflow-wrap: anywhere; }
+.dlist-row.crit .dlist-line, .dlist-row.warn .dlist-line { color: var(--ink); }
+.dlist-row .needs-mark { top: 50%; right: 14px; transform: translateY(-50%); box-shadow: none; }
+.pill.sample { border-style: dashed; }
+.dlist-empty { padding: 28px 20px; border: 1px dashed var(--line-strong); border-radius: var(--radius); text-align: center; }
+@media (max-width: 700px) {
+  .dlist-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name status" "line line"; }
+  .dlist-name { grid-area: name; } .dlist-row .status-word { grid-area: status; } .dlist-line { grid-area: line; }
+  .dlist-row { padding-right: 16px; }
+  .dlist-row .needs-mark { position: static; transform: none; }
+}

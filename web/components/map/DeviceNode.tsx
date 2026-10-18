@@ -1,11 +1,11 @@
 "use client";
-// One device on the map, read at a glance: its icon ringed in its status colour, three small gauges (disk, memory,
-// CPU), up to three starred apps by name, a dot per app it runs, and a mark when something needs the person. Zoomed out, only the icon and name stay.
+// One device on the map, read at a glance: its icon ringed in its status colour, its status in a word with one plain
+// line (its top problem, or "All good"), up to three starred apps by name, a dot per app it runs, and a mark when something needs the person. Zoomed out, only the icon and name stay.
 // Hover or select it for quick actions; drag from an edge dot to another device to draw a relationship.
 import { memo, useLayoutEffect, useRef } from "react";
 import { Handle, NodeToolbar, Position, useStore, type Node, type NodeProps } from "@xyflow/react";
 import { Info, Grid as LayoutGrid, Chat as MessageCircle, Star } from "@/src/components/icons";
-import { ago, answering, type Need } from "@/lib/needsYou";
+import { answering, type Need } from "@/lib/needsYou";
 import { APP_CAP, appOrder } from "@/lib/apps";
 import { useServices } from "@/lib/data";
 import { named, type StepState } from "@/lib/follow";
@@ -13,6 +13,7 @@ import { named, type StepState } from "@/lib/follow";
 const LIT_WORDS: Record<StepState, string> = { checking: "Checking…", found: "Found something", done: "Done" };
 import type { Device } from "@/lib/types";
 import NeedsMark from "../NeedsMark";
+import StatusWord, { deviceLine, deviceTone } from "../StatusWord";
 import { appIcon, deviceIcon, roleOf } from "./kinds";
 
 export type DeviceNodeData = {
@@ -27,25 +28,6 @@ export type DeviceNodeData = {
 };
 export type DeviceNodeType = Node<DeviceNodeData, "device">;
 
-const tone = (v?: number | null) => v == null ? "none" : v >= 90 ? "crit" : v >= 75 ? "warn" : "ok";
-
-/** A small ring gauge: the arc is the value, the number sits inside. */
-function Gauge({ label, value }: { label: string; value?: number | null }) {
-  const r = 13, c = 2 * Math.PI * r;
-  const v = value == null ? 0 : Math.min(100, Math.max(0, value));
-  return (
-    <div className={`gauge ${tone(value)}`} title={`${label}: ${value == null ? "unknown" : `${Math.round(v)}%`}`}>
-      <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden>
-        <circle cx="16" cy="16" r={r} className="g-track" />
-        <circle cx="16" cy="16" r={r} className="g-arc" strokeDasharray={`${(v / 100) * c} ${c}`}
-          transform="rotate(-90 16 16)" />
-        <text x="16" y="19.5" textAnchor="middle">{value == null ? "–" : Math.round(v)}</text>
-      </svg>
-      <span>{label}</span>
-    </div>
-  );
-}
-
 const SIDES = [Position.Top, Position.Right, Position.Bottom, Position.Left];
 
 function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
@@ -54,7 +36,6 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   const compact = useStore((s) => s.transform[2] < 0.45); // zoomed far out: icon and name only
   const Icon = deviceIcon(d);
   const sample = d.realm !== "real";
-  const silent = d.realm === "real" && d.status === "offline";
   const bad = services.filter((s) => (s.status ?? "ok") !== "ok").length;
   // the apps the owner starred, in the order they starred them
   const favs = (d.favoriteApps ?? []).map((id) => services.find((s) => s.id === id)).filter((s) => !!s).slice(0, 3);
@@ -88,7 +69,8 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
           {d.favorite && <Star className="dstar" size={13} weight="fill" aria-label="Favorite" />}
           <NeedsMark needs={needs} />
         </div>
-        {!compact && <div className={`dwatch ${d.status}`}>{answering(d, now)}</div>}
+        {!compact && <div className="dstate"><StatusWord tone={deviceTone(d)} />
+          <span className="dline">{answering(d, now).replace(/^./, (c) => c.toUpperCase())}</span></div>}
         {!compact && data.by && <div className="dby">watched by the {data.by}</div>}
       </div>
     );
@@ -106,14 +88,10 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
         {d.favorite && <Star className="dstar" size={13} weight="fill" aria-label="Favorite" />}
         <NeedsMark needs={needs} />
       </div>
-      {!compact && (silent
-        ? <div className="dsilent">{d.starting ? "Starting…"
-            : `Silent for ${d.lastSeen ? ago(now - d.lastSeen.getTime()) : "a while"}`}</div>
-        : <div className="dgauges">
-            <Gauge label="Disk" value={d.vitals?.diskPct} />
-            <Gauge label="Mem" value={d.vitals?.mem} />
-            <Gauge label="CPU" value={d.vitals?.cpu} />
-          </div>)}
+      {!compact && <div className="dstate">
+        <StatusWord tone={d.starting ? "later" : deviceTone(d)} word={d.starting ? "Starting" : undefined} />
+        <span className="dline">{deviceLine(d, now)}</span>
+      </div>}
       {focused && ( // an opened card shows its apps at any zoom
         <div className="dappgrid" role="group" aria-label={`Apps on ${d.name}`}>
           {shown.slice(0, APP_CAP).map((s) => {
@@ -146,8 +124,7 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
           {services.slice(0, 5).map((s) => <span key={s.id} className={`dot ${s.status ?? "ok"}`} />)}
           {services.length > 5 && <span className="more">+{services.length - 5}</span>}
           <span className="dapps-text">{services.length} app{services.length === 1 ? "" : "s"}
-            {bad > 0 ? <b> · {bad} need{bad === 1 ? "s" : ""} a look</b>
-              : (d.status === "crit" || d.status === "warn") && <b className={d.status}> · {d.status === "crit" ? "needs you" : "needs a look"}</b>}</span>
+            {bad > 0 && <b> · {bad} need{bad === 1 ? "s" : ""} a look</b>}</span>
         </button>)}
     </div>
   );

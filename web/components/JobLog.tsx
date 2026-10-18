@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { aboutApp } from "@/lib/apps";
 import type { Action, LogJob, Service } from "@/lib/types";
+import { StatusIcon } from "./StatusWord";
 
 const BY = { you: "You approved", nightlight: "Nightlight, as you allowed", device: "The device" } as const;
 
@@ -36,7 +37,7 @@ export default function JobLog({ deviceId, actions, app }: { deviceId: string; a
         : "Nothing yet. Every job that runs here will be listed."}</p>}
       {shown.map((j) => (
         <div key={j.actionId} className="logrow small">
-          <span className={`dot ${j.ok ? "ok" : "crit"}`} />
+          <StatusIcon tone={j.ok ? "ok" : "crit"} word={j.ok ? "Worked" : "Didn't work"} />
           <div className="logrow-body">
             <div><strong>{j.title}</strong>{j.service && <span className="pill" style={{ marginLeft: 6 }}>{j.service}</span>}</div>
             {j.summary && <div>{j.summary}</div>}
