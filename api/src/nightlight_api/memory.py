@@ -66,7 +66,20 @@ def _scope(uid: str, ep: int) -> dict:
 
 
 def _usable(uid: str) -> bool:
-    return enabled() and bool(_UID.match(uid or ""))
+    return on_for(uid) and bool(_UID.match(uid or ""))
+
+
+def on_for(uid: str | None) -> bool:
+    """Memory for this person. Never for a live demo machine's shared account: visits reuse its uid, and Memory Bank
+    calls can't share a cleanup's transaction, so nothing is remembered there (and nothing can leak between visits)."""
+    from . import live
+    return enabled() and not live.pool_slot(uid)
+
+
+def purge_pool_account(uid: str) -> bool:
+    """Cleanup only (under its epoch fence): remove anything Memory Bank still holds for a pool uid (from before memory
+    was off for pool accounts). Nothing can write there any more, so this can't touch a newer visit's facts."""
+    return _purge(uid) if enabled() else True
 
 
 def _clean(text: str) -> tuple[str, int]:

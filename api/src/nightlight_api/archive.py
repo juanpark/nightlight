@@ -42,6 +42,8 @@ def archive(tx, uid: str, device_id: str, name: str, words: str, who: str) -> No
 
 def remove_now(uid: str, device_id: str, action_id: str | None = None) -> dict:
     """The device can't uninstall its helper (not reporting, or too old): cut its access and archive it now."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     query = real.tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id))
 
     @firestore.transactional
@@ -114,6 +116,8 @@ def after_approval(uid: str, action_id: str) -> None:
 
 def forget(uid: str, device_id: str) -> dict:
     """Delete an archived device and everything kept about it, now."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     d = db.device(uid, device_id).get().to_dict()
     if not d or not d.get("archived"):
         raise ApiError(409, "remove_first") if d else not_found()

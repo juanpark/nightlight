@@ -245,6 +245,9 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
     (`origin="app"`) has approved a one-tap capability already. Everything else comes from the registry: a read the
     device allows runs without a card, other jobs wait for a tap, signed ones for the owner's passkey.
     ValueError(code) when the capability doesn't apply to this device."""
+    from . import live
+    if name in live.POOL_FORBIDDEN_ACTIONS and live.pool_slot(uid):
+        raise ValueError("not_on_demo_machine")  # chat, playbooks and app routes alike: never a card for it
     cap = capabilities.get(name)
     if not cap:
         raise ApiError(422, "unknown_action")
@@ -301,6 +304,9 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         if not action_snap.exists:
             raise not_found()
         action = dict(action_snap.to_dict(), id=action_id_)
+        from . import live
+        if decision == "approve" and action.get("type") in live.POOL_FORBIDDEN_ACTIONS and live.pool_slot(uid):
+            raise ApiError(403, "live_demo_machine")  # a card made before this rule (or any other way) can't run
         user_snap, device_snap, services, trust_ref, trust_snap = _read_context(
             tx, uid, action["deviceId"], action["type"])
         user = user_snap.to_dict() if user_snap.exists else None
