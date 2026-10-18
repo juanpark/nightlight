@@ -37,8 +37,14 @@ export async function startLive(scenario: Scenario) {
   const made = !auth.currentUser;
   try {
     if (made) await signInAnonymously(auth); // the lease belongs to this visitor
-    const r = await api<{ token: string; resumed?: boolean; etaSeconds?: number; restoreSeconds?: number }>(
-      "POST", "/api/demo/live", { scenario });
+    // 409 live_starting: this visitor's machine is still being set up; ask again when the API says to
+    let r: { token: string; resumed?: boolean; etaSeconds?: number; restoreSeconds?: number };
+    for (let tries = 0; ; tries++) {
+      try { r = await api("POST", "/api/demo/live", { scenario }); break; } catch (e) {
+        if (!(e instanceof ApiError && e.code === "live_starting") || tries >= 60) throw e;
+        await new Promise((ok) => setTimeout(ok, Math.min(Math.max(Number(e.body.retryAfter) || 5, 1), 30) * 1000));
+      }
+    }
     await signInWithCustomToken(auth, r.token);
     set({ starting: false, resumed: !!r.resumed, eta: r.etaSeconds, restore: r.restoreSeconds });
   } catch (e) {
