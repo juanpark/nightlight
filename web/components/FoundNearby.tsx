@@ -122,6 +122,8 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
   return (
     <div className="panel">
       <h3>Found nearby</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>Seen from your own computers. What you put on the map is
+        watched from one of them: Nightlight can see it answers, not what&apos;s inside it.</p>
       {items && found.length === 0 && (
         <p className="small muted" style={{ marginTop: 0 }}>Nothing found yet. One of your devices can look around its
           network for printers, storage and other servers. It sends back what it finds, never addresses, and you choose

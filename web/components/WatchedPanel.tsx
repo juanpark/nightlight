@@ -142,6 +142,8 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
   return (
     <>
       <p className="drawer-status">{sentence}</p>
+      <p className="small muted" style={{ marginTop: 0 }}>Watched from {by ? `the ${by}` : "one of your computers"}:
+        Nightlight can see it answers, not what&apos;s inside it.</p>
       <div className="drawer-actions">
         <button className="primary" onClick={() => onAsk(role === "router" ? "Is my internet connection all right?"
           : `How is my ${d.name} doing?`)}>Ask about it</button>

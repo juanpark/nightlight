@@ -230,6 +230,23 @@ export default function AddDevice({ anonymous, live = false, onSave, devices }: 
       <p className="small muted" style={{ marginTop: 0 }}>Three steps, about a minute. You&apos;ll see it on your map
         the moment it connects.</p>
       <Reassure />
+      <p className="small">Nightlight looks after Macs (macOS 10.15+) and Linux computers, including Raspberry Pi.
+        Windows PCs, NAS boxes, routers and printers are watched from one of those: install it on one computer and they
+        show up under <em>Found nearby</em>.</p>
+      <details className="small">
+        <summary className="muted">Which devices?</summary>
+        <ul style={{ margin: "6px 0", paddingLeft: 20 }}>
+          <li><strong>Looked after</strong> (the helper runs on it): disk, memory, apps and services, explained in plain
+            words, fixed only after your tap. Linux with systemd (Raspberry Pi OS, Ubuntu, Debian and most others) and
+            macOS 10.15 or newer.</li>
+          <li><strong>Watched</strong> (seen from a computer with the helper): found on your network, named when it
+            announces a name, checked that it still answers; never changed. Routers, NAS boxes, printers, TVs, cameras,
+            Windows PCs.</li>
+          <li><strong>Watched from the cloud</strong>: checks that a website or online service answers (Watch a
+            website).</li>
+        </ul>
+        <p className="muted" style={{ margin: 0 }}>Windows and NAS boxes are next.</p>
+      </details>
       <div className="setup-pick" role="radiogroup" aria-label="Which kind of device?">
         <button role="radio" aria-checked={mac} className={mac ? "on" : ""} onClick={() => pick("mac")}>
           <Laptop size={22} strokeWidth={1.6} /> A Mac</button>
