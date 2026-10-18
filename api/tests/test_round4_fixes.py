@@ -37,7 +37,7 @@ def test_an_oversized_device_read_keeps_its_shape_and_its_readings():
     assert len(out["services"]) == 6 and out["findings"]  # today's readings are whole
     assert "shortened" in out  # and it says history was cut
     line, _ = turns._commentary("get_device", out)
-    assert line.startswith("disk 17.0%, memory 36%, 1 problem(s)")
+    assert line.startswith("disk 17.0%, memory 36%, 1 problem")
 
 
 def test_many_findings_keep_a_structured_envelope_with_a_count():
@@ -49,7 +49,7 @@ def test_many_findings_keep_a_structured_envelope_with_a_count():
     assert len(json.dumps(out).encode()) <= settings.tool_result_bytes and "truncated" not in out
     assert out["vitals"] == {"diskPct": 17.0, "mem": 36.2} and out["findings"][0]["message"].startswith("container-0")
     assert out["findingsOmitted"]["total"] == 50 and out["findingsOmitted"]["notShown"] == 50 - len(out["findings"])
-    assert "50 problem(s)" in turns._commentary("get_device", out)[0]
+    assert "50 problems" in turns._commentary("get_device", out)[0]
 
 
 def test_big_permissions_are_bounded_with_counts_and_the_readings_survive():
@@ -71,7 +71,7 @@ def test_a_small_result_is_untouched():
 
 def test_step_lines_for_reads_never_say_just_done():
     assert turns._commentary("inspect", {"status": "done", "playbook": "Playbook \"Running slowly\":\n- x is busy"}
-                             )[0] == "Checkup done: 1 finding(s)"
+                             )[0] == "Checkup done: 1 finding"
     line, _ = turns._commentary("inspect", {"status": "done", "summary": None, "output": "Processor busy: 90%\nmore"})
     assert line == "The device answered: Processor busy: 90%"
     assert turns._commentary("get_device", {"truncated": True, "summary": "{..."})[0].startswith("Read it")

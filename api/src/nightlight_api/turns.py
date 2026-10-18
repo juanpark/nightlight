@@ -724,6 +724,10 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if reason and status in (None, "error", "refused"):
         words, code = _plain_reason(reason)
         return f"Couldn't: {words}", code
+    if name in ACTION_TOOLS and resp.get("ranOnItsOwn") and status in ("done", "failed"):
+        lead = "Handled on its own, as you allowed (Trust)" if status == "done" else \
+            "Tried on its own, as you allowed (Trust), but it didn't work"
+        return lead + (f": {resp['result']}" if resp.get("result") else ""), None
     if status == "asked":
         return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
     if status in ("waiting", "safer_first"):
@@ -736,7 +740,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if name == "check_space" and status == "done" and "devices" in resp:
         rows = [f"{d.get('name')}: " + ", ".join(f"{u['what']} {u['sizeGb']} GB" for u in d.get("usedBy") or [])
                 for d in resp["devices"] if d.get("usedBy")]
-        return f"Measured the space on {len(rows)} device(s)", "\n".join(rows) or None
+        return f"Measured the space on {_n(len(rows), 'device')}", "\n".join(rows) or None
     if "devices" in resp:
         bad = [d.get("name") for d in resp["devices"] if d.get("status") not in ("ok", None)]
         return f"{len(resp['devices'])} devices" + (f"; needs a look: {', '.join(bad[:4])}" if bad else "; all fine"), None
@@ -748,22 +752,22 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         notes = len(book.get("device") or []) + sum(len(n) for n in (book.get("services") or {}).values())
         bits = [f"disk {v.get('diskPct')}%" if v.get("diskPct") is not None else None,
                 f"memory {round(v['mem'])}%" if v.get("mem") is not None else None,
-                f"{(resp.get('findingsOmitted') or {}).get('total') or len(resp.get('findings') or [])} problem(s)",
-                f"{notes} note(s) in its notebook" if notes else None,
-                f"{len(resp['runbooks'])} saved fix(es)" if resp.get("runbooks") else None]
+                _n((resp.get('findingsOmitted') or {}).get('total') or len(resp.get('findings') or []), "problem"),
+                f"{_n(notes, 'note')} in its notebook" if notes else None,
+                _n(len(resp["runbooks"]), "saved fix", "saved fixes") if resp.get("runbooks") else None]
         return ", ".join(b for b in bits if b), None
     if name == "read_device_log" and "jobs" in resp:
         jobs = resp["jobs"]
-        return f"Read what was done there: {len(jobs)} past task(s)", \
+        return f"Read what was done there: {_n(len(jobs), 'past task')}", \
             "\n".join(f"{j.get('at')} {j.get('title')}: {j.get('summary')}" for j in jobs)[:DETAILS_CHARS] or None
     if name == "use_runbook" and resp.get("runbook"):
         cards = len(resp.get("actionIds") or [])
-        return f"Saved fix \"{resp['runbook']}\": " + (f"{cards} step(s) waiting for your OK" if cards
+        return f"Saved fix \"{resp['runbook']}\": " + (f"{_n(cards, 'step')} waiting for your OK" if cards
                                                        else _status_words(resp.get("status")).lower()), None
     if resp.get("playbook"):  # run_playbook, check_space, or a read that found the same playbook job
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
-        return (f"Checkup done: {len(lines)} finding(s)" if lines else "Checkup done: nothing stood out"), \
+        return (f"Checkup done: {_n(len(lines), 'finding')}" if lines else "Checkup done: nothing stood out"), \
             text[:DETAILS_CHARS]
     if name in DEVICE_READS and status in ("done", "failed"):
         out = resp.get("output") or ""
@@ -775,7 +779,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         return "Read it (a long result, shortened to fit)", (str(resp.get("summary") or "")[:DETAILS_CHARS] or None)
     if name == "research" and resp.get("status") == "done":
         src = ", ".join(s.get("title") or "" for s in resp.get("sources") or [])
-        return f"Searched the web: {len(resp.get('sources') or [])} source(s){': ' + src if src else ''}", \
+        return f"Searched the web: {_n(len(resp.get('sources') or []), 'source')}{': ' + src if src else ''}", \
             (resp.get("answer") or "")[:DETAILS_CHARS]
     if name == "how_nightlight_works" and resp.get("title"):
         return f"Read Nightlight's guide: {resp['title']}", resp.get("text")
@@ -786,6 +790,11 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
     if status:
         return _status_words(status), None if status in STATUS_WORDS else f"Status: {status}"
     return "Done", None
+
+
+def _n(count: int, one: str, many: str | None = None) -> str:
+    """A count with its noun in the right number: "1 problem", "2 problems"."""
+    return f"{count} {one if count == 1 else (many or one + 's')}"
 
 
 def _status_words(status) -> str:

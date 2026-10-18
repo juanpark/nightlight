@@ -28,6 +28,8 @@ def test_a_fresh_demo_has_notes_a_runbook_and_past_jobs(client, started):
     pi = client.get("/api/devices/pi-1/knowledge").json()
     assert ["TeslaMate" in n["text"] for n in pi["notes"]["services"]["TeslaMate"]] == [True]
     assert [j["kind"] for j in _jobs(client, "pi-1")] == ["clear_images", "rotate_logs"]  # 10 days, then 14 days ago
+    # The Trust panel starts every kind at "Always ask me", so the history must not claim jobs ran on their own.
+    assert {j["by"] for j in _jobs(client, "pi-1")} == {"you"}
 
     # The past jobs are finished sample jobs: nothing to deliver, approve or continue.
     for snap in db.actions(started).get():
