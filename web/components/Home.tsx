@@ -215,7 +215,7 @@ export default function Home({ user, account }: { user: User; account?: string }
           {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
+          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} sample={sampleShown} />}
           {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
           <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
             onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
