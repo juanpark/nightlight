@@ -53,24 +53,24 @@ export default function SignIn() {
     <div className="signin">
       <div className="modal start">
         <div className="brand" style={{ justifyContent: "center" }}><span className="bulb" /> Nightlight</div>
-        <h1>Nightlight for your servers and devices</h1>
-        <p className="muted">One friendly map of your devices. Nightlight watches, explains in plain words, and helps you
-          run things smoothly.</p>
+        <h1>Go to sleep. It&apos;s got this.</h1>
+        <p className="muted">An agent for the machines you run. Nightlight watches, explains issues in plain words, and
+          gets things fixed.</p>
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
           for the next visitor.</p>}
 
         <p className="start-lead"><strong>Nightlight is live.</strong></p>
 
         <div className="start-option start-own">
-          <p><strong>The real thing:</strong> Sign in with Google and add your own devices in a few minutes.</p>
-          <p className="small">(Mac or Linux machine like the Raspberry Pi)</p>
+          <p><strong>Try the real thing:</strong> Sign in with Google and add your own devices in a few minutes.</p>
+          <p className="small">(Mac or Linux machines like the Raspberry Pi)</p>
           <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
-          <WhichDevices label="Which devices are supported (as of 2026-10-18)" />
+          <WhichDevices start label="Which devices are supported (as of 2026-10-18)" />
         </div>
 
         <div className="start-option start-sample">
-          <p><strong>A guided tour:</strong> Explore a sample home with sample devices. Nightlight&apos;s AI responses are
-            real, so the interactions take a few seconds.</p>
+          <p><strong>Try a guided tour:</strong> Explore a sample home with sample devices. Relax and experience
+            Nightlight&apos;s real agent at work.</p>
           <button className="primary" disabled={off} onClick={() => go("demo")}>Take the tour (instant demo)</button>
         </div>
 
@@ -81,10 +81,9 @@ export default function SignIn() {
           </div>
         ) : liveOn && status && (
           <div className="start-option">
-            <p><strong>Hands-on experience without installing anything on your device:</strong> Rent a demo Linux VM in
-              Google Cloud.</p>
+            <p><strong>Try it hands-on without a device:</strong> Demo Linux VM in Google Cloud.</p>
             <p className="small"><span className="pill">Limited demo</span> No passkeys, no adding devices, and nothing
-              nearby to find. To experience the full app, use your own device or take the guided tour.</p>
+              nearby to find. For the full experience, use your own device or take the guided tour.</p>
             <button disabled={off} onClick={() => startLive("crash")}>
               {live.starting ? "Starting your machine…" : "Hands on with a VM (takes about a minute to boot)"}</button>
             <p className="small muted" aria-live="polite">{status.free} of {status.total} free · reset to a clean copy
