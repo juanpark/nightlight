@@ -9,6 +9,7 @@ them only with your permission, earning more freedom one kind of job at a time.
 Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterprise Productivity) by team **8yte**.
 Everything here was written during the hackathon window.
 
+**Trying it for the first time (judges start here):** [`docs/JUDGE-WALKTHROUGH.md`](docs/JUDGE-WALKTHROUGH.md).
 **What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).
 **How a cloud command center can be trusted with your machines:** [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);
 **passkeys for owners, step by step:** [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
@@ -403,6 +404,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
 | `docs/BENCHMARKS.md`, `scripts/bench.py` | measured latency and cost |
 | `docs/COSTS.md` | what we spent on Google Cloud and Gemini, the guards that cap it, and why |
+| `docs/JUDGE-WALKTHROUGH.md` | the first-visit walkthrough (live machine, simulated home, your own device): the source of truth for docs, deck and video |
 | `docs/LIMITS-AND-ROADMAP.md` | how we tested, known limits and their root causes, what comes next |
 | `docs/architecture/` | the architecture diagram as code |
 | `contracts/mocks/` | sample data for every state of the demo story |
