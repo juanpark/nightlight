@@ -78,6 +78,8 @@ export default function SignIn() {
           <div className="start-option">
             <p className="small">A real virtual machine in Google Cloud, set up like a small home server with something
               already broken. It isn&apos;t your computer, but everything Nightlight does to it is real.</p>
+            <p className="small"><span className="pill">Limited</span> No passkeys, no adding devices, nothing nearby to
+              find.</p>
             <button disabled={off} onClick={() => startLive("crash")}>
               {live.starting ? "Starting your machine…" : "See it on a real cloud machine (about a minute)"}</button>
             <p className="small muted" aria-live="polite">{status.free} of {status.total} free · reset to a clean copy

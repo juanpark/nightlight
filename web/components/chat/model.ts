@@ -136,7 +136,7 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
     const after = prev?.kind === "agent"
       ? prev.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []) : undefined;
     out.push({ kind: "agent", key: m.id, mode: m.mode ?? "quick", blocks, busy: false, past: true,
-      error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
+      error: m.error?.message, errorCode: m.error?.code, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
 }
