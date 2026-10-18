@@ -10,7 +10,7 @@ import { StartModal } from "./StartModal";
 
 type Kind = "demo" | "google";
 
-// "Try the demo" opens the start choices (sign in, the guided tour, a cloud machine) in a dialog; "Sign in with Google"
+// "Get started" opens the start choices (sign in, the guided tour, a cloud machine) in a dialog; "Sign in with Google"
 // signs in straight away. Once Firebase reports a user, AppGate swaps the landing page for the app.
 export function AuthButtons({
   size = "large",
@@ -58,7 +58,7 @@ export function AuthButtons({
         {!googleOnly &&
           wrap(
             <button type="button" className={s.primary} disabled={busy !== null} onClick={() => setChoosing(true)}>
-              {busy === "demo" ? "Starting the demo…" : label("Try the demo")}
+              {busy === "demo" ? "Starting the demo…" : label("Get started")}
               {busy !== "demo" && <Icon name="arrow" size={size === "large" ? 18 : 16} />}
             </button>,
           )}

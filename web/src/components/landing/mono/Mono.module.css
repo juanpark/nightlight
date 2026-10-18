@@ -44,7 +44,8 @@
 /* ---------- type ---------- */
 .h1, .h2, .h2Big, .bandTitle, .ctaTitle { font-family: var(--font-display), system-ui, sans-serif; font-weight: 450;
   letter-spacing: -0.025em; margin: 0; text-wrap: balance; color: var(--ink); }
-.h1 { font-size: clamp(2.4rem, 4.3vw, 4rem); line-height: 1.04; max-width: 15ch; }
+.h1 { font-size: clamp(2.9rem, 7vw, 6rem); line-height: .98; letter-spacing: -0.035em; max-width: 11ch; }
+.h1 .quiet { display: block; }
 .h2 { font-size: clamp(1.9rem, 3vw, 2.75rem); line-height: 1.08; max-width: 14ch; }
 .h2Big { font-size: clamp(2rem, 3.6vw, 3.25rem); line-height: 1.08; max-width: 20ch; }
 .quiet { color: var(--quiet); }
@@ -88,8 +89,9 @@
 
 /* ---------- hero ---------- */
 .hero { padding: clamp(40px, 7vh, 84px) var(--gutter) 0; max-width: calc(var(--max) + 2 * var(--gutter)); margin: 0 auto; }
-.heroText { display: grid; grid-template-columns: 1.15fr 1fr; gap: 24px 64px; align-items: end; }
-.heroSide { display: grid; gap: 24px; justify-items: start; }
+.heroText { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px 72px; align-items: end; }
+/* the lede and actions sit on the headline's baseline, not floating above it */
+.heroSide { display: grid; gap: 28px; justify-items: start; padding-bottom: .35rem; }
 .heroCanvas { margin-top: clamp(40px, 6vh, 64px); }
 
 .principles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin: 72px 0 0; }

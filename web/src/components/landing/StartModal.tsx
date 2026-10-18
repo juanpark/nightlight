@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { StartChoices } from "@/components/SignIn";
+import { Logo } from "../brand/Logo";
+import { Close } from "../icons";
 import { display, sans } from "./fonts";
 import { holdSmoothScroll } from "./motion/smooth";
 import s from "./StartModal.module.css";
@@ -30,8 +32,11 @@ export function StartModal({ onClose }: { onClose: () => void }) {
   return createPortal(
     <div className={`${s.scrim} ${display.variable} ${sans.variable}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className={`modal start ${s.dialog}`} role="dialog" aria-modal="true" aria-labelledby="start-title" data-lenis-prevent>
-        <button ref={close} type="button" className={s.close} onClick={onClose} aria-label="Close">×</button>
-        <StartChoices />
+        <button ref={close} type="button" className={s.close} onClick={onClose} aria-label="Close">
+          <Close size={18} aria-hidden />
+        </button>
+        <Logo height={22} className={s.logo} />
+        <StartChoices title="How do you want to start?" />
       </div>
     </div>,
     document.body,

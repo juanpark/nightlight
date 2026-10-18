@@ -18,7 +18,7 @@ function problemText(p: Problem): string | null {
 
 /** The start screen's choices (Juan's wording and logic), shared by the plain start screen and the landing page's
  * start dialog. */
-export function StartChoices() {
+export function StartChoices({ title = "Go to sleep. It's got this." }: { title?: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [status, setStatus] = useState<LiveStatus | null>(null);
@@ -54,7 +54,7 @@ export function StartChoices() {
   return (
       <>
         <div className="brand" style={{ justifyContent: "center" }}><span className="bulb" /> Nightlight</div>
-        <h1 id="start-title">Go to sleep. It&apos;s got this.</h1>
+        <h1 id="start-title">{title}</h1>
         <p className="muted">An agent for the machines you run. Nightlight watches, explains issues in plain words, and
           gets things fixed.</p>
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset

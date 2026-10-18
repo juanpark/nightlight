@@ -186,7 +186,7 @@ export function MonoLanding() {
               </p>
               <div data-hero-rise>
                 <AuthButtons styles={s} />
-                <p className={s.fine}>The demo opens a simulated sample home. No account, nothing to install.</p>
+                <p className={s.fine}>Start on a simulated sample home with no account, or sign in and add your own machines.</p>
               </div>
             </div>
           </div>
