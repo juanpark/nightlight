@@ -236,7 +236,7 @@ def visitor_check(slot: str, lease_id: str):
 
 
 def cleanup_check(slot: str, epoch: int):
-    """The fence for a cleanup: every destructive transaction (and the Auth deletion) proceeds only while this cleanup
+    """The fence for a cleanup: every destructive transaction proceeds only while this cleanup
     still owns the slot's current epoch, and the slot is still being cleaned (never once it serves a newer visit)."""
     def check(tx):
         d = slots().document(slot).get(transaction=tx).to_dict() or {}
@@ -244,17 +244,6 @@ def cleanup_check(slot: str, epoch: int):
         if d.get("epoch") != epoch or not cleaning:
             raise CleanupLost(slot)
     return check
-
-
-def reset_auth_user(uid: str) -> None:
-    """Delete the pool account's Firebase Auth user: any login a visitor linked to it (Google, password) and every
-    refresh token die with the visit. The next custom-token sign-in creates the user again; Firestore data is by uid."""
-    from firebase_admin import auth as fb_auth
-    from .auth import _app
-    try:
-        fb_auth.delete_user(uid, app=_app())
-    except fb_auth.UserNotFoundError:
-        pass
 
 
 # ------------------------------------------------------------------ leases
@@ -280,9 +269,11 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
         for n, d in docs.items():
             if _live(d, now) and d.get("holder") == requester:
                 return n, d, False
+            if d.get("state") == "initializing" and d.get("holder") == requester:
+                raise ApiError(409, "live_starting", retryAfter=3)  # no token until initialisation is complete
         if sum(1 for d in docs.values() if _live(d, now) and d.get("ipHash") == ip_hash) >= settings.live_per_ip:
             raise ApiError(429, "live_per_visitor_limit")
-        free = [n for n, d in docs.items() if d.get("state", "free") == "free" and not d.get("authDeletion")]
+        free = [n for n, d in docs.items() if d.get("state", "free") == "free"]
         if not free:
             return None, None, False
         adm_ref = db.client().collection("liveAdmissions").document(ip_hash)
@@ -291,7 +282,7 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
             raise ApiError(429, "live_admissions_limit", retryAfter=600)
         # Prefer the slot stopped longest (spreads wear, and a slot just released may still be stopping).
         n = min(free, key=lambda x: docs[x].get("freedAt") or datetime(2000, 1, 1, tzinfo=timezone.utc))
-        d = {"state": "leased", "epoch": docs[n].get("epoch", 0), "instance": n, "uid": names[n],
+        d = {"state": "initializing", "epoch": docs[n].get("epoch", 0), "instance": n, "uid": names[n],
              "leaseId": new_id("lease"), "holder": requester,
              "ipHash": ip_hash, "scenario": scenario, "leasedAt": now,
              "expiresAt": now + timedelta(seconds=settings.live_idle_seconds),
@@ -313,7 +304,6 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
         raise ApiError(409, "live_all_busy", **counts())
     if fresh:
         try:
-            reset_auth_user(d["uid"])  # also done at release; again here so no earlier login can survive into this visit
             vm_command(slot, f"{scenario}:{d['leaseId']}")
             try:
                 vm_start(slot)
@@ -322,27 +312,49 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
                     raise
                 # still stopping from the last release: mine() starts it once it has stopped
             _forget_status(slot)
-        except ApiError:
-            _abandon(slot, d["leaseId"])
-            raise
         except Exception as e:
             log.warning("live start %s failed: %s", slot, type(e).__name__)
             _abandon(slot, d["leaseId"])
             raise ApiError(503, "live_start_failed", retryAfter=10) from None
+        d = _admit(slot, d["leaseId"])  # only now can a token for this lease exist
     # resumed: this visitor already held a live lease (came back to the page). The screen offers "Continue where
     # you left off" or "Start fresh" (POST /api/demo/live/reset).
     return {**_public(slot, d), "token": mint_token(d["uid"], slot, d["leaseId"]), "fresh": fresh,
             "resumed": not fresh}
 
 
-def _abandon(slot: str, lease_id: str) -> None:
-    """The VM couldn't be started: give the slot back as it was (stopped, nothing to wipe)."""
+def _admit(slot: str, lease_id: str) -> dict:
+    """Initialisation finished: the lease becomes usable (and its idle clock starts now)."""
     @firestore.transactional
     def run(tx):
-        d = slots().document(slot).get(transaction=tx).to_dict() or {}
-        if d.get("leaseId") == lease_id:
-            tx.set(slots().document(slot), {"state": "free", "freedAt": _now(), "epoch": d.get("epoch", 0)})
+        ref = slots().document(slot)
+        d = ref.get(transaction=tx).to_dict() or {}
+        if d.get("state") != "initializing" or d.get("leaseId") != lease_id:
+            raise ApiError(503, "live_start_failed", retryAfter=10)
+        now = _now()
+        upd = {"state": "leased", "expiresAt": min(now + timedelta(seconds=settings.live_idle_seconds),
+                                                   d["hardExpiresAt"]), "lastBeat": now}
+        tx.update(ref, upd)
+        return {**d, **upd}
+    return db.run_transaction(run)
+
+
+def _abandon(slot: str, lease_id: str) -> None:
+    """Initialisation failed. Never straight back to free: the slot goes to maintenance with a cleanup and a disk
+    restore due, exactly as after a visit (the sweep retries both), so nothing of this attempt can reach the next."""
+    @firestore.transactional
+    def run(tx):
+        ref = slots().document(slot)
+        d = ref.get(transaction=tx).to_dict() or {}
+        if d.get("leaseId") == lease_id and d.get("state") == "initializing":
+            tx.set(ref, {"state": "maintenance", "reason": "start_failed", "needsCleanup": True, "uid": d["uid"],
+                         "epoch": d.get("epoch", 0) + 1, "lastLeaseId": lease_id,
+                         "restore": _restore_plan(slot, "free")})
     db.run_transaction(run)
+    try:
+        vm_stop(slot)
+    except Exception as e:
+        log.warning("live stop after failed start %s: %s", slot, type(e).__name__)
 
 
 def _public(slot: str, d: dict) -> dict:
@@ -545,9 +557,10 @@ def _claim_release(slot: str) -> dict | None:
         ref = slots().document(slot)
         d = ref.get(transaction=tx).to_dict() or {}
         expired = d.get("state") == "leased" and not _live(d, now)
-        stale = d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE \
-            and not d.get("authDeletion")  # an Auth deletion may be in flight: resolve_stale_auth_deletion first
-        if not (expired or stale):
+        stale = d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE
+        # A lease whose initialisation never finished (crashed worker): cleaned up like any other visit.
+        stuck = d.get("state") == "initializing" and (d.get("leasedAt") or now) <= now - RELEASE_STALE
+        if not (expired or stale or stuck):
             return None
         epoch = d.get("epoch", 0) + 1  # the visit is over: a new epoch, before any cleanup starts
         tx.update(ref, {"state": "releasing", "releaseStartedAt": now, "epoch": epoch, "wiping": False})
@@ -586,79 +599,20 @@ def _release(slot: str) -> bool:
         if cur.get("state") != "releasing" or cur.get("epoch") != epoch:
             return False  # someone else took this release over (stale-release takeover): theirs stands
         tx.set(ref, {**after, "uid": d["uid"], "lastLeaseId": d.get("leaseId"), "restore": plan, "epoch": epoch,
-                     **({"authDeletion": cur["authDeletion"]} if cur.get("authDeletion") else {})})
+})
         return True
 
     return db.run_transaction(finish)
 
 
 def cleanup(slot: str, uid: str, epoch: int) -> None:
-    """Everything a visit leaves on the account side goes: the data (wipe) and the Firebase Auth user (logins a visitor
-    linked, refresh tokens). Every destructive step runs under this cleanup's epoch fence: CleanupLost the moment a
-    newer cleanup owns the slot, or the slot serves a newer visit. Raises if any part fails."""
+    """Everything a visit leaves on the account side goes (wipe). Every destructive step runs under this cleanup's
+    epoch fence: CleanupLost the moment a newer cleanup owns the slot, or the slot serves a newer visit.
+    The Firebase Auth user is kept: a pool uid is admitted only with a custom token carrying the slot's CURRENT lease
+    (API and rules), so a login a visitor linked, or an earlier visit's token, is refused without deleting anything."""
     with db.fenced(cleanup_check(slot, epoch)):
         wipe(uid)
         renew_maintenance_claim(slot, epoch)
-        _mark_auth_deletion(slot, epoch)  # fenced: only while this cleanup owns a slot being cleaned
-    reset_auth_user(uid)  # raises on anything but done / already gone: the marker then stays (no lease, no takeover)
-    _clear_auth_deletion(slot, epoch)
-
-
-AUTH_DELETION_STALE = timedelta(minutes=10)  # far beyond the Auth call's own timeout
-
-
-def _mark_auth_deletion(slot: str, epoch: int) -> None:
-    """Record the deletion in the transaction that authorises it. While the marker exists the slot is never leased and
-    its release is never taken over, so a deletion still in flight can't land on a newer visit of the same uid."""
-    @firestore.transactional
-    def run(tx):
-        ref = slots().document(slot)
-        ref.get(transaction=tx)  # the cleanup fence (db.run_transaction) has just checked epoch and state on it
-        tx.update(ref, {"authDeletion": {"epoch": epoch, "at": _now()}})
-    db.run_transaction(run)
-
-
-def _clear_auth_deletion(slot: str, epoch: int | None) -> None:
-    @firestore.transactional
-    def run(tx):
-        ref = slots().document(slot)
-        d = ref.get(transaction=tx).to_dict() or {}
-        m = d.get("authDeletion")
-        if m and (epoch is None or m.get("epoch") == epoch):
-            tx.update(ref, {"authDeletion": firestore.DELETE_FIELD})
-    with db.fenced(None):
-        db.run_transaction(run)
-
-
-def auth_user_exists(uid: str) -> bool:
-    from firebase_admin import auth as fb_auth
-    from .auth import _app
-    try:
-        fb_auth.get_user(uid, app=_app())
-        return True
-    except fb_auth.UserNotFoundError:
-        return False
-
-
-def resolve_stale_auth_deletion(slot: str) -> bool:
-    """A marker older than AUTH_DELETION_STALE (its worker died): delete again and confirm the user is gone, then clear
-    it. True when the slot has no marker left."""
-    d = slots().document(slot).get().to_dict() or {}
-    m = d.get("authDeletion")
-    if not m:
-        return True
-    if _now() - m["at"] < AUTH_DELETION_STALE:
-        return False
-    uid = d.get("uid") or pool().get(slot)
-    try:
-        reset_auth_user(uid)
-        if auth_user_exists(uid):
-            return False
-    except Exception as e:
-        log.warning("live auth re-check %s failed: %s", slot, type(e).__name__)
-        return False
-    _clear_auth_deletion(slot, m.get("epoch"))
-    return True
 
 
 # ------------------------------------------------------------------ disk restore from the golden snapshot
@@ -752,8 +706,7 @@ def _restore_done(slot: str, r: dict) -> bool:
             return "pending"  # its cleanup is still running
         if d.get("state") == "restoring":
             tx.set(ref, {"state": "free", "freedAt": _now(), "lastLeaseId": d.get("lastLeaseId"),
-                         "lastRestoreSeconds": took, "epoch": d.get("epoch", 0), "uid": d.get("uid"),
-                         **({"authDeletion": d["authDeletion"]} if d.get("authDeletion") else {})})
+                         "lastRestoreSeconds": took, "epoch": d.get("epoch", 0), "uid": d.get("uid")})
         else:  # maintenance (cleanup failed), or a lease that ended: the disk is clean, the slot stays as it is
             tx.update(ref, {"restore": firestore.DELETE_FIELD})
         return None
@@ -900,6 +853,7 @@ def release_expired(limit: int | None = None) -> int:
     for name in pool():
         d = slots().document(name).get().to_dict() or {}
         due = (d.get("state") == "leased" and not _live(d, now)) or \
+              (d.get("state") == "initializing" and (d.get("leasedAt") or now) <= now - RELEASE_STALE) or \
               (d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE)
         if due and _release(name):
             n += 1
@@ -924,11 +878,6 @@ def sweep() -> dict:
                 _finish_maintenance(name, epoch)
             except Exception as e:
                 log.warning("live cleanup retry %s failed: %s", name, type(e).__name__)
-    for name in pool():
-        try:
-            resolve_stale_auth_deletion(name)
-        except Exception as e:
-            log.warning("live auth marker %s: %s", name, type(e).__name__)
     restored = advance_restores(budget=240)  # the scheduled request may run 15 min; a restore takes ~1-2
     stopped = []
     now = _now()
@@ -1013,7 +962,7 @@ def status() -> dict:
     for name in pool():
         d = slots().document(name).get().to_dict() or {}
         st = d.get("state", "free")
-        state = "in_use" if _live(d, now) else (
+        state = "in_use" if _live(d, now) or st == "initializing" else (
             "free" if st == "free" else "maintenance" if st == "maintenance" else "resetting")
         machines.append({"machine": _label(name), "state": state, "vm": vms.get(name, "UNKNOWN")})
     return {"enabled": True, "total": len(machines), "inUse": sum(m["state"] == "in_use" for m in machines),

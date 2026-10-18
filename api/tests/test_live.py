@@ -38,7 +38,6 @@ def pool(monkeypatch):
     monkeypatch.setattr(live, "vm_status", lambda name, max_age=0: "TERMINATED")
     monkeypatch.setattr(live, "restore_step", lambda slot, min_gap=0: False)
     monkeypatch.setattr(live, "mint_token", lambda uid, slot, lease_id: f"tok:{uid}:{lease_id}")
-    monkeypatch.setattr(live, "reset_auth_user", lambda uid: calls.append(("auth_reset", uid)))
     live._lease_cache.clear()
     yield names, uids, calls
     for n in names:
@@ -92,11 +91,9 @@ def test_admissions_per_address_per_hour_are_limited_beyond_the_concurrent_limit
     assert e.value.code == "live_admissions_limit"
 
 
-def test_lease_binds_uid_to_slot_and_resets_the_auth_user_first(pool):
-    _, _, calls = pool
+def test_lease_binds_uid_to_slot(pool):
     got = live.lease("v1", "ip1")
     assert db.client().collection("livePoolUids").document(got["uid"]).get().to_dict() == {"slot": got["slot"]}
-    assert ("auth_reset", got["uid"]) in calls
 
 
 # ------------------------------------------------------------------ finding 1: identity by uid, not by claims
@@ -132,15 +129,6 @@ def test_lease_claims_on_a_non_pool_uid_are_refused(pool, monkeypatch):
                                    "firebase": {"sign_in_provider": "custom"}})
     assert c.get("/api/devices/removed", headers={"Authorization": "Bearer x"}).status_code == 401
 
-
-def test_release_resets_the_auth_user(pool, monkeypatch):
-    _, _, calls = pool
-    monkeypatch.setattr(live, "wipe", lambda uid: None)
-    got = live.lease("v1", "ip1")
-    calls.clear()
-    live.end(got["slot"], got["leaseId"])
-    assert ("auth_reset", got["uid"]) in calls
-    assert live.slots().document(got["slot"]).get().to_dict()["state"] == "restoring"
 
 
 # ------------------------------------------------------------------ finding 5: rules (emulator) and no stale cache
@@ -376,7 +364,7 @@ def _only_first_slot_free(names):
         live.slots().document(n).set({"state": "maintenance"})
 
 
-def test_a_stale_cleanup_never_touches_the_next_visit_or_its_auth_user(pool):
+def test_a_stale_cleanup_never_touches_the_next_visit(pool):
     names, uids, calls = pool
     _only_first_slot_free(names)
     slot, uid = names[0], uids[0]
@@ -393,7 +381,6 @@ def test_a_stale_cleanup_never_touches_the_next_visit_or_its_auth_user(pool):
     with pytest.raises(live.CleanupLost):
         live.cleanup(slot, uid, stale["epoch"])  # release 1 resumes
     assert db.notes(uid, "dev_base").document("n_next").get().exists
-    assert ("auth_reset", uid) not in calls
     assert live.slots().document(slot).get().to_dict()["leaseId"] == second["leaseId"]
 
 
@@ -480,64 +467,7 @@ def test_a_reset_cleanup_stops_when_a_release_takes_over(pool, monkeypatch):
 
 # ------------------------------------------------------------------ rev3: Auth deletion marker, pool memory off, maintenance claim
 
-def test_a_delayed_auth_deletion_blocks_takeover_and_reuse_until_it_returns(pool, monkeypatch):
-    names, uids, calls = pool
-    _only_first_slot_free(names)
-    slot, uid = names[0], uids[0]
-    monkeypatch.setattr(live, "wipe", lambda u: None)
-    live.lease("v1", "ip1")
-    live.slots().document(slot).update({"expiresAt": NOW() - timedelta(seconds=1)})
-    during = {}
 
-    def slow_delete(u):  # the Firebase call is still in flight while others try to move the slot on
-        live.slots().document(slot).update({"releaseStartedAt": NOW() - timedelta(minutes=10)})
-        during["takeover"] = live._claim_release(slot)
-        during["marker"] = live.slots().document(slot).get().to_dict().get("authDeletion")
-        try:
-            live.lease("v2", "ip2")
-            during["lease"] = "granted"
-        except ApiError as e:
-            during["lease"] = e.code
-
-    monkeypatch.setattr(live, "reset_auth_user", slow_delete)
-    assert live._release(slot)
-    assert during["takeover"] is None and during["marker"] and during["lease"] == "live_all_busy"
-    d = live.slots().document(slot).get().to_dict()
-    assert d["state"] == "restoring" and "authDeletion" not in d  # cleared only after the call returned
-    _free_after_release(slot)
-    assert live.lease("v2", "ip2")["slot"] == slot
-
-
-def test_a_failed_auth_deletion_keeps_the_marker_and_the_slot_out_of_service(pool, monkeypatch):
-    names, uids, _ = pool
-    _only_first_slot_free(names)
-    slot = names[0]
-    monkeypatch.setattr(live, "wipe", lambda u: None)
-    got = live.lease("v1", "ip1")
-
-    def broken(u):
-        raise RuntimeError("auth down")
-
-    monkeypatch.setattr(live, "reset_auth_user", broken)
-    live.end(slot, got["leaseId"])
-    d = live.slots().document(slot).get().to_dict()
-    assert d["state"] == "maintenance" and d["authDeletion"]
-    with pytest.raises(ApiError):
-        live.lease("v2", "ip2")
-
-
-def test_a_stale_auth_marker_is_cleared_only_after_confirming_the_user_is_gone(pool, monkeypatch):
-    names, uids, _ = pool
-    slot = names[0]
-    live.slots().document(slot).set({"state": "free", "uid": uids[0],
-                                     "authDeletion": {"epoch": 3, "at": NOW() - timedelta(minutes=1)}})
-    assert live.resolve_stale_auth_deletion(slot) is False  # still fresh: may be in flight
-    live.slots().document(slot).update({"authDeletion.at": NOW() - timedelta(minutes=30)})
-    monkeypatch.setattr(live, "auth_user_exists", lambda u: True)
-    assert live.resolve_stale_auth_deletion(slot) is False  # not confirmed gone
-    monkeypatch.setattr(live, "auth_user_exists", lambda u: False)
-    assert live.resolve_stale_auth_deletion(slot) is True
-    assert "authDeletion" not in live.slots().document(slot).get().to_dict()
 
 
 def test_memory_is_off_for_pool_accounts_everywhere(pool, monkeypatch):
@@ -584,3 +514,74 @@ def test_a_stale_maintenance_claim_can_be_taken_over(pool):
     live.slots().document(slot).set({"state": "maintenance", "needsCleanup": True, "uid": uids[0], "epoch": 5,
                                      "maintClaim": {"epoch": 5, "at": NOW() - timedelta(minutes=30)}})
     assert live._claim_maintenance(slot) == 6
+
+
+# ------------------------------------------------------------------ rev4: no Auth deletion; custom sign-in only; init
+
+def test_no_auth_user_is_ever_deleted():
+    import inspect
+    src = inspect.getsource(live)
+    assert "delete_user" not in src and "authDeletion" not in src
+
+
+def test_a_linked_provider_token_for_a_pool_uid_is_refused_in_the_api(pool, monkeypatch):
+    got = live.lease("v1", "ip1")
+    for claims in ({}, {"nl_slot": got["slot"], "nl_lease": got["leaseId"]}):  # without, and with current claims
+        c = _client_with(monkeypatch, {"uid": got["uid"], **claims, "firebase": {"sign_in_provider": "google.com"}})
+        r = c.get("/api/devices/removed", headers={"Authorization": "Bearer x"})
+        assert r.status_code == 401 and r.json()["code"] == "lease_ended"
+
+
+def test_a_linked_provider_token_for_a_pool_uid_is_refused_by_the_rules(pool):
+    got = live.lease("v1", "ip1")
+    uid, slot, lid = got["uid"], got["slot"], got["leaseId"]
+    db.device(uid, "d1").set({"name": "x"})
+    host = os.environ["FIRESTORE_EMULATOR_HOST"]
+    url = f"http://{host}/v1/projects/{settings.project_id}/databases/(default)/documents/users/{uid}/devices/d1"
+    for claims in ({}, {"nl_slot": slot, "nl_lease": "stale"}, {"nl_slot": slot, "nl_lease": lid}):
+        tok = _jwt({"sub": uid, "user_id": uid, "firebase": {"sign_in_provider": "password"}, **claims})
+        assert httpx.get(url, headers={"Authorization": f"Bearer {tok}"}).status_code == 403
+    assert _read_as(uid, {"nl_slot": slot, "nl_lease": lid}) == 200  # the custom token for the current lease
+
+
+def test_a_failed_initialisation_goes_to_maintenance_never_free_and_issues_no_token(pool, monkeypatch):
+    names, uids, _ = pool
+    _only_first_slot_free(names)
+    slot, uid = names[0], uids[0]
+    _seed_pool_account(uid)
+    db.user(uid).collection("sessions").document("s_old").set({"title": "an earlier private chat"})
+
+    def broken(name, value):
+        raise RuntimeError("compute down")
+
+    monkeypatch.setattr(live, "vm_command", broken)
+    with pytest.raises(ApiError) as e:
+        live.lease("v1", "ip1")
+    assert e.value.code == "live_start_failed"
+    d = live.slots().document(slot).get().to_dict()
+    assert d["state"] == "maintenance" and d["needsCleanup"] and d.get("restore")
+    with pytest.raises(ApiError) as e:  # the next visitor never gets this slot while it is unclean
+        live.lease("v2", "ip2")
+    assert e.value.code == "live_all_busy"
+    monkeypatch.setattr(live, "advance_restores", lambda budget=0: [])
+    monkeypatch.setattr(live, "all_status", lambda max_age=0: {})
+    live.sweep()  # the cleanup runs before the slot can serve anyone
+    assert not db.user(uid).collection("sessions").document("s_old").get().exists
+    assert live.slots().document(slot).get().to_dict()["state"] == "restoring"
+
+
+def test_no_token_is_resumed_while_the_lease_is_initialising(pool, monkeypatch):
+    names, _, _ = pool
+    seen = {}
+
+    def during_init(name, value):
+        try:
+            live.lease("v1", "ip1")
+            seen["resume"] = "token"
+        except ApiError as e:
+            seen["resume"] = e.code
+
+    monkeypatch.setattr(live, "vm_command", during_init)
+    got = live.lease("v1", "ip1")
+    assert seen["resume"] == "live_starting" and got["fresh"] is True
+    assert live.slots().document(got["slot"]).get().to_dict()["state"] == "leased"

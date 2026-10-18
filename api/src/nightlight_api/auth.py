@@ -30,8 +30,9 @@ def _claims(request: Request) -> dict:
     if slot or "nl_lease" in claims:
         # A live demo machine's account: only with a token for THIS slot's current lease. A login linked to the
         # account (no lease claims) or a token from an earlier visit is refused.
-        if not slot or claims.get("nl_slot") != slot or not claims.get("nl_lease"):
-            raise ApiError(401, "lease_ended")
+        if not slot or claims.get("nl_slot") != slot or not claims.get("nl_lease") \
+                or (claims.get("firebase") or {}).get("sign_in_provider") != "custom":
+            raise ApiError(401, "lease_ended")  # also: a Google/password login linked to the pool account
         line = f"{request.method} {request.url.path}"
         changes = request.method != "GET"
         d = live.lease_doc(slot, str(claims["nl_lease"]), fresh=changes)

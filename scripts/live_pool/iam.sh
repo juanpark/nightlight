@@ -12,8 +12,6 @@
 #  3. liveDemoPoolDiskCreate (project level, unconditioned): Google evaluates compute.disks.create at the project, and
 #     the request's resource-name attribute is not documented as usable in a condition, so it is granted separately and
 #     plainly. A dedicated pool project would contain it fully (roadmap).
-#  4. liveDemoPoolAuth (project level): delete a Firebase Auth user, used to reset a pool account after each visit.
-#     Firebase Auth permissions can't be scoped to some uids; the same boundary as (1).
 # After granting, validate with the runtime identity itself (not owner credentials). Python reads Application Default
 # Credentials, so impersonate there (the gcloud CLI property alone does not change what the server uses):
 #   gcloud auth application-default login --impersonate-service-account=api-runtime@nightlight-aibc.iam.gserviceaccount.com
@@ -44,7 +42,6 @@ compute.instances.getGuestAttributes,compute.instances.attachDisk,compute.instan
 compute.disks.get,compute.disks.use,compute.disks.delete,compute.disks.setLabels,compute.snapshots.useReadOnly,\
 compute.zoneOperations.get
 role liveDemoPoolDiskCreate "Nightlight live demo pool disk create" compute.disks.create
-role liveDemoPoolAuth "Nightlight live demo pool account reset" firebaseauth.users.delete,firebaseauth.users.get
 
 P="projects/$PROJECT"
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" \
@@ -55,6 +52,4 @@ resource.name.startsWith('$P/global/snapshots/nl-live-') || \
 resource.type == 'compute.googleapis.com/ZoneOperation'" >/dev/null
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" \
   --role "$P/roles/liveDemoPoolDiskCreate" --condition=None >/dev/null
-gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" \
-  --role "$P/roles/liveDemoPoolAuth" --condition=None >/dev/null
 echo "granted; now validate with the runtime identity (see the comment at the top)"

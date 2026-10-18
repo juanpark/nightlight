@@ -11,7 +11,8 @@ service cloud.firestore {
     function leaseOk(uid) {
       let slot = get(poolSlot(uid)).data.slot;
       let s = get(/databases/$(database)/documents/livePool/$(slot)).data;
-      return request.auth.token.get('nl_slot', '') == slot
+      return request.auth.token.firebase.sign_in_provider == 'custom'
+        && request.auth.token.get('nl_slot', '') == slot
         && s.get('state', '') == 'leased'
         && s.get('leaseId', '') == request.auth.token.get('nl_lease', '-')
         && s.get('wiping', false) == false
