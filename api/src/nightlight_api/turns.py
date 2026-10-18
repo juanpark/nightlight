@@ -389,9 +389,10 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                                     ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
                                     if ev is None:
                                         continue
-                            if ev.author != "user" and any(p.text or p.function_call or p.function_response
-                                                           for p in (ev.content.parts if ev.content else None) or []):
-                                forwarded += 1  # the model said or did something
+                            if not ev.partial and ev.author != "user" and any(
+                                    (p.text and p.text.strip() and not p.thought) or p.function_call
+                                    or p.function_response for p in (ev.content.parts if ev.content else None) or []):
+                                forwarded += 1  # the model said something the person saw, or did something
                             await queue.put(("event", ev))
                     finally:
                         await run.aclose()

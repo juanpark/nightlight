@@ -121,6 +121,28 @@ def test_investigate_busy_at_once_gives_a_quick_look_that_says_so(client, starte
                         "The NAS is fine: its disk is 40% full.")
 
 
+def test_a_hidden_cut_answer_still_lets_quick_stand_in(client, started):  # Codex merge v2 #1
+    from google.adk.models.llm_response import LlmResponse
+    from google.genai import types
+    deep = []
+
+    async def behave(llm_request, stream):
+        deep.append(llm_request.config.max_output_tokens == settings.deep_max_output_tokens)
+        if len(deep) == 1:  # a partial the person never sees, then a reply the length limit cut off
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text="The NAS")]), partial=True)
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text="The NAS is slow bec")]),
+                              partial=False, turn_complete=True, finish_reason=types.FinishReason.MAX_TOKENS)
+        elif len(deep) == 2:  # the answer-only retry: the model is busy
+            raise _busy()
+        else:
+            yield _answer("The NAS is fine: its disk is 40% full.")
+    FakeLlm.behavior = behave
+    ev = events(dig(client, new_session(client)))
+    assert ev[-1]["type"] == "done" and deep == [True, True, False]
+    assert said(ev) == ("Investigate is busy right now, so here is a quick look instead.\n\n"
+                        "The NAS is fine: its disk is 40% full.")
+
+
 def test_busy_after_steps_ran_is_not_retried(client, started):
     calls = []
 
