@@ -283,6 +283,29 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
+  // While an answer works, a device its latest step touches that is off the edge of the map eases just far enough
+  // into view (no centering on every step). Never while the person is moving the map, or just did; reduced motion jumps.
+  useEffect(() => {
+    const id = followed.last;
+    if (followed.done || !id || followed.seq === dimmed) return;
+    const raf = requestAnimationFrame(() => {
+      if (busyHands.current || Date.now() - lastHands.current < HANDS_OFF_MS) return;
+      const f = flow.current, el = box.current, p = spots.get(id);
+      if (!f || !el || !p) return;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return; // the map isn't on screen (a phone showing the chat)
+      const { x, y, zoom } = f.getViewport();
+      const m = 16, sx = p.x * zoom + x, sy = p.y * zoom + y - 14 * zoom, w = NODE_W * zoom, h = (NODE_H + 14) * zoom;
+      const dx = sx < m ? m - sx : sx + w > r.width - m ? r.width - m - (sx + w) : 0;
+      const dy = sy < m ? m - sy : sy + h > r.height - m ? r.height - m - (sy + h) : 0;
+      if (!dx && !dy) return;
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      f.setViewport({ x: x + dx, y: y + dy, zoom }, { duration: still ? 0 : 450 });
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed.last, followed.seq, followed.done]);
+
   // Zoomed in far enough, the card nearest the middle of the view opens; zoomed back out, a card opened that way closes.
   const box = useRef<HTMLDivElement>(null);
   function moved(v: { x: number; y: number; zoom: number }) {
