@@ -21,7 +21,7 @@ Everything here was written during the hackathon window.
 
 ## Try it in 30 seconds
 
-1. Open the live app and tap "Try the demo (no account)". You get a **simulated sample home**, labelled "Sample": a
+1. Open the live app and tap "Open the simulated home". You get a **simulated sample home**, labelled "Sample": a
    Raspberry Pi (VPN and a car data logger), a Mac Mini (home automation), a NAS (photos and a nightly backup), a
    Minecraft server, a camera recorder and a router.
 2. In the chat, ask: **"Is anything wrong at home?"**
@@ -40,14 +40,14 @@ update) and reset the sample home. Signing in with Google lets you add your own 
 | **Watches** | Each device shows a health light and one plain sentence ("The Minecraft world hasn't been backed up in 9 days"). A sweep every 5 minutes marks devices that stopped reporting and checks watched websites. | `api/.../sim.py`, `real.py`, `watch.py`, `main.py` (`/internal/sweep`) |
 | **Explains in plain words** | A Gemini agent reads devices with tools and answers without jargon. Before answering "why is it full / slow / offline?" on a real device, it runs fixed read-only checks and answers with names and sizes. | `agent.py`, `playbooks.yaml`, helper `inspect` |
 | **Asks before fixing** | Every change is an approval card: the plan, a dry run, what it touches, how to undo it, a risk badge. One tap approves or declines. A card exists only when the model called the tool that makes it; the chat shows each card and each step from server events, never from the model's words, and the server never edits an answer to match them. | `actions.py`, `capabilities.py`, `agent.py`, `turns.py`, `web/components/ApprovalCard.tsx` |
-| **Earns trust per kind of job** | After three approved successes of the same kind of job, Nightlight may offer to handle that job on its own. Risky jobs have a ceiling (restarting a game server always asks). A failure moves trust back down a step. Jobs on real devices always wait for a tap. | `trust.py`, `web/components/TrustPanel.tsx` |
+| **Earns trust per kind of job** | After three approved successes of the same kind of safe (routine) job, Nightlight may offer to handle that job on its own. Restarts and updates always ask; no number of approvals changes that. A failure moves trust back down a step. Jobs on real devices always wait for a tap. | `trust.py`, `web/components/TrustPanel.tsx` |
 
 Trust levels, in the words the app uses:
 
 | Level | What the agent does |
 |---|---|
 | Always ask me | explains and waits for a tap |
-| Ask me for new things | does familiar safe jobs on its own, asks about anything new |
+| Ask me for new things | does familiar safe jobs on its own, asks about anything new (restarts and updates still ask) |
 | Just handle it and tell me | acts, then reports in plain words |
 
 The trust ladder runs on the sample home. On real devices every restart, clean-up or removal needs a tap, whatever the
@@ -274,8 +274,9 @@ only, about 3,300 lines, reviewable in one sitting.
 needs no Terminal and no developer tools: it brings its own Python. Click through the standard installer; your
 browser opens Nightlight's approval page; click **Approve** and the Mac appears on your map. The background service
 is managed from the app, and the question about the private folders is left for later. Nothing on the Mac listens
-for connections, so the firewall never asks. The package is built, signed and notarized by
-[`scripts/build_mac_pkg.sh`](scripts/build_mac_pkg.sh) (CPython from python-build-standalone, checked against pinned
+for connections, so the firewall never asks. The package is built by
+[`scripts/build_mac_pkg.sh`](scripts/build_mac_pkg.sh), which signs and notarizes it once Developer ID certificates
+are present; today's build is unsigned, so macOS shows a warning first and asks for right-click → Open (CPython from python-build-standalone, checked against pinned
 sha256 digests). Its shared files stay in `/Library/Application Support/Nightlight` after an uninstall; the uninstall
 prints the one administrator command that removes them.
 
@@ -323,21 +324,20 @@ device, history and all; the owner chooses when approving.
 - The trust ladder (jobs running on their own) applies to the sample home only.
 - The helper supports Linux (systemd) and macOS (launchd). **Windows is not supported**; a Windows PC can only be
   watched from another device (does it answer on the network).
-- Adding a Linux device needs one line in a terminal. Only the Mac has an installer, and macOS opens it only once it
-  is notarized with a Developer ID.
+- Adding a Linux device needs one line in a terminal. Only the Mac has an installer; until it is notarized with a
+  Developer ID, macOS opens it only through right-click → Open.
 - Lines are drawn automatically only for what helpers can see: the router, backups, mounted shared folders and a
   few services in use. Everything else is drawn by the owner (or by the agent when you tell it how two devices relate).
 - A router's maker and model come only from UPnP; with UPnP off on the router it is found but not named.
 - Phones and laptops that use a private Wi-Fi address and announce no name fold into one line; when a phone rotates
   that address, it looks like a new thing.
-- Names of things nearby can be turned off through the account settings API (`POST /api/settings`); the switch in the
-  app is not built yet.
+- Names of things nearby can be turned off in More → Settings ("Show names things announce").
 - A device token has no expiry; it is revocable but not rotated.
 - `curl | sh` trusts the HTTPS origin; the sha256 pin only proves the helper matches what that server serves.
 - A job handed to a helper that crashes before reporting stays "running"; a job approved while the device is offline
   waits until it reports again.
-- There is no "delete my account" yet; removed devices are archived 30 days, then deleted ("forget for good" deletes
-  them now).
+- There is no "delete my account" yet; removed devices are archived 30 days, then deleted; an API call
+  (`DELETE /api/devices/{id}`) deletes one sooner, with no button for it in the app yet.
 - Browser notifications work only while the tab is open.
 - Scrubbing is pattern-based and best effort. The design relies first on not collecting secrets.
 

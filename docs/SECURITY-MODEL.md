@@ -148,8 +148,8 @@ signature bytes.
 ## The trust ladder (sample home only)
 
 On the simulated home, Nightlight earns freedom one kind of job at a time: after three approved successes of the same
-kind, it may offer to handle that kind on its own; risky kinds have a ceiling and a failure moves it back a step
-(`trust.py`). On real devices this does not apply: every restart, clean-up or removal waits for a tap, whatever the
+safe (routine) kind, such as a clean-up, it may offer to handle that kind on its own. Restarts and updates always ask,
+however often they went well, and a failure moves a kind back a step (`trust.py`). On real devices this does not apply: every restart, clean-up or removal waits for a tap, whatever the
 level. We kept it that way on purpose until the fixed menu has more hours behind it.
 
 ## A reinstall keeps a device's history, without a new way in

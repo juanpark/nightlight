@@ -74,6 +74,17 @@ What this protects against: a breached cloud (can't sign), a stolen Nightlight s
 injection (a human signs every command). What it doesn't: an owner approving a harmful command they didn't read; the
 card shows the AI's explanation and a risk level to help, and read-only bundles are the default.
 
+## The trust ladder: freedom earned one kind of job at a time (sample home)
+
+Cards answer "may it do this, now?". The ladder answers "may it do this kind of job without asking next time?". Each
+kind of job has a level: **Always ask me**, **Ask me for new things**, **Just handle it and tell me**. After three
+approved successes of the same safe (routine) kind, such as a log clean-up, Nightlight offers to stop asking for it;
+the owner accepts or declines, and the Trust panel can move any kind back down. A failure moves a kind back a step on
+its own. Restarts and updates always ask, however often they went well (`trust.py`).
+
+It runs on the sample home only. On real devices every change still waits for a tap, because the fixed menu needs more
+hours behind it before we let it act alone there. That is the next step this design is built for, not a missing piece.
+
 ## How we got here (for the judges)
 
 1. Read-only monitoring and explanations (sample home).
@@ -84,8 +95,10 @@ card shows the AI's explanation and a risk level to help, and read-only bundles 
 
 ## Roadmap items that follow from this
 
-- Expert sessions: per-command and time-boxed signing, transcripts, and a "read-only" classifier for bundles.
+- Expert sessions: a "read-only" classifier for bundles (per-command signing, the 15-minute read-only grant and the
+  on-device audit log of signed commands have shipped).
 - Release signing in a hardware security module or a CI pipeline outside the cloud that talks to devices.
-- Installers (Mac `.pkg`, Raspberry Pi image) so the first install needs no terminal line.
+- Installers so the first install needs no terminal line: the Mac `.pkg` has shipped (unsigned until Developer ID
+  certificates arrive); a Raspberry Pi image and a Linux `.deb` are next.
 - Retention you choose per account (7 / 30 / 90 / 365 days) and cold archives in Cloud Storage.
 - Account deletion that purges everything at once.
