@@ -115,7 +115,7 @@ export default function Home({ user, live = false }: { user: User; live?: boolea
         <nav className={`top-nav ${menu ? "open" : ""}`}>
         <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
         <button onClick={() => toggle("activity")}>Activity</button>
-        <button onClick={() => toggle("memory")}>Memory</button>
+        {!live && <button onClick={() => toggle("memory")}>Memory</button>}
         <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
@@ -150,7 +150,7 @@ export default function Home({ user, live = false }: { user: User; live?: boolea
           {panel === "demo" && <DemoTools devices={devices} />}
           {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} onSave={saveWithGoogle}
             onTour={() => { setPanel("none"); setPane("home"); restartTour(uid); }} />}
-          {panel === "memory" && <MemoryPanel />}
+          {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
           {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
