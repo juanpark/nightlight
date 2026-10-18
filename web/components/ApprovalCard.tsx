@@ -100,7 +100,7 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
     : (action.params as { command?: string } | undefined)?.command;
   const signedCard = SIGNED.has(action.type);
   return (
-    <div className="card">
+    <div className="card" data-tour="card">
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <strong style={{ flex: 1 }}>{action.plan}</strong>
         <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>

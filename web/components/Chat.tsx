@@ -290,7 +290,7 @@ const Chat = forwardRef<ChatHandle, {
           ))}
           <span className="mode-hint small muted">{MODES.find((m) => m.id === mode)?.hint}</span>
         </div>
-        <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
+        <form className="chat-input" data-tour="chat" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} />
           {busy

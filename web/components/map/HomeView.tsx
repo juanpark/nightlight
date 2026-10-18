@@ -26,7 +26,7 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
   const shown = useMemo(() => applyFilter(filter, devices, marks), [filter, devices, marks]);
   const shownWatches = useMemo(() => applyToWatches(filter, watches), [filter, watches]);
   return (
-    <div className="homeview">
+    <div className="homeview" data-tour="map">
       {(devices.length > 0 || watches.length > 0 || filtering(filter)) && <HomeBar devices={devices} watches={watches}
         places={places} filter={filter} onFilter={setFilter} view={view} onView={pick} />}
       {devices.length > 0 && shown.length === 0
