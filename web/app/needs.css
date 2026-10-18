@@ -210,3 +210,5 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 /* Pair approval: continue an earlier device's history, or add it as new */
 .pair-continue { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 6px 0 0; display: grid; gap: 6px; }
 .pair-continue legend { padding: 0 4px; }
+/* the live bar floats over the bottom of the home pane: leave room so it never covers the map's legend */
+.live-bar ~ .shell .left { padding-bottom: 72px; }
