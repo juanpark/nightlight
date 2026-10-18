@@ -116,7 +116,7 @@ def _waiting_card(tx, uid: str, device_id: str, action_type: str, params: dict, 
             continue
         if a.get("type") == action_type and (a.get("params") or {}) == (params or {}):
             return dict(a, id=snap.id, waiting=True)
-        if a.get("type") in same_problem:
+        if a.get("type") != action_type and a.get("type") in same_problem:  # same job, other target: its own card
             found.append(dict(a, id=snap.id, waiting=True))
     return found[0] if found else None
 
