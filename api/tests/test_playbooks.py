@@ -23,7 +23,7 @@ def test_causes_are_matched_in_code_with_thresholds_and_permissions():
     by = {f["cause"]: f for f in got["found"]}
     assert list(by) == ["trash", "brew", "npm", "docker_images", "app_caches"]  # playbook order, Downloads absent
     assert by["trash"]["fixAllowed"] and not by["npm"]["fixAllowed"] and "advice" in by["app_caches"]
-    assert by["docker_images"]["say"].startswith("Docker images take up to 5.2GB")
+    assert by["docker_images"]["say"].startswith("Old app downloads (Docker images) take up to 5.2GB")
     small = playbooks.evaluate(book, "Trash: 120 MB", {})
     assert small["found"] == [] and small["nothing"]
 

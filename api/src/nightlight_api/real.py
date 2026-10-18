@@ -30,22 +30,24 @@ CLAIM_MIN_SECONDS = 4
 # What a real device can be asked to do is declared in capabilities.py; the card builders for its jobs live here.
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
-FIX = {
+FIX = {  # recipe -> (title, what happens in plain words, undo, the exact command the helper runs or None)
     "empty_trash": ("Empty the Trash", "Deletes everything in the Trash", "Can't be undone: files in the Trash are "
-                    "deleted for good. Look in the Trash first if you're unsure."),
-    "brew_cleanup": ("Clear Homebrew's old downloads", "Runs \"brew cleanup -s\": removes old versions and cached "
-                     "downloads", "Nothing to undo: Homebrew downloads again what it needs."),
-    "npm_cache": ("Clear the npm cache", "Runs \"npm cache clean --force\"",
-                  "Nothing to undo: npm downloads packages again when needed."),
-    "xcode_build_data": ("Clear Xcode's build data", "Empties Xcode's DerivedData folder",
-                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower)."),
-    "docker_prune": ("Remove Docker's leftover images", "Runs \"docker image prune -f\": removes only untagged "
-                     "images (leftovers from updates and rebuilds) that no container uses", "Nothing to undo: "
-                     "images with a name and all containers are not touched."),
-    "apt_clean": ("Clear downloaded system updates", "Runs \"sudo apt-get clean\": removes downloaded package files",
-                  "Nothing to undo: installed software is not touched."),
-    "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "
-                       "200 MB of system logs", "Can't be undone: older log entries are deleted."),
+                    "deleted for good. Look in the Trash first if you're unsure.", None),
+    "brew_cleanup": ("Clear old downloads of developer tools (Homebrew)", "Removes old versions and saved downloads "
+                     "of Homebrew's tools", "Nothing to undo: Homebrew downloads again what it needs.",
+                     "brew cleanup -s"),
+    "npm_cache": ("Clear a programming tool's download cache (npm)", "Removes the packages npm saved for reuse",
+                  "Nothing to undo: npm downloads packages again when needed.", "npm cache clean --force"),
+    "xcode_build_data": ("Clear Xcode's temporary build files", "Empties Xcode's build folder (DerivedData)",
+                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower).", None),
+    "docker_prune": ("Remove leftover app downloads", "Removes old versions of app downloads (Docker images) left "
+                     "over from updates that no app uses", "Nothing to undo: apps in use and their downloads are "
+                     "not touched.", "docker image prune -f"),
+    "apt_clean": ("Clear downloaded system updates", "Removes update files the system already installed",
+                  "Nothing to undo: installed software is not touched.", "sudo apt-get clean"),
+    "journal_vacuum": ("Shrink the system's event diary (log)", "Keeps only the newest 200 MB of the system's record "
+                       "of events", "Can't be undone: older entries are deleted.",
+                       "sudo journalctl --vacuum-size=200M"),
 }
 # The device's last measurement per clean-up (device field `spaceMeasured`, written when its disk checks come back and
 # when a clean-up ran): one that measured at most NOTHING_GB within MEASURED_FOR gets no card, it would free nothing.
@@ -892,10 +894,11 @@ def _unit_card(device: dict, services: dict, params: dict) -> dict:
     if not svc or svc.get("kind") != "system" or svc.get("unit") != unit or not svc.get("failed"):
         raise ValueError("not_failed")  # only the exact service the device reports as failed
     friendly = _friendly(unit)
-    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} ({unit}) on the {device['name']}.",
-            "dryRun": f"The helper on the device runs \"sudo systemctl restart {unit}\" and checks it is still running "
-                      f"a few seconds later. Nothing else is touched.",
+    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} on the {device['name']}: it stopped working.",
+            "dryRun": f"Nightlight's helper starts {friendly} (a background service, {unit}) again and checks it is "
+                      "still running a few seconds later. Nothing else is touched.",
             "rollback": "Nothing to undo: if it fails again, it simply stays stopped and you'll see why.",
+            "command": f"sudo systemctl restart {unit}",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -910,10 +913,11 @@ def _fix_card(device: dict, params: dict) -> dict:
     if measured.get("gb") is not None and measured["gb"] <= NOTHING_GB and age < MEASURED_FOR:
         raise Outcome("nothing_to_free", recipe=params["recipe"], measuredGb=measured["gb"],
                       minutesAgo=int(age.total_seconds() // 60))
-    title, what, undo = FIX[params["recipe"]]
+    title, what, undo, command = FIX[params["recipe"]]
     return {"svcId": None, "plan": f"{title} on the {device['name']}.",
-            "dryRun": f"{what}. The helper reports how much space it freed. Nothing else is touched.",
-            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service"}
+            "dryRun": f"{what}. Nightlight's helper reports how much space it freed. Nothing else is touched.",
+            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service",
+            **({"command": command} if command else {})}
 
 
 def _remove_card(device: dict, params: dict) -> dict:
@@ -962,16 +966,18 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     if unhealthy:  # running but failing its health check: the restart the card names is the job's own parameter
         if release.newer(UNHEALTHY_RESTART_FROM, device.get("helperVersion")):
             raise ValueError("helper_too_old")
-        return {"svcId": _doc_id(name), "plan": f"Restart the {name} container on the {device['name']}: it is "
-                                                f"running but failing its own health check.",
-                "dryRun": f"The helper on the device runs \"docker restart {name}\" and checks its health a few "
-                          f"seconds later. {name} is unavailable for a moment. Nothing else is touched.",
+        return {"svcId": _doc_id(name), "plan": f"Restart {name} on the {device['name']}: it is on but not "
+                                                f"responding properly (its own health check fails).",
+                "dryRun": f"Nightlight's helper restarts {name} and checks it is healthy a few seconds later. {name} "
+                          f"is unavailable for a moment. Nothing else is touched.",
                 "rollback": "Nothing to undo: it starts again with the same settings and data.",
+                "command": f"docker restart {name}",
                 "blastRadius": [device["id"]], "riskClass": "service"}
-    return {"svcId": _doc_id(name), "plan": f"Start the stopped {name} container again on the {device['name']}.",
-            "dryRun": f"The helper on the device runs \"docker start {name}\" and checks it is still running a few "
-                      f"seconds later. Nothing else is touched.",
-            "rollback": f"Stop {name} again (from the app or with \"docker stop {name}\").",
+    return {"svcId": _doc_id(name), "plan": f"Start {name} again on the {device['name']}: it has stopped.",
+            "dryRun": f"Nightlight's helper starts {name} (an app packaged with Docker) and checks it is still "
+                      f"running a few seconds later. Nothing else is touched.",
+            "rollback": f"You can stop {name} again on the device (\"docker stop {name}\").",
+            "command": f"docker start {name}",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 

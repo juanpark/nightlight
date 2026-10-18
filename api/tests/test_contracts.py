@@ -186,4 +186,4 @@ def test_a_failed_automatic_safer_step_is_a_failed_step(started):  # Codex contr
     r = _call(tools, "restart_server", device_id="game-1")
     assert r["status"] == "safer_first" and r["proposed"]["status"] == "failed" and not r["awaitingTap"]
     assert "didn't respond" in r["proposed"]["result"]
-    assert turns._ok(r) is False and "(failed)" in turns._commentary("restart_server", r)[0]
+    assert turns._ok(r) is False and "(it didn't work)" in turns._commentary("restart_server", r)[0]

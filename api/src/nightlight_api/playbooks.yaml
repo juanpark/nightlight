@@ -38,7 +38,7 @@
     - id: gradle
       match: '^(?:Biggest folder: )?~/\.gradle: (?P<size>[\d.]+ [MG]B)$'
       min_gb: 2
-      say: Gradle (Android/Java builds) keeps {size} of downloaded libraries and build caches.
+      say: A developer build tool (Gradle, for Android/Java) keeps {size} of downloads and temporary build files.
       advice: Delete ~/.gradle/caches when no build is running; Gradle downloads what it needs again.
     - id: simulators
       match: '^(?:Biggest folder: )?~/Library/Developer: (?P<size>[\d.]+ [MG]B)$'
@@ -48,7 +48,7 @@
     - id: user_cache
       match: '^(?:Biggest folder: )?~/\.cache: (?P<size>[\d.]+ [MG]B)$'
       min_gb: 2
-      say: Programs' caches in ~/.cache take {size}; they are rebuilt when needed.
+      say: Programs' temporary files (in ~/.cache) take {size}; they are rebuilt when needed.
       advice: Look inside ~/.cache and delete the folders of tools you no longer use.
     - id: trash
       match: '^Trash: (?P<size>[\d.]+ [MG]B)'
@@ -63,18 +63,18 @@
     - id: brew
       match: '^Homebrew cache: (?P<size>[\d.]+ [MG]B)'
       min_gb: 0.5
-      say: Homebrew keeps {size} of old downloads.
+      say: A developer tool installer (Homebrew) keeps {size} of old downloads.
       fix: brew_cleanup
     - id: npm
       match: '^npm cache: (?P<size>[\d.]+ [MG]B)'
       min_gb: 0.5
-      say: The npm cache takes {size}.
+      say: A programming tool's download cache (npm) takes {size}.
       fix: npm_cache
     - id: docker_images
       match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[kMG]?B)'
       min_gb: 0.3
-      say: Docker images take up to {size} that no container uses. The clean-up removes only untagged leftovers; check
-        the rest with "docker image ls" before removing anything you built yourself.
+      say: Old app downloads (Docker images) take up to {size} that no app uses. The clean-up removes only leftovers
+        from updates; anything else stays (check it with "docker image ls" before removing what you built yourself).
       fix: docker_prune
     - id: apt
       match: '^Package cache \(apt\): (?P<size>[\d.]+ [MG]B)'
@@ -85,7 +85,7 @@
     - id: journal
       match: '^System journal: (?P<size>[\d.]+\s*[MG])'
       min_gb: 0.5
-      say: The system log takes {size}.
+      say: The system's event diary (its log) takes {size}.
       advice: Or run "sudo journalctl --vacuum-size=200M" yourself in a terminal on the device.
       fix: journal_vacuum
     # One log (a file or a folder under /var/log, never the journal: it has its own line) that grew big. No card:
@@ -93,9 +93,10 @@
     - id: big_log
       match: '^Big log: (?P<path>/var/log/(?P<app>[^/.:]+)[^:]*): (?P<size>[\d.]+ [MG]B)$'
       min_gb: 1
-      say: One log takes {size} on its own, {path}. Going by its name, "{app}" writes it.
+      say: One app's activity file (log) takes {size} on its own, {path}. Going by its name, "{app}" writes it.
       advice: Have "{app}" keep less (most programs have a log level or log rotation setting; a debug log can usually
-        be switched off). In Investigate mode, Nightlight can write the exact command to shrink it for you to sign.
+        be switched off). If deeper checks with a passkey are set up for this device, Investigate deeply can propose the
+        exact command to shrink it, for you to approve.
     - id: app_caches
       match: '^App caches: (?P<size>[\d.]+ [MG]B)'
       min_gb: 2
@@ -165,11 +166,11 @@
       advice: Install them from System Settings > General > Software Update when a restart suits you.
     - id: apt
       match: '^(?P<count>[1-9]\d*) package updates waiting'
-      say: "{count} package updates are waiting."
+      say: "{count} software updates (packages) are waiting."
       advice: Run "sudo apt update && sudo apt upgrade" when nothing important is running.
     - id: brew
       match: '^Homebrew outdated \((?P<count>[1-9]\d*)\)'
-      say: "{count} Homebrew packages have newer versions."
+      say: "{count} developer tools installed with Homebrew have newer versions."
       advice: Run "brew upgrade" when you have a few minutes.
   nothing: Nothing is waiting to be installed.
 
