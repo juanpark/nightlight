@@ -123,13 +123,29 @@
   findings: [f_mem]
   checks: [processes, load]
   causes:
+    # A program on the computer itself is not part of any app, whatever its name: restarting an app can't help, so
+    # its advice says so (the facts in the result, not a rule for the model).
+    - id: busy_program_host
+      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>.+) \(on the computer itself, not inside any app\)$'
+      min_value: {mem: 15}
+      say: "{name} uses {mem}% of the memory. It runs on the computer itself, not inside any of your apps (even one
+        with a similar name)."
+      advice: Restarting an app won't free this memory. If {name} isn't something you started, whoever looks after
+        that computer can stop it; Nightlight's jobs can't stop programs outside your apps.
     - id: busy_program
-      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>.+)$'
+      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>(?!.*\(on the computer itself).+)$'
       min_value: {mem: 15}
       say: "{name} uses {mem}% of the memory."
       advice: Quit {name} if you don't need it now, or restart it if it has been open for days.
+    - id: busy_cpu_host
+      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>.+) \(on the computer itself, not inside any app\)$'
+      min_value: {cpu: 80}
+      say: "{name} keeps a processor core busy ({cpu}% CPU). It runs on the computer itself, not inside any of your
+        apps (even one with a similar name)."
+      advice: Restarting an app won't calm it. If {name} isn't something you started, whoever looks after that
+        computer can stop it; Nightlight's jobs can't stop programs outside your apps.
     - id: busy_cpu
-      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>.+)$'
+      match: '^(?P<mem>[\d.]+)% mem, (?P<cpu>[\d.]+)% cpu, (?P<name>(?!.*\(on the computer itself).+)$'
       min_value: {cpu: 80}
       say: "{name} keeps a processor core busy ({cpu}% CPU)."
       advice: If {name} isn't doing something you asked for, quit or restart it.
