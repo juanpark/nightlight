@@ -117,20 +117,21 @@ def test_streamed_chunks_keep_a_long_answer_alive(client, started):
 
 
 def test_a_spent_budget_is_said_plainly_with_no_new_checks(client, started, monkeypatch):
-    monkeypatch.setattr(settings, "deep_turn_seconds", 0.2)
-
+    # The deadline passes exactly while the first call is out (no reliance on how fast the turn starts).
+    spent = []
+    monkeypatch.setattr(agentlib.TurnContext, "out_of_time", lambda self: bool(spent))
     seen = []
 
     async def behave(llm_request, stream):
         seen.append(llm_request)
         if len(seen) == 1:
-            await asyncio.sleep(0.25)  # under the silence gap, but the turn's budget runs out meanwhile
+            spent.append(True)  # the turn's budget runs out while this call is in flight
             yield _check_pi("Let me check the NAS.")
         else:
             yield _answer("I couldn't check the NAS in time; its disk and backups are still unchecked.")
     FakeLlm.behavior = behave
     ev = events(dig(client, new_session(client)))
-    assert ev[0]["budgetSeconds"] == 0.2
+    assert ev[0]["budgetSeconds"] == settings.deep_turn_seconds
     assert ev[-1]["type"] == "done"
     results = [e for e in ev if e["type"] == "tool_result"]
     assert results and "time budget" in results[0]["summary"]  # the check the model asked for was refused
@@ -140,6 +141,43 @@ def test_a_spent_budget_is_said_plainly_with_no_new_checks(client, started, monk
     assert two.config.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.NONE
     assert str(two.config.thinking_config.thinking_level).endswith(settings.deep_thinking)  # no secret downgrade
     assert "still unchecked" in said(ev)
+
+
+def test_the_deadline_is_real_time(monkeypatch):
+    monkeypatch.setattr(settings, "quick_turn_seconds", 5)
+    ctx = agentlib.TurnContext("u", "s", "t", 1, 1, "ip")
+    assert not ctx.out_of_time()
+    ctx.started -= 6
+    assert ctx.out_of_time()
+
+
+def test_a_wordless_turn_keeps_its_steps_and_error_on_reload(client, started):
+    uid = started
+    sid = new_session(client)
+    check = _check_pi()
+    check.content.parts = check.content.parts[1:]  # a tool call with no words
+    FakeLlm.behavior = _script(check, "hang", "hang")
+    ev = events(ask(client, sid))
+    assert ev[-1]["code"] == "model_slow" and said(ev) == ""
+    stored = _assistant(uid, sid)  # what a reload reads back
+    assert len(stored) == 1 and stored[0]["text"] == ""
+    assert [t["name"] for t in stored[0]["toolCalls"]] == ["get_device"] and stored[0]["toolCalls"][0]["ok"]
+    assert stored[0]["error"]["code"] == "model_slow" and stored[0]["metrics"]["slowCalls"] == 2
+    # a wordless record is not fed back to the model as an empty reply
+    FakeLlm.behavior = b = _script(_answer("Fine."))
+    events(ask(client, sid, text="And now?"))
+    assert all(p.text for c in b.seen[0].contents for p in c.parts or [] if p.text is not None)
+
+
+def test_a_slow_continuation_makes_no_claim_about_changes(client, started):
+    sid = new_session(client)
+    action_id = next(e["actionId"] for e in events(ask(client, sid)) if e["type"] == "approval_request")
+    cont = client.post(f"/api/actions/{action_id}/decide", json={"decision": "approve"}).json()["continuationTurnId"]
+    FakeLlm.behavior = _script("hang", "hang")  # the job already ran; its narration goes silent twice
+    ev = events(client.post(f"/api/turns/{cont}/stream", json={}))
+    assert ev[-1]["code"] == "model_slow"
+    assert ev[-1]["message"] == "Gemini is slow right now, so I couldn't finish this answer. Please ask again."
+    assert "nothing was changed" not in ev[-1]["message"]
 
 
 def test_no_hurry_left():

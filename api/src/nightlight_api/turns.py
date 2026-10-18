@@ -45,7 +45,7 @@ NO_ANSWER = "I couldn't put an answer together this time. Please ask again."
 # a second silent call ends the turn with SLOW: honest failure, never a quietly thinner answer.
 CARRY_ON = "[Nightlight] Your last reply took too long and was cancelled. Carry on from where you were."
 SLOW = "Gemini is slow right now; nothing was changed. Please ask again."
-SLOW_CHANGED = "Gemini is slow right now, so I stopped here; the steps above are all that was done. Please ask again."
+SLOW_UNSURE = "Gemini is slow right now, so I couldn't finish this answer. Please ask again."
 
 
 def _without_text(ev):
@@ -268,7 +268,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
 def history(uid: str, c: Claim) -> list[types.Content]:
     """Recent messages as model contents, oldest first, excluding everything from the current turn."""
     msgs = [m.to_dict() for m in db.messages(uid, c.session_id).get()]
-    msgs = [m for m in msgs if m.get("turnId") != c.turn_id]
+    msgs = [m for m in msgs if m.get("turnId") != c.turn_id and m.get("text")]  # a wordless record isn't history
     msgs.sort(key=lambda m: m["seq"])
     picked, chars = [], 0
     for m in reversed(msgs[-settings.history_messages:]):
@@ -533,15 +533,17 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
         if slow:
-            # Gemini went silent twice: say so plainly after whatever was already shown, and claim no change
-            # unless one really happened (an auto-approved fix ran, or an approved one is on its way).
-            changed = any(a.get("status") != "pending" for a in ctx.actions)
-            err = {"code": "model_slow", "message": SLOW_CHANGED if changed else SLOW}
+            # Gemini went silent twice: say so plainly after whatever was already shown. "Nothing was changed" is
+            # said only when provable: a person's question whose turn proposed nothing. A continuation narrates a
+            # job that may already have run, so it (and any turn with actions) makes no claim about changes.
+            provable = c.turn.get("kind") == "user" and not ctx.actions
+            err = {"code": "model_slow", "message": SLOW if provable else SLOW_UNSURE}
             metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
                        "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6),
                        "budgetSeconds": ctx.turn_seconds}
             finishing = True
-            await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else None, metrics=metrics,
+            # Stored even with no prose (text ""), so the steps, cards, receipt and error survive a reload.
+            await asyncio.to_thread(finish, uid, c, text=shown if shown.strip() else "", metrics=metrics,
                                     tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
             yield sse({"type": "error", **err, "retryable": True})
             return
