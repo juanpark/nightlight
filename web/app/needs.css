@@ -200,3 +200,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
   background: var(--panel); box-shadow: 0 4px 16px rgb(0 0 0 / 15%); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 @media (max-width: 900px) { .live-bar { bottom: 64px; } }
+
+/* A link that looks like a button (Add a device: Download anyway) */
+a.button { display: inline-block; font: inherit; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); padding: 7px 12px; text-decoration: none; }
+a.button.primary { background: var(--accent); color: var(--bg); border-color: transparent; }
+.setup-alt { margin-top: 10px; }
