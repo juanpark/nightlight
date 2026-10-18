@@ -263,3 +263,12 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 .tour-flash { outline: 3px solid var(--glow-ink); outline-offset: 3px; transition: outline-color .3s; }
 .tour-head .spacer { flex: 1; }
 .try-sep { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+/* compact tour: one row of step chips, then only the current step */
+.sample-tour { padding: 8px 12px; }
+.tour-sub { margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tour-chips { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 12px; }
+.tour-chips li { padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.tour-chips li.done { color: var(--ok-ink); border-color: var(--ok); }
+.tour-chips li.now { color: var(--ink); border-color: var(--glow-ink); font-weight: 600; }
+.tour-now { margin-top: 6px; display: grid; gap: 4px; justify-items: start; }
+.sample-tour .tour-end { margin: 6px 0 0; }

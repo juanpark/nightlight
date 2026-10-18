@@ -92,24 +92,28 @@ export default function SampleTour({ uid, actions, devices, discoveries, onAsk, 
   ];
   const count = steps.filter((x) => has(x.id)).length;
   const next = steps.find((x) => !has(x.id));
+  // compact: done steps and later ones are one-word chips; only the current step shows its why, button and hint
   return (
     <section className="panel sample-tour" aria-label="Your tour">
       <button className="tour-head" aria-expanded={s.open} onClick={() => setS((c) => ({ ...c, open: !c.open }))}>
         <strong>Your tour</strong> <span className="muted">· {count} of {steps.length}</span>
+        <span className="small muted tour-sub">Pretend devices, real Gemini: answers take a few seconds.</span>
         <span className="spacer" /><span className="small muted">{s.open ? "Hide" : "Show"}</span>
       </button>
       {s.open && <>
-        <ol className="tour-steps">
-          {steps.map((x) => (
+        <ol className="tour-chips" aria-label="Steps">
+          {steps.map((x, i) => (
             <li key={x.id} className={has(x.id) ? "done" : x === next ? "now" : ""}>
-              <span className="tour-tick" aria-hidden>{has(x.id) ? "✓" : ""}</span>
-              <div>
-                <strong>{x.title}</strong> <span className="small">{x.why}</span>
-                {!has(x.id) && <div className="tour-act">{x.act}</div>}
-                {!has(x.id) && x === next && x.hint && <div className="small muted">{x.hint}</div>}
-              </div>
-            </li>))}
+              <span aria-hidden>{has(x.id) ? "✓" : i + 1}</span> {x.title}</li>))}
         </ol>
+        {next && (
+          <div className="tour-now">
+            <span className="small">{next.why}</span>
+            <div className="tour-act">{next.act}</div>
+            {next.hint && <div className="small muted">{next.hint}</div>}
+            {/* a step can be skipped (or done some other way) without blocking the rest */}
+            <button className="linkish small" onClick={() => tick(next.id)}>Skip this step</button>
+          </div>)}
         {note && <p className="small" role="status">{note}</p>}
         <p className="small tour-end">{count === steps.length ? "That's the tour. " : ""}The real thing runs on your own Mac or
           Raspberry Pi:{" "}<button className="small primary" onClick={onSave}>Try the real app</button></p>
