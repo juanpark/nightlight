@@ -30,7 +30,8 @@ APP = "nightlight"
 ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server",
                 "update_app", "restart_container",
                 "restart_service",
-                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
+                "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook",
+                "allow_log_reading"}
 
 
 # Check-and-return for the one answer failure the harness can see without guessing at meaning: a final answer with no
@@ -64,6 +65,9 @@ def unanswered(ev) -> str | None:
     if ev.finish_reason == types.FinishReason.MAX_TOKENS:
         return "cut"
     return None if any(p.text and p.text.strip() and not p.thought for p in parts) else "empty"
+
+
+QUICK_INSTEAD = "Investigate is busy right now, so here is a quick look instead.\n\n"
 
 
 def _utcnow() -> datetime:
@@ -352,45 +356,66 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                         pass
                 ctx.fleet, ctx.memories = await asyncio.gather(
                     asyncio.to_thread(agentlib.fleet_summary, uid, c.generation), _recall(uid, ctx.memory_epoch))
-            agent = agentlib.build(ctx, continuation=continuation, model=model)
-            sessions = InMemorySessionService()
-            runner = Runner(app_name=APP, agent=agent, session_service=sessions)
-            adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
-            for content in await asyncio.to_thread(history, uid, c):
-                await sessions.append_event(adk_session, Event(
-                    author="user" if content.role == "user" else agent.name, content=content))
-            prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
-            message = types.Content(role="user", parts=[types.Part(text=prompt)])
-            for attempt in range(2):
-                last = None  # the run's final model response: is it an answer?
-                run = runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                       run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                            max_llm_calls=ctx.max_calls))
-                try:
-                    async for ev in run:
-                        if not ev.partial and not ev.get_function_responses():
-                            last = ev
-                            calls = any(p.function_call for p in (ev.content.parts if ev.content else None) or [])
-                            if attempt == 1 and calls:
-                                # The answer-only retry asked for a tool: not an answer. ADK runs a call only
-                                # after yielding it, so stopping here means nothing runs (before_tool refuses too).
-                                last = None
-                                break
-                            if ev.finish_reason == types.FinishReason.MAX_TOKENS:
-                                ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
-                                if ev is None:
-                                    continue
-                        await queue.put(("event", ev))
-                finally:
-                    await run.aclose()
-                why = unanswered(last)
-                if why is None:
-                    break
-                if attempt == 1:
-                    await queue.put(("no_answer", None))
-                    break
-                ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
-                message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
+            forwarded = 0  # model events passed on: a busy model before any is the only time Quick stands in
+
+            async def run_once():
+                nonlocal forwarded
+                agent = agentlib.build(ctx, continuation=continuation, model=model)
+                sessions = InMemorySessionService()
+                runner = Runner(app_name=APP, agent=agent, session_service=sessions)
+                adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
+                for content in await asyncio.to_thread(history, uid, c):
+                    await sessions.append_event(adk_session, Event(
+                        author="user" if content.role == "user" else agent.name, content=content))
+                prompt = c.turn["input"] if kind == "user" else \
+                    f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
+                message = types.Content(role="user", parts=[types.Part(text=prompt)])
+                for attempt in range(2):
+                    last = None  # the run's final model response: is it an answer?
+                    run = runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                           run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                                max_llm_calls=ctx.max_calls))
+                    try:
+                        async for ev in run:
+                            if not ev.partial and not ev.get_function_responses():
+                                last = ev
+                                calls = any(p.function_call for p in (ev.content.parts if ev.content else None) or [])
+                                if attempt == 1 and calls:
+                                    # The answer-only retry asked for a tool: not an answer. ADK runs a call only
+                                    # after yielding it, so stopping here means nothing runs (before_tool refuses too).
+                                    last = None
+                                    break
+                                if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+                                    ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
+                                    if ev is None:
+                                        continue
+                            if ev.author != "user" and any(p.text or p.function_call or p.function_response
+                                                           for p in (ev.content.parts if ev.content else None) or []):
+                                forwarded += 1  # the model said or did something
+                            await queue.put(("event", ev))
+                    finally:
+                        await run.aclose()
+                    why = unanswered(last)
+                    if why is None:
+                        break
+                    if attempt == 1:
+                        await queue.put(("no_answer", None))
+                        break
+                    ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
+                    message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
+
+            try:
+                await run_once()
+            except Exception as e:
+                # Investigate's model is out of capacity before anything was said or done: the same question gets a
+                # Quick look instead, and the answer says so first. Busy later (after steps ran) fails as before.
+                if not (ctx.deep and not continuation and forwarded == 0 and agentlib.model_busy(e)):
+                    raise
+                ctx.deep = False
+                ctx.retry_from = None
+                ctx.reservations.clear()  # the refused call's reservation stays spent (its usage is unknown)
+                await queue.put(("notice", QUICK_INSTEAD))
+                await run_once()
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
             await queue.put(("error", e))
@@ -429,6 +454,11 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 break
             if kind == "no_answer":
                 no_answer = True
+                continue
+            if kind == "notice":  # our own words, said before anything else (nothing has been shown yet)
+                raw = shown = item
+                first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
+                yield out({"type": "text", "delta": item})
                 continue
             ev = item
             parts = (ev.content.parts if ev.content else None) or []

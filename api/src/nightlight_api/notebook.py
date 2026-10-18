@@ -98,9 +98,29 @@ def _all(uid: str, device_id: str, generation: int | None) -> list[dict]:
     return notes
 
 
+def age(at, now: datetime | None = None) -> str | None:
+    """How long ago something was written, in words ("5 hours ago", "3 days ago"), or None when unknown."""
+    if not hasattr(at, "date"):
+        return None
+    secs = ((now or _now()) - at).total_seconds()
+    if secs < 3600:
+        return "less than an hour ago"
+    if secs < 86400:
+        hours = int(secs // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(secs // 86400)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def written(at, now: datetime | None = None) -> str | None:
+    """A note's or profile's date for the agent: when, how long ago, and that it is history, not a reading."""
+    ago = age(at, now)
+    return f"{at:%Y-%m-%d %H:%M} UTC ({ago}; may be out of date)" if ago else None
+
+
 def _short(x: dict) -> dict:
     return {"text": x["text"], "by": x.get("by"), "on": x["at"].date().isoformat() if hasattr(x.get("at"), "date")
-            else None}
+            else None, "written": written(x.get("at"))}
 
 
 def recent(uid: str, device_id: str, generation: int | None, n: int = SHOWN) -> list[dict]:

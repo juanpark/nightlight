@@ -1318,41 +1318,55 @@ def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = N
             st = d.get("setup") or {}
             if st.get("attempt") != setup_attempt or st.get("state") != "applying" or st.get("permsApplied"):
                 raise ApiError(409, "setup_superseded")
-        services = {s.id: s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)}
-        containers = {s.get("name") for s in services.values() if s.get("kind") == "container"}
-        units = {s.get("unit") for s in services.values() if s.get("kind") == "system" and s.get("unit")}
-        if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
-                or not set(perms["logs"]) <= containers | units:
-            raise ApiError(422, "unknown_target")  # only things this device reported
-        before = d.get("permissions") or DEFAULT_PERMISSIONS
-        clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
-                 "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
-                 **{k: sorted(set(perms[k])) for k in
-                                                         ("logs", "restart_container", "restart_service")}}
-        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
-        words = []
-        if clean["diagnose"] != before.get("diagnose"):
-            words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
-        if clean["updates"] != (before.get("updates") is not False):
-            words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
-        if clean["autoUpdate"] != bool(before.get("autoUpdate")):
-            words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
-        if clean["cleanup"] != bool(before.get("cleanup")):
-            words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
-        for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
-                          ("restart_service", "restart the service")):
-            added = sorted(set(clean[key]) - set(before.get(key, [])))
-            removed = sorted(set(before.get(key, [])) - set(clean[key]))
-            if added:
-                words.append(f"may {what} {', '.join(added)}")
-            if removed:
-                words.append(f"may no longer {what} {', '.join(removed)}")
-        if words:
-            event(tx, uid, device_id, "permissions", "info",
-                  f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+        services = [s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)]
+        clean = permission_writes(tx, uid, device_id, d, services, perms, also)
         return {"ok": True, "permissions": clean}
 
     return db.run_transaction(run)
+
+
+def log_targets(services) -> set:
+    """What this device reported that log reading can be allowed for: its containers and system services."""
+    return {s.get("name") for s in services if s.get("kind") == "container"} | \
+        {s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")}
+
+
+def permission_writes(tx, uid: str, device_id: str, d: dict, services, perms: dict,
+                      also: dict | None = None) -> dict:
+    """Validate and write a device's new permissions with their Activity line (writes only: the caller has read the
+    device `d` and its `services` in this transaction). Returns the clean permissions."""
+    ref = db.device(uid, device_id)
+    containers = {s.get("name") for s in services if s.get("kind") == "container"}
+    units = {s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")}
+    if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
+            or not set(perms["logs"]) <= containers | units:
+        raise ApiError(422, "unknown_target")  # only things this device reported
+    before = d.get("permissions") or DEFAULT_PERMISSIONS
+    clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
+             "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
+             **{k: sorted(set(perms[k])) for k in ("logs", "restart_container", "restart_service")}}
+    tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
+    words = []
+    if clean["diagnose"] != before.get("diagnose"):
+        words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
+    if clean["updates"] != (before.get("updates") is not False):
+        words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
+    if clean["autoUpdate"] != bool(before.get("autoUpdate")):
+        words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
+    if clean["cleanup"] != bool(before.get("cleanup")):
+        words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
+    for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
+                      ("restart_service", "restart the service")):
+        added = sorted(set(clean[key]) - set(before.get(key, [])))
+        removed = sorted(set(before.get(key, [])) - set(clean[key]))
+        if added:
+            words.append(f"may {what} {', '.join(added)}")
+        if removed:
+            words.append(f"may no longer {what} {', '.join(removed)}")
+    if words:
+        event(tx, uid, device_id, "permissions", "info",
+              f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+    return clean
 
 
 def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days: int | None) -> dict:
