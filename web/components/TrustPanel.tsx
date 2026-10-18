@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import type { Level, TrustDoc } from "@/lib/types";
+import type { Go } from "@/lib/needsYou";
+import type { Device, Level, TrustDoc } from "@/lib/types";
 
 const LEVELS: { id: Level; label: string }[] = [
   { id: "ask", label: "Always ask me" }, { id: "ask_new", label: "Ask me for new things" },
@@ -9,7 +10,12 @@ const LEVELS: { id: Level; label: string }[] = [
 ];
 const ORDER: Level[] = ["ask", "ask_new", "auto"];
 
-export default function TrustPanel({ trust }: { trust: TrustDoc[] }) {
+/** The trust ladder works on the sample home; on the owner's own devices every change waits for a tap, and what each
+ * device allows lives in its own Settings. So a real home leads with that, and the ladder shows only with the sample. */
+export default function TrustPanel({ trust, devices, sample, onGo }: {
+  trust: TrustDoc[]; devices: Device[]; sample: boolean; onGo: (g: Go) => void; // sample: the sample home is showing
+}) {
+  const real = devices.filter((d) => d.realm === "real");
   const [err, setErr] = useState("");
   async function call(fn: () => Promise<unknown>) {
     setErr("");
@@ -18,11 +24,22 @@ export default function TrustPanel({ trust }: { trust: TrustDoc[] }) {
   return (
     <div className="panel">
       <h3>How much Nightlight does on its own</h3>
-      <p className="small muted" style={{ marginTop: 0 }}>For each kind of job, choose whether Nightlight asks you first.
-        Risky jobs always ask. If a job ever fails, it goes back to asking.</p>
-      <p className="small muted" style={{ marginTop: 0 }}>This works on the sample home for now. On your own devices,
-        every restart, clean-up or removal waits for your tap whatever you choose here; what Nightlight may do on
-        each of them is set in that device&apos;s Settings.</p>
+      {real.length > 0 && (<>
+        <p className="small" style={{ marginTop: 0 }}>On your own devices every change waits for your tap (by design).
+          What Nightlight may do on each device is set in that device&apos;s Settings; fixes that worked are saved per
+          device under <em>Knowledge → Fixes that worked here</em>.</p>
+        <div className="list">
+          {real.map((d) => (
+            <div key={d.id} className="item">
+              <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{d.name}</span>
+              <button className="small" onClick={() => onGo({ to: "drawer", deviceId: d.id, tab: "settings" })}>Settings</button>
+            </div>))}
+        </div>
+      </>)}
+      {sample && (<>
+      {real.length > 0 && <h4 style={{ marginBottom: 4 }}>Sample home</h4>}
+      <p className="small muted" style={{ marginTop: 0 }}>For each kind of job on the sample home, choose whether
+        Nightlight asks you first. Risky jobs always ask. If a job ever fails, it goes back to asking.</p>
       <div className="list">
         {trust.map((t) => (
           <div key={t.id} className="item" style={{ flexWrap: "wrap" }}>
@@ -49,6 +66,9 @@ export default function TrustPanel({ trust }: { trust: TrustDoc[] }) {
         ))}
         {trust.length === 0 && <span className="muted small">Nothing yet.</span>}
       </div>
+      </>)}
+      {!sample && real.length === 0 && <p className="small muted">Add a device first: what Nightlight may do is set
+        per device, in its Settings.</p>}
       {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
