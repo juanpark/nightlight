@@ -17,6 +17,22 @@ from .errors import ApiError, Outcome, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub, scrub_value
 
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 2: "stopped with an error (exit code 2)",
+                137: "was force-stopped (exit code 137: killed, or out of memory)",
+                143: "was asked to stop (exit code 143)", 139: "crashed (exit code 139)",
+                126: "couldn't start its program (exit code 126)", 127: "couldn't find its program (exit code 127)"}
+
+
+def _stopped_words(status) -> str:
+    """Why a stopped container stopped, in plain words first, from Docker's status ("Exited (137) 5 minutes ago"):
+    the meaning is the fact to report, the number only backs it up."""
+    m = re.match(r"Exited \((-?\d+)\)", status or "")
+    if not m:
+        return "isn't running"
+    code = int(m.group(1))
+    return "isn't running: it " + EXIT_MEANING.get(code, f"exited with code {code}")
+
+
 CODE_TTL = timedelta(minutes=10)
 CODES_PER_HOUR = 10
 HEARTBEAT_MIN_SECONDS = 20
@@ -845,7 +861,8 @@ def checks(facts: dict) -> list[dict]:
                         "evidence": f"container status: {c.get('status')}", "svcId": _doc_id(c["name"])})
         if c.get("state") not in ("running", None):
             out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_down", "severity": "warn",
-                        "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
+                        "message": f"{c['name']} {_stopped_words(c.get('status'))}.",
+                        "evidence": f"container state: {c.get('state')}",
                         "svcId": _doc_id(c["name"])})
     agents = facts.get("failedAgents") or []
     if agents:
@@ -1020,7 +1037,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         if not t or t.get("revoked"):
             raise ApiError(401, "invalid_token")
         last = t.get("lastSeen")
-        if last and (_now() - last).total_seconds() < HEARTBEAT_MIN_SECONDS:
+        # The minimum gap bounds a misbehaving client, never a helper's normal cadence: the report a helper sends
+        # right after finishing a job (so the change shows at once) is let through once per job result.
+        if last and (_now() - last).total_seconds() < HEARTBEAT_MIN_SECONDS and not t.get("reportDue"):
             raise ApiError(429, "too_frequent", retryAfter=HEARTBEAT_MIN_SECONDS)
         uid, device_id = t["uid"], t["deviceId"]
         dref = db.device(uid, device_id)
@@ -1065,7 +1084,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
             restarted[0] = gap["restarted"] is True
             event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again: "
                   + gap["words"])
-        tx.update(tref, {"lastSeen": _now()})
+        tx.update(tref, {"lastSeen": _now(), "reportDue": False})
         extra["diskTrend"] = trend
         if net_changed:
             extra["net"] = net

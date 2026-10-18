@@ -62,7 +62,7 @@ def evaluate(book: dict, output: str, device: dict) -> dict:
         hit = next((m for m in cause["_re"].finditer(output or "") if _fits(cause, m)), None)
         if not hit:
             continue
-        words = {k: (v or "").strip()[:80] for k, v in hit.groupdict().items()}
+        words = {k: (v or "").strip()[:120] for k, v in hit.groupdict().items()}
         row = {"cause": cause["id"], "say": cause["say"].format(**words)}
         if cause.get("advice"):
             row["advice"] = cause["advice"].format(**words)

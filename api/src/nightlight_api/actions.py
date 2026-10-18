@@ -513,6 +513,10 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         for ref, doc, merge in writes:
             tx.set(ref, doc, merge=merge)
         _deliver_outcome(tx, uid, a, device, cap, current)
+        # The helper reports right after a job, so the change shows at once; that one report may come sooner than
+        # the heartbeat's minimum gap (real.heartbeat). Before this, it got a 429 and slept ~20 s with its work
+        # channel closed, so the next job in the same chat waited past the in-turn wait.
+        tx.update(real.tokens_ref().document(real._sha(token)), {"reportDue": True})
         return {"ok": True, "actionId": action_id_, "status": a["status"]}
 
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
