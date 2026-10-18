@@ -254,7 +254,7 @@ export default function AddDevice({ anonymous, live = false, onSave, devices }: 
               minutes. It installs Nightlight&apos;s helper, a small program that stays on the device and reports how
               it is doing, and links it to your account.</span></>
               : !err && <p className="small muted">Making your line…</p>}
-            {err && <p className="small" style={{ color: "var(--crit)" }}>{err}{" "}
+            {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}{" "}
               <button className="linkish small" onClick={getCode}>Try again</button></p>}
           </Step>
           <Step n={3} art={<span className="art-keys"><kbd>{mac ? "return" : "Enter"}</kbd></span>}>

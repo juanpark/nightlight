@@ -52,7 +52,7 @@ function Item({ device, rb, onAsk }: { device: Device; rb: Runbook; onAsk: (q: s
           : <>Delete it? <button className="small" onClick={remove}>Delete</button>
               <button className="small" onClick={() => setDeleting(false)}>Keep</button></>}
       </div>
-      {err && <span style={{ color: "var(--crit)" }}>{err}</span>}
+      {err && <span style={{ color: "var(--crit-ink)" }}>{err}</span>}
     </div>
   );
 }

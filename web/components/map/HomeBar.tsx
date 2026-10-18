@@ -55,7 +55,7 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
                 placeholder="e.g. Home, Office, Mum's" aria-label="Place name" />
               <button className="primary small">Save</button>
               <button type="button" className="small" onClick={() => { setNaming(null); setErr(""); }}>Cancel</button>
-              {err && <span className="small" style={{ color: "var(--crit)" }}>{err}</span>}
+              {err && <span className="small" style={{ color: "var(--crit-ink)" }}>{err}</span>}
             </form>)}
         </div>)}
       {kinds.length > 1 && (

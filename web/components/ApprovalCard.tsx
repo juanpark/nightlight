@@ -113,7 +113,7 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
               <code className="perm-cmd">{command}</code></details></dd></>)}
         <dt>What happens</dt><dd>{action.dryRun}</dd>
         <dt>Affects</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (your real device)" : " (sample, nothing real)"}
-          {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit)" }}> (signed for a different device!)</strong> : null}</dd>
+          {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit-ink)" }}> (signed for a different device!)</strong> : null}</dd>
         <dt>Can it be undone?</dt><dd>{action.rollback}</dd>
         <dt>Status</dt><dd>{STATUS[action.status]}{action.decision?.by === "auto" ? " (handled on its own, as you allowed)" : ""}</dd>
         {action.result && <><dt>Result</dt><dd>{action.result.summary}</dd></>}
@@ -136,9 +136,9 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
             <a href={appHost.url}>{appHost.host}</a>. Open Nightlight there to approve this.</div>
         : !passkeysSupported() ? <div className="small muted">This browser can&apos;t use passkeys, so the button is off.
             Approve from a phone or computer that can (Safari, Chrome, Edge or Firefox, up to date).</div>
-        : prep && "problem" in prep ? <div className="small" style={{ color: "var(--crit)" }}>{prep.problem}</div>
+        : prep && "problem" in prep ? <div className="small" style={{ color: "var(--crit-ink)" }}>{prep.problem}</div>
         : null)}
-      {err && <div className="small" style={{ color: "var(--crit)" }}>{err}</div>}
+      {err && <div className="small" style={{ color: "var(--crit-ink)" }}>{err}</div>}
     </div>
   );
 }

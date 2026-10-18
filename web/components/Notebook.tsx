@@ -59,7 +59,7 @@ export default function Notebook({ uid, deviceId, app }: { uid: string; deviceId
           placeholder={app ? `Add a note about ${app.name}` : "Add a note (e.g. in the hallway cupboard; the kids' game server)"} />
         <button disabled={!text.trim()}>Add</button>
       </form>
-      {problem && <p className="small" style={{ color: "var(--crit)" }}>{problem}</p>}
+      {problem && <p className="small" style={{ color: "var(--crit-ink)" }}>{problem}</p>}
     </section>
   );
 }

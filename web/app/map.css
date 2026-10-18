@@ -68,12 +68,12 @@
 .dnode.watched.router { border-width: 2px; border-color: var(--accent); }
 .dnode.watched.router.crit { border-color: var(--crit); }
 .dwatch { font-size: 13px; padding-left: 40px; color: var(--ink); }
-.dwatch.crit { color: var(--crit); font-weight: 600; }
+.dwatch.crit { color: var(--crit-ink); font-weight: 600; }
 .dwatch.offline { color: var(--muted); }
 .dby { font-size: 11px; color: var(--muted); padding-left: 40px; }
 .dapps .more { font-size: 10px; }
 .dapps-text { margin-left: auto; white-space: nowrap; }
-.dapps-text b { color: var(--warn); font-weight: 600; }
+.dapps-text b { color: var(--warn-ink); font-weight: 600; }
 
 .react-flow__node:focus-visible { outline: none; }
 .react-flow__node:focus-visible .dnode { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
@@ -97,7 +97,7 @@
 @media (prefers-reduced-motion: reduce) { .edge-flow { animation: none; } }
 .elabel { position: absolute; pointer-events: all; font-size: 10px; }
 .everb { background: var(--bg); color: var(--muted); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line);
-  opacity: .85; }
+ }
 .elabel.k-network .everb { display: none; } /* plain wires speak for themselves */
 /* drawn by Nightlight: a dot before the verb; on a plain wire, the dot alone */
 .everb.auto { display: inline-flex; align-items: center; gap: 4px; border-style: dashed; }
@@ -112,7 +112,7 @@
 .homemap .hm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; color: var(--muted);
   padding: 0 4px; }
 .homemap .hm-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.hm-hint { flex-basis: 100%; opacity: .8; }
+.hm-hint { flex-basis: 100%; }
 
 @media (max-width: 900px) {
   .hm-canvas { height: min(calc(100dvh - 320px), 440px); min-height: 340px; }
@@ -120,18 +120,18 @@
 }
 
 /* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
-.dnode .dstar { color: var(--glow); fill: var(--glow); flex: none; }
+.dnode .dstar { color: var(--glow-ink); fill: var(--glow-ink); flex: none; }
 .dfavs { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .dchip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; max-width: 100%;
   font-size: 12px; line-height: 1; padding: 4px 6px; border-radius: 999px; background: var(--bg);
   border: 1px solid var(--line); color: var(--ink); }
 .dchip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dchip svg { flex: none; }
-.dchip.ok svg { color: var(--ok); }
+.dchip.ok svg { color: var(--ok-ink); }
 .dchip.warn { border-color: var(--warn); }
-.dchip.warn svg { color: var(--warn); }
+.dchip.warn svg { color: var(--warn-ink); }
 .dchip.crit { border-color: var(--crit); }
-.dchip.crit svg { color: var(--crit); }
+.dchip.crit svg { color: var(--crit-ink); }
 .dfavs.hl .dchip { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }
 
 /* An opened card: every app as a chip, two to a row; the cards below move down to make room. */
@@ -178,7 +178,7 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 .status-board { padding: 12px 14px; }
 .sb-head { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .sb-summary { font-variant-numeric: tabular-nums; }
-.sb-summary.crit { color: var(--crit); } .sb-summary.warn { color: var(--warn); }
+.sb-summary.crit { color: var(--crit-ink); } .sb-summary.warn { color: var(--warn-ink); }
 .sb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 10px; }
 .sb-block { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
@@ -191,5 +191,9 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 .sb-value { color: var(--muted); overflow-wrap: anywhere; }
 .sb-apps { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--ink); }
 .sb-mark { font-weight: 700; text-align: center; }
-.sb-mark.ok { color: var(--ok); } .sb-mark.warn { color: var(--warn); } .sb-mark.crit { color: var(--crit); }
+.sb-mark.ok { color: var(--ok-ink); } .sb-mark.warn { color: var(--warn-ink); } .sb-mark.crit { color: var(--crit-ink); }
 .sb-mark.unknown { color: var(--muted); }
+
+/* the map library's credit link, readable in both themes */
+.react-flow__attribution { background: transparent; }
+.react-flow__attribution a { color: var(--muted); }

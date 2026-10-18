@@ -4,7 +4,7 @@
 // signs out back to the start screen.
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { leaveLive, minutes, resumedSeen, SCENARIOS, useLive, type LiveMe, type Scenario } from "@/lib/live";
+import { leaveLive, machineState, minutes, resumedSeen, SCENARIOS, useLive, type LiveMe, type Scenario } from "@/lib/live";
 
 const PHASE: Record<LiveMe["phase"], string> = {
   stopping: "Stopping your machine…", restoring: "Putting back a clean copy of its disk…", starting: "Starting it up…",
@@ -65,6 +65,12 @@ export default function LiveSession() {
     } finally { setWorking(false); }
   }
   const fresh = (scenario: Scenario = "none") => act("/api/demo/live/reset", { scenario });
+  // tell Home: when the lease began (reports before it are the clean copy's), and whether the machine is ready
+  const since = me?.secondsSinceLease;
+  const [leaseStart, setLeaseStart] = useState<number>();
+  useEffect(() => { if (since != null) setLeaseStart((t) => t ?? Date.now() - since * 1000); }, [since]);
+  useEffect(() => { machineState({ machineReady: ready && !live.resumed, leaseStart }); }, [ready, live.resumed, leaseStart]);
+
   const restore = me?.restoreSeconds ?? live.restore ?? 120;
 
   if (live.resumed && me) {
@@ -106,7 +112,7 @@ export default function LiveSession() {
         </select></label>
       <button className="small" disabled={working} onClick={() => fresh()}>Start fresh</button>
       <button className="small" onClick={() => leaveLive()}>Leave</button>
-      {err && <span className="small" role="alert" style={{ color: "var(--crit)" }}>{err}</span>}
+      {err && <span className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</span>}
     </div>
   );
 }

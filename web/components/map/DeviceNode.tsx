@@ -103,7 +103,8 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
         <NeedsMark needs={needs} />
       </div>
       {!compact && (silent
-        ? <div className="dsilent">Silent for {d.lastSeen ? ago(now - d.lastSeen.getTime()) : "a while"}</div>
+        ? <div className="dsilent">{d.starting ? "Starting…"
+            : `Silent for ${d.lastSeen ? ago(now - d.lastSeen.getTime()) : "a while"}`}</div>
         : <div className="dgauges">
             <Gauge label="Disk" value={d.vitals?.diskPct} />
             <Gauge label="Mem" value={d.vitals?.mem} />

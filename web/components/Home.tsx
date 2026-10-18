@@ -17,7 +17,7 @@ import DeviceDrawer, { type Tab } from "./DeviceDrawer";
 import AccountSettings from "./AccountSettings";
 import Tour from "./Tour";
 import { restartTour } from "@/lib/tour";
-import { leaveLive } from "@/lib/live";
+import { leaveLive, useLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -39,7 +39,14 @@ export default function Home({ user, account }: { user: User; account?: string }
   const now = useNow();
   const rawDevices = useDevices(uid, gen);
   const links = useLinks(uid, gen);
-  const devices = useMemo(() => rawDevices.map((d) => presented(d, now)), [rawDevices, now]);
+  const machine = useLive();
+  // on a live machine, a report from before this visit is the clean copy's: the device is still starting
+  const since = live ? machine.leaseStart ?? Infinity : undefined;
+  const devices = useMemo(() => rawDevices.map((d) => {
+    const p = presented(d, now);
+    return since !== undefined && d.realm === "real" && !((d.lastSeen?.getTime() ?? 0) > since)
+      ? { ...p, status: "offline" as const, health: "unknown" as const, findings: [], starting: true } : p;
+  }), [rawDevices, now, since]);
   const actions = useActions(uid, gen);
   const events = useEvents(uid, gen);
   const trust = useTrust(uid, gen);
@@ -93,7 +100,16 @@ export default function Home({ user, account }: { user: User; account?: string }
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
   const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
-  const toggle = (p: Panel) => { setMenu(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
+  const [more, setMore] = useState(false); // wide screens: the secondary header links, folded under More
+  useEffect(() => {
+    if (!more) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element).closest?.(".more")) setMore(false);
+    };
+    document.addEventListener("keydown", close); document.addEventListener("pointerdown", close);
+    return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close); };
+  }, [more]);
+  const toggle = (p: Panel) => { setMenu(false); setMore(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
   function go(g: Go) {
     if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.app ? "apps" : g.tab ?? null); setApp(g.app ?? null); }
     else if (g.to === "panel") setPanel(g.panel);
@@ -116,18 +132,24 @@ export default function Home({ user, account }: { user: User; account?: string }
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
-        <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
-        <button onClick={() => toggle("activity")}>Activity</button>
-        {!live && <button onClick={() => toggle("memory")}>Memory</button>}
         <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
-        <button onClick={() => toggle("demo")}>Demo tools</button>
-        <button data-tour="settings" onClick={() => toggle("settings")}>Settings</button>
         {user.isAnonymous
-          ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
-          : <span className="small muted">{user.email}</span>}
-        <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
+          && <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>}
+        <div className="more">
+          <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
+            onClick={() => setMore(!more)}>More</button>
+          <div className={`more-list ${more ? "open" : ""}`}>
+            <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
+            <button onClick={() => toggle("activity")}>Activity</button>
+            {!live && <button onClick={() => toggle("memory")}>Memory</button>}
+            <button onClick={() => toggle("demo")}>Demo tools</button>
+            <button data-tour="settings" onClick={() => toggle("settings")}>Settings</button>
+            {!user.isAnonymous && <span className="small muted" title={user.email ?? undefined}>{user.email}</span>}
+            <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
+          </div>
+        </div>
         </nav>
       </header>
       <div className="main" data-pane={pane}>
@@ -155,7 +177,7 @@ export default function Home({ user, account }: { user: User; account?: string }
             onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
           {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
-          {me && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
+          {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
@@ -181,7 +203,8 @@ export default function Home({ user, account }: { user: User; account?: string }
           Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
         <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
       </nav>
-      <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)}
+      <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)
+        && (!live || machine.machineReady)}
         state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
           realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
       {resetting && <div className="overlay"><div className="modal">Starting the sample home fresh…</div></div>}

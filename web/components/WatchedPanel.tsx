@@ -135,7 +135,7 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
                 <button className="small" onClick={stop}>Stop watching</button>{" "}
                 <button className="small" onClick={() => setStopping(false)}>Keep it</button></>}
         </div>
-        {note && <p className="small" style={{ color: "var(--crit)" }}>{note}</p>}
+        {note && <p className="small" style={{ color: "var(--crit-ink)" }}>{note}</p>}
       </section>
     );
   }
@@ -176,7 +176,7 @@ export default function WatchedPanel({ uid, generation, device: d, devices, onAs
             memory and what runs there, and Nightlight could fix things on it.</p>
           <button onClick={() => onGo({ to: "panel", panel: "add" })}>Install the helper on it</button>
         </section>)}
-      {note && <p className="small" style={{ color: "var(--crit)" }}>{note}</p>}
+      {note && <p className="small" style={{ color: "var(--crit-ink)" }}>{note}</p>}
     </>
   );
 }

@@ -99,6 +99,7 @@ export function needsYou(i: NeedsInput): Need[] {
       cta: { label: "Review", go: { to: "drawer", deviceId: d.id } }, at: d.createdAt?.getTime() ?? i.now });
   }
   for (const d of i.devices) {
+    if (d.starting) continue; // a live machine still starting: what it said before is the clean copy's, not news
     const real = d.realm === "real";
     const removing = i.actions.some((a) => a.deviceId === d.id && a.type === "remove_device" && open(a));
     if (removing) {

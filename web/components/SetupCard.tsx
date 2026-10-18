@@ -81,7 +81,7 @@ export default function SetupCard({ device: d, actions, onGo }: { device: Device
         <button className="primary" onClick={save} disabled={busy}>{strict ? "Got it" : "Done"}</button>
         {!strict && <span className="small muted">You can change this any time in Settings.</span>}
       </div>
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }
