@@ -17,6 +17,7 @@ import DeviceDrawer, { type Tab } from "./DeviceDrawer";
 import AccountSettings from "./AccountSettings";
 import Tour from "./Tour";
 import { restartTour } from "@/lib/tour";
+import { leaveLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -28,7 +29,7 @@ import MemoryPanel from "./MemoryPanel";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
 
-export default function Home({ user }: { user: User }) {
+export default function Home({ user, live = false }: { user: User; live?: boolean }) { // live: a live demo machine's account
   const uid = user.uid;
   const me = useUserDoc(uid);
   const gen = me?.demoGeneration;
@@ -123,7 +124,7 @@ export default function Home({ user }: { user: User }) {
         {user.isAnonymous
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
           : <span className="small muted">{user.email}</span>}
-        <button onClick={async () => signOut((await firebase()).auth)}>Sign out</button>
+        <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
         </nav>
       </header>
       <div className="main" data-pane={pane}>
