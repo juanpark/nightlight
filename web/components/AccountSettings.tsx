@@ -11,7 +11,10 @@ function TimeZone({ me }: { me: UserDoc | null | undefined }) {
   const here = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; } })();
   const saved = me?.settings?.timeZone;
   const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false); // one save at a time, so what shows is what the account ends on
   const [err, setErr] = useState("");
+  // once the account confirms the chosen zone, show the account's value again
+  useEffect(() => { if (draft !== null && saved === draft) setDraft(null); }, [draft, saved]);
   const zones = (() => {
     try { return (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? []; }
     catch { return []; }
@@ -19,15 +22,18 @@ function TimeZone({ me }: { me: UserDoc | null | undefined }) {
   const shown = draft ?? saved ?? here;
   const auto = !saved || me?.settings?.timeZoneAuto;
   async function pick(z: string) {
-    setDraft(z); setErr("");
+    if (saving) return;
+    setDraft(z); setErr(""); setSaving(true);
     try { await api("POST", "/api/settings", { timeZone: z }); }
     catch { setDraft(null); setErr("Couldn't save the time zone, so it stays as it was. Try again in a moment."); }
+    finally { setSaving(false); }
   }
   return (
     <div className="setting-row" style={{ flexWrap: "wrap", gap: 8 }}>
       <span><strong>Time zone</strong>: {shown}{auto && !draft ? " (from this browser)" : ""}</span>
       {zones.length > 0 && me && (
-        <select aria-label="Time zone" value={shown} onChange={(e) => pick(e.target.value)}>
+        <select aria-label="Time zone" value={shown} disabled={saving} aria-busy={saving || undefined}
+          onChange={(e) => pick(e.target.value)}>
           {!zones.includes(shown) && <option value={shown}>{shown}</option>}
           {zones.map((z) => <option key={z} value={z}>{z}</option>)}
         </select>)}
