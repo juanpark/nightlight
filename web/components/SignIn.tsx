@@ -1,6 +1,6 @@
 "use client";
-// The start screen: the sample home first (instant, everything Nightlight does), then your own computers as the next
-// step, then (while LIVE_DEMO is on and the pool has machines) a real cloud machine.
+// The start screen: your own computers (the real thing), the sample home (the full tour, instantly), then (while
+// LIVE_DEMO is on and the pool has machines) a borrowed cloud machine.
 import { useEffect, useState } from "react";
 import { GoogleAuthProvider, signInAnonymously, signInWithPopup } from "firebase/auth";
 import { api } from "@/lib/api";
@@ -58,17 +58,19 @@ export default function SignIn() {
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
           for the next visitor.</p>}
 
-        <div className="start-option start-sample">
-          <p><strong>Sit back and see everything Nightlight can do</strong></p>
-          <p className="small">A complete sample home, ready instantly: six devices, problems to fix, cards to
-            approve, trust to earn. Everything you see is simulated; the AI answering you is real.</p>
-          <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant)</button>
-        </div>
+        <p className="start-lead"><strong>Nightlight is live.</strong></p>
 
         <div className="start-option start-own">
-          <p><strong>Ready for the real thing?</strong> Sign in with Google and add your Mac or Raspberry Pi in about two
-            minutes.</p>
+          <p><strong>The real thing:</strong> sign in with Google and add your own Mac or Linux machine (including
+            Raspberry Pi) in about two minutes.</p>
           <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
+        </div>
+
+        <div className="start-option start-sample">
+          <p><strong>Just looking?</strong> Take the full tour in a simulated sample home, instantly.</p>
+          <p className="small">Six devices, problems to fix, cards to approve, trust to earn. Everything you see is
+            simulated; the AI answering you is real.</p>
+          <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant)</button>
         </div>
 
         {busyAll ? (
@@ -78,8 +80,8 @@ export default function SignIn() {
           </div>
         ) : liveOn && status && (
           <div className="start-option">
-            <p className="small">A real virtual machine in Google Cloud, set up like a small home server with something
-              already broken. It isn&apos;t your computer, but everything Nightlight does to it is real.</p>
+            <p><strong>Want hands on a real server without installing anything?</strong> Borrow a demo Linux machine in
+              Google Cloud.</p>
             <p className="small"><span className="pill">Limited</span> No passkeys, no adding devices, nothing nearby to
               find.</p>
             <button disabled={off} onClick={() => startLive("crash")}>

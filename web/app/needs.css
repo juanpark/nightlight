@@ -242,3 +242,4 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 .sim-term { background: #11151f; color: #e6e9f0; font-size: 12px; line-height: 1.5; padding: 10px 12px; border-radius: 10px;
   min-height: 3em; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .try-real { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.start-lead { text-align: center; font-size: 18px; margin: 4px 0 0; }
