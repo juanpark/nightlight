@@ -180,7 +180,7 @@ export default function Home({ user, account }: { user: User; account?: string }
                   ? "Notifications are blocked for this site in your browser settings"
                   : "Show a notification when something goes wrong, while this tab is open"}>
                 {notify.on ? "Notifying you" : "Notify me"}</button>)}
-            <button onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
+            <button onClick={() => askChat("Is anything wrong with my servers?")}>Ask if anything&apos;s wrong</button>
             <div style={{ flexBasis: "100%" }}>
               <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
                 onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
@@ -193,7 +193,7 @@ export default function Home({ user, account }: { user: User; account?: string }
             onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
           {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
-          {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
+          {me && !live && !user.isAnonymous && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={signInReal}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} sample={sampleShown} />}
@@ -220,8 +220,9 @@ export default function Home({ user, account }: { user: User; account?: string }
           Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
         <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
       </nav>
+      {/* the sample home has its own guided checklist: the popover tour waits (Settings can still start it) */}
       <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)
-        && (!live || machine.machineReady)}
+        && (!live || machine.machineReady) && !sampleShown}
         state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
           realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
       {resetting && <div className="overlay"><div className="modal">Resetting the sample home…</div></div>}
