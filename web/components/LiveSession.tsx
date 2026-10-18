@@ -106,7 +106,7 @@ export default function LiveSession() {
         </select></label>
       <button className="small" disabled={working} onClick={() => fresh()}>Start fresh</button>
       <button className="small" onClick={() => leaveLive()}>Leave</button>
-      {err && <span className="small" role="alert" style={{ color: "var(--crit)" }}>{err}</span>}
+      {err && <span className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</span>}
     </div>
   );
 }

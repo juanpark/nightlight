@@ -38,7 +38,7 @@ export default function AppDetail({ uid, generation, device: d, app: s, actions,
           aria-label={`${starred ? "Unstar" : "Star"} ${s.name} as a favorite`} onClick={() => fav.toggleApp(s.id)}>
           <Star size={16} /></button>
       </div>
-      {fav.err && <p className="small" style={{ color: "var(--crit)" }}>{fav.err}</p>}
+      {fav.err && <p className="small" style={{ color: "var(--crit-ink)" }}>{fav.err}</p>}
       {what && <p className="app-what">{what}</p>}
       <p className="drawer-status"><span className={`dot ${s.status ?? "ok"}`} /> {state(s)}
         {s.detail && <span className="muted small"> {s.detail}</span>}</p>

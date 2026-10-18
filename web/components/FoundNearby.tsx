@@ -67,7 +67,7 @@ function LookNearby({ devices, discoveries, onGo, again }: {
               found&quot;: <code>~/.local/bin/nightlight discover</code>)</>}
           </p>);
       })}
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }
@@ -158,7 +158,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
           {showPrivate && <ul>{privates.map((t) => <li key={key(t)}>{what(t)}</li>)}</ul>}
         </div>
       )}
-      {msg && <p className="small" style={{ color: "var(--crit)" }}>{msg}</p>}
+      {msg && <p className="small" style={{ color: "var(--crit-ink)" }}>{msg}</p>}
       {items && <LookNearby devices={devices} discoveries={discoveries} onGo={onGo} again={found.length > 0} />}
     </div>
   );

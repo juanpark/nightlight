@@ -2,11 +2,21 @@
    a menu, and every pane scrolling on its own. Wide screens are unchanged. */
 .menu-toggle, .pane-tabs { display: none; }
 .top-nav { display: contents; }
+/* The header's secondary links (Trust, Activity, Memory, Demo tools, Settings, Sign out), folded under More */
+.more { position: relative; }
+.more-toggle::after { content: " ▾"; font-size: .8em; }
+.more-list { display: none; }
+.more-list.open { display: flex; flex-direction: column; align-items: stretch; gap: 2px; position: absolute; right: 0;
+  top: calc(100% + 6px); z-index: 40; min-width: 200px; padding: 6px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.more-list > button { text-align: left; border-color: transparent; background: transparent; }
+.more-list > button:hover, .more-list > button:focus-visible { border-color: var(--line); }
+.more-list > .small { padding: 4px 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Mid-width screens: the header's links go quiet (no box until hover) so they fit on one row */
 @media (min-width: 901px) and (max-width: 1600px) {
   .top { gap: 6px; }
-  .top-nav > button { padding: 6px 9px; border-color: transparent; background: transparent; }
-  .top-nav > button:hover, .top-nav > button:focus-visible { border-color: var(--line); }
+  .top-nav > button, .more-toggle { padding: 6px 9px; border-color: transparent; background: transparent; }
+  .top-nav > button:hover, .top-nav > button:focus-visible, .more-toggle:hover, .more-toggle:focus-visible { border-color: var(--line); }
   .top-nav > .small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
@@ -22,6 +32,10 @@
     box-shadow: var(--shadow); }
   .top-nav.open > button { text-align: left; padding: 10px 12px; }
   .top-nav.open > .small { padding: 4px 2px; overflow: hidden; text-overflow: ellipsis; }
+  .top-nav.open > .more { display: flex; flex-direction: column; align-items: stretch; }
+  .top-nav.open .more-toggle { text-align: left; padding: 10px 12px; }
+  .top-nav.open .more-list.open { position: static; min-width: 0; padding: 0 0 0 12px; border: 0; box-shadow: none; }
+  .top-nav.open .more-list > button { padding: 10px 12px; }
 
   .main { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .main[data-pane="home"] > .right, .main[data-pane="chat"] > .left { display: none; }

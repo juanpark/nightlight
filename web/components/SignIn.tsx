@@ -81,7 +81,7 @@ export default function SignIn() {
               · {status.inUse} in use</p>
           </div>
         )}
-        {said && <p className="small" role="alert" style={{ color: "var(--crit)" }}>{said}</p>}
+        {said && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{said}</p>}
 
         <div className="start-option">
           <p>{liveOn ? "Short on time? Try the fully simulated home instead (instant)." : "Try a fully simulated home (instant)."}</p>
@@ -94,7 +94,7 @@ export default function SignIn() {
         </div>
         {liveOn && <p className="small muted">Your machine is reset to a clean copy after you leave
           ({status?.idleMinutes ?? 15} minutes without activity, at most {status?.maxMinutes ?? 60} minutes).</p>}
-        {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+        {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
       </div>
     </div>
   );

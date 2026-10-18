@@ -40,7 +40,7 @@ export default function WatchedRow({ watches, now, onAsk }: {
             }}>Stop watching</button>
             <button className="linkish small" onClick={() => setOpen(null)}>Close</button>
           </div>
-          {err && <div style={{ color: "var(--crit)" }}>{err}</div>}
+          {err && <div style={{ color: "var(--crit-ink)" }}>{err}</div>}
         </div>
       )}
     </div>

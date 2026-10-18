@@ -202,7 +202,7 @@ export default function Permissions({ device, services }: { device: Device; serv
       </div>
       </details>
 
-      {error && <p className="small" style={{ color: "var(--crit)" }}>{error}</p>}
+      {error && <p className="small" style={{ color: "var(--crit-ink)" }}>{error}</p>}
       <p className="small muted perm-foot">
         <span className={`dot ${inForce ? "ok" : "offline"}`} />
         {inForce ? "Applied" : "Waiting for the device…"}

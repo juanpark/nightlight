@@ -284,7 +284,7 @@ function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClo
       <span style={{ flex: 1 }} />
       {fav && <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />}
       <button className="drawer-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
-      {fav?.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
+      {fav?.err && <p className="small" style={{ color: "var(--crit-ink)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
     </div>
   );
 }

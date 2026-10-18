@@ -114,7 +114,7 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
           </div>
         </div>
       )}
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }

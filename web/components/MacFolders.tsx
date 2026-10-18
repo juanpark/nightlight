@@ -41,7 +41,7 @@ export default function MacFolders({ device: d, actions }: { device: Device; act
       {d.macFolders === "allowed" && !asking && <span className="muted">If a folder still shows as blocked, ask again, or
         allow it on the Mac in System Settings › Privacy &amp; Security › Files and Folders.</span>}
       {job && !asking && job.result?.summary && <span className="muted">{job.result.summary}</span>}
-      {err && <span style={{ color: "var(--crit)" }}>{err}</span>}
+      {err && <span style={{ color: "var(--crit-ink)" }}>{err}</span>}
     </div>
   );
 }

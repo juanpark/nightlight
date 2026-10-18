@@ -63,7 +63,7 @@ export default function Checkups({ uid, generation, deviceId, actions, cleanupOn
           <button key={o.id} className={o.suggested ? "primary" : ""} disabled={!!busy} title={o.about}
             onClick={() => run(o.id)}>{busy === o.id ? "Starting…" : o.title}</button>))}
       </div>
-      {error && <p className="small" style={{ color: "var(--crit)" }}>{error}</p>}
+      {error && <p className="small" style={{ color: "var(--crit-ink)" }}>{error}</p>}
       {last && !pb && ["approved", "running"].includes(last.status) &&
         <p className="small muted">Checking on the device… (updates can take up to a minute)</p>}
       {last && last.status === "failed" && <p className="small">The checkup couldn&apos;t finish: {last.result?.summary}</p>}

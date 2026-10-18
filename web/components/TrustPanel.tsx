@@ -49,7 +49,7 @@ export default function TrustPanel({ trust }: { trust: TrustDoc[] }) {
         ))}
         {trust.length === 0 && <span className="muted small">Nothing yet.</span>}
       </div>
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }

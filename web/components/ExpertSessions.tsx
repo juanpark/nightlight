@@ -77,7 +77,7 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
               : mine
                 ? mine === key.fingerprint
                   ? <>ready, code <strong>{mine}</strong></>
-                  : <strong style={{ color: "var(--crit)" }}>the server shows a different key ({key.fingerprint}) than
+                  : <strong style={{ color: "var(--crit-ink)" }}>the server shows a different key ({key.fingerprint}) than
                       the passkey this browser made ({mine}): don&apos;t switch it on anywhere; tell us.</strong>
                 : <>ready (made in another browser: compare the code there), server copy <strong>{key.fingerprint}</strong></>
               : !passkeysSupported()
@@ -92,7 +92,7 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
               (if that says &quot;command not found&quot;: <code className="perm-cmd">~/.local/bin/nightlight expert</code>) and
               check it shows exactly the code above{mine ? <> ({mine})</> : null}.</>}</li>
           </ol>
-          {err && <div style={{ color: "var(--crit)" }}>{err}</div>}
+          {err && <div style={{ color: "var(--crit-ink)" }}>{err}</div>}
         </div>)}
     </section>
   );
