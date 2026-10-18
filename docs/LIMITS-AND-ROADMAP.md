@@ -174,7 +174,7 @@ ordinary approval cards have no second factor: a signed-in session can tap Appro
 | Next | Why |
 |---|---|
 | A Mac menu-bar app for the helper: status at a glance, its version, Open Nightlight, pause, uninstall | today the helper is an invisible background service; owners asked where to see it and its version (`nightlight --version` and the app's Settings show it now) |
-| A helper with no Python needed: one compiled program per platform (Go or Rust) | the one-line install needs Python 3.8+ (Linux and Raspberry Pi OS ship it; the Mac installer brings its own). A compiled helper drops that need and starts faster; the cost is a rewrite, signing per platform, and losing the single readable file owners can check today |
+| A compiled helper (Go or Rust): one small program per platform | Python is no longer something an owner installs: the Mac installer and the one-line command bring their own pinned, checksum-verified copy when a device has none. A compiled helper would still be smaller and start faster. It is about 1–2 weeks of work (a 4,000-line helper to rewrite and re-test, plus a signed build per platform), so it waits until after the contest. See [why the helper is Python for now](#why-the-helper-is-python-for-now) |
 | Structured findings with evidence citations: each finding cites the step id it came from; the UI shows the evidence beside each claim | closes the last gap between words and tools (limit 1 above) |
 | `check_speed` and `alternatives` tools; `needs_measurement` on clean-ups | "slow" and "safer option" become measured answers, and a clean-up is never offered on nothing |
 | Per-call timeout and a visible time budget in both modes | an honest "Nightlight is slow right now" instead of a thinner answer |
@@ -185,3 +185,18 @@ ordinary approval cards have no second factor: a signed-in session can tap Appro
 
 If you find something not on this list, `scripts/chat_probe.py` and `scripts/chat_eval.py` are the fastest way to show
 us: they print exactly what a person would have seen.
+
+## Why the helper is Python for now
+
+- **One readable file.** The whole helper is a single Python file. An owner, or a judge, can open it and check exactly
+  what runs on their machine. That matters more to a trust product than speed.
+- **It already runs almost everywhere.** Raspberry Pi OS, Ubuntu and most Linux systems ship Python 3. Where one
+  doesn't (minimal Debian, some NAS systems) or on a Mac, Nightlight brings its own copy: the same pinned
+  python-build-standalone build, checked against its sha256 before use, kept in Nightlight's own folder and removed
+  on uninstall. The owner never installs Python, and the system's own Python is never touched.
+- **It let us move fast.** In three days the helper gained checks, jobs, discovery, passkey verification, an audit
+  log and signed self-update, each tested on real machines. A rewrite now would trade all of that testing for a
+  smaller file.
+- **What would change our mind:** devices too small for a Python runtime (routers, some NAS boxes), or owners who
+  want a single binary. Then the compiled helper above comes first, keeping the same job list, the same signatures
+  and the same outgoing-only network rule.
