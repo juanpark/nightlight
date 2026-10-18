@@ -203,7 +203,7 @@ def pairs_ref():
     return db.client().collection("pairRequests")
 
 
-def pair_start(name: str, os_name: str | None, ip: str) -> dict:
+def pair_start(name: str, os_name: str | None, ip: str, machine: str | None = None, via: str | None = None) -> dict:
     now = _now()
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     poll_secret = secrets.token_urlsafe(32)
@@ -218,6 +218,7 @@ def pair_start(name: str, os_name: str | None, ip: str) -> dict:
         tx.set(bucket, {"count": n + 1, "expiresAt": now + timedelta(hours=2)})
         tx.set(pairs_ref().document(_sha(code)), {"pollHash": _sha(poll_secret), "name": name, "os": os_name,
                                                    "status": "waiting", "uid": None, "expiresAt": now + PAIR_TTL,
+                                                   "machine": machine, "via": via,
                                                    "createdAt": firestore.SERVER_TIMESTAMP})
 
     db.run_transaction(run)
@@ -234,18 +235,88 @@ def _pair_doc(tx, code: str):
     return ref, data
 
 
+# ------------------------------------------------------------------ a reinstall continues the same device
+# The helper reports a fingerprint of its machine: SHA-256 of the machine's own hardware id (macOS IOPlatformUUID,
+# Linux /etc/machine-id), never the id itself. It can't be keyed with the account's netKey like the other
+# fingerprints, because an unpaired helper has no account yet; so the server keys it per account (HMAC with that
+# account's netKey) before keeping it on a device or comparing. Matches therefore never cross accounts, and nothing is
+# continued without the owner choosing "Continue its history" when approving.
+
+def keyed_machine(key: str | None, machine: str | None) -> str | None:
+    """The account-keyed form of a helper's machine fingerprint (20 hex characters), or None."""
+    if not key or not machine:
+        return None
+    import hmac
+    return hmac.new(bytes.fromhex(key), b"machine:" + machine.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def _machine_tag(tx, uid: str, machine: str | None) -> str | None:
+    """Read only: an account without a key yet has no device with a fingerprint either."""
+    if not machine:
+        return None
+    snap = links._net_ref(uid).get(transaction=tx)
+    return keyed_machine((snap.to_dict() or {}).get("key") if snap.exists else None, machine)
+
+
+def _may_continue(d: dict) -> bool:
+    """A helper device not reporting (offline, uninstalled, revoked) or archived, and not being deleted (a purge that
+    has claimed it always wins: see archive.purge)."""
+    return d.get("realm") == "real" and d.get("kind") != "watched" and not d.get("purgeClaim") \
+        and bool(d.get("archived") or view(d).get("stale"))
+
+
+def _continuable(snaps) -> tuple[str, dict] | None:
+    """Of this account's devices with the same machine fingerprint, the one a reinstall may continue: a helper device
+    that is offline, uninstalled or removed (archived, not yet deleted); the most recently seen. A device still
+    reporting is never offered (that would cut a working helper off)."""
+    out = []
+    for s in snaps:
+        d = s.to_dict() or {}
+        if _may_continue(d):
+            out.append((s.id, d))
+    if not out:
+        return None
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    return max(out, key=lambda x: x[1].get("lastSeen") or x[1].get("archivedAt") or epoch)
+
+
+def _same_machine(tx, uid: str, machine: str | None) -> tuple[str | None, tuple[str, dict] | None]:
+    tag = _machine_tag(tx, uid, machine)
+    if not tag:
+        return None, None
+    return tag, _continuable(db.devices(uid).where(filter=FieldFilter("machine", "==", tag)).get(transaction=tx))
+
+
+def _iso(t) -> str | None:
+    return t.isoformat().replace("+00:00", "Z") if isinstance(t, datetime) else None
+
+
 def pair_preview(uid: str, code: str) -> dict:
+    """What the owner sees before approving, with `continues` when this looks like one of their devices reinstalled
+    ({deviceId, name, lastSeen, removed}), else None."""
     from . import live
     live.forbid_pool(uid)  # never on a live demo machine's account
     _count_check(uid)
     _, data = _pair_doc(None, code)
     if not data or data["status"] != "waiting":
         raise not_found()
-    return {"name": data["name"], "os": data.get("os"),
-            "expiresAt": data["expiresAt"].isoformat().replace("+00:00", "Z")}
+    out = {"name": data["name"], "os": data.get("os"),
+           "expiresAt": data["expiresAt"].isoformat().replace("+00:00", "Z"), "continues": None}
+    if data.get("machine"):
+        @firestore.transactional
+        def run(tx):
+            return _same_machine(tx, uid, data["machine"])[1]
+        found = db.run_transaction(run)
+        if found:
+            device_id, d = found
+            out["continues"] = {"deviceId": device_id, "name": d.get("name"), "lastSeen": _iso(d.get("lastSeen")),
+                                "removed": bool(d.get("archived"))}
+    return out
 
 
-def pair_decide(uid: str, code: str, approve: bool) -> dict:
+def pair_decide(uid: str, code: str, approve: bool, continue_device: bool = False) -> dict:
+    """The owner's tap. With continue_device, the approved helper takes over the device the preview offered: found
+    again here from the fingerprint the helper sent and this account's own devices, never an id from the browser."""
     from . import live
     live.forbid_pool(uid)  # never on a live demo machine's account
     _count_check(uid)
@@ -257,11 +328,20 @@ def pair_decide(uid: str, code: str, approve: bool) -> dict:
             raise not_found()
         if data["status"] != "waiting":
             raise ApiError(409, "already_decided")
+        target = None
+        tag, found = _same_machine(tx, uid, data.get("machine")) if approve else (None, None)
+        if approve and continue_device:
+            if not found:
+                raise ApiError(409, "nothing_to_continue")
+            target = found[0]
+        # from here on only the account-keyed fingerprint is kept with the request
         tx.update(ref, {"status": "approved" if approve else "denied", "uid": uid if approve else None,
-                        "decidedAt": firestore.SERVER_TIMESTAMP})
+                        "continues": target, "machineTag": tag, "machine": firestore.DELETE_FIELD,
+                        "decidedAt": _now()})
+        return target
 
-    db.run_transaction(run)
-    return {"ok": True}
+    target = db.run_transaction(run)
+    return {"ok": True, "continues": target}
 
 
 def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
@@ -280,11 +360,61 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
         if data["status"] == "waiting":
             tx.update(ref, {"lastPollAt": _now()})  # only the real device (right secret) gets here
             return 202, {"status": "waiting"}
+        kept = _continue_reads(tx, data) if data.get("continues") else None
+        if kept:
+            tx.update(ref, {"status": "consumed", "deviceId": data["continues"],
+                            "consumedAt": firestore.SERVER_TIMESTAMP})
+            _rebind(tx, data, token, *kept)
+            return 200, {"deviceId": data["continues"], "token": token, "continued": True}
         tx.update(ref, {"status": "consumed", "deviceId": device_id, "consumedAt": firestore.SERVER_TIMESTAMP})
         _create_device(tx, data["uid"], device_id, token, data["name"])
         return 200, {"deviceId": device_id, "token": token}
 
     return db.run_transaction(run)
+
+
+def _continue_reads(tx, data: dict):
+    """Everything the continuation needs, read: (device snapshot, its tokens), or None when the device can't be
+    continued any more: deleted or being deleted (a purge claimed it), its fingerprint changed, its own helper is
+    reporting again (its working token is never revoked), or another reinstall took it over after this approval.
+    Then the helper becomes a new device instead: nothing is ever merged without the owner's choice."""
+    uid, device_id = data["uid"], data["continues"]
+    dsnap = db.device(uid, device_id).get(transaction=tx)
+    d = dsnap.to_dict() if dsnap.exists else None
+    tag = data.get("machineTag")
+    tokens = [t for t in tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id)).get(transaction=tx)
+              if (t.to_dict() or {}).get("uid") == uid]
+    if not d or not tag or d.get("machine") != tag or not _may_continue(d):
+        return None
+    since, decided = d.get("helperSince"), data.get("decidedAt")
+    if isinstance(since, datetime) and isinstance(decided, datetime) and since > decided:
+        return None
+    return dsnap, tokens
+
+
+def _rebind(tx, data: dict, token: str, dsnap, old_tokens) -> None:
+    """The reinstalled helper takes over its device: the old tokens die; the document, with its history, notes, saved
+    fixes, jobs, events, place on the map and name, stays; a removed device comes back. Writes only."""
+    from . import archive
+    uid, device_id = data["uid"], data["continues"]
+    d = dsnap.to_dict() or {}
+    for t in old_tokens:
+        if not (t.to_dict() or {}).get("revoked"):
+            tx.update(t.reference, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
+    tx.set(tokens_ref().document(_sha(token)), {"uid": uid, "deviceId": device_id, "revoked": False,
+                                                "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None})
+    tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"), {"uid": uid, "deviceId": device_id})
+    tx.delete(archive.index().document(f"{uid}__{device_id}"))
+    tx.update(dsnap.reference, {
+        "archived": False, "archivedAt": firestore.DELETE_FIELD, "purgeAt": firestore.DELETE_FIELD,
+        "revoked": False, "uninstalled": False, "status": "offline", "health": "unknown", "registered": True,
+        "helperSince": _now(), "installedWith": data.get("via"),
+        # what the new install says about itself (version, managed from the app or not) comes with its first report
+        "helperVersion": None, "manage": None, "allowedJobs": {}})
+    how = {"installer": "installer", "command_line": "command line"}.get(data.get("via"))
+    event(tx, uid, device_id, "reinstalled", "info",
+          f"Helper reinstalled{f' ({how})' if how else ''} on {d.get('name', 'a device')}; history kept."
+          + (" It is back on your map." if d.get("archived") else ""), who="you")
 
 
 # ------------------------------------------------------------------ discovery and devices watched by a helper
@@ -729,8 +859,9 @@ def add_found(uid: str, helper_id: str, cid: str, name: str | None) -> dict:
 
 
 def leave(token: str, cleanup: str | None = None) -> dict:
-    """The helper revokes its own token (it uninstalled itself, from the app or by hand): the device is archived and
-    a removal the owner asked for is closed, in one transaction."""
+    """The helper revokes its own token (it uninstalled itself, from the app or by hand), in one transaction. A
+    removal the owner asked for in the app is closed and the device archived; an uninstall done on the device leaves
+    it on the map as offline, history kept (archive.left)."""
     from . import archive
     tref = tokens_ref().document(_sha(token))
 
@@ -965,7 +1096,7 @@ def _remove_card(device: dict, params: dict) -> dict:
                        "It isn't reporting (or its helper is too old to uninstall itself), so its access is cut now "
                        "and it leaves your map; to delete the helper's files, run the uninstall line on it."),
             "rollback": f"Its history, notes and activity are kept for {ARCHIVE_DAYS} days, then deleted. To bring it "
-                        "back, add it again (it becomes a new device).",
+                        "back, install the helper on it again and choose \"Continue its history\" when approving.",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -1035,6 +1166,7 @@ def back_words(last_seen, uptime_sec) -> dict:
 
 def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
     tref = tokens_ref().document(_sha(token))
+    machine = facts.get("machine")  # a fingerprint (validated hex), kept as sent
     facts, _ = scrub_value(facts)
     findings = checks(facts)
     services = {}
@@ -1110,6 +1242,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         extra["diskTrend"] = trend
         if net_changed:
             extra["net"] = net
+        mtag = keyed_machine(net_key, machine)
+        if mtag and mtag != device.get("machine"):
+            extra["machine"] = mtag  # lets a later reinstall on this machine continue this device
         tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),

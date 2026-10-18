@@ -77,8 +77,8 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | Method and path | Auth | Body | Response |
 |---|---|---|---|
 | `POST /api/devices/enrol-code` | owner | `{}` | `201 {code:"ABCD-EFGH", expiresAt}`: one-time, 10 minutes, at most 10 per hour (`429 quota_uid`) |
-| `GET /api/devices/pair/{code}` | owner | | `200 {name, os, expiresAt}`: preview of a code a device shows; `404` if unknown, expired or already decided |
-| `POST /api/devices/pair/{code}` | owner | `{"approve":true}` or `{"approve":false}` | `200 {ok}`; `404`; `409 already_decided`. Previews and decisions together: at most 30 per hour (`429 quota_uid`) |
+| `GET /api/devices/pair/{code}` | owner | | `200 {name, os, expiresAt, continues}`: preview of a code a device shows; `404` if unknown, expired or already decided. `continues` is `null`, or `{deviceId, name, lastSeen, removed}` when the helper (0.9.33+) runs on a machine that is already one of this owner's devices, offline, uninstalled or removed but not yet deleted (see "A reinstall continues the same device") |
+| `POST /api/devices/pair/{code}` | owner | `{"approve":true, "continueDevice"?: bool}` or `{"approve":false}` | `200 {ok, continues}` (`continues`: the device id taken over, or `null`); `404`; `409 already_decided`; `409 nothing_to_continue` (`continueDevice` with no device to continue). `continueDevice` defaults to `false` (a new device). Previews and decisions together: at most 30 per hour (`429 quota_uid`) |
 | `POST /api/devices/{deviceId}/revoke` | token | `{}` | `200 {ok, deviceId}`: the helper's token stops working and the device goes offline. For a watched device (`kind: "watched"`) it takes it off the map instead and offers its discovery item again |
 | `POST /api/discoveries/{helperDeviceId}/{cid}/add` | token | `{"name"?:"Printer"}` (1-40) | `201 {ok, deviceId}`: a watched device on the map, called `name`, or without one the name it announced (cut to 40), else its guess; the announced name is kept as `seenName` (`nameFromSeen: true` while the device is still called by it); `404` (expired list, unknown item, helper gone); `409 already_added`; `422 no_check_port`; `429 watch_capacity` (10 watched per helper) |
 | `POST /api/watches` | owner | `{"name":"Blog","url":"https://…","tags":[]}` (name 1-40, url 8-300, tags ≤6) | `201 {id, url}` (checked once right away); `422 bad_url` / `unknown_host` / `private_address`; `429 too_many_watches` (10 per account) / `watch_budget` (20 adds per day, 200 active overall) |
@@ -89,8 +89,8 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | Method and path | Auth | Body | Response |
 |---|---|---|---|
 | `POST /helper/enrol` | the one-time code | `{"code":"ABCD-EFGH","name":"My Pi"}` | `201 {deviceId, token}`: the token is shown only here; `401 invalid_code` if unknown, used or expired |
-| `POST /helper/pair/start` | none (20 per network address per hour, `429 quota_ip`) | `{"name":"Raspberry Pi","os":"Debian 12"}` | `201 {code, pollSecret, interval:3, expiresAt}` (10 minutes) |
-| `POST /helper/pair/poll` | `pollSecret` | `{"code":"…","pollSecret":"…"}` | `202 {status:"waiting"}`; `200 {deviceId, token}` once, after the owner approved; `401 invalid_code` (unknown, expired, used, declined or wrong secret, all alike); `429 slow_down` (polls under 2 s apart) |
+| `POST /helper/pair/start` | none (20 per network address per hour, `429 quota_ip`) | `{"name":"Raspberry Pi","os":"Debian 12", "machine"?: "<32 hex>", "via"?: "installer"\|"command_line"}` | `201 {code, pollSecret, interval:3, expiresAt}` (10 minutes) |
+| `POST /helper/pair/poll` | `pollSecret` | `{"code":"…","pollSecret":"…"}` | `202 {status:"waiting"}`; `200 {deviceId, token}` once, after the owner approved (`200 {deviceId, token, continued: true}` when it continues an existing device); `401 invalid_code` (unknown, expired, used, declined or wrong secret, all alike); `429 slow_down` (polls under 2 s apart) |
 | `POST /helper/heartbeat` | `X-Device-Token` | allowlisted facts (below) | `200 {ok, deviceId, findings, jobs:[{id, type, params}], pollEverySec, watch:[{cid, port}], netKey}`; `401 invalid_token`; `429 too_frequent` (one report per 20 s) |
 | `POST /helper/jobs/claim` | `X-Device-Token` | `{}` | `200 {ok, jobs, pollEverySec}`: a light check for approved work between reports; `429 too_frequent` (4 s apart) |
 | `POST /helper/jobs/{actionId}/result` | `X-Device-Token` | `{"ok":true,"summary":"…","state":"running","output":null}` | `200 {ok, actionId, status}`; a repeated report changes nothing; `409 illegal_transition` before the job was handed to this device; `404` for any other device |
@@ -103,6 +103,30 @@ While `demo.state` is `resetting`, every sample-home write and chat answers `409
 | `GET /api/found` | signed in | — | `200 {items:[{guess, vendor, name, maker, model, services, ports, tag?, seenBy:[{deviceId,name,cid}]}]}`: Found nearby once per thing. Items with the same fingerprint (`tag`) from several devices merge into one row; anything whose fingerprint is one of the owner's own devices (any of a helper's addresses, `net.self` or `net.selves`), or already added, is left out. Merged rows keep every service and port seen, the most specific guess, the first announced name and the first maker and model reported (`null` when none); `seenBy[].canWatch` says whether that finder saw a port to check, and finders that can come first, so Add uses `seenBy[0]`'s `deviceId` and `cid` |
 | `POST /api/settings` | owner | `{"deviceNames": bool}` | `200 {ok, deviceNames}`: the account's switch for the names things nearby announce (on by default: it is the owner's own dashboard). Off: helpers stop sending names from their next report, new lists keep none, and the names already kept are removed (from every discovery list, and `seenName` from watched devices; one still called by its announced name goes back to its guess). Addresses never leave a device either way |
 | `POST /helper/leave` | `X-Device-Token` | `{}` | `200 {ok}`: the device revokes its own token (uninstall); `401 invalid_token` |
+
+**A reinstall continues the same device.** Helpers from 0.9.33 send `machine` (in `pair/start` and every
+heartbeat): SHA-256 (first 32 hex) of the machine's own id (macOS `IOPlatformUUID`, Linux `/etc/machine-id`), never
+the id itself. The server keeps only an account-keyed form (HMAC with the account's `netKey`) as device field
+`machine`, so matches never cross accounts. When a new helper pairs from a machine that is one of the owner's devices
+and that device is offline, uninstalled or removed (archived, not yet deleted), the preview's `continues` names it;
+the app asks "This looks like your <name>, last seen <when>. Continue its history?" (default yes) or "Add as a new
+device". `continueDevice: true` makes the server find the device again itself (never from an id the browser sends);
+when the helper then polls, its old tokens are revoked, a new token is bound to the same device id, an archived
+device is restored, and every subcollection (history, notes, saved fixes, jobs, events), its place on the map and
+its name stay. The device gets `helperSince`, `installedWith` (`installer`/`command_line`), and its version and
+managed mode from its first report; Activity gets "Helper reinstalled (installer) on <name>; history kept." A device
+still reporting is never offered. The poll checks again, in the transaction that binds the token: if the device's
+own helper is reporting again, a purge has claimed it, or its fingerprint changed, the helper becomes a new device
+instead (a working token is never revoked). After the decision the pairing request keeps only the keyed fingerprint
+(`machineTag`). Deleting an archived device (the 30-day sweep or "forget for good") first claims it on the device
+document (`purgeClaim`) in a transaction that requires it to be archived (and, for the sweep, its own `purgeAt` to
+have passed); every delete batch and the final delete re-check that claim, so a device restored by a reinstall is
+never deleted, and a claimed device is never restored. Enrolling with a typed code (`/helper/enrol`) always makes a
+new device.
+
+**Uninstall vs remove.** Uninstalling on the device (`helper uninstall`, `curl …/uninstall.sh | sh`, the Mac
+installer's uninstall) calls `/helper/leave {}`: the token is revoked and the device stays on the map as offline
+(`revoked`, `uninstalled`, `uninstalledAt`), history kept. Removing it in the app archives it (below).
 
 **The Mac installer** (`GET /download/Nightlight.pkg` on the web app, with its sha256 at
 `/download/Nightlight.pkg.sha256`; `404` until a notarized package is deployed) uses the same pairing: its
@@ -302,7 +326,7 @@ approval) → `202 {removed: "asked_device", actionId}` when the helper (0.9.6+)
 `{removed: "access_cut"}` when the device is silent, revoked or older: tokens revoked and the device archived now.
 From chat the agent's `remove_device` tool puts up a pending card; approving it does the same. The helper's
 `POST /helper/leave {"cleanup": "full"|"files_left"}` (body optional) archives the device and closes the removal in one
-transaction. Archived devices carry `archived`, `archivedAt`, `purgeAt` (30 days); they are hidden from the map and
+transaction (a leave with no removal under way, an uninstall on the device, leaves it on the map as offline instead). Archived devices carry `archived`, `archivedAt`, `purgeAt` (30 days); they are hidden from the map and
 the agent. `GET /api/devices/removed` lists them; `DELETE /api/devices/{id}` deletes an archived device and its
 services, history, notes, events and actions now (`409 remove_first` if it isn't archived). The sweep purges the
 rest when `purgeAt` passes.

@@ -54,11 +54,13 @@ def test_chat_card_then_approval_finishes_an_offline_removal(client, started):
     assert db.device(started, dev["deviceId"]).get().to_dict()["archived"]
 
 
-def test_uninstall_by_hand_also_leaves_the_map(client, started):
+def test_uninstall_by_hand_keeps_the_device_offline_with_its_history(client, started):
     dev = enrolled(client)
     beat(client, dev["token"], FACTS)
     client.post("/helper/leave", json={}, headers={"X-Device-Token": dev["token"]})  # an older helper's body
-    assert db.device(started, dev["deviceId"]).get().to_dict()["archived"]
+    d = db.device(started, dev["deviceId"]).get().to_dict()
+    assert not d.get("archived") and d["revoked"] and d["uninstalled"]  # on the map, offline; a reinstall continues it
+    assert beat(client, dev["token"], FACTS).status_code == 401
 
 
 def test_forget_for_good_and_purge_after_30_days(client, started):
@@ -74,8 +76,8 @@ def test_forget_for_good_and_purge_after_30_days(client, started):
     other = enrolled(client, "Other")
     beat(client, other["token"], FACTS)
     client.post(f"/api/devices/{other['deviceId']}/remove", json={})
-    archive.index().document(f"{started}__{other['deviceId']}").update(
-        {"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})
+    for ref in (archive.index().document(f"{started}__{other['deviceId']}"), db.device(started, other["deviceId"])):
+        ref.update({"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})  # the device's own date decides
     assert archive.purge_due() == 1 and not db.device(started, other["deviceId"]).get().exists
 
 

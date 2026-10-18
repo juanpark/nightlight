@@ -61,7 +61,7 @@ def test_activity_records_real_devices_and_survives_reset(client, started):
     client.post("/api/demo/reset", json={})
     assert {"joined", "status_warn"} <= {e["kind"] for e in _events(started)}
     client.post("/helper/leave", json={}, headers={"X-Device-Token": dev["token"]})
-    assert "removed" in {e["kind"] for e in _events(started)}  # uninstalled by hand: archived, leaves the map
+    assert "uninstalled" in {e["kind"] for e in _events(started)}  # uninstalled by hand: stays on the map, offline
 
 
 def test_tags_are_saved_cleaned_and_shown_to_the_agent(client, started):

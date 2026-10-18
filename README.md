@@ -255,7 +255,10 @@ It changes nothing by default. What it can do, and only after you allow it:
 | `update` (or the "updates" switch) | install a signed, newer helper after your tap (or automatically if you say so) |
 | `nightlight expert` at the device | pin your passkey so expert sessions can run commands you sign |
 
-Removing a device is a card too: the helper uninstalls itself and the device leaves the map.
+Removing a device is a card too: the helper uninstalls itself and the device leaves the map (archived for 30 days).
+Uninstalling the helper on the device itself keeps the device on the map as offline, with its history. Installing the
+helper again on the same machine (say, moving from the command line to the Mac installer) offers to continue that
+device, history and all; the owner chooses when approving.
 
 ## Honest limits
 
