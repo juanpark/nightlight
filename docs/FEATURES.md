@@ -29,7 +29,7 @@ only (signed in with Google) · **passkey** = needs a passkey (Face ID, Touch ID
 | Feature | What the user gets | Where in the UI | Component file(s) | Tour? | Notes |
 |---|---|---|---|---|---|
 | Needs strip | A one-line verdict plus every problem that needs you, worst first | Top of Home (`data-tour="needs"`), "Show all N" | `NeedsList.tsx`, `NeedsMark.tsx`, `lib/needsYou.ts` | yes | |
-| Ask if anything's wrong | One tap asks the assistant to check the whole home | "Ask if anything's wrong" in needs strip | `Home.tsx` | no | |
+| Ask if anything's wrong | One tap asks the assistant to check all your servers | "Ask if anything's wrong" in needs strip | `Home.tsx` | no | |
 | Map | Devices on graph paper; pan, pinch, zoom, drag to place; health light per device | Home, view switch "Map" | `map/HomeView.tsx`, `map/HomeMap.tsx`, `map/DeviceNode.tsx` | yes | |
 | Device card on map | Card opens in place with its apps (problems first, then starred) | Tap a device: "Open", "Ask", "Details" | `map/DeviceNode.tsx`, `map/AppSheet.tsx` | no | |
 | Lines between devices | Draw how devices relate (connected through, backs up to…); the assistant uses them | "Drag from a dot on a device to another to link them" | `map/LinkEdge.tsx`, `map/HomeMap.tsx` | no | Some drawn automatically on real devices |

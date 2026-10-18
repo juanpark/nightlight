@@ -25,7 +25,7 @@ Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterpri
 1. Open the live app and take the guided tour of the sample home. The devices are pretend; Nightlight's AI is real.
    The sample home has a Raspberry Pi (VPN and a car data logger), a Mac Mini (home automation), a NAS (photos and a
    nightly backup), a Minecraft server, a camera recorder and a router. Everything in it is labelled "Sample".
-2. In the chat, ask: **"Is anything wrong at home?"**
+2. In the chat, ask: **"Is anything wrong with my servers?"**
 3. Nightlight reads the devices, answers in two or three short sentences, and puts up an **approval card** for the
    most serious problem: the Pi's disk is 94% full, and it offers to clean old logs. Nothing changes until you tap
    Approve.

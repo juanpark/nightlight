@@ -207,7 +207,7 @@ const SHOTS = {
   async S3(browser, theme, name) {
     const { ctx, page, mark, stop } = await session(browser, "D", theme, name);
     await beat(1500);
-    await ask(page, "Is anything wrong at home?"); mark("asked");
+    await ask(page, "Is anything wrong with my servers?"); mark("asked");
     await chat(page).locator("button", { hasText: "Not now" }).last().waitFor({ timeout: AGENT_WAIT }); mark("card");
     await answered(page); mark("answered");
     const log = chat(page).locator(".wl-head").last();
@@ -221,7 +221,7 @@ const SHOTS = {
   async S3p(browser, theme, name) {
     const { ctx, page, mark, stop } = await session(browser, "P", theme, name);
     await press(page, page.locator(".pane-tabs button", { hasText: "Chat" }), { pause: 1200 }); mark("chat-tab");
-    await ask(page, "Is anything wrong at home?"); mark("asked");
+    await ask(page, "Is anything wrong with my servers?"); mark("asked");
     await chat(page).locator("button", { hasText: "Not now" }).last().waitFor({ timeout: AGENT_WAIT }); mark("card");
     await answered(page);
     await chat(page).locator(".card").last().scrollIntoViewIfNeeded(); await beat(2500);
@@ -241,7 +241,7 @@ const SHOTS = {
     const { ctx, page, mark, stop } = await session(browser, "D", theme, name);
     for (let round = 1; round <= 3; round++) {
       if (round > 1) { await inject(page, "Disk fills up"); mark(`inject-${round}`); }
-      await ask(page, round === 1 ? "Is anything wrong at home?" : "The Pi's disk is full again. Can you clean it up?");
+      await ask(page, round === 1 ? "Is anything wrong with my servers?" : "The Pi's disk is full again. Can you clean it up?");
       await approve(page, (s) => mark(`${s}-${round}`));
       await beat(1500);
     }
@@ -300,7 +300,7 @@ const STILLS = {
     await page.getByRole("button", { name: "Trust", exact: true }).click();
     await node(page, "Raspberry Pi").click(); await beat(1500);
     await page.locator(".drawer").screenshot({ path: path.join(RAW, `F3-drawer-${theme}.png`) });
-    await page.locator(".chat-starter", { hasText: "Is anything wrong at home?" }).click();
+    await page.locator(".chat-starter", { hasText: "Is anything wrong with my servers?" }).click();
     const card = chat(page).locator(".card").last();
     await card.locator("button", { hasText: "Not now" }).waitFor({ timeout: AGENT_WAIT });
     await answered(page); await beat(800);
@@ -312,7 +312,7 @@ const STILLS = {
     const { ctx, page } = await session(browser, "readme", theme, null);
     await page.mouse.move(0, 0);
     await page.screenshot({ path: path.join(README, `map-${theme}.png`) });
-    await page.locator(".chat-starter", { hasText: "Is anything wrong at home?" }).click();
+    await page.locator(".chat-starter", { hasText: "Is anything wrong with my servers?" }).click();
     await chat(page).locator("button", { hasText: "Not now" }).last().waitFor({ timeout: AGENT_WAIT });
     await answered(page); await beat(800);
     await page.screenshot({ path: path.join(README, `chat-${theme}.png`) });
