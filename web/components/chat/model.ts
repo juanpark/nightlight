@@ -2,7 +2,7 @@
 // Nightlight checked or ran, and what came back) and approval cards. Live events and stored messages build the same
 // shape, so a reloaded chat reads like the live one. UX spec 2026-10-17 §4.
 import type { PastMessage, PastStep } from "@/lib/data";
-import type { Device, StreamEvent } from "@/lib/types";
+import type { Device, Metrics, StreamEvent } from "@/lib/types";
 
 export type Mode = "quick" | "investigate";
 export type StepStatus = "running" | "done" | "failed" | "stopped";
@@ -20,7 +20,7 @@ export type Turn =
   | { kind: "system"; key: string; text: string; icon: "mode" | "stopped" }
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
-      past?: boolean; after?: string[]; ms?: number };
+      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics };
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -86,7 +86,7 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
     case "error": // the turn is over: a step still waiting will never answer
       return { ...stop(t), busy: t.busy, error: e.message || e.code };
     case "done":
-      return { ...t, ms: e.metrics?.latencyMs };
+      return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
       return t;
   }
@@ -129,7 +129,7 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
     const after = prev?.kind === "agent"
       ? prev.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []) : undefined;
     out.push({ kind: "agent", key: m.id, mode: m.mode ?? "quick", blocks, busy: false, past: true,
-      error: m.error?.message, after });
+      error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
 }
