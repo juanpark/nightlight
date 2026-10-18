@@ -2,6 +2,7 @@
 // One agent turn: a work log of what Nightlight checked (its running commentary, each step and what came back), then
 // its answer, then any approval cards. Quick answers keep the log folded; investigations show it open.
 import { useState, type JSX } from "react";
+import { useNow } from "@/lib/data";
 import type { Action, Device, Metrics } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
 import type { AgentTurn, Block } from "./model";
@@ -16,8 +17,17 @@ const cents = (usd: number) => { const c = usd * 100; return c < 0.1 ? "under 0.
 
 /** The receipt for an answer: how long it took, which model wrote it and what it cost. */
 function receipt(ms?: number, m?: Metrics): string {
-  return [ms ? secs(ms) : "", m?.model ? modelName(m.model) : "", m?.costUsd != null ? cents(m.costUsd) : ""]
+  const slow = m?.slowCalls ? `${m.slowCalls} slow call${m.slowCalls === 1 ? "" : "s"} retried` : "";
+  return [ms ? secs(ms) : "", m?.model ? modelName(m.model) : "", m?.costUsd != null ? cents(m.costUsd) : "", slow]
     .filter(Boolean).join(" · ");
+}
+
+const span = (s: number) => s >= 60 && s % 60 === 0 ? `${s / 60} min` : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+
+/** "45 s of 4 min": how long this answer has been working, against the time the server gives it. */
+function Elapsed({ from, budget }: { from: number; budget: number }) {
+  const now = useNow(1000);
+  return <> · {span(Math.max(0, Math.min(budget, Math.round((now - from) / 1000))))} of {span(budget)}</>;
 }
 
 function StepRow({ s, show }: { s: Step; show?: boolean }) {
@@ -41,8 +51,8 @@ function StepRow({ s, show }: { s: Step; show?: boolean }) {
   );
 }
 
-function WorkLog({ blocks, busy, investigate, ms, metrics }: {
-  blocks: Block[]; busy: boolean; investigate: boolean; ms?: number; metrics?: Metrics;
+function WorkLog({ blocks, busy, investigate, ms, metrics, from, budget }: {
+  blocks: Block[]; busy: boolean; investigate: boolean; ms?: number; metrics?: Metrics; from?: number; budget?: number;
 }) {
   const [open, setOpen] = useState(investigate);
   const steps = blocks.filter((b): b is Step => b.kind === "step");
@@ -55,7 +65,8 @@ function WorkLog({ blocks, busy, investigate, ms, metrics }: {
     <div className={`worklog ${open ? "open" : ""}`}>
       <button className="wl-head" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span className="wl-chev">{open ? "▾" : "▸"}</span>
-        {busy ? `Working… ${n}` : `What I checked · ${n}${paid ? ` · ${paid}` : ""}`}
+        {busy ? <>Working… {n}{from && budget ? <Elapsed from={from} budget={budget} /> : null}</>
+          : `What I checked · ${n}${paid ? ` · ${paid}` : ""}`}
       </button>
       {visible.length > 0 && (
         <div className="wl-body">
@@ -67,8 +78,9 @@ function WorkLog({ blocks, busy, investigate, ms, metrics }: {
   );
 }
 
-export default function TurnView({ turn, actions, devices, onFollowUp }: {
+export default function TurnView({ turn, actions, devices, onFollowUp, onRetry }: {
   turn: AgentTurn; actions: Action[]; devices: Device[]; onFollowUp: (turnId: string) => void;
+  onRetry?: () => void; // asks the same question again, offered when the server says trying again may work
 }) {
   // The answer is the last thing said; words said before or between steps are commentary in a work log. Everything
   // keeps its order: a card appears where it was put up, between the steps around it.
@@ -86,7 +98,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
       const isLast = i > lastStep; // the segment holding the last step carries the turn's totals
       parts.push(<WorkLog key={`log${i}`} blocks={blocks} busy={turn.busy && isLast}
         investigate={turn.mode === "investigate"} ms={isLast ? turn.ms : undefined}
-        metrics={isLast ? turn.metrics : undefined} />);
+        metrics={isLast ? turn.metrics : undefined} from={turn.startedAt} budget={turn.budget} />);
     } else {
       blocks.forEach((b, j) => b.kind === "text" && parts.push(<p key={`n${i}.${j}`} className="wl-note">{b.text.trim()}</p>));
     }
@@ -113,7 +125,8 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
       {!turn.busy && lastStep < 0 && final >= 0 && receipt(turn.ms, turn.metrics) &&
         <div className="wl-receipt small muted">Answered from what I know · {receipt(turn.ms, turn.metrics)}</div>}
       {turn.busy && final < 0 && lastStep < 0 && <div className="bubble agent thinking">Thinking…</div>}
-      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}</div>}
+      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}
+        {turn.retryable && !turn.busy && onRetry && <>{" "}<button className="linkish small" onClick={onRetry}>Ask again</button></>}</div>}
     </div>
   );
 }
