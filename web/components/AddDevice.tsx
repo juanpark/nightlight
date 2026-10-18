@@ -251,7 +251,8 @@ export default function AddDevice({ anonymous, live = false, onSave, devices }: 
         <TrySimulated />
         <div className="try-real">
           <p className="small"><strong>Do it for real:</strong> your laptop or Raspberry Pi on your own map in about two
-            minutes. Real devices belong to an account, so first sign in with Google; this sample home stays.</p>
+            minutes. Real devices belong to an account, so first sign in with Google; you can open the sample home again
+            from there.</p>
           <button className="primary" onClick={onSave}>Sign in with Google</button>
         </div>
         <Reassure />

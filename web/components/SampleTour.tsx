@@ -108,7 +108,7 @@ export default function SampleTour({ uid, actions, devices, discoveries, onAsk, 
         </ol>
         {note && <p className="small" role="status">{note}</p>}
         <p className="small tour-end">{count === steps.length ? "That's the tour. " : ""}The real thing runs on your own Mac or
-          Raspberry Pi:{" "}<button className="small primary" onClick={onSave}>Sign in with Google</button></p>
+          Raspberry Pi:{" "}<button className="small primary" onClick={onSave}>Try the real app</button></p>
       </>}
     </section>
   );
