@@ -213,7 +213,7 @@ export interface UserDoc {
 }
 
 export type StreamEvent =
-  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate" }
+  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate"; budgetSeconds?: number }
   | { type: "text"; delta: string }
   | { type: "tool_call"; name: string; args?: Record<string, unknown>; callId?: string }
   | { type: "tool_result"; name: string; callId?: string; summary?: string; details?: string | null; ok?: boolean; ms?: number | null }
@@ -233,4 +233,5 @@ export interface Discovery { id: string; by: string; byName: string; items: Foun
   expiresAt?: Date | null }
 
 /** What one answer took: from the stream's `done`, and on stored messages once the server keeps them there. */
-export interface Metrics { latencyMs?: number; toolCalls?: number; modelCalls?: number; costUsd?: number; model?: string }
+export interface Metrics { latencyMs?: number; toolCalls?: number; modelCalls?: number; costUsd?: number; model?: string;
+  budgetSeconds?: number; slowCalls?: number }

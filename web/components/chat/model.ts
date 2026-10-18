@@ -18,7 +18,8 @@ export type Turn =
   | { kind: "system"; key: string; text: string; icon: "mode" | "stopped" }
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
-      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics };
+      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics;
+      startedAt?: number; budget?: number; retryable?: boolean }; // budget: the seconds the server gives this answer
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -63,7 +64,8 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
   const last = blocks[blocks.length - 1];
   switch (e.type) {
     case "turn_start":
-      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode };
+      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode, startedAt: t.startedAt ?? Date.now(),
+        budget: e.budgetSeconds ?? t.budget };
     case "text":
       if (last?.kind === "text") blocks[blocks.length - 1] = { ...last, text: last.text + e.delta };
       else blocks.push({ kind: "text", text: e.delta });
@@ -87,7 +89,7 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
       if (blocks.some((b) => b.kind === "card" && b.actionId === e.actionId)) return t;
       return { ...t, blocks: [...blocks, { kind: "card", actionId: e.actionId }] };
     case "error": // the turn is over: a step still waiting will never answer
-      return { ...stop(t), busy: t.busy, error: e.message || e.code };
+      return { ...stop(t), busy: t.busy, error: e.message || e.code, retryable: !!e.retryable };
     case "done":
       return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
