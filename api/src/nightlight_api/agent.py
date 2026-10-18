@@ -138,6 +138,10 @@ class TurnContext:
         return time.monotonic() - self.started > self.turn_seconds
 
     @property
+    def max_input_tokens(self) -> int:
+        return settings.deep_max_input_tokens if self.deep else settings.max_input_tokens
+
+    @property
     def max_tools(self) -> int:
         return settings.deep_calls_per_turn if self.deep else settings.tool_calls_per_turn
 
@@ -1271,18 +1275,109 @@ def _trim_oldest(req) -> bool:
     return True
 
 
-def bound_input(req, counter=None) -> None:
-    """Guarantee the complete request fits max_input_tokens by exact count, trimming history; otherwise refuse."""
-    limit = settings.max_input_tokens
-    counter = counter or COUNTER
-    for _ in range(50):
+# Within a turn, older tool results are shortened before anything fails: an investigation may take up to
+# deep_calls_per_turn steps, each result up to tool_result_bytes, and together they outgrow any fixed input ceiling
+# (18 Oct: a 21-step expert investigation of port 53 reached 16k tokens and the whole turn failed as "too long").
+# The newest step's results stay whole; each older one keeps its short fields, its first lines and its key lines,
+# with a plain note saying it was shortened. The call/response pairing is never touched, only the response body.
+SHORTENED_MIN_BYTES = 1000  # a result smaller than this is left whole: shortening it saves too little
+SHORT_FIELD_CHARS = 120
+KEY_LINE = re.compile(r"error|fail|denied|refused|warn|critical|fatal|panic|killed|listen|exit", re.I)
+
+
+def _lines(value) -> list[str]:
+    """Every line of text in a result, in order: strings split on newlines, other list items one line each."""
+    if isinstance(value, str):
+        return value.splitlines()
+    if isinstance(value, dict):
+        return [line for v in value.values() for line in _lines(v)]
+    if isinstance(value, list):
+        return [line for v in value for line in
+                (_lines(v) if isinstance(v, str) else [json.dumps(v, default=str, ensure_ascii=False)])]
+    return []
+
+
+def _shortened(response: dict) -> dict:
+    """An earlier tool result cut down to what still helps, saying so plainly."""
+    out = {k: v for k, v in response.items()
+           if isinstance(v, (bool, int, float)) or (isinstance(v, str) and "\n" not in v and len(v) <= SHORT_FIELD_CHARS)}
+    lines = [line.strip() for line in _lines({k: v for k, v in response.items() if k not in out}) if line.strip()]
+    key = [line for line in lines[4:] if KEY_LINE.search(line)][-4:]  # the latest key lines matter most
+    out["shortenedEarlier"] = (f"This earlier output was shortened so the whole investigation fits: it had {len(lines)} "
+                               f"lines ({_size(response)} bytes). Its first lines and key lines are kept here; run "
+                               "the check again if you need all of it.")
+    out["firstLines"] = [line[:160] for line in lines[:4]]
+    if key:
+        out["keyLines"] = [line[:160] for line in key]
+    return out
+
+
+def _shorten_older_results(req, excess: int) -> bool:
+    """Shorten the oldest tool results (never the newest step's) until about `excess` tokens are saved. Contents and
+    parts are replaced, never edited in place, so the session's own record keeps the full output."""
+    last = max((i for i, c in enumerate(req.contents) if any(p.function_response for p in (c.parts or []))),
+               default=0)
+    saved, changed = 0, False
+    for i, content in enumerate(req.contents[:last]):
+        parts = list(content.parts or [])
+        touched = False
+        for j, part in enumerate(parts):
+            fr = part.function_response
+            if not fr or not isinstance(fr.response, dict) or "shortenedEarlier" in fr.response:
+                continue
+            before = _size(fr.response)
+            if before < SHORTENED_MIN_BYTES:
+                continue
+            small = _shortened(fr.response)
+            parts[j] = part.model_copy(update={"function_response": fr.model_copy(update={"response": small})})
+            saved += (before - _size(small)) // 4  # ~4 bytes a token: errs towards shortening a little more
+            touched = True
+        if touched:
+            req.contents[i] = content.model_copy(update={"parts": parts})
+            changed = True
+        if saved >= excess:
+            break
+    return changed
+
+
+COUNT_RETRY_SECONDS = 1.0
+
+
+def _count(req, counter) -> int:
+    """The exact count, asked again once after a short wait when the counter fails (a busy or flaky moment). If it
+    still fails, the size can't be proven and nothing is sent: an honest "couldn't check", never "too long"."""
+    for attempt in (1, 2):
         try:
-            n = counter(req)
-        except Exception:
-            raise ApiError(422, "context_limit") from None  # cannot prove the bound: fail closed
+            return counter(req)
+        except Exception as e:
+            code = getattr(e, "code", None)
+            permanent = isinstance(code, int) and 400 <= code < 500 and code != 429
+            if attempt == 2 or permanent:
+                raise ApiError(503, "size_check_failed") from None
+            time.sleep(COUNT_RETRY_SECONDS * random.uniform(0.5, 1.5))
+    raise AssertionError("unreachable")
+
+
+def bound_input(req, counter=None, limit: int | None = None, metrics: dict | None = None) -> dict:
+    """Guarantee the complete request fits the limit by exact count. Over it, older tool results in this turn are
+    shortened first, then the oldest chat history is dropped; only a request that still can't fit is refused (the
+    current question with its newest step alone over the limit). Returns what was done: {"shortened", "trimmed"}.
+
+    Each reduction is also recorded in `metrics` (the turn's receipt) the moment it happens, as stepsShortened /
+    longChat, so a turn that then fails (size_check_failed, context_limit) still stores them."""
+    limit = limit or settings.max_input_tokens
+    counter = counter or COUNTER
+    metrics = {} if metrics is None else metrics
+    done = {"shortened": False, "trimmed": False}
+    for _ in range(50):
+        n = _count(req, counter)
         if n <= limit:
-            return
-        if not _trim_oldest(req):
+            return done
+        if _shorten_older_results(req, n - limit):
+            done["shortened"] = metrics["stepsShortened"] = True
+        elif _trim_oldest(req):
+            done["trimmed"] = metrics["longChat"] = True
+        else:
             break
     raise ApiError(422, "context_limit")
 
@@ -1437,7 +1532,9 @@ def make_callbacks(ctx: TurnContext):
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
             scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
-        await asyncio.to_thread(bound_input, llm_request)
+        # Older chat left out (longChat) or older step outputs shortened (stepsShortened) go on the receipt as they
+        # happen, also when the turn then fails.
+        await asyncio.to_thread(bound_input, llm_request, None, ctx.max_input_tokens, ctx.metrics)
         await reserve_call(ctx)
         ctx.watch_call(True)  # the call itself starts now: its silence is timed from here
         return None

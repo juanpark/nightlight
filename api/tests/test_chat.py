@@ -604,3 +604,16 @@ def test_one_card_returned_by_two_steps_sits_after_the_first(client, started):  
     assert len([e for e in ev if e["type"] == "approval_request"]) == 1
     msg = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
     assert [bool(t.get("actionId")) for t in msg["toolCalls"]] == [True, False]  # a reload rebuilds one card
+
+
+def test_long_chat_is_flagged_on_the_receipt(client, started, monkeypatch):
+    """A chat whose older messages no longer fit the history window keeps going; its receipt carries longChat so
+    the chat can suggest a fresh start."""
+    from nightlight_api.config import settings
+    monkeypatch.setattr(settings, "history_messages", 2)
+    sid = new_session(client)
+    first = events(ask(client, sid))
+    assert first[-1]["type"] == "done" and "longChat" not in first[-1]["metrics"]
+    events(ask(client, sid, text="And my NAS?"))
+    third = events(ask(client, sid, text="And the Mac mini?"))
+    assert third[-1]["type"] == "done" and third[-1]["metrics"]["longChat"] is True

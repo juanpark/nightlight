@@ -271,8 +271,10 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
 
 # ------------------------------------------------------------------ history
 
-def history(uid: str, c: Claim) -> list[types.Content]:
-    """Recent messages as model contents, oldest first, excluding everything from the current turn."""
+def history(uid: str, c: Claim, metrics: dict | None = None) -> list[types.Content]:
+    """Recent messages as model contents, oldest first, excluding everything from the current turn. Older messages
+    beyond history_messages / history_chars are left out; when any are, metrics["longChat"] is set so the answer's
+    receipt can say the chat is getting long (a gentle warning; the chat itself carries on)."""
     msgs = [m.to_dict() for m in db.messages(uid, c.session_id).get()]
     msgs = [m for m in msgs if m.get("turnId") != c.turn_id and m.get("text")]  # a wordless record isn't history
     msgs.sort(key=lambda m: m["seq"])
@@ -282,6 +284,8 @@ def history(uid: str, c: Claim) -> list[types.Content]:
         if chars > settings.history_chars:
             break
         picked.append(m)
+    if metrics is not None and len(picked) < len(msgs):
+        metrics["longChat"] = True
     contents: list[types.Content] = []
     for m in reversed(picked):
         role = "model" if m["role"] == "assistant" else "user"
@@ -376,7 +380,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 sessions = InMemorySessionService()
                 runner = Runner(app_name=APP, agent=agent, session_service=sessions)
                 adk_session = await sessions.create_session(app_name=APP, user_id=uid, state={"uid": uid})
-                for content in await asyncio.to_thread(history, uid, c):
+                for content in await asyncio.to_thread(history, uid, c, ctx.metrics):
                     await sessions.append_event(adk_session, Event(
                         author="user" if content.role == "user" else agent.name, content=content))
                 prompt = c.turn["input"] if kind == "user" else \
@@ -619,7 +623,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                                     tool_calls=tool_calls, action_ids=[a["id"] for a in ctx.actions], error=err)
         except ApiError:
             pass  # superseded meanwhile: nothing to record
-        yield sse({"type": "error", **err, "retryable": e.status == 429})
+        yield sse({"type": "error", **err, "retryable": e.status == 429 or e.code == "size_check_failed"})
     except Exception as e:
         err = {"code": "internal", "message": "Something went wrong on our side. Please try again."}
         if agentlib.model_busy(e):  # the model itself is out of capacity: say so plainly, nothing technical
@@ -840,7 +844,11 @@ def _error_message(code: str) -> str:
         "quota_ip": "This network has asked a lot this hour. Please try again a bit later.",
         "quota_global": "Nightlight has reached today's limit. Please try again later.",
         "kill_switch": "Nightlight's assistant is paused right now.",
-        "context_limit": "This conversation got too long. Please start a new chat.",
+        # Only what was saved carries over: notes in a device's notebook (its Knowledge tab) and, when on, memories.
+        "context_limit": ("This chat has grown too long for me to keep all of it in mind. Please start a new chat. "
+                          "Notes saved about your devices (each device's Knowledge tab) carry over to it."),
+        "size_check_failed": ("I couldn't check the size of this request just now, so I stopped before sending it. "
+                              "Please try again in a moment."),
         "too_many_steps": "That needed too many steps. Please ask about one thing at a time.",
         "resetting": "The demo is resetting. Please wait a moment.",
     }.get(code, "Something went wrong. Please try again.")
