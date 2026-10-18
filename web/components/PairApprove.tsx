@@ -1,8 +1,10 @@
 "use client";
-// "Your device shows a code": look the code up, show which device asked, then Approve or This isn't mine.
+// "Your device shows a code": look the code up, show which device asked, then Approve or This isn't mine. A device
+// that was here before (reinstalled, or removed and not yet purged) can continue its history instead of starting anew.
 // Used in Add a device and on /pair (the page a phone opens from the device's QR code).
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { timeAgo } from "@/lib/time";
 
 export const CODE_RE = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/;
 
@@ -12,7 +14,8 @@ export function normalCode(raw: string) {
   return /^[A-Z0-9]{8}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4)}` : s;
 }
 
-interface Preview { name: string; os?: string; expiresAt?: string }
+interface Preview { name: string; os?: string; expiresAt?: string;
+  continues?: { deviceId: string; name: string; lastSeen: string | null; removed?: boolean } | null }
 export type PairResult = { approved: boolean; name: string };
 
 function message(e: unknown) {
@@ -34,6 +37,7 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
   const [preview, setPreview] = useState<{ code: string; p: Preview } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [keep, setKeep] = useState(true); // continue the earlier device's history (the default when there is one)
   const code = normalCode(raw);
   const valid = CODE_RE.test(code);
 
@@ -41,6 +45,7 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
     setBusy(true); setErr(""); setPreview(null);
     try {
       setPreview({ code: c, p: await api<Preview>("GET", `/api/devices/pair/${encodeURIComponent(c)}`) });
+      setKeep(true);
     } catch (e) {
       setErr(message(e));
     } finally {
@@ -53,7 +58,15 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
     setBusy(true); setErr("");
     if (approve) onApprove?.();
     try {
-      await api("POST", `/api/devices/pair/${encodeURIComponent(preview.code)}`, { approve });
+      const path = `/api/devices/pair/${encodeURIComponent(preview.code)}`;
+      // continueDevice only when there is something to continue (an API without it refuses unknown fields)
+      if (approve && preview.p.continues) {
+        try { await api("POST", path, { approve, continueDevice: keep }); }
+        catch (e) {
+          if (!(e instanceof ApiError && e.code === "nothing_to_continue")) throw e;
+          await api("POST", path, { approve }); // the earlier device is gone after all: add it as new
+        }
+      } else await api("POST", path, { approve });
       onDone({ approved: approve, name: preview.p.name });
     } catch (e) {
       setErr(message(e));
@@ -81,6 +94,19 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
         <div className="card">
           <strong>Add “{preview.p.name}”{preview.p.os ? ` (${preview.p.os})` : ""}?</strong>
           <span className="small muted">Only approve a device you just set up yourself. Code {preview.code}.</span>
+          {preview.p.continues && (() => {
+            const c = preview.p.continues;
+            const seen = c.lastSeen ? `, last seen ${timeAgo(new Date(c.lastSeen))}` : "";
+            return (
+              <fieldset className="pair-continue">
+                <legend>This looks like your {c.name}{seen}{c.removed ? " (removed)" : ""}. Continue its history?</legend>
+                <label><input type="radio" name="continue" checked={keep} onChange={() => setKeep(true)} />{" "}
+                  <strong>Continue its history</strong> <span className="small muted">(keeps its notes, saved fixes,
+                    jobs and place on the map)</span></label>
+                <label><input type="radio" name="continue" checked={!keep} onChange={() => setKeep(false)} />{" "}
+                  <strong>Add as a new device</strong></label>
+              </fieldset>);
+          })()}
           <div className="actions">
             <button className="primary" disabled={busy} onClick={() => decide(true)}>Approve</button>
             <button disabled={busy} onClick={() => decide(false)}>This isn’t mine</button>
