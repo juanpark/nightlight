@@ -4,7 +4,9 @@
 import { useEffect, useRef } from "react";
 import { driver, type DriveStep } from "driver.js";
 import "driver.js/dist/driver.css";
-import { markSeen, seen, TOURS, type TourId, type TourState } from "@/lib/tour";
+import { markSeen, seen, seenAt, TOURS, type TourId, type TourState } from "@/lib/tour";
+
+const CARD_TOUR_AFTER = 5 * 60 * 1000; // never two tours back to back: the card tour waits a while after the first one
 
 /** The element a step points at, if it is on screen (a phone hides the menu and the other pane). */
 function anchor(name?: string): Element | undefined {
@@ -50,7 +52,8 @@ export default function Tour({ uid, state, ready }: { uid: string; state: TourSt
     if (!ready || running.current) return;
     const next: TourId | null = !seen(uid, "intro") ? "intro"
       : state.realDevices > 0 && !seen(uid, "firstDevice") ? "firstDevice"
-        : state.hasCard && !seen(uid, "firstCard") && anchor("card") ? "firstCard" : null;
+        : state.hasCard && !seen(uid, "firstCard") && anchor("card")
+          && Date.now() - seenAt(uid, "intro") > CARD_TOUR_AFTER ? "firstCard" : null;
     if (!next) return;
     const t = setTimeout(() => run(next), 1500);
     return () => clearTimeout(t);
