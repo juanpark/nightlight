@@ -16,7 +16,7 @@ export function normalCode(raw: string) {
 
 interface Preview { name: string; os?: string; expiresAt?: string;
   continues?: { deviceId: string; name: string; lastSeen: string | null; removed?: boolean } | null }
-export type PairResult = { approved: boolean; name: string };
+export type PairResult = { approved: boolean; name: string; continued?: string }; // continued: the earlier device's id
 
 function message(e: unknown) {
   if (e instanceof ApiError) {
@@ -60,14 +60,15 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
     try {
       const path = `/api/devices/pair/${encodeURIComponent(preview.code)}`;
       // continueDevice only when there is something to continue (an API without it refuses unknown fields)
+      let continued: string | undefined;
       if (approve && preview.p.continues) {
-        try { await api("POST", path, { approve, continueDevice: keep }); }
+        try { continued = (await api<{ continues?: string | null }>("POST", path, { approve, continueDevice: keep })).continues ?? undefined; }
         catch (e) {
           if (!(e instanceof ApiError && e.code === "nothing_to_continue")) throw e;
           await api("POST", path, { approve }); // the earlier device is gone after all: add it as new
         }
       } else await api("POST", path, { approve });
-      onDone({ approved: approve, name: preview.p.name });
+      onDone({ approved: approve, name: preview.p.name, continued });
     } catch (e) {
       setErr(message(e));
       setBusy(false);
