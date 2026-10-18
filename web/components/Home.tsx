@@ -120,9 +120,19 @@ export default function Home({ user, account }: { user: User; account?: string }
 
   // "Try the real app": a plain Google sign-in; the anonymous sample visit is simply left behind (a signed-in owner can
   // open the sample home again with Take the tour)
+  // after "Try it on your own computer" signed in: open Add a device (the wish waited in this tab)
+  useEffect(() => {
+    if (user.isAnonymous) return;
+    try {
+      if (sessionStorage.getItem("nl_after_sign_in") === "add") { sessionStorage.removeItem("nl_after_sign_in"); setPanel("add"); }
+    } catch { /* nothing waits */ }
+  }, [user.uid, user.isAnonymous]);
   async function signInReal() {
     const { auth } = await firebase();
-    await signInWithPopup(auth, new GoogleAuthProvider()).catch(alertless);
+    await signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => {
+      try { sessionStorage.removeItem("nl_after_sign_in"); } catch { /* nothing waits */ } // closed or failed: no wish left behind
+      alertless(e);
+    });
   }
 
   return (
@@ -187,7 +197,7 @@ export default function Home({ user, account }: { user: User; account?: string }
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={signInReal}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} sample={sampleShown} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={signInReal} devices={devices} />}
+          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} sample={sampleShown} onSave={signInReal} devices={devices} />}
           <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
             onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
             onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
