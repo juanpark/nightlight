@@ -594,3 +594,13 @@ def test_the_home_summary_names_saved_fixes(client, started):  # Codex charter c
     text = agentlib.fleet_summary(started, generation(started))
     mac = next(line for line in text.splitlines() if line.startswith("- mac-1 "))
     assert "Saved fixes that worked here before (runbooks): " in mac
+
+
+def test_one_card_returned_by_two_steps_sits_after_the_first(client, started):  # Codex contracts #4
+    FakeLlm.behavior = _scripted(("rotate_logs", {"device_id": "pi-1"}), ("clear_images", {"device_id": "pi-1"}),
+                                 "The Pi is full.")
+    sid = new_session(client)
+    ev = events(ask(client, sid, "고쳐줘"))
+    assert len([e for e in ev if e["type"] == "approval_request"]) == 1
+    msg = next(m.to_dict() for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    assert [bool(t.get("actionId")) for t in msg["toolCalls"]] == [True, False]  # a reload rebuilds one card

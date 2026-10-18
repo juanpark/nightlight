@@ -108,27 +108,15 @@ def space_checks(device: dict) -> tuple[list[str], list[str]]:
     return [c for c in checks if c in offered], [c for c in checks if c not in offered]
 
 
-# Clean-ups whose place the helper's disk check always measures on that kind of system. It prints only places of 50 MB
-# or more, so when the check ran and a place's line is missing, it holds less than that.
-ALWAYS_MEASURED = {"mac": ("xcode_build_data", "brew_cleanup", "npm_cache", "empty_trash"),
-                   "linux": ("apt_clean", "npm_cache")}
-
-
 def measure(output: str, what: list, device: dict) -> dict[str, float]:
-    """GB each clean-up would free, as far as these checks' output shows (recipe -> GB); recipes it says nothing
-    about are left out."""
+    """GB each clean-up would free, from the lines these checks printed (recipe -> GB). A missing line is unknown,
+    never zero: the helper leaves out both small places and places it couldn't measure (timeout, unreadable)."""
     sizes: dict[str, float] = {}
     for cause in library()[SPACE]["causes"]:
         fix = cause.get("fix")
         hit = cause["_re"].search(output or "") if fix and fix not in sizes else None
         if hit and (gb := _gb(hit.groupdict().get("size") or "")) is not None:
             sizes[fix] = round(gb, 2)
-    if "disk" in (what or []) and "Biggest known places" in (output or ""):
-        mac = "mac" in (device.get("os") or "").lower()
-        for fix in ALWAYS_MEASURED["mac" if mac else "linux"]:
-            if fix == "empty_trash" and "Not checked (macOS privacy)" in output:
-                continue  # the Trash wasn't looked at
-            sizes.setdefault(fix, 0.0)
     return sizes
 
 
