@@ -81,6 +81,23 @@ function Step({ n, art, children }: { n: number; art: React.ReactNode; children:
   );
 }
 
+/** What a careful person wants to know before pasting a line from the internet. Facts as in the README ("What never
+ * leaves a device", "Real devices"). */
+function Reassure() {
+  return (
+    <div className="promise small">
+      <ul>
+        <li><strong>Watches, changes nothing.</strong> A fix or clean-up happens only after you tap Approve.</li>
+        <li><strong>Nothing listens on your computer.</strong> It only calls out, so no firewall prompt.</li>
+        <li><strong>Stays on the machine:</strong> its host name, IP addresses, files, passwords and keys.</li>
+        <li><strong>One line removes it</strong>, or remove it from the app.</li>
+      </ul>
+      <p className="muted">In the first minute: your device&apos;s disk, memory and apps, and <em>Found nearby</em>, the
+        printer, TV and phones it can see on your network, by the names they announce.</p>
+    </div>
+  );
+}
+
 const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
 
 export default function AddDevice({ anonymous, onSave, devices }: {
@@ -98,9 +115,11 @@ export default function AddDevice({ anonymous, onSave, devices }: {
   if (anonymous) {
     return (
       <div className="panel">
-        <h3>Add a real device</h3>
-        <p>Real devices stay linked to your account, so first save this home with Google.</p>
-        <button className="primary" onClick={onSave}>Save with Google</button>
+        <h3>Try it on your own computer</h3>
+        <p>Your laptop or Raspberry Pi on your own map in about two minutes. Real devices belong to an account, so
+          first sign in with Google; this sample home stays.</p>
+        <button className="primary" onClick={onSave}>Sign in with Google</button>
+        <Reassure />
       </div>
     );
   }
@@ -129,6 +148,7 @@ export default function AddDevice({ anonymous, onSave, devices }: {
       <h3>Add one of your devices</h3>
       <p className="small muted" style={{ marginTop: 0 }}>Three steps, about a minute. You&apos;ll see it on your map
         the moment it connects.</p>
+      <Reassure />
       <div className="setup-pick" role="radiogroup" aria-label="Which kind of device?">
         <button role="radio" aria-checked={mac} className={mac ? "on" : ""} onClick={() => pick("mac")}>
           <Laptop size={22} strokeWidth={1.6} /> A Mac</button>
@@ -136,6 +156,8 @@ export default function AddDevice({ anonymous, onSave, devices }: {
           <Cpu size={22} strokeWidth={1.6} /> Linux or Raspberry Pi</button>
       </div>
 
+      {mac && <p className="small muted setup-note">A Mac installer with no Terminal is coming: it is waiting on
+        Apple&apos;s signing certificates. Until then, this one line does the same.</p>}
       {os && (
         <ol className="setup-steps">
           {mac
@@ -185,12 +207,14 @@ export default function AddDevice({ anonymous, onSave, devices }: {
 
       <details className="small" style={{ marginTop: 12 }}>
         <summary>What does the helper do? How do I remove it?</summary>
-        <p>A small helper on your device reports its health (disk, memory, what is running). It never sends passwords,
-          logs, file contents or network addresses, and it changes nothing unless you allow a job on the device itself
-          and then approve it here.</p>
+        <p>A small helper on your device reports its health (disk, memory, what is running). It never sends its host
+          name, IP or hardware addresses, files, passwords or keys. The recent log lines of your apps are sent only
+          scrubbed on the device, and you can switch that off per app. It changes nothing unless you allow a kind of
+          job and then approve each one here.</p>
         <p>To remove it, run this on the device:</p>
         <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
-        <p className="soon">Coming later: installers for Mac, Windows and NAS app stores, no terminal needed.</p>
+        <p className="soon">Coming: the Mac installer (waiting on signing), then a Linux package and NAS apps.
+          Windows isn&apos;t supported yet.</p>
       </details>
     </div>
   );
