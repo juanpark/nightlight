@@ -643,7 +643,8 @@ def test_a_too_soon_report_waits_the_asked_gap_not_a_backoff(helper, monkeypatch
     monkeypatch.setattr(helper, "_wait_and_claim", waits.append)
     with pytest.raises(KeyboardInterrupt):
         helper.run(60)
-    assert sleeps == [21] and waits == [60]  # retried after the server's gap, then back to the normal minute
+    # Retried after the server's gap, with the work channel open meanwhile (never a blind sleep), then the minute.
+    assert sleeps == [] and waits == [21, 60]
 
 
 def test_after_running_a_job_the_helper_reports_at_once(helper, monkeypatch):

@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.31"
+VERSION = "0.9.32"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -499,6 +499,8 @@ EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was fo
                 143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
                 127: "couldn't find its program"}
 OOM_MEANING = "was force-stopped because it ran out of memory"
+KILLED_MEANING = ("was force-stopped: something killed it (a person, a program or the system); Docker didn't record "
+                  "it running out of memory")
 HEALTH_MEANING = {"unhealthy": "is running, but failing its health check", "starting": "is running, but its health "
                   "check hasn't passed yet", "healthy": "is running and passing its health check"}
 
@@ -515,6 +517,8 @@ def _look_container(name, logs):
     meaning = EXIT_MEANING.get(code, f"exited with code {code}") if status != "running" else "is running"
     if status != "running" and st.get("OOMKilled"):
         meaning = OOM_MEANING  # Docker saw the memory limit hit: say it plainly, not "killed, or out of memory"
+    elif status != "running" and code == 137:
+        meaning = KILLED_MEANING  # Docker recorded no out-of-memory: say what is known, the plain fact first
     health = st.get("Health") if isinstance(st.get("Health"), dict) else {}
     if status == "running" and health.get("Status") in HEALTH_MEANING:
         meaning = HEALTH_MEANING[health["Status"]]
@@ -1057,8 +1061,80 @@ def _inspect_processes():
         if r[2] not in seen:
             seen.add(r[2])
             shown.append(r)
-    return "\n".join(head + [f"Top programs by processor and by memory (memory %, {how}, program):"] + [
-        f"{m:.1f}% mem, {c:.1f}% cpu, {_one_line(name, 40)}" for c, m, _pid, name in shown])
+    where = _where_each([pid for _c, _m, pid, _n in shown]) if sampled is not None else {}
+    return "\n".join(head + [f"Top programs by processor and by memory (memory %, {how}, program"
+                             + (", and whether it runs inside an app's container or on the computer itself"
+                                if any(where.values()) else "") + "):"] + [
+        f"{m:.1f}% mem, {c:.1f}% cpu, {_one_line(name, 40)}" + (f" ({where[pid]})" if where.get(pid) else "")
+        for c, m, pid, name in shown])
+
+
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
+
+
+def _container_ids():
+    """{full container id: name} of the running containers ({} without Docker), to say which app a program is in."""
+    if not shutil.which("docker"):
+        return {}
+    out = {}
+    for line in _run(["docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"], timeout=max(_left(5), 1)
+                     ).splitlines()[:100]:
+        parts = line.split()
+        if len(parts) == 2 and _CONTAINER_ID.fullmatch(parts[0]):
+            out[parts[0]] = parts[1][:64]
+    return out
+
+
+# Control-group paths, as /proc/<pid>/cgroup shows them. A container: Docker ("docker-<id>.scope", "/docker/<id>"),
+# Podman ("libpod-<id>"), containerd and Kubernetes ("cri-containerd-", "/containerd/", "kubepods"), LXC ("/lxc/",
+# "lxc.payload"); systemd-machined guests and containers ("machine.slice"). The computer itself: the root, init, and
+# systemd's own system and user slices. Anything else is said as unknown, never guessed.
+# Matched on whole path components, so a host service named like a runtime ("docker-cleanup.service") stays a host
+# service.
+_CONTAINER_SCOPE = re.compile(r"(docker|libpod|cri-containerd|crio)-[0-9a-f]{12,64}(\.scope)?|"
+                              r"kubepods(-[A-Za-z0-9_-]+)?\.slice|kubepods|lxc\.payload\.[^/]+")
+_UNIT = re.compile(r".+\.(service|socket|mount|timer|target|path|swap|device|automount)")  # a systemd unit: never one
+
+
+def _in_container(path):
+    parts = [p for p in path.split("/") if p and not _UNIT.fullmatch(p)]
+    return any(_CONTAINER_SCOPE.fullmatch(p) for p in parts) or any(
+        a in ("docker", "lxc") and (b and (a == "lxc" or _CONTAINER_ID.fullmatch(b)))
+        for a, b in zip(parts, parts[1:]))
+_HOST_PATH = re.compile(r"/|/init\.scope|/system\.slice(/[^/]+\.(service|scope|mount|socket))?|/user\.slice(/.*)?")
+UNKNOWN_WHERE = "couldn't tell whether it runs inside an app"
+
+
+def _cgroup_where(text):
+    """("container", id or None) | ("machine", None) | ("host", None) | ("unknown", None) for one cgroup file."""
+    paths = [ln.split(":", 2)[2].strip() for ln in text.splitlines() if ln.count(":") >= 2]
+    if any(_in_container(p) for p in paths):
+        m = _CONTAINER_ID.search(text)
+        return "container", m.group(0) if m else None
+    if any("machine.slice" in p.split("/") for p in paths):
+        return "machine", None
+    if paths and all(_HOST_PATH.fullmatch(p) for p in paths):
+        return "host", None
+    return "unknown", None
+
+
+def _where_each(pids):
+    """Linux: {pid: where it runs}: inside a container (and which app's), on the computer itself, or unknown, from
+    its control group; None when that can't be read. A program on the computer itself is never part of an app,
+    whatever its name suggests."""
+    found = {}
+    for pid in pids:
+        try:
+            with open(f"{_PROC}/{pid}/cgroup") as f:
+                found[pid] = _cgroup_where(f.read(4096))
+        except (OSError, ValueError):
+            found[pid] = None
+    # Docker is asked for names only when a program is in a container with an id
+    names = _container_ids() if any(w and w[1] for w in found.values()) else {}
+    words = {"host": "on the computer itself, not inside any app", "unknown": UNKNOWN_WHERE,
+             "machine": "inside a virtual machine or system container"}
+    return {pid: None if w is None else f"inside app {names[w[1]]}" if w[0] == "container" and w[1] in names
+            else "inside a container" if w[0] == "container" else words[w[0]] for pid, w in found.items()}
 
 
 def _inspect_updates():
@@ -2341,8 +2417,9 @@ def run(every):
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
             sys.stdout.flush()
             os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
-        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure
-            time.sleep(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
+        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure. The work
+            # channel stays open meanwhile, so a check the owner's chat asks for still starts within a second.
+            _wait_and_claim(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
             continue
         wait = every if status == 200 else min(max(wait, every) * 2, 900)
         _wait_and_claim(wait)  # returns early after running a job: the change is then reported right away
