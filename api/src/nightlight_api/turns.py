@@ -27,7 +27,8 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
-ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server", "restart_container",
+ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server",
+                "update_app", "restart_container",
                 "restart_service",
                 "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
 
@@ -471,7 +472,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
                                **({"callId": rid} if rid else {}),
                                "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
-                    if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
+                    if part.function_response.name in ACTION_TOOLS and (resp.get("status") == "pending"
+                                                                        or resp.get("awaitingTap")):
                         ids = resp.get("actionIds") or [resp.get("actionId")]  # a runbook can put up several
                         if step is not None:
                             step["actionId"] = ids[0]  # the card sits right after its step
@@ -542,7 +544,7 @@ def _keep_until():
     return datetime.now(timezone.utc) + timedelta(days=CHAT_KEEP_DAYS)
 
 
-DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command"}  # the device answers; slow ones finish in a follow-up
+DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command", "check_space"}  # the device answers; slow ones finish in a follow-up
 DETAILS_CHARS = 2000
 
 
@@ -554,6 +556,13 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         return f"Couldn't: {reason}", None
     if status == "asked":
         return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
+    if status in ("waiting", "safer_first"):
+        plan = (resp.get("proposed") or {}).get("plan") or ""
+        return ("A card for this was already waiting: " if status == "waiting" else "The safer step first: ") + plan, None
+    if name == "check_space" and status == "done" and "devices" in resp:
+        rows = [f"{d.get('name')}: " + ", ".join(f"{u['what']} {u['sizeGb']} GB" for u in d.get("usedBy") or [])
+                for d in resp["devices"] if d.get("usedBy")]
+        return f"Measured the space on {len(rows)} device(s)", "\n".join(rows) or None
     if "devices" in resp:
         bad = [d.get("name") for d in resp["devices"] if d.get("status") not in ("ok", None)]
         return f"{len(resp['devices'])} devices" + (f"; needs a look: {', '.join(bad[:4])}" if bad else "; all fine"), None
@@ -577,7 +586,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         cards = len(resp.get("actionIds") or [])
         return f"Runbook \"{resp['runbook']}\": " + (f"put up {cards} card(s) for your approval" if cards
                                                      else f"result: {resp.get('status')}"), None
-    if name == "run_playbook" and resp.get("playbook"):
+    if name in ("run_playbook", "check_space") and resp.get("playbook"):
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
         return (f"Checkup done: {len(lines)} finding(s)" if lines else "Checkup done: nothing stood out"), \

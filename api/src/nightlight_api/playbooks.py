@@ -11,7 +11,7 @@ from google.cloud import firestore
 
 from . import actions, real
 
-_UNIT_GB = {"k": 1 / 1024 ** 2, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
+_UNIT_GB = {"b": 1 / 1024 ** 3, "k": 1 / 1024 ** 2, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
 
 
 @lru_cache(maxsize=1)
@@ -28,11 +28,12 @@ def library() -> dict[str, dict]:
 
 
 def _gb(text: str) -> float | None:
-    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmMgGtT])?i?B?\s*", text or "")
+    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmMgGtT])?i?(B)?\s*", text or "")
     if not m:
         return None
+    unit = m.group(2) or ("b" if m.group(3) else "g")  # "0B" is bytes; a bare number (journal "1.2G" style) is GB
     try:
-        return float(m.group(1)) * _UNIT_GB[(m.group(2) or "g").lower()]
+        return float(m.group(1)) * _UNIT_GB[unit.lower()]
     except ValueError:
         return None
 
@@ -94,6 +95,41 @@ def start(uid: str, device_id: str, book_id: str, *, session_id: str, turn_id: s
     return actions.request_inspection(uid, session_id=session_id, turn_id=turn_id, generation=generation,
                                       device_id=device_id, what=book["checks"], fence=fence,
                                       extra={"playbook": book_id}, mode=mode)
+
+
+SPACE = "disk_full"  # the playbook behind "where did my space go / clear the junk"
+
+
+def space_checks(device: dict) -> tuple[list[str], list[str]]:
+    """(checks of the space playbook this device offers, those it doesn't): a device runs what it can, and the
+    answer says what couldn't be looked at."""
+    offered = set((device.get("allowedJobs") or {}).get("inspect", []))
+    checks = library()[SPACE]["checks"]
+    return [c for c in checks if c in offered], [c for c in checks if c not in offered]
+
+
+# Clean-ups whose place the helper's disk check always measures on that kind of system. It prints only places of 50 MB
+# or more, so when the check ran and a place's line is missing, it holds less than that.
+ALWAYS_MEASURED = {"mac": ("xcode_build_data", "brew_cleanup", "npm_cache", "empty_trash"),
+                   "linux": ("apt_clean", "npm_cache")}
+
+
+def measure(output: str, what: list, device: dict) -> dict[str, float]:
+    """GB each clean-up would free, as far as these checks' output shows (recipe -> GB); recipes it says nothing
+    about are left out."""
+    sizes: dict[str, float] = {}
+    for cause in library()[SPACE]["causes"]:
+        fix = cause.get("fix")
+        hit = cause["_re"].search(output or "") if fix and fix not in sizes else None
+        if hit and (gb := _gb(hit.groupdict().get("size") or "")) is not None:
+            sizes[fix] = round(gb, 2)
+    if "disk" in (what or []) and "Biggest known places" in (output or ""):
+        mac = "mac" in (device.get("os") or "").lower()
+        for fix in ALWAYS_MEASURED["mac" if mac else "linux"]:
+            if fix == "empty_trash" and "Not checked (macOS privacy)" in output:
+                continue  # the Trash wasn't looked at
+            sizes.setdefault(fix, 0.0)
+    return sizes
 
 
 def summary(result: dict) -> str:

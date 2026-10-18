@@ -13,7 +13,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 import re
 
 from . import apps, db, links, release
-from .errors import ApiError, not_found
+from .errors import ApiError, Outcome, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub, scrub_value
 
@@ -47,6 +47,10 @@ FIX = {
     "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "
                        "200 MB of system logs", "Can't be undone: older log entries are deleted."),
 }
+# The device's last measurement per clean-up (device field `spaceMeasured`, written when its disk checks come back and
+# when a clean-up ran): one that measured at most NOTHING_GB within MEASURED_FOR gets no card, it would free nothing.
+NOTHING_GB = 0.1
+MEASURED_FOR = timedelta(hours=3)
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -900,6 +904,12 @@ def _fix_card(device: dict, params: dict) -> dict:
         raise ValueError("bad_target")
     if params["recipe"] not in (device.get("allowedJobs") or {}).get("fix", []):
         raise ValueError("not_allowed_on_device")
+    measured = ((device.get("spaceMeasured") or {}).get(params["recipe"]) or {})
+    at = measured.get("at")
+    age = (_now() - at) if isinstance(at, datetime) else timedelta(0)  # not a datetime yet: written just now
+    if measured.get("gb") is not None and measured["gb"] <= NOTHING_GB and age < MEASURED_FOR:
+        raise Outcome("nothing_to_free", recipe=params["recipe"], measuredGb=measured["gb"],
+                      minutesAgo=int(age.total_seconds() // 60))
     title, what, undo = FIX[params["recipe"]]
     return {"svcId": None, "plan": f"{title} on the {device['name']}.",
             "dryRun": f"{what}. The helper reports how much space it freed. Nothing else is touched.",

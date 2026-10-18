@@ -58,7 +58,7 @@
       say: The npm cache takes {size}.
       fix: npm_cache
     - id: docker_images
-      match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[MG]B)'
+      match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[kMG]?B)'
       min_gb: 0.3
       say: Docker images take up to {size} that no container uses. The clean-up removes only untagged leftovers; check
         the rest with "docker image ls" before removing anything you built yourself.

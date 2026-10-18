@@ -21,6 +21,15 @@ class ApiError(Exception):
         return {"error": _NAMES.get(self.status, "error"), "code": self.code, **self.extra}
 
 
+class Outcome(ValueError):
+    """A job that doesn't apply for a reason that is itself the answer (e.g. nothing to free): its code, plus what
+    the caller can tell the person."""
+
+    def __init__(self, code: str, **info):
+        super().__init__(code)
+        self.info = info
+
+
 def not_found() -> ApiError:
     return ApiError(404, "not_found")
 
