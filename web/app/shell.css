@@ -195,3 +195,46 @@
   border-top: 1px solid var(--line); }
 .status-icon { flex: none; margin-top: 2px; }
 .top-add[aria-current="page"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--primary); }
+
+/* Day, monochrome. The paper is quiet: solid hairlines on every card, no tinted borders, no glow halos. Colour is
+   spent where it says something: the status word and its ring, a coloured border only on the device that is broken,
+   and the star yellow on the main action and on what needs you. */
+/* The verdict strip on day: a plain white panel with a hairline; the steady star is its one bright spot */
+[data-theme="day"] .needs-strip, [data-theme="day"] .needs-strip[data-state="needs"] { border-color: var(--line); }
+[data-theme="day"] .needs-strip[data-state="needs"] .verdict-light,
+[data-theme="day"] .top-verdict[data-state="needs"] .verdict-light {
+  background: var(--glow); box-shadow: 0 0 0 4px rgb(var(--glow-rgb) / .26); animation: none; }
+[data-theme="day"] .top-verdict[data-state="needs"] { border-color: var(--line-strong); }
+/* the rest of the home, counted by state: each count a dot, a number and a word */
+.verdict-tally { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 0; font-size: 14px; color: var(--muted); }
+.tally-label { color: var(--muted); }
+.tally-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tally-item b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.tally-item .dot { width: 8px; height: 8px; }
+[data-theme="day"] .sheet { box-shadow: -18px 0 40px -28px rgb(26 26 24 / .3); }
+
+[data-theme="day"] .dnode, [data-theme="day"] .dnode.sample { border-width: 1px; border-style: solid; border-color: var(--line);
+  transition: box-shadow .2s cubic-bezier(.22, 1, .36, 1), translate .2s cubic-bezier(.22, 1, .36, 1), border-color .2s; }
+[data-theme="day"] .dnode.warn { border-color: var(--warn-fill); }
+[data-theme="day"] .dnode.crit { border-color: var(--crit-fill); }
+[data-theme="day"] .dnode.crit:not(.sel):not(.focused) { box-shadow: var(--shadow); }
+/* a small lift under the pointer: the card rises, its controls don't change */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  [data-theme="day"] .dnode:not(.sel):not(.focused):hover { translate: 0 -2px; box-shadow: var(--lift); border-color: var(--line-strong); }
+  [data-theme="day"] .dnode.crit:not(.sel):not(.focused):hover { border-color: var(--crit-fill); }
+  [data-theme="day"] .dnode.warn:not(.sel):not(.focused):hover { border-color: var(--warn-fill); }
+}
+[data-theme="day"] .dchip.crit { border-color: var(--line-strong); }
+
+/* "Ask if anything's wrong" while an answer is being written: the working dot, a quieter label, still a way to the answer */
+.ask-check.busy { display: inline-flex; align-items: center; gap: 8px; }
+.ask-check.busy::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--glow); flex: none;
+  box-shadow: 0 0 0 1px var(--glow-ink); animation: working-dot 1.1s ease-in-out infinite; }
+.ask-check-now { color: var(--muted); font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .ask-check.busy::before { animation: none; } }
+/* the chat is in view and answering: the button only says so (disabled reads as quiet, not broken) */
+.ask-check.busy:disabled { opacity: 1; color: var(--muted); cursor: default; }
+/* the device you picked: a soft blue ring, the one blue in the day theme, kept for "this is the one you chose" so it
+   never reads as a status (those are red, amber and green, each with a word) */
+[data-theme="day"] .dnode { --sel-ring: #5b8fd9; }
+[data-theme="day"] .dnode.sel { background: color-mix(in oklab, #5b8fd9 5%, var(--panel)); }

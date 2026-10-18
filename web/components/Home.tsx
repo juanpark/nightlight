@@ -7,6 +7,7 @@ import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
   useUserDoc, useWatches } from "@/lib/data";
 import { byDevice, needsYou, verdict, type Go, useDismissed } from "@/lib/needsYou";
+import type { Device } from "@/lib/types";
 import NeedsList from "./NeedsList";
 import FoundNearby from "./FoundNearby";
 import { addable, useFound } from "@/lib/found";
@@ -141,6 +142,9 @@ export default function Home({ user, account }: { user: User; account?: string }
     requestAnimationFrame(() => (f ? railBtn : foldBtn).current?.focus()); // focus stays on the control that moved
   };
   const showChat = () => { setPane("chat"); setFolded(false); };
+  // the chat is out of sight when it is folded away, or on a narrow screen (one pane at a time, the home showing)
+  const narrow = useNarrow();
+  const chatHidden = folded || narrow;
   const askChat = (q: string) => { showChat(); chat.current?.ask(q); };
   // A panel replaces whatever was open over the home (the device panel included), so closing it lands on the home.
   const open = (p: Panel) => { setMenu(false); setPane("home"); setSelected(null); setApp(null); setPanel(p); };
@@ -236,6 +240,13 @@ export default function Home({ user, account }: { user: User; account?: string }
   }
 
   const foundCount = addable(found.items).length;
+  const count = (s: Device["status"]) => devices.filter((d) => d.status === s).length;
+  const tally = ([
+    ["crit", count("crit"), "broken"],
+    ["warn", count("warn"), count("warn") === 1 ? "needs a look" : "need a look"],
+    ["offline", count("offline"), "not reporting"],
+    ["ok", count("ok"), "fine"],
+  ] as const).filter(([, n]) => n > 0);
   const sample = user.isAnonymous || sampleOn;
   // the More menu: everything that isn't the home itself, in the order an owner reaches for it
   const item = (p: Panel, label: string, Icon: LucideIcon, count?: number, tour?: string) => (
@@ -329,9 +340,22 @@ export default function Home({ user, account }: { user: User; account?: string }
                 <span className="verdict-light" aria-hidden />
                 <div className="verdict-text">
                   <h1 className="verdict" id="verdict">{verdict(needs)}</h1>
+                  {/* the rest of the home at a glance: how many devices are in each state, each with its word */}
+                  {needs.length > 0 && tally.length > 0 && <p className="verdict-tally">
+                    <span className="tally-label">Devices</span>
+                    {tally.map(([tone, n, word]) => <span key={tone} className="tally-item">
+                      <span className={`dot ${tone}`} aria-hidden /><b>{n}</b> {word}</span>)}</p>}
                   {!needs.length && <p className="verdict-sub">Nothing needs you right now. Nightlight keeps watching.</p>}
                 </div>
-                <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
+                {/* while an answer is being written, asking again would only wait in line: the button says it is checking and
+                    takes you to the answer instead */}
+                <button className={`small ask-check ${chatBusy ? "busy" : ""}`} aria-busy={chatBusy || undefined}
+                  disabled={chatBusy && !chatHidden}
+                  title={chatBusy ? (chatHidden ? "Nightlight is answering in the chat. Show the answer." : "Nightlight is answering in the chat")
+                    : undefined}
+                  onClick={() => chatBusy ? showChat() : askChat("Is anything wrong at home?")}>
+                  {chatBusy ? (chatHidden ? <><span className="ask-check-now">Checking…</span>Show me</> : "Checking…")
+                    : <>Ask if anything&apos;s wrong</>}</button>
               </div>
               {needs.length > 0 && <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice plain fold
                 onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />}
@@ -408,19 +432,26 @@ function useFolded(): [boolean, (f: boolean) => void] {
   return [folded, set];
 }
 
-// Night or day: follows the system until the person picks one, then remembers it in this browser.
-function useTheme(): ["night" | "day", () => void] {
-  const [picked, setPicked] = useState<"night" | "day" | null>(null);
-  const [system, setSystem] = useState<"night" | "day">("night");
+// One pane at a time below this width (mobile.css): the chat and the home take turns
+function useNarrow() {
+  const [narrow, setNarrow] = useState(false);
   useEffect(() => {
-    try { const t = localStorage.getItem("nl_theme"); if (t === "night" || t === "day") setPicked(t); } catch { /* system */ }
-    const q = window.matchMedia("(prefers-color-scheme: light)");
-    const read = () => setSystem(q.matches ? "day" : "night");
+    const q = window.matchMedia("(max-width: 900px)");
+    const read = () => setNarrow(q.matches);
     read();
     q.addEventListener("change", read);
     return () => q.removeEventListener("change", read);
   }, []);
-  const theme = picked ?? system;
+  return narrow;
+}
+
+// Day by default; night when the person picks it, remembered in this browser.
+function useTheme(): ["night" | "day", () => void] {
+  const [picked, setPicked] = useState<"night" | "day" | null>(null);
+  useEffect(() => {
+    try { const t = localStorage.getItem("nl_theme"); if (t === "night" || t === "day") setPicked(t); } catch { /* day */ }
+  }, []);
+  const theme = picked ?? "day";
   // on the page too, so what sits outside the shell (the live machine bar, the tour) wears the same theme
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

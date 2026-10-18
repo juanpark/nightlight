@@ -90,7 +90,7 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
         {(filter.favorites || devices.some(starred)) && (
           <button className={`fpill ${filter.favorites ? "on" : ""}`} aria-pressed={filter.favorites}
             onClick={() => onFilter({ ...filter, favorites: !filter.favorites })}>
-            <Star size={15} weight={filter.favorites ? "fill" : undefined} aria-hidden /> Favorites</button>)}
+            <Star className={filter.favorites ? "dstar" : undefined} size={15} weight={filter.favorites ? "fill" : undefined} aria-hidden /> Favorites</button>)}
       </div>
 
       {(kinds.length > 1 || places.length > 1 || tags.length > 0) && <div className="fgroup" role="group" aria-label="Narrow by">

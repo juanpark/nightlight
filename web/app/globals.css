@@ -5,25 +5,31 @@
    Each status has two strengths: --ok/--warn/--crit/--offline for text and anything with text on it (≥ 4.5:1), and
    a livelier --*-fill for dots, rings, borders and glows (≥ 3:1). Hues: a fresh green, an amber kept orange so it never
    reads as the star yellow, a warm coral-red, and a slate. */
+/* Day is monochrome: warm near-black ink on a near-white cream, white panels, hairline greys. The star yellow is the
+   only colour that isn't status: the main button, the light and anything that needs you. Status hues are bright, as
+   fills that still reach 3:1 on white, with darker strengths for text. */
 :root, [data-theme="day"] {
-  --bg: #f5efe2; --panel: #fffaf0; --panel-2: #efe7d6; --line: #e2d7c1; --line-strong: #c4b595;
-  --ink: #15224a; --muted: #4f5b77; --glow: #fdd83a; --glow-rgb: 232 178 0;
-  --accent: #15224a; --on-accent: #fffaf0; --primary: #fdd83a; --primary-hover: #ffe36a; --on-primary: #15224a;
-  --ok: #217541; --warn: #995814; --crit: #b63731; --offline: #5b6681; --on-status: #fffaf0;
-  --ok-fill: #21914e; --warn-fill: #c26c0a; --crit-fill: #e1564d; --offline-fill: #737e9a;
-  --select: rgb(21 34 74 / .08);
-  --shadow: 0 1px 2px rgb(21 34 74 / .05), 0 10px 26px -14px rgb(21 34 74 / .22);
-  --logo-light: #f2b800;
-  --glow-ink: #a87f00; /* the star as a ring or an icon on cream (≥ 3:1) */
-  --field-line: #8f7c58; /* the outline of a field to type in or pick from: ≥ 3:1 on every surface */
-  --scrim: #0b1430; /* what dims the page behind a tour step: the night navy in both themes, never black */
+  --bg: #fcfbf8; --panel: #ffffff; --panel-2: #f3f2ee; --line: #e8e6e0; --line-strong: #cfccc3;
+  --ink: #1a1a18; --muted: #5e5d58; --glow: #fdd83a; --glow-rgb: 253 216 58;
+  --accent: #1a1a18; --on-accent: #ffffff; --primary: #fdd83a; --primary-hover: #ffe14f; --on-primary: #1a1a18;
+  --ok: #1d7a3c; --warn: #b85a00; --crit: #c0352b; --offline: #5e5d58; --on-status: #ffffff;
+  --ok-fill: #22a447; --warn-fill: #d97706; --crit-fill: #ec3d32; --offline-fill: #8e8c86;
+  --select: rgb(26 26 24 / .06);
+  --shadow: 0 1px 2px rgb(26 26 24 / .04), 0 12px 28px -16px rgb(26 26 24 / .18);
+  --logo-light: #f5c400;
+  --glow-ink: #a87f00; /* the star as a ring or an icon on white (≥ 3:1) */
+  --field-line: #8d8a82; /* the outline of a field to type in or pick from: ≥ 3:1 on every surface */
+  --map-dot: #d2cfc6;
+  --fav-edge: #b38600; /* the favourite star's thin gold edge, so the yellow holds on white (≥ 3:1) */
+  --lift: 0 18px 36px -16px rgb(26 26 24 / .26); /* a card raised above the others: selected, opened, a sheet */
+  --scrim: #1a1a18; /* what dims the page behind a tour step: the ink, softened by the tour's own opacity */
   color-scheme: light;
   --radius: 14px;
   --font-ui: var(--font-sans, system-ui), system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-head: var(--font-display, var(--font-ui)), system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) { /* only pages without a theme of their own (/pair); the app is day unless night is picked */
   --bg: #0b1430; --panel: #111c3d; --panel-2: #18254b; --line: #22305c; --line-strong: #33457a;
   --ink: #f4efe4; --muted: #a5a7ab; --glow: #fdd83a; --glow-rgb: 253 216 58;
   --accent: #fdd83a; --on-accent: #15224a; --primary: #fdd83a; --primary-hover: #ffe36a; --on-primary: #15224a;
@@ -34,6 +40,9 @@
   --logo-light: #fdd83a;
   --glow-ink: #fdd83a;
   --field-line: #5f72a8;
+  --map-dot: rgb(128 142 190 / .32);
+  --fav-edge: transparent;
+  --lift: 0 18px 36px -14px rgb(3 7 20 / .55);
   color-scheme: dark;
   }
 }
@@ -48,6 +57,9 @@
   --logo-light: #fdd83a;
   --glow-ink: #fdd83a;
   --field-line: #5f72a8;
+  --map-dot: rgb(128 142 190 / .32);
+  --fav-edge: transparent;
+  --lift: 0 18px 36px -14px rgb(3 7 20 / .55);
   color-scheme: dark;
 }
 /* The same readable strengths under the names the app's components use (--*-ink): text and small icons */
@@ -63,7 +75,7 @@
   white-space: nowrap; border: 0; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased; }
-::selection { background: rgb(253 216 58 / .85); color: #15224a; }
+::selection { background: rgb(253 216 58 / .85); color: var(--on-primary); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel);
   color: var(--ink); padding: 7px 13px; font-weight: 550; transition: background-color .15s, border-color .15s, color .15s; }
@@ -91,6 +103,10 @@ code, pre { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .dot.ok { background: var(--ok-fill); } .dot.warn { background: var(--warn-fill); }
 .dot.crit { background: var(--crit-fill); } .dot.offline { background: var(--offline-fill); }
+/* A favourite is always the star yellow, wherever it shows: on a card, an app chip, the star button, the filter */
+.dstar, .star-btn.on svg { color: var(--glow); fill: var(--glow); }
+.dstar path, .star-btn.on svg path { stroke: var(--fav-edge, transparent); stroke-width: 14;
+  stroke-linejoin: round; paint-order: stroke; }
 .risk { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
 .risk.routine { background: color-mix(in srgb, var(--ok-fill) 18%, transparent); color: var(--ok); }
 .risk.service { background: color-mix(in srgb, var(--warn-fill) 22%, transparent); color: var(--warn); }

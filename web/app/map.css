@@ -10,9 +10,11 @@
 .fpill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px; font-size: 13px;
   font-weight: 500; border-color: var(--line); white-space: nowrap; }
 .fpill:hover:not(:disabled) { border-color: var(--line-strong); }
-.fpill.on, .fpill.on:hover { background: var(--select); color: var(--ink); border-color: var(--accent); font-weight: 600; }
+/* on: the colours flip, ink ground and paper text, like the chosen view */
+.fpill.on, .fpill.on:hover:not(:disabled) { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
 .fpill > svg { flex: none; color: var(--muted); }
-.fpill.on > svg { color: var(--ink); }
+.fpill.on > svg { color: var(--bg); }
+.fpill.on > svg.dstar { color: var(--glow); }
 .fcount { min-width: 20px; padding: 0 6px; border-radius: 99px; line-height: 19px; font-size: 11.5px; font-weight: 700;
   text-align: center; background: var(--glow); color: var(--on-primary); }
 .fclear { margin-left: auto; }
@@ -63,7 +65,7 @@
    gap of the paper between, the card lifts a touch, and the ring settles in from a wider, fainter halo. */
 .dnode { --sel-ring: color-mix(in oklab, var(--ink) 72%, transparent); }
 .dnode.sel { background: color-mix(in oklab, var(--ink) 4%, var(--panel));
-  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), 0 18px 36px -14px rgb(3 7 20 / .55);
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), var(--lift);
   animation: sel-in .28s cubic-bezier(.22, 1, .36, 1); }
 @keyframes sel-in {
   from { box-shadow: 0 0 0 3px var(--bg), 0 0 0 12px color-mix(in oklab, var(--ink) 0%, transparent), var(--shadow); }
@@ -145,7 +147,7 @@
 }
 
 /* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
-.dnode .dstar { color: var(--glow-ink); fill: var(--glow-ink); flex: none; }
+.dnode .dstar { flex: none; }
 .dfavs { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .dchip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; max-width: 100%;
   font-size: 12px; line-height: 1; padding: 4px 6px; border-radius: 999px; background: var(--bg);
@@ -160,7 +162,7 @@
 .dfavs.hl .dchip { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }
 
 /* An opened card: every app as a chip, two to a row; the cards below move down to make room. */
-.dnode.focused { z-index: 5; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), 0 18px 36px -14px rgb(3 7 20 / .55); } /* opened in place: the same ring as selected */
+.dnode.focused { z-index: 5; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), var(--lift); } /* opened in place: the same ring as selected */
 .dappgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .dappgrid .dchip { cursor: pointer; justify-content: flex-start; min-height: 28px; font: inherit; font-size: 12px; }
 .dappgrid .dchip:hover { border-color: var(--accent); }

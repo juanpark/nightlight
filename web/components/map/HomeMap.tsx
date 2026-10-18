@@ -390,9 +390,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         edgesFocusable={false} /* Tab goes device to device; a line is chosen by clicking it */
         panOnScroll zoomOnScroll={false} zoomOnPinch={!still} zoomOnDoubleClick={false}
         fitView fitViewOptions={FIT}>
-        {/* graph paper: fine squares, with a stronger line every fifth */}
-        <Background id="fine" variant={BackgroundVariant.Lines} gap={GRID} lineWidth={0.5} color="rgba(128,142,190,.14)" />
-        <Background id="major" variant={BackgroundVariant.Lines} gap={GRID * 5} lineWidth={1} color="rgba(128,142,190,.26)" />
+        {/* dot paper: one quiet dot per snap square (the colour is a theme token) */}
+        <Background id="dots" variant={BackgroundVariant.Dots} gap={GRID} size={1.4} color="var(--map-dot)" />
         <Controls showInteractive={false} position={touch ? "bottom-right" : "top-right"} /> {/* on touch: clear of the devices */}
       </ReactFlow>
       {touch && <button className={`hm-move ${live ? "on" : ""}`} aria-pressed={live} onClick={() => setLive(!live)}>

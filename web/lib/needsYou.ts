@@ -185,9 +185,12 @@ export function byDevice(needs: Need[]): Map<string, Need[]> {
 
 export function verdict(needs: Need[]): string {
   if (needs.length === 0) return "All good";
+  // the urgent ones lead, since that is what to act on first; the rest follow as "and N more"
   const urgent = needs.filter((n) => n.priority === 1).length;
-  return `${needs.length} ${needs.length === 1 ? "thing needs" : "things need"} you` + (urgent && needs.length > 1
-    ? `, ${urgent} urgent` : "");
+  const rest = needs.length - urgent;
+  const things = (n: number, kind = "") => `${n} ${kind}${n === 1 ? "thing needs" : "things need"} you`;
+  if (!urgent) return things(needs.length);
+  return things(urgent, "urgent ") + (rest ? `, and ${rest} more` : "");
 }
 
 /** One plain sentence about a device, for the top of its panel. */

@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Returning visitor: show the loading screen (in their app theme) instead of the landing page before the first paint; AppGate clears this. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem("nl-session")){var d=document.documentElement.dataset,t=localStorage.getItem("nl_theme");d.session="1";d.theme=t==="day"||t==="night"?t:matchMedia("(prefers-color-scheme: dark)").matches?"night":"day"}}catch(e){}`,
+            __html: `try{if(localStorage.getItem("nl-session")){var d=document.documentElement.dataset,t=localStorage.getItem("nl_theme");d.session="1";d.theme=t==="night"?"night":"day"}}catch(e){}`,
           }}
         />
       </head>
