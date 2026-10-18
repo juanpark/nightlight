@@ -1089,7 +1089,17 @@ def _container_ids():
 # Podman ("libpod-<id>"), containerd and Kubernetes ("cri-containerd-", "/containerd/", "kubepods"), LXC ("/lxc/",
 # "lxc.payload"); systemd-machined guests and containers ("machine.slice"). The computer itself: the root, init, and
 # systemd's own system and user slices. Anything else is said as unknown, never guessed.
-_IN_CONTAINER = re.compile(r"docker[-/]|libpod-|cri-containerd|/containerd/|kubepods|/lxc[/.]|lxc\.payload")
+# Matched on whole path components, so a host service named like a runtime ("docker-cleanup.service") stays a host
+# service.
+_CONTAINER_SCOPE = re.compile(r"(docker|libpod|cri-containerd|crio)-[0-9a-f]{12,64}(\.scope)?|kubepods([-.].*)?|"
+                              r"lxc\.payload\..+")
+
+
+def _in_container(path):
+    parts = [p for p in path.split("/") if p]
+    return any(_CONTAINER_SCOPE.fullmatch(p) for p in parts) or any(
+        a in ("docker", "lxc") and (b and (a == "lxc" or _CONTAINER_ID.fullmatch(b)))
+        for a, b in zip(parts, parts[1:]))
 _HOST_PATH = re.compile(r"/|/init\.scope|/system\.slice(/[^/]+\.(service|scope|mount|socket))?|/user\.slice(/.*)?")
 UNKNOWN_WHERE = "couldn't tell whether it runs inside an app"
 
@@ -1097,10 +1107,10 @@ UNKNOWN_WHERE = "couldn't tell whether it runs inside an app"
 def _cgroup_where(text):
     """("container", id or None) | ("machine", None) | ("host", None) | ("unknown", None) for one cgroup file."""
     paths = [ln.split(":", 2)[2].strip() for ln in text.splitlines() if ln.count(":") >= 2]
-    if any(_IN_CONTAINER.search(p) for p in paths):
+    if any(_in_container(p) for p in paths):
         m = _CONTAINER_ID.search(text)
         return "container", m.group(0) if m else None
-    if any("machine.slice" in p for p in paths):
+    if any("machine.slice" in p.split("/") for p in paths):
         return "machine", None
     if paths and all(_HOST_PATH.fullmatch(p) for p in paths):
         return "host", None

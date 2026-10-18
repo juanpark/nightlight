@@ -185,13 +185,50 @@ def _bounded(value: dict, ctx: TurnContext, shrink: tuple = (), readings: tuple 
     if _size(out) > limit:  # every reading list compacted first, then cut from the end
         for key in lists:
             out[key] = [{k: r[k] for k in READING_KEYS if k in r} if isinstance(r, dict) else r for r in out[key]]
-    for key in reversed(lists):  # the last-named list gives way first
+    # Other metadata (permissions such as allowedJobs, ...) next: each list in it keeps its first few entries with a
+    # count of the rest, biggest part first.
+    core = set(ENVELOPE) | set(lists) | {"shortened"}
+    meta = sorted((k for k in out if k not in core and not k.endswith("Omitted")), key=lambda k: -_size(out[k]))
+    for key in meta:
+        if _size(out) <= limit:
+            break
+        capped, omitted = _cap_lists(out[key], META_KEEP)
+        if omitted:
+            out[key], out[f"{key}Omitted"] = capped, omitted
+    for key in reversed(lists):  # then the reading rows: the last-named list gives way first
         rows, total = out[key], len(out[key])
         while rows and _size(out) > limit:
             rows = rows[:-1]
             out[key] = rows
             out[f"{key}Omitted"] = {"notShown": total - len(rows), "total": total}  # to fit the result
+    for key in meta:  # still too big: metadata is left out whole, and the result names it
+        if _size(out) <= limit:
+            break
+        out.pop(key, None)
+        out.pop(f"{key}Omitted", None)
+        out["leftOut"] = out.get("leftOut", []) + [key]
     return out if _size(out) <= limit else _bounded_string(out, limit)
+
+
+# What always survives a shrink: what the thing is and how it is now.
+ENVELOPE = ("id", "name", "status", "health", "vitals", "realm", "stale", "lastSeen", "readingsAsOf", "os")
+META_KEEP = 3
+
+
+def _cap_lists(value, keep: int):
+    """(value with each list cut to `keep` entries, {path: how many were cut}) for a list or a dict of lists."""
+    if isinstance(value, list):
+        return (value[:keep], {"notShown": len(value) - keep, "total": len(value)}) if len(value) > keep \
+            else (value, {})
+    if isinstance(value, dict):
+        out, omitted = {}, {}
+        for k, v in value.items():
+            if isinstance(v, list) and len(v) > keep:
+                out[k], omitted[k] = v[:keep], {"notShown": len(v) - keep, "total": len(v)}
+            else:
+                out[k] = v
+        return out, omitted
+    return value, {}
 
 
 def _bounded_string(clean: dict, limit: int) -> dict:
