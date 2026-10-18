@@ -184,3 +184,8 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .driver-popover.nl-tour .driver-popover-arrow-side-right.driver-popover-arrow { border-right-color: var(--panel); }
 .driver-popover.nl-tour .driver-popover-arrow-side-top.driver-popover-arrow { border-top-color: var(--panel); }
 .driver-popover.nl-tour .driver-popover-arrow-side-bottom.driver-popover-arrow { border-bottom-color: var(--panel); }
+/* A link that looks like a button (Add a device: Download anyway) */
+a.button { display: inline-block; font: inherit; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); padding: 7px 12px; text-decoration: none; }
+a.button.primary { background: var(--accent); color: var(--bg); border-color: transparent; }
+.setup-alt { margin-top: 10px; }

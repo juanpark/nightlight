@@ -99,6 +99,68 @@ function Reassure() {
   );
 }
 
+const PKG = "/download/Nightlight.pkg";
+
+/** The Mac installer, behind a plain warning first: it isn't signed by Apple yet, so macOS warns about it. Shown only
+ * when this site actually serves the package. */
+function MacInstaller() {
+  const [served, setServed] = useState(false);
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    fetch(PKG, { method: "HEAD" }).then((r) => setServed(r.ok), () => {});
+  }, []);
+  useEffect(() => {
+    if (!asking) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAsking(false); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [asking]);
+  if (!served) return null;
+  return (
+    <div className="setup-alt">
+      <p className="small">Rather not use Terminal on a Mac?{" "}
+        <button onClick={() => setAsking(true)}>Mac installer</button></p>
+      {asking && (
+        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) setAsking(false); }}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pkg-title">
+            <h3 id="pkg-title">Before you download</h3>
+            <p>This installer isn&apos;t signed by Apple yet (signing is pending). macOS will warn that it can&apos;t
+              check it for malicious software.</p>
+            <p>To open it: right-click the file → <strong>Open</strong>, or <strong>System Settings → Privacy &amp;
+              Security → Open Anyway</strong>.</p>
+            <p className="small muted">It installs the same helper as the command line.</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setAsking(false)}>Cancel</button>
+              <a className="button primary" href={PKG} download autoFocus onClick={() => setAsking(false)}>Download anyway</a>
+            </div>
+          </div>
+        </div>)}
+    </div>
+  );
+}
+
+/** How to remove the helper, for each way it was installed. */
+function Uninstall({ origin }: { origin: string }) {
+  return (
+    <details className="small" style={{ marginTop: 8 }}>
+      <summary>How to uninstall</summary>
+      <p><strong>Installed with the command line:</strong> on the device, run</p>
+      <Copy text="nightlight uninstall" />
+      <p className="muted">If it says &quot;command not found&quot;, use <code>~/.local/bin/nightlight uninstall</code>,
+        or paste this:</p>
+      <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
+      <p><strong>Installed with the Mac installer:</strong> run <code>nightlight uninstall</code> in Terminal the same
+        way. The installer&apos;s own files need an administrator to remove; if nobody else on this Mac uses
+        Nightlight:</p>
+      <Copy text="sudo rm -rf '/Library/Application Support/Nightlight' && sudo pkgutil --forget com.nightlight.installer" />
+      <p><strong>Easiest:</strong> removing the device in the app (open it on the map → <em>Remove this
+        device…</em>) does the uninstall for you.</p>
+      <p className="muted">Uninstalling on the device keeps its history in Nightlight: it shows as offline until you
+        remove it in the app.</p>
+    </details>
+  );
+}
+
 const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
 
 export default function AddDevice({ anonymous, onSave, devices }: {
@@ -157,8 +219,6 @@ export default function AddDevice({ anonymous, onSave, devices }: {
           <Cpu size={22} strokeWidth={1.6} /> Linux computer or Raspberry Pi</button>
       </div>
 
-      {mac && <p className="small muted setup-note">A Mac installer you double-click is coming; it still needs
-        Apple&apos;s sign-off. Until then, this one line does the same.</p>}
       {os && (
         <ol className="setup-steps">
           {mac
@@ -193,6 +253,10 @@ export default function AddDevice({ anonymous, onSave, devices }: {
             <button className="linkish small" onClick={getCode}>Get a new line</button>}
         </>)}
 
+      <MacInstaller />
+      <p className="soon small muted">Coming soon: installers for Linux (.deb) and NAS (Docker). Windows isn&apos;t
+        supported yet.</p>
+
       <button className="linkish small" onClick={() => setOther(!other)}>
         {other ? "Hide" : "Can't paste on that device? Use a code it shows instead"}</button>
       {other && (
@@ -208,18 +272,15 @@ export default function AddDevice({ anonymous, onSave, devices }: {
       )}
 
       <details className="small" style={{ marginTop: 12 }}>
-        <summary>What does the helper do? How do I remove it?</summary>
+        <summary>What does the helper do?</summary>
         <p>The Nightlight helper is a small program that runs on your device and reports its health (disk, memory,
           what is running). It never sends the device&apos;s name on the network or its network addresses (host name,
           IP and hardware addresses), files, passwords or keys. Your apps&apos; recent messages (their log lines) are
           sent only after private details are removed on the device, and you can switch that off per app. It changes
           nothing unless you allow that kind of job in the device&apos;s Settings and then approve each one here.</p>
         <p>Pasting the line from another computer you are connected to (over SSH) works just as well.</p>
-        <p>To remove it, paste this on the device:</p>
-        <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
-        <p className="soon">Coming: the Mac installer, then a Linux package and versions for NAS boxes (home storage).
-          Windows isn&apos;t supported yet.</p>
       </details>
+      <Uninstall origin={origin} />
     </div>
   );
 }
