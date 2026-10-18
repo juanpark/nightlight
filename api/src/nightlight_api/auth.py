@@ -26,13 +26,17 @@ def _claims(request: Request) -> dict:
     except Exception:  # expired, revoked, malformed, wrong project: all the same to the caller
         raise ApiError(401, "invalid_token") from None
     from . import live
-    slot = live.pool_slot(claims.get("uid"))  # pool accounts are known by uid (server config), not by claims
-    if slot or "nl_lease" in claims:
-        # A live demo machine's account: only with a token for THIS slot's current lease. A login linked to the
-        # account (no lease claims) or a token from an earlier visit is refused.
-        if not slot or claims.get("nl_slot") != slot or not claims.get("nl_lease") \
+    if live.pool_slot(claims.get("uid")):
+        raise ApiError(401, "lease_ended")  # a pool account itself never signs in; visits have their own identity
+    visit = live.visit_account(claims.get("uid"))
+    if visit or "nl_lease" in claims:
+        # A visit to a live demo machine: its own Firebase identity, mapped by the server (liveVisits) to the pool
+        # account whose data it sees, only with a custom token for THIS slot's current lease.
+        if not visit or claims.get("nl_slot") != visit[0] or claims.get("nl_lease") != visit[2] \
                 or (claims.get("firebase") or {}).get("sign_in_provider") != "custom":
-            raise ApiError(401, "lease_ended")  # also: a Google/password login linked to the pool account
+            raise ApiError(401, "lease_ended")
+        slot = visit[0]
+        claims = {**claims, "uid": visit[1], "visit_uid": claims.get("uid")}  # every route acts on the account
         line = f"{request.method} {request.url.path}"
         changes = request.method != "GET"
         d = live.lease_doc(slot, str(claims["nl_lease"]), fresh=changes)

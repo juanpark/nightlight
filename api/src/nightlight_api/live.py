@@ -69,6 +69,20 @@ def pool_slot(uid: str | None) -> str | None:
 POOL_FORBIDDEN_ACTIONS = frozenset({"remove_device", "update_helper", "expert_grant", "expert_command"})
 
 
+def visits():
+    return db.client().collection("liveVisits")
+
+
+def visit_account(visit_uid: str | None) -> tuple[str, str, str] | None:
+    """(slot, pool account uid, lease id) for a visit identity, from liveVisits (written by the lease transaction)."""
+    if not visit_uid or not visit_uid.startswith("live-") or not enabled():
+        return None
+    d = visits().document(visit_uid).get().to_dict()
+    if not d or d.get("slot") not in pool() or pool()[d["slot"]] != d.get("account"):
+        return None
+    return d["slot"], d["account"], d["leaseId"]
+
+
 def forbid_pool(uid: str) -> None:
     """Called where pool-forbidden changes are made (pairing, removal, permissions, setup, passkeys, settings)."""
     if pool_slot(uid):
@@ -186,11 +200,12 @@ def _signer_app():
         options={"projectId": settings.project_id, "serviceAccountId": settings.live_signer}, name="live-signer")
 
 
-def mint_token(pool_uid: str, slot: str, lease_id: str) -> str:
+def mint_token(visit_uid: str, slot: str, lease_id: str, account: str) -> str:
     """A Firebase custom token for the pool account, signed through IAM (no key file). The lease id rides along as a
     claim, so the token (and every ID token made from it) stops working the moment that lease ends."""
     from firebase_admin import auth as fb_auth
-    token = fb_auth.create_custom_token(pool_uid, {"nl_slot": slot, "nl_lease": lease_id}, app=_signer_app())
+    token = fb_auth.create_custom_token(visit_uid, {"nl_slot": slot, "nl_lease": lease_id, "nl_account": account},
+                                        app=_signer_app())
     return token.decode() if isinstance(token, bytes) else token
 
 
@@ -271,7 +286,9 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
                 return n, d, False
             if d.get("state") == "initializing" and d.get("holder") == requester:
                 raise ApiError(409, "live_starting", retryAfter=3)  # no token until initialisation is complete
-        if sum(1 for d in docs.values() if _live(d, now) and d.get("ipHash") == ip_hash) >= settings.live_per_ip:
+        held = [d for d in docs.values() if (_live(d, now) or d.get("state") == "initializing")
+                and d.get("ipHash") == ip_hash]
+        if len(held) >= settings.live_per_ip:
             raise ApiError(429, "live_per_visitor_limit")
         free = [n for n, d in docs.items() if d.get("state", "free") == "free"]
         if not free:
@@ -288,6 +305,11 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
              "expiresAt": now + timedelta(seconds=settings.live_idle_seconds),
              "hardExpiresAt": now + timedelta(seconds=settings.live_max_seconds), "lastBeat": now}
         d["command"] = d["leaseId"]  # the VM agent's first command for this lease: reset, then the scenario
+        # A Firebase identity for this visit only. The shared pool account never signs in, so anything a visitor
+        # does to their own Firebase user (profile, linked logins, deletion) can't reach another visit.
+        d["visitUid"] = f"live-{n}-{d['leaseId'].lower()[-16:]}"
+        tx.set(visits().document(d["visitUid"]), {"slot": n, "account": names[n], "leaseId": d["leaseId"],
+                                                   "createdAt": now})
         tx.set(slots().document(n), d)
         tx.set(adm_ref, {"at": recent + [now]})
         # The uid -> slot binding the Firestore rules read: this uid's reads need a token for this slot's live lease.
@@ -319,7 +341,7 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
         d = _admit(slot, d["leaseId"])  # only now can a token for this lease exist
     # resumed: this visitor already held a live lease (came back to the page). The screen offers "Continue where
     # you left off" or "Start fresh" (POST /api/demo/live/reset).
-    return {**_public(slot, d), "token": mint_token(d["uid"], slot, d["leaseId"]), "fresh": fresh,
+    return {**_public(slot, d), "token": mint_token(d["visitUid"], slot, d["leaseId"], d["uid"]), "fresh": fresh,
             "resumed": not fresh}
 
 
@@ -347,6 +369,8 @@ def _abandon(slot: str, lease_id: str) -> None:
         ref = slots().document(slot)
         d = ref.get(transaction=tx).to_dict() or {}
         if d.get("leaseId") == lease_id and d.get("state") == "initializing":
+            if d.get("visitUid"):
+                tx.delete(visits().document(d["visitUid"]))
             tx.set(ref, {"state": "maintenance", "reason": "start_failed", "needsCleanup": True, "uid": d["uid"],
                          "epoch": d.get("epoch", 0) + 1, "lastLeaseId": lease_id,
                          "restore": _restore_plan(slot, "free")})
@@ -358,7 +382,8 @@ def _abandon(slot: str, lease_id: str) -> None:
 
 
 def _public(slot: str, d: dict) -> dict:
-    return {"machine": _label(slot), "slot": slot, "leaseId": d["leaseId"], "uid": d["uid"],
+    # uid: the account whose data the visit sees (Firestore paths users/{uid}); visitUid: who signs in.
+    return {"machine": _label(slot), "slot": slot, "leaseId": d["leaseId"], "uid": d["uid"], "visitUid": d.get("visitUid"),
             "expiresAt": d["expiresAt"].isoformat(), "hardExpiresAt": d["hardExpiresAt"].isoformat(),
             "scenario": d.get("scenario", "none"), "etaSeconds": settings.live_eta_seconds,
             "restoreSeconds": settings.live_restore_seconds}
@@ -564,6 +589,8 @@ def _claim_release(slot: str) -> dict | None:
             return None
         epoch = d.get("epoch", 0) + 1  # the visit is over: a new epoch, before any cleanup starts
         tx.update(ref, {"state": "releasing", "releaseStartedAt": now, "epoch": epoch, "wiping": False})
+        if d.get("visitUid"):
+            tx.delete(visits().document(d["visitUid"]))  # the visit identity no longer maps to anything
         return {**d, "epoch": epoch}
 
     return db.run_transaction(run)
@@ -884,7 +911,8 @@ def sweep() -> dict:
     status = all_status(max_age=0)
     for name, vm in status.items():
         d = slots().document(name).get().to_dict() or {}
-        if vm in VM_UP and not _live(d, now) and not d.get("restore"):
+        # A fresh initialisation is starting its VM; a stuck one was released above (and is then cleaned up).
+        if vm in VM_UP and not _live(d, now) and not d.get("restore") and d.get("state") != "initializing":
             try:
                 vm_stop(name)
                 _forget_status(name)

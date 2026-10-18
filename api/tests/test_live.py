@@ -37,7 +37,7 @@ def pool(monkeypatch):
     monkeypatch.setattr(live, "vm_stop", lambda name: calls.append(("stop", name)))
     monkeypatch.setattr(live, "vm_status", lambda name, max_age=0: "TERMINATED")
     monkeypatch.setattr(live, "restore_step", lambda slot, min_gap=0: False)
-    monkeypatch.setattr(live, "mint_token", lambda uid, slot, lease_id: f"tok:{uid}:{lease_id}")
+    monkeypatch.setattr(live, "mint_token", lambda uid, slot, lease_id, account: f"tok:{uid}:{lease_id}")
     live._lease_cache.clear()
     yield names, uids, calls
     for n in names:
@@ -116,10 +116,10 @@ def test_pool_uid_with_another_slots_lease_is_refused_and_the_right_one_works(po
     names, _, _ = pool
     got = live.lease("v1", "ip1")
     other = next(n for n in names if n != got["slot"])
-    bad = _client_with(monkeypatch, {"uid": got["uid"], "nl_slot": other, "nl_lease": got["leaseId"],
+    bad = _client_with(monkeypatch, {"uid": got["visitUid"], "nl_slot": other, "nl_lease": got["leaseId"],
                                      "firebase": {"sign_in_provider": "custom"}})
     assert bad.get("/api/devices/removed", headers={"Authorization": "Bearer x"}).status_code == 401
-    good = _client_with(monkeypatch, {"uid": got["uid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
+    good = _client_with(monkeypatch, {"uid": got["visitUid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
                                       "firebase": {"sign_in_provider": "custom"}})
     assert good.get("/api/devices/removed", headers={"Authorization": "Bearer x"}).status_code == 200
 
@@ -141,10 +141,11 @@ def _jwt(claims):
     return f"{enc({'alg': 'none', 'typ': 'JWT'})}.{enc(body)}."
 
 
-def _read_as(uid, claims):
+def _read_as(uid, claims, auth_uid=None):
     host = os.environ["FIRESTORE_EMULATOR_HOST"]
     url = (f"http://{host}/v1/projects/{settings.project_id}/databases/(default)/documents/users/{uid}/devices/d1")
-    tok = _jwt({"sub": uid, "user_id": uid, "firebase": {"sign_in_provider": "custom"}, **claims})
+    who = auth_uid or uid
+    tok = _jwt({"sub": who, "user_id": who, "firebase": {"sign_in_provider": "custom"}, **claims})
     return httpx.get(url, headers={"Authorization": f"Bearer {tok}"}).status_code
 
 
@@ -153,16 +154,18 @@ def test_rules_need_this_slots_current_lease_for_a_pool_uid(pool):
     uid, slot, lid = got["uid"], got["slot"], got["leaseId"]
     db.device(uid, "d1").set({"name": "x"})
     ok = {"nl_slot": slot, "nl_lease": lid}
-    assert _read_as(uid, ok) == 200
+    vu = got["visitUid"]
+    assert _read_as(uid, ok, vu) == 200
     assert _read_as(uid, {}) == 403  # linked login, no claims
     assert _read_as(uid, {"nl_slot": slot, "nl_lease": "old"}) == 403  # an earlier visit
+    assert _read_as(uid, ok) == 403  # the pool account itself never signs in
     live.slots().document(slot).update({"wiping": True})
-    assert _read_as(uid, ok) == 403
+    assert _read_as(uid, ok, vu) == 403
     live.slots().document(slot).update({"wiping": False, "expiresAt": NOW() - timedelta(seconds=1)})
-    assert _read_as(uid, ok) == 403  # expired by time, before any cleanup ran
+    assert _read_as(uid, ok, vu) == 403  # expired by time, before any cleanup ran
     live.slots().document(slot).update({"expiresAt": NOW() + timedelta(minutes=5),
                                         "hardExpiresAt": NOW() - timedelta(seconds=1)})
-    assert _read_as(uid, ok) == 403
+    assert _read_as(uid, ok, vu) == 403
     assert _read_as("ordinary-user", {}) in (200, 404)  # everyone else: unchanged
 
 
@@ -177,7 +180,7 @@ def test_no_cached_admission_past_expiry(pool):
 def test_writes_during_a_start_fresh_wipe_are_fenced(pool, monkeypatch):
     got = live.lease("v1", "ip1")
     live.slots().document(got["slot"]).update({"wiping": True})
-    c = _client_with(monkeypatch, {"uid": got["uid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
+    c = _client_with(monkeypatch, {"uid": got["visitUid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
                                    "firebase": {"sign_in_provider": "custom"}})
     r = c.post("/api/chat/sessions", json={}, headers={"Authorization": "Bearer x"})
     assert r.status_code == 409 and r.json()["code"] == "machine_resetting"
@@ -398,7 +401,7 @@ def test_a_write_admitted_in_one_visit_cannot_land_in_the_next(pool, monkeypatch
     real_lease_doc = live.lease_doc
     monkeypatch.setattr(live, "lease_doc", lambda s, lid, fresh=False: admitted if lid == first["leaseId"]
                         else real_lease_doc(s, lid, fresh=fresh))
-    c = _client_with(monkeypatch, {"uid": uid, "nl_slot": slot, "nl_lease": first["leaseId"],
+    c = _client_with(monkeypatch, {"uid": first["visitUid"], "nl_slot": slot, "nl_lease": first["leaseId"],
                                    "firebase": {"sign_in_provider": "custom"}})
     r = c.post("/api/devices/dev_base/layout", json={"name": "Judge one's private box"},
                headers={"Authorization": "Bearer x"})
@@ -486,12 +489,11 @@ def test_a_paused_forget_memories_request_from_an_old_visit_is_refused(pool, mon
     monkeypatch.setattr(live, "wipe", lambda u: None)
     live.end(got["slot"], got["leaseId"])
     monkeypatch.setattr(live, "lease_doc", lambda s, lid, fresh=False: admitted)  # it passed auth earlier
-    c = _client_with(monkeypatch, {"uid": got["uid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
+    c = _client_with(monkeypatch, {"uid": got["visitUid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
                                    "firebase": {"sign_in_provider": "custom"}})
     r = c.delete("/api/me/memories", headers={"Authorization": "Bearer x"})
-    assert r.status_code == 403 and r.json()["code"] == "memory_off_on_demo_machine"
-    r = c.get("/api/me/memories", headers={"Authorization": "Bearer x"})
-    assert r.json()["enabled"] is False and r.json()["memories"] == []
+    # the old visit identity no longer maps to the account (401); and memory routes refuse pool accounts anyway (403)
+    assert (r.status_code, r.json()["code"]) in ((401, "lease_ended"), (403, "memory_off_on_demo_machine"))
 
 
 def test_overlapping_maintenance_sweeps_never_steal_and_one_finishes(pool, monkeypatch):
@@ -541,7 +543,7 @@ def test_a_linked_provider_token_for_a_pool_uid_is_refused_by_the_rules(pool):
     for claims in ({}, {"nl_slot": slot, "nl_lease": "stale"}, {"nl_slot": slot, "nl_lease": lid}):
         tok = _jwt({"sub": uid, "user_id": uid, "firebase": {"sign_in_provider": "password"}, **claims})
         assert httpx.get(url, headers={"Authorization": f"Bearer {tok}"}).status_code == 403
-    assert _read_as(uid, {"nl_slot": slot, "nl_lease": lid}) == 200  # the custom token for the current lease
+    assert _read_as(uid, {"nl_slot": slot, "nl_lease": lid}, got["visitUid"]) == 200  # this visit's custom token
 
 
 def test_a_failed_initialisation_goes_to_maintenance_never_free_and_issues_no_token(pool, monkeypatch):
@@ -585,3 +587,89 @@ def test_no_token_is_resumed_while_the_lease_is_initialising(pool, monkeypatch):
     got = live.lease("v1", "ip1")
     assert seen["resume"] == "live_starting" and got["fresh"] is True
     assert live.slots().document(got["slot"]).get().to_dict()["state"] == "leased"
+
+
+# ------------------------------------------------------------------ rev5: per-visit Firebase identities
+
+def test_each_visit_signs_in_as_its_own_identity_never_the_pool_account(pool, monkeypatch):
+    names, uids, _ = pool
+    minted = []
+    monkeypatch.setattr(live, "mint_token", lambda uid, slot, lease_id, account: minted.append((uid, account)) or "t")
+    monkeypatch.setattr(live, "wipe", lambda u: None)
+    _only_first_slot_free(names)
+    first = live.lease("v1", "ip1")
+    live.end(first["slot"], first["leaseId"])
+    _free_after_release(first["slot"])
+    second = live.lease("v2", "ip2")
+    assert first["visitUid"] != second["visitUid"]
+    assert all(u not in uids and a == uids[0] for u, a in minted)
+    # visit 1's own Firebase user (its profile, linked logins, deletion) is not visit 2's: different uids, and visit 1
+    # no longer maps to the account at all
+    assert not live.visits().document(first["visitUid"]).get().exists
+    assert live.visits().document(second["visitUid"]).get().to_dict()["account"] == uids[0]
+
+
+def test_an_old_visit_identity_is_refused_by_api_and_rules_after_the_next_visit_starts(pool, monkeypatch):
+    names, uids, _ = pool
+    monkeypatch.setattr(live, "wipe", lambda u: None)
+    _only_first_slot_free(names)
+    first = live.lease("v1", "ip1")
+    live.end(first["slot"], first["leaseId"])
+    _free_after_release(first["slot"])
+    second = live.lease("v2", "ip2")
+    db.device(uids[0], "d1").set({"name": "x"})
+    old = {"nl_slot": first["slot"], "nl_lease": first["leaseId"]}
+    c = _client_with(monkeypatch, {"uid": first["visitUid"], **old, "firebase": {"sign_in_provider": "custom"}})
+    assert c.get("/api/devices/removed", headers={"Authorization": "Bearer x"}).status_code == 401
+    assert _read_as(uids[0], old, first["visitUid"]) == 403
+    # even with the new lease's claims, the old identity maps to nothing
+    assert _read_as(uids[0], {"nl_slot": second["slot"], "nl_lease": second["leaseId"]}, first["visitUid"]) == 403
+    assert _read_as(uids[0], {"nl_slot": second["slot"], "nl_lease": second["leaseId"]}, second["visitUid"]) == 200
+
+
+def test_the_api_acts_on_the_mapped_account(pool, monkeypatch):
+    got = live.lease("v1", "ip1")
+    c = _client_with(monkeypatch, {"uid": got["visitUid"], "nl_slot": got["slot"], "nl_lease": got["leaseId"],
+                                   "firebase": {"sign_in_provider": "custom"}})
+    r = c.get("/api/me/memories", headers={"Authorization": "Bearer x"})
+    assert r.status_code == 200 and r.json()["reason"] == "memory_off_on_demo_machine"  # i.e. resolved to the pool uid
+
+
+def test_a_visit_identity_cannot_read_another_account(pool):
+    names, uids, _ = pool
+    got = live.lease("v1", "ip1")
+    other = next(u for u in uids if u != got["uid"])
+    db.device(other, "d1").set({"name": "x"})
+    assert _read_as(other, {"nl_slot": got["slot"], "nl_lease": got["leaseId"]}, got["visitUid"]) == 403
+
+
+def test_initialising_leases_count_toward_the_per_address_limit(pool, monkeypatch):
+    monkeypatch.setattr(settings, "live_per_ip", 2)
+    seen = {}
+
+    def during_init(name, value):  # while the first lease is still initialising, two more from the same address
+        if "x" in seen:
+            return
+        seen["x"] = 1
+        live.lease("b", "same")
+        try:
+            live.lease("c", "same")
+            seen["third"] = "granted"
+        except ApiError as e:
+            seen["third"] = e.code
+
+    monkeypatch.setattr(live, "vm_command", during_init)
+    live.lease("a", "same")
+    assert seen["third"] == "live_per_visitor_limit"
+
+
+def test_the_sweep_leaves_a_fresh_initialisation_alone(pool, monkeypatch):
+    names, _, calls = pool
+    live.slots().document(names[0]).set({"state": "initializing", "leaseId": "lease_x", "uid": "u",
+                                         "leasedAt": NOW(), "epoch": 1})
+    monkeypatch.setattr(live, "all_status", lambda max_age=0: {n: "RUNNING" for n in names[:1]})
+    monkeypatch.setattr(live, "advance_restores", lambda budget=0: [])
+    calls.clear()
+    live.sweep()
+    assert ("stop", names[0]) not in calls
+    assert live.slots().document(names[0]).get().to_dict()["state"] == "initializing"
