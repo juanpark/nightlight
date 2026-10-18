@@ -213,14 +213,14 @@ export interface UserDoc {
 }
 
 export type StreamEvent =
-  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate" }
+  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate"; budgetSeconds?: number }
   | { type: "text"; delta: string }
   | { type: "tool_call"; name: string; args?: Record<string, unknown>; callId?: string }
   | { type: "tool_result"; name: string; callId?: string; summary?: string; details?: string | null; ok?: boolean; ms?: number | null }
   | { type: "approval_request"; actionId: string }
   | { type: "followup_pending"; turnId: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }
-  | { type: "done"; turnId: string; metrics?: Record<string, number> };
+  | { type: "done"; turnId: string; metrics?: Metrics };
 
 export interface FoundItem { cid: string; guess: string; vendor?: string | null; services: string[]; ports: number[];
   added?: boolean }
@@ -231,3 +231,7 @@ export interface FoundThing { guess: string; vendor?: string | null; name?: stri
   router?: boolean; privateAddress?: boolean }
 export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
   expiresAt?: Date | null }
+
+/** What one answer took: from the stream's `done`, and on stored messages once the server keeps them there. */
+export interface Metrics { latencyMs?: number; toolCalls?: number; modelCalls?: number; costUsd?: number; model?: string;
+  budgetSeconds?: number; slowCalls?: number }

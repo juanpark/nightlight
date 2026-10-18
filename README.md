@@ -77,7 +77,7 @@ flowchart LR
         A["Cloud Run: API<br/>FastAPI + ADK agent"]
         FS[("Firestore")]
         AUTH["Firebase Authentication"]
-        G["Gemini on Agent Platform<br/>3.5 Flash-Lite: quick answers<br/>3.8 Flash: Investigate mode"]
+        G["Gemini on Agent Platform<br/>3.8 Flash: quick answers (low thinking)<br/>and Investigate mode (medium thinking)"]
         MB["Agent Platform<br/>Memory Bank"]
         GS["Google Search grounding"]
         SCH["Cloud Scheduler<br/>sweep every 5 min"]
@@ -121,7 +121,7 @@ How the pieces talk:
 
 | Service | What it does here | Why |
 |---|---|---|
-| **Gemini on Google Agent Platform** | `gemini-3.5-flash-lite` (low thinking) answers everyday questions; `gemini-3.8-flash` (medium thinking, up to 24 steps) runs Investigate mode | Flash-Lite answered faster in our tests with equally plain answers; the stronger model is a choice the person makes, with its own budget |
+| **Gemini on Google Agent Platform** | `gemini-3.8-flash` for both modes: everyday questions at low thinking with a few steps; Investigate mode at medium thinking with up to 24 steps and its own budget | On 18 Oct we moved everyday answers from 3.5 Flash-Lite to 3.8 Flash: on the same 12 demo questions, run 3 times each, Flash-Lite passed 26 of 36 and Flash 34 of 35, at about twice the time per answer (median 9.0 s against 4.6 s) and 2.5 times the cost |
 | **Agent Development Kit (ADK, Python)** | the agent loop, tools, callbacks before and after each model call (cost reservation, size checks, scrubbing) | one place to bound every call |
 | **Agent Platform Memory Bank** | facts about the person, scoped to the verified user id, written only by the agent's `remember` tool, kept 180 days | memory that survives a cleared browser, without extracting it from transcripts behind the person's back |
 | **Google Search grounding** | one grounded Gemini call for unknown errors, sources returned | the agent should not guess at error messages it has never seen |

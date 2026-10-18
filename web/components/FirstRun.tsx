@@ -15,7 +15,7 @@ function write(k: string, v: string) { try { localStorage.setItem(k, v); } catch
 export default function FirstRun({ uid, anonymous, devices, discoveries, expert, onAdd, onWatch, onSample, onSave,
   onGo }: {
   uid: string; anonymous: boolean; devices: Device[]; discoveries: Discovery[]; expert: { enabled: boolean } | null;
-  onAdd: () => void; onWatch: () => void; onSample: () => void; onSave: () => void; onGo: (g: Go) => void;
+  onAdd: () => void; onWatch: () => void; onSample: () => void; onSave: () => void | Promise<void>; onGo: (g: Go) => void;
 }) {
   const [hidden, setHidden] = useState(true); // until localStorage is read, so it never flashes
   const [skipped, setSkipped] = useState(false);
@@ -27,8 +27,9 @@ export default function FirstRun({ uid, anonymous, devices, discoveries, expert,
   if (anonymous) {
     return (
       <div className="panel firstrun firstrun-line small">
-        This is a sample home. Save with Google to add your own devices.
-        <button className="linkish" onClick={onSave}>Save with Google</button>
+        This is a sample home: the devices are simulated. Yours take about two minutes.
+        {/* sign in, then straight to the line for their own computer */}
+        <button className="small" onClick={async () => { await onSave(); onAdd(); }}>Try it on your own computer</button>
       </div>
     );
   }

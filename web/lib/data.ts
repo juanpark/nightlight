@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp, where, type DocumentData } from "firebase/firestore";
 import { firebase } from "./firebase";
-import type { Action, Device, Discovery, EventDoc, HistoryPoint, Note, PlaceDoc, Runbook, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
+import type { Action, Device, Discovery, EventDoc, HistoryPoint, Metrics, Note, PlaceDoc, Runbook, Service, TrustDoc, UserDoc, Watch, Link } from "./types";
 
 /** Firestore Timestamps → Date, recursively, so the UI sees one shape (docs/API.md "Times"). */
 function plain<T>(id: string, data: DocumentData): T {
@@ -80,7 +80,7 @@ export function useServicesState(uid: string | null, deviceId: string | null) {
 export interface PastStep { name: string; args?: Record<string, unknown>; summary?: string; details?: string;
   textOffset?: number; ok?: boolean; ms?: number; unfinished?: boolean; actionId?: string; callId?: string }
 export interface PastMessage { id: string; role: "user" | "assistant"; text: string; seq: number; turnId?: string;
-  mode?: "quick" | "investigate"; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
+  mode?: "quick" | "investigate"; metrics?: Metrics; toolCalls?: PastStep[]; actionIds?: string[]; error?: { code: string; message: string } }
 
 /** A chat's saved messages, oldest first (read once when the chat opens). */
 export async function loadMessages(uid: string, sessionId: string): Promise<PastMessage[]> {

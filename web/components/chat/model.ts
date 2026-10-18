@@ -2,7 +2,7 @@
 // Nightlight checked or ran, and what came back) and approval cards. Live events and stored messages build the same
 // shape, so a reloaded chat reads like the live one. UX spec 2026-10-17 §4.
 import type { PastMessage, PastStep } from "@/lib/data";
-import type { Device, StreamEvent } from "@/lib/types";
+import type { Device, Metrics, StreamEvent } from "@/lib/types";
 
 export type Mode = "quick" | "investigate";
 export type StepStatus = "running" | "done" | "failed" | "stopped";
@@ -11,16 +11,15 @@ export type Block =
   | { kind: "text"; text: string }
   | { kind: "step"; name: string; label: string; command?: string; status: StepStatus; summary?: string;
       details?: string; startedAt: number; ms?: number; callId?: string }
-  | { kind: "card"; actionId: string }
-  // "Let me check the Raspberry Pi." said just before a step: read as the first line of the work log, not as an answer
-  | { kind: "lead"; text: string };
+  | { kind: "card"; actionId: string };
 
 export type Turn =
   | { kind: "user"; key: string; text: string; past?: boolean }
   | { kind: "system"; key: string; text: string; icon: "mode" | "stopped" }
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
-      past?: boolean; after?: string[]; ms?: number };
+      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics;
+      startedAt?: number; budget?: number; retryable?: boolean }; // budget: the seconds the server gives this answer
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -42,6 +41,11 @@ export function label(name: string, args: Record<string, unknown> | undefined, d
     propose_command: `Preparing a command for the ${dev}`, update_profile: `Updating what I know about the ${dev}`,
     research: `Searching the web: ${(args?.question as string) ?? ""}`,
     link_devices: "Adding a line to your map",
+    rotate_logs: `Preparing a log clean-up for the ${dev}`, backup_world: `Preparing a backup on the ${dev}`,
+    restart_server: `Preparing a restart for the ${dev}`, clear_images: `Preparing a clean-up for the ${dev}`,
+    restart_app: `Preparing a restart for the ${dev}`, update_server: `Preparing an update for the ${dev}`,
+    use_runbook: `Following saved steps for the ${dev}`, read_device_log: `Reading recent log lines on the ${dev}`,
+    save_runbook: `Saving these steps for the ${dev}`,
   } as Record<string, string>)[name] ?? `Working on the ${dev}`;
 }
 
@@ -60,7 +64,8 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
   const last = blocks[blocks.length - 1];
   switch (e.type) {
     case "turn_start":
-      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode };
+      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode, startedAt: t.startedAt ?? Date.now(),
+        budget: e.budgetSeconds ?? t.budget };
     case "text":
       if (last?.kind === "text") blocks[blocks.length - 1] = { ...last, text: last.text + e.delta };
       else blocks.push({ kind: "text", text: e.delta });
@@ -84,9 +89,9 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
       if (blocks.some((b) => b.kind === "card" && b.actionId === e.actionId)) return t;
       return { ...t, blocks: [...blocks, { kind: "card", actionId: e.actionId }] };
     case "error": // the turn is over: a step still waiting will never answer
-      return { ...stop(t), busy: t.busy, error: e.message || e.code };
+      return { ...stop(t), busy: t.busy, error: e.message || e.code, retryable: !!e.retryable };
     case "done":
-      return { ...t, ms: e.metrics?.latencyMs };
+      return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
       return t;
   }
@@ -118,7 +123,9 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       if (m.text.slice(at, cut).trim()) blocks.push({ kind: "text", text: m.text.slice(at, cut) });
       at = cut;
       blocks.push(pastStep(s, devices));
-      if (s.actionId) blocks.push({ kind: "card", actionId: s.actionId });
+      // two steps can be answered by one card: it stays where it first appeared
+      if (s.actionId && !blocks.some((b) => b.kind === "card" && b.actionId === s.actionId))
+        blocks.push({ kind: "card", actionId: s.actionId });
     }
     if (m.text.slice(at).trim()) blocks.push({ kind: "text", text: m.text.slice(at) });
     for (const id of m.actionIds ?? []) {
@@ -129,17 +136,7 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
     const after = prev?.kind === "agent"
       ? prev.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []) : undefined;
     out.push({ kind: "agent", key: m.id, mode: m.mode ?? "quick", blocks, busy: false, past: true,
-      error: m.error?.message, after });
+      error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
-}
-
-const LEAD = /^(Let me|I['’]ll) (check|look at|look into|see)[^.]{0,80}\.$/;
-
-/** A turn's blocks with its opening "Let me check…" sentence (only when it is the whole of the words before a step,
- * and that step comes right after) turned into a work-log line. Nothing else changes: other words are never removed. */
-export function withLead(blocks: Block[]): Block[] {
-  const [first, second] = blocks;
-  if (first?.kind !== "text" || second?.kind !== "step" || !LEAD.test(first.text.trim())) return blocks;
-  return [{ kind: "lead", text: first.text.trim() }, ...blocks.slice(1)];
 }

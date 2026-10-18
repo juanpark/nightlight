@@ -53,4 +53,7 @@
 .presets { padding: 0 0 6px; }
 .presets button .small { opacity: .8; }
 .perm-switches > summary { cursor: pointer; margin: 4px 0; }
-.wl-lead { color: var(--muted); font-style: italic; }
+.wl-receipt { margin: 4px 2px 0; }
+.chat-break { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.chat-break-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-break p { margin: 0; }
