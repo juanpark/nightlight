@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { StartChoices } from "@/components/SignIn";
 import { display, sans } from "./fonts";
+import { holdSmoothScroll } from "./motion/smooth";
 import s from "./StartModal.module.css";
 
 export function StartModal({ onClose }: { onClose: () => void }) {
@@ -19,12 +20,16 @@ export function StartModal({ onClose }: { onClose: () => void }) {
     document.addEventListener("keydown", esc);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden"; // the landing page stays put underneath
-    return () => { document.removeEventListener("keydown", esc); document.body.style.overflow = overflow; before?.focus?.(); };
+    holdSmoothScroll(true); // and its smooth scrolling lets the dialog have the wheel
+    return () => {
+      document.removeEventListener("keydown", esc); document.body.style.overflow = overflow; holdSmoothScroll(false);
+      before?.focus?.();
+    };
   }, [onClose, mounted]);
   if (!mounted) return null;
   return createPortal(
     <div className={`${s.scrim} ${display.variable} ${sans.variable}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={`modal start ${s.dialog}`} role="dialog" aria-modal="true" aria-labelledby="start-title">
+      <div className={`modal start ${s.dialog}`} role="dialog" aria-modal="true" aria-labelledby="start-title" data-lenis-prevent>
         <button ref={close} type="button" className={s.close} onClick={onClose} aria-label="Close">×</button>
         <StartChoices />
       </div>

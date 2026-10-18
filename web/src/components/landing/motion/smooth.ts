@@ -49,6 +49,12 @@ export function useSmoothScroll() {
   }, []);
 }
 
+/** Pause the page's smooth scrolling while a dialog is open (it would otherwise take the wheel), and resume after. */
+export function holdSmoothScroll(held: boolean) {
+  if (!lenis) return;
+  if (held) lenis.stop(); else lenis.start();
+}
+
 // Scrolls to an element, a selector or a y offset; jumps under reduced motion.
 export function scrollToTarget(target: string | HTMLElement | number) {
   if (lenis) {
