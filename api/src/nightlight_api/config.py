@@ -63,6 +63,8 @@ class Settings:
     live_idle_seconds: int = int(os.environ.get("LIVE_IDLE_SECONDS", "900"))  # no heartbeat this long: released
     live_max_seconds: int = int(os.environ.get("LIVE_MAX_SECONDS", "3600"))  # hard cap on one lease
     live_per_ip: int = int(os.environ.get("LIVE_PER_IP", "2"))  # live leases one visitor address may hold at once
+    live_admissions_per_hour: int = int(os.environ.get("LIVE_ADMISSIONS_PER_HOUR", "4"))  # new leases per address
+    live_resets_per_lease: int = int(os.environ.get("LIVE_RESETS_PER_LEASE", "3"))  # Start fresh, per visit
     live_eta_seconds: int = int(os.environ.get("LIVE_ETA_SECONDS", "60"))  # measured click-to-ready 48-59 s (18 Oct)
     live_restore_seconds: int = int(os.environ.get("LIVE_RESTORE_SECONDS", "120"))  # Start fresh, click-to-ready 105-110 s (18 Oct)
     # The service account that signs pool custom tokens through IAM signBlob (needs Token Creator on itself).

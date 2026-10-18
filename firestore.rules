@@ -2,13 +2,25 @@ rules_version = '2';
 // Browsers may only read their own data. Every write goes through the API (Admin SDK), never the client.
 service cloud.firestore {
   match /databases/{database}/documents {
+    // A live demo machine's pool account is known by uid (livePoolUids/{uid} -> its slot, written by the API), not by
+    // token claims: it reads only with a token for that slot's current lease (leased, not wiping, before both of its
+    // deadlines). A login linked to the account, or a token from an earlier visit, reads nothing.
+    function poolSlot(uid) {
+      return /databases/$(database)/documents/livePoolUids/$(uid);
+    }
+    function leaseOk(uid) {
+      let slot = get(poolSlot(uid)).data.slot;
+      let s = get(/databases/$(database)/documents/livePool/$(slot)).data;
+      return request.auth.token.get('nl_slot', '') == slot
+        && s.get('state', '') == 'leased'
+        && s.get('leaseId', '') == request.auth.token.get('nl_lease', '-')
+        && s.get('wiping', false) == false
+        && s.expiresAt > request.time
+        && s.hardExpiresAt > request.time;
+    }
     match /users/{uid}/{document=**} {
-      // A live demo machine's pool account (token claims nl_slot / nl_lease) reads only while that lease is current,
-      // so a visitor who has left can't read the next visitor's chats with a still-valid ID token.
       allow read: if request.auth != null && request.auth.uid == uid
-        && (!('nl_lease' in request.auth.token)
-            || get(/databases/$(database)/documents/livePool/$(request.auth.token.nl_slot)).data.get('leaseId', '')
-               == request.auth.token.nl_lease);
+        && (!exists(poolSlot(uid)) || leaseOk(uid));
       allow write: if false;
     }
     match /{document=**} {

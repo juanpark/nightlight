@@ -25,18 +25,29 @@ def _claims(request: Request) -> dict:
         claims = fb_auth.verify_id_token(token, app=_app())
     except Exception:  # expired, revoked, malformed, wrong project: all the same to the caller
         raise ApiError(401, "invalid_token") from None
-    if "nl_lease" in claims:  # a live demo machine's pool account: valid only while that lease lasts
-        from . import live
-        if not live.lease_live(str(claims.get("nl_slot")), str(claims["nl_lease"])):
+    from . import live
+    slot = live.pool_slot(claims.get("uid"))  # pool accounts are known by uid (server config), not by claims
+    if slot or "nl_lease" in claims:
+        # A live demo machine's account: only with a token for THIS slot's current lease. A login linked to the
+        # account (no lease claims) or a token from an earlier visit is refused.
+        if not slot or claims.get("nl_slot") != slot or not claims.get("nl_lease"):
             raise ApiError(401, "lease_ended")
-        if POOL_DENY.search(f"{request.method} {request.url.path}"):
+        line = f"{request.method} {request.url.path}"
+        changes = request.method != "GET"
+        d = live.lease_doc(slot, str(claims["nl_lease"]), fresh=changes)
+        if d is None:
+            raise ApiError(401, "lease_ended")
+        if POOL_DENY.search(line):
             raise ApiError(403, "live_demo_machine")
+        if changes and not request.url.path.startswith("/api/demo/live") and (d.get("restore") or d.get("wiping")):
+            raise ApiError(409, "machine_resetting", retryAfter=10)  # no writes race the wipe of a Start fresh
     return claims
 
 
-# What a visitor on a live demo machine may not do: things that would unpair, replace or outlive the machine for the
-# next visitor (remove/forget/revoke it, pair other devices, self-update, register a passkey, account settings).
-POOL_DENY = re.compile(r"^(POST /api/devices/enrol-code|\w+ /api/devices/pair/|POST /api/devices/[^/]+/(remove|revoke|update)$"
+# What a visitor on a live demo machine may not do by route (the same changes are refused again where they're made:
+# live.forbid_pool, and actions for remove/update cards): unpair, replace or outlive the machine for the next visitor.
+POOL_DENY = re.compile(r"^(POST /api/devices/enrol-code|\w+ /api/devices/pair/"
+                       r"|POST /api/devices/[^/]+/(remove|revoke|update|permissions|setup|mac-folders)$"
                        r"|DELETE /api/devices/[^/]+$|POST /api/expert/register|POST /api/settings$)")
 
 

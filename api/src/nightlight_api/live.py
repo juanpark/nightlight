@@ -57,6 +57,24 @@ def slots():
     return db.client().collection("livePool")
 
 
+def pool_slot(uid: str | None) -> str | None:
+    """The pool slot this uid belongs to, from server configuration (never from a token): None for everyone else."""
+    if not uid or not enabled():
+        return None
+    return next((name for name, pool_uid in pool().items() if pool_uid == uid), None)
+
+
+# What a live demo machine's account may never do, whatever asks for it (route, chat tool, card approval): things that
+# would unpair, replace or outlive the machine for the next visitor.
+POOL_FORBIDDEN_ACTIONS = frozenset({"remove_device", "update_helper", "expert_grant", "expert_command"})
+
+
+def forbid_pool(uid: str) -> None:
+    """Called where pool-forbidden changes are made (pairing, removal, permissions, setup, passkeys, settings)."""
+    if pool_slot(uid):
+        raise ApiError(403, "live_demo_machine")
+
+
 def _label(name: str) -> str:
     return "Machine " + name.rsplit("-", 1)[-1]
 
@@ -176,29 +194,49 @@ def mint_token(pool_uid: str, slot: str, lease_id: str) -> str:
     return token.decode() if isinstance(token, bytes) else token
 
 
-_lease_cache: dict[tuple[str, str], tuple[float, bool]] = {}
+_lease_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
 
-def lease_live(slot: str, lease_id: str, max_age: float = 5.0) -> bool:
-    """Is this lease still the slot's current, unexpired lease? Cached for a few seconds per (slot, lease)."""
+def lease_doc(slot: str, lease_id: str, *, fresh: bool = False) -> dict | None:
+    """The slot's data when this is its current, unexpired lease, else None. Reads may reuse a check up to 2 s old,
+    never past the lease's own deadlines; anything that changes state (fresh=True) always reads the slot again."""
     key = (slot, lease_id)
     hit = _lease_cache.get(key)
-    if hit and time.monotonic() - hit[0] < max_age:
+    now = _now()
+    if not fresh and hit and time.monotonic() - hit[0] < 2.0 and _live(hit[1], now):
         return hit[1]
     snap = slots().document(slot).get() if slot in pool() else None
     d = (snap.to_dict() or {}) if snap is not None and snap.exists else {}
-    ok = d.get("state") == "leased" and d.get("leaseId") == lease_id and d.get("expiresAt") is not None \
-        and d["expiresAt"] > _now()
+    if not (_live(d, now) and d.get("leaseId") == lease_id):
+        _lease_cache.pop(key, None)
+        return None
     if len(_lease_cache) > 500:
         _lease_cache.clear()
-    _lease_cache[key] = (time.monotonic(), ok)
-    return ok
+    _lease_cache[key] = (time.monotonic(), d)
+    return d
+
+
+def lease_live(slot: str, lease_id: str, max_age: float = 2.0) -> bool:
+    return lease_doc(slot, lease_id, fresh=not max_age) is not None
+
+
+def reset_auth_user(uid: str) -> None:
+    """Delete the pool account's Firebase Auth user: any login a visitor linked to it (Google, password) and every
+    refresh token die with the visit. The next custom-token sign-in creates the user again; Firestore data is by uid."""
+    from firebase_admin import auth as fb_auth
+    from .auth import _app
+    try:
+        fb_auth.delete_user(uid, app=_app())
+    except fb_auth.UserNotFoundError:
+        pass
 
 
 # ------------------------------------------------------------------ leases
 
 def _live(d: dict, now: datetime) -> bool:
-    return d.get("state") == "leased" and d.get("expiresAt") is not None and d["expiresAt"] > now
+    """A current lease: leased, before its idle deadline and before its fixed hard deadline (which never moves)."""
+    return d.get("state") == "leased" and d.get("expiresAt") is not None and d["expiresAt"] > now \
+        and d.get("hardExpiresAt") is not None and d["hardExpiresAt"] > now
 
 
 def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
@@ -221,6 +259,10 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
         free = [n for n, d in docs.items() if d.get("state", "free") == "free"]
         if not free:
             return None, None, False
+        adm_ref = db.client().collection("liveAdmissions").document(ip_hash)
+        recent = [t for t in (adm_ref.get(transaction=tx).to_dict() or {}).get("at", []) if t > now - timedelta(hours=1)]
+        if len(recent) >= settings.live_admissions_per_hour:  # new machines per visitor address per hour
+            raise ApiError(429, "live_admissions_limit", retryAfter=600)
         # Prefer the slot stopped longest (spreads wear, and a slot just released may still be stopping).
         n = min(free, key=lambda x: docs[x].get("freedAt") or datetime(2000, 1, 1, tzinfo=timezone.utc))
         d = {"state": "leased", "instance": n, "uid": names[n], "leaseId": new_id("lease"), "holder": requester,
@@ -229,6 +271,9 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
              "hardExpiresAt": now + timedelta(seconds=settings.live_max_seconds), "lastBeat": now}
         d["command"] = d["leaseId"]  # the VM agent's first command for this lease: reset, then the scenario
         tx.set(slots().document(n), d)
+        tx.set(adm_ref, {"at": recent + [now]})
+        # The uid -> slot binding the Firestore rules read: this uid's reads need a token for this slot's live lease.
+        tx.set(db.client().collection("livePoolUids").document(names[n]), {"slot": n})
         return n, d, True
 
     slot, d, fresh = db.run_transaction(run)
@@ -241,6 +286,7 @@ def lease(requester: str, ip_hash: str, scenario: str = "none") -> dict:
         raise ApiError(409, "live_all_busy", **counts())
     if fresh:
         try:
+            reset_auth_user(d["uid"])  # also done at release; again here so no earlier login can survive into this visit
             vm_command(slot, f"{scenario}:{d['leaseId']}")
             try:
                 vm_start(slot)
@@ -390,11 +436,13 @@ def set_scenario(slot: str, lease_id: str, scenario: str) -> dict:
 
 
 def reset_mine(slot: str, lease_id: str, scenario: str = "none") -> dict:
-    """Start fresh on the same machine: wipe this pool account's chats, notes, runbooks, jobs, trust and memories,
-    restore the VM's boot disk from its golden snapshot (stop -> new disk -> boot), keep the lease. One at a time.
+    """Start fresh on the same machine: wipe this pool account back to its baseline, restore the VM's boot disk from
+    its golden snapshot (stop -> new disk -> boot), keep the lease. One at a time, at most LIVE_RESETS_PER_LEASE, and
+    only with time left before the lease's fixed deadline for the restore to finish.
     Progress: GET /api/demo/live/me (stopping -> restoring -> starting -> reconnecting -> ready)."""
     if scenario not in SCENARIOS:
         raise ApiError(422, "unknown_scenario")
+    plan = _restore_plan(slot, "start", lease_id)
 
     @firestore.transactional
     def run(tx):
@@ -405,21 +453,39 @@ def reset_mine(slot: str, lease_id: str, scenario: str = "none") -> dict:
             raise ApiError(401, "lease_ended")
         if d.get("restore") or d.get("wiping"):
             raise ApiError(409, "reset_in_progress", retryAfter=10)
-        # The idle clock restarts, and the lease is never cut short by its own restore.
+        if d.get("resets", 0) >= settings.live_resets_per_lease:
+            raise ApiError(429, "live_reset_limit")
+        if d["hardExpiresAt"] - now < timedelta(seconds=settings.live_restore_seconds + 120):
+            raise ApiError(409, "live_not_enough_time")
+        # The idle clock restarts with room for the restore; the hard deadline never moves.
         expires = min(now + timedelta(seconds=settings.live_idle_seconds + settings.live_restore_seconds),
-                      d["hardExpiresAt"] + timedelta(seconds=settings.live_restore_seconds))
-        tx.update(ref, {"restore": _restore_plan(slot, "start"), "scenario": scenario, "wiping": True,
-                        "expiresAt": expires, "lastBeat": now, "resetAt": now,
-                        "hardExpiresAt": max(d["hardExpiresAt"], expires)})
+                      d["hardExpiresAt"])
+        tx.update(ref, {"restore": plan, "scenario": scenario, "wiping": True, "expiresAt": expires, "lastBeat": now,
+                        "resetAt": now, "resets": d.get("resets", 0) + 1})
         return d
 
     d = db.run_transaction(run)
+    ok = False
     try:
         restore_step(slot)  # first step now: the VM starts stopping while the account is wiped
         wipe(d["uid"])
+        ok = True
     finally:
-        slots().document(slot).update({"wiping": False})
+        _end_wiping(slot, plan["op"], ok)
     return {"ok": True, "scenario": scenario, "phase": "stopping", "restoreSeconds": settings.live_restore_seconds}
+
+
+def _end_wiping(slot: str, op: str, ok: bool) -> None:
+    """Clear the wiping flag only on the restore this reset started (a release may have taken the slot meanwhile).
+    A failed wipe leaves the account unclean: the lease ends now and the release (wipe again, or maintenance) follows."""
+    @firestore.transactional
+    def run(tx):
+        ref = slots().document(slot)
+        d = ref.get(transaction=tx).to_dict() or {}
+        if (d.get("restore") or {}).get("op") != op or d.get("state") != "leased":
+            return
+        tx.update(ref, {"wiping": False, **({} if ok else {"expiresAt": _now(), "wipeFailed": True})})
+    db.run_transaction(run)
 
 
 def end(slot: str, lease_id: str) -> dict:
@@ -447,12 +513,12 @@ def _claim_release(slot: str) -> dict | None:
         now = _now()
         ref = slots().document(slot)
         d = ref.get(transaction=tx).to_dict() or {}
-        expired = d.get("state") == "leased" and d.get("expiresAt") is not None and d["expiresAt"] <= now
+        expired = d.get("state") == "leased" and not _live(d, now)
         stale = d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE
         if not (expired or stale):
             return None
         tx.update(ref, {"state": "releasing", "releaseStartedAt": now})
-        return d
+        return {**d, "_claimedAt": now}
 
     return db.run_transaction(run)
 
@@ -461,22 +527,40 @@ def _release(slot: str) -> bool:
     d = _claim_release(slot)
     if d is None:
         return False
+    claimed_at = d["_claimedAt"]
     try:
-        vm_stop(slot)  # first: the machine stops costing money even if the wipe below fails
+        vm_stop(slot)  # first: the machine stops costing money even if the cleanup below fails
         _forget_status(slot)
     except Exception as e:
         log.warning("live stop %s failed: %s", slot, type(e).__name__)  # the sweep stops orphans
+    # Not free yet: the boot disk goes back to its golden snapshot (a true rollback of anything the visitor changed on
+    # the machine). A Start fresh still under way keeps its disk and steps; it now ends with the slot free.
+    plan = {**(d.get("restore") or _restore_plan(slot, "free")), "then": "free"}
     try:
-        wipe(d["uid"])
+        cleanup(d["uid"])
+        after = {"state": "restoring"}
     except Exception as e:
-        log.warning("live wipe %s failed: %s", slot, type(e).__name__)
-        return False  # stays "releasing"; the next sweep takes it over after RELEASE_STALE
-    # Not free yet: the boot disk goes back to its golden snapshot first (a true rollback of anything the visitor
-    # changed on the machine). The sweep, the public status and new lease requests advance it step by step.
-    slots().document(slot).set({"state": "restoring", "lastLeaseId": d.get("leaseId"),
-                                "restore": {**(d.get("restore") or _restore_plan(slot, "free")), "then": "free"}})
-    # (a Start fresh still under way keeps its disk and steps; it now ends with the slot free instead of started)
-    return True
+        # Never back in service unclean: maintenance, shown in the public status, retried by the sweep.
+        log.warning("live cleanup %s failed: %s", slot, type(e).__name__)
+        after = {"state": "maintenance", "reason": "cleanup_failed", "needsCleanup": True}
+
+    @firestore.transactional
+    def finish(tx):
+        ref = slots().document(slot)
+        cur = ref.get(transaction=tx).to_dict() or {}
+        if cur.get("state") != "releasing" or cur.get("releaseStartedAt") != claimed_at:
+            return False  # someone else took this release over (stale-release takeover): theirs stands
+        tx.set(ref, {**after, "uid": d["uid"], "lastLeaseId": d.get("leaseId"), "restore": plan})
+        return True
+
+    return db.run_transaction(finish)
+
+
+def cleanup(uid: str) -> None:
+    """Everything a visit leaves on the account side goes: the data (wipe) and the Firebase Auth user (logins a visitor
+    linked, refresh tokens). Raises if any part fails."""
+    wipe(uid)
+    reset_auth_user(uid)
 
 
 # ------------------------------------------------------------------ disk restore from the golden snapshot
@@ -485,9 +569,9 @@ def _disk_url(name: str = "") -> str:
     return f"{COMPUTE}/projects/{settings.project_id}/zones/{settings.live_zone}/disks" + (f"/{name}" if name else "")
 
 
-def _restore_plan(slot: str, then: str) -> dict:
-    op = "r" + format(int(time.time() * 1000), "x")[-9:]
-    return {"op": op, "target": f"{slot}-{op}", "then": then, "startedAt": _now()}
+def _restore_plan(slot: str, then: str, lease_id: str | None = None) -> dict:
+    op = "r" + format(int(time.time() * 1000), "x")[-9:] + new_id("x")[-4:].lower()
+    return {"op": op, "target": f"{slot}-{op}", "then": then, "startedAt": _now(), "leaseId": lease_id}
 
 
 _step_at: dict[str, float] = {}
@@ -546,22 +630,28 @@ def restore_step(slot: str, min_gap: float = 0.0) -> bool:
 
 
 def _restore_done(slot: str, r: dict) -> bool:
+    """The disk swap is finished. What happens next is decided from the slot's state now, in one transaction (a
+    release may have turned a Start fresh into a release meanwhile): back to service, still maintenance, or (a Start
+    fresh whose lease is still current) the visitor's machine starts again."""
     took = round((_now() - r["startedAt"]).total_seconds())
 
     @firestore.transactional
     def run(tx):
         ref = slots().document(slot)
         d = ref.get(transaction=tx).to_dict() or {}
-        if (d.get("restore") or {}).get("op") != r["op"]:
+        cur = d.get("restore") or {}
+        if cur.get("op") != r["op"]:
             return None
-        if r["then"] == "free":
+        if d.get("state") == "leased" and cur.get("then") == "start" and cur.get("leaseId") == d.get("leaseId"):
+            nonce = new_id("cmd")
+            tx.update(ref, {"restore": firestore.DELETE_FIELD, "command": nonce, "commandAt": _now(), "restored": took})
+            return f"{d.get('scenario', 'none')}:{nonce}"
+        if d.get("state") == "restoring":
             tx.set(ref, {"state": "free", "freedAt": _now(), "lastLeaseId": d.get("lastLeaseId"),
                          "lastRestoreSeconds": took})
-            return None
-        nonce = new_id("cmd")  # a new command, so a "dirty" mark from before the restore can't match it
-        tx.update(ref, {"restore": firestore.DELETE_FIELD, "command": nonce, "commandAt": _now(),
-                        "restored": took, "restoredFor": d.get("command")})
-        return f"{d.get('scenario', 'none')}:{nonce}"
+        else:  # maintenance (cleanup failed), or a lease that ended: the disk is clean, the slot stays as it is
+            tx.update(ref, {"restore": firestore.DELETE_FIELD})
+        return None
 
     cmd = db.run_transaction(run)
     if cmd:  # a restore during a lease: the visitor's machine starts again on the clean disk
@@ -590,41 +680,77 @@ def advance_restores(budget: float = 0.0) -> list[str]:
         return [n for n in ex.map(drive, pending) if n]
 
 
+KEEP_USER_COLLECTIONS = ("devices", "quota", "trust")  # trust: freshly seeded by the reset below; quota: rate limits
+
+
+def record_baseline(uid: str) -> dict:
+    """Record what a clean pool account looks like (its paired devices and their services, exactly), once, when the
+    golden snapshots are taken. wipe() puts this back after every visit."""
+    devices = {}
+    for snap in db.devices(uid).get():
+        devices[snap.id] = {"doc": snap.to_dict(),
+                            "services": {s.id: s.to_dict() for s in db.services(uid, snap.id).get()}}
+    db.client().collection("livePoolBaseline").document(uid).set({"devices": devices, "recordedAt": _now()})
+    return {"devices": len(devices)}
+
+
 def wipe(uid: str) -> None:
-    """Forget everything one visitor did on a pool account. The paired device and its helper stay."""
-    from . import demo, watch
-    snap = db.user(uid).get()
-    if snap.exists:
-        demo.reset(uid)  # chats, turns, trust, non-real things, Memory Bank memories (best effort)
+    """Put a pool account back to its recorded baseline. Every visitor-owned thing goes: chats, turns, notes,
+    runbooks, profiles, jobs and cards, events, links, places, scans, discoveries, watches, trust, memories; devices
+    and their services are restored exactly (names, tags, positions, favourites, issue states, permissions); devices
+    that aren't in the baseline are deleted. Raises (never half-succeeds silently) if anything fails or doesn't verify."""
+    from copy import deepcopy
+    from . import demo, memory, watch
+    base = (db.client().collection("livePoolBaseline").document(uid).get().to_dict() or {}).get("devices")
+    if not base:
+        raise RuntimeError("no_baseline")
+    if db.user(uid).get().exists:
+        demo.reset(uid)  # chats, turns, trust (reseeded), non-real things
     else:
         demo.start(uid, "empty")
-    # What Nightlight may do on the machine goes back to the pool's recorded preset (a visitor may have changed it).
-    base = db.client().collection("livePoolBaseline").document(uid).get().to_dict() or {}
-    for device_id, perms in (base.get("permissions") or {}).items():
-        try:
-            from . import real
-            snap = db.device(uid, device_id).get()
-            if snap.exists and (snap.to_dict() or {}).get("permissions") != perms:
-                real.set_permissions(uid, device_id, perms)
-        except Exception as e:
-            log.warning("live wipe permissions failed: %s", type(e).__name__)
-    refs = []
-    for dev in db.devices(uid).get():
-        for sub in ("notes", "runbooks", "profile"):
-            refs += [s.reference for s in dev.reference.collection(sub).get()]
-    refs += [s.reference for s in db.events(uid).get()]
-    refs += [s.reference for s in db.actions(uid).get()]
-    refs += [s.reference for s in db.user(uid).collection("scans").get()]
-    for i in range(0, len(refs), 400):
-        batch = db.client().batch()
-        for r in refs[i:i + 400]:
-            batch.delete(r)
-        batch.commit()
+    if memory.enabled() and not memory.forget_all(uid):
+        raise RuntimeError("memory_not_cleared")
     for w in watch.watches(uid).get():
-        try:
-            watch.remove_watch(uid, w.id)
-        except Exception as e:
-            log.warning("live wipe watch failed: %s", type(e).__name__)
+        watch.remove_watch(uid, w.id)  # also leaves the global watch registry
+    client = db.client()
+    for col in db.user(uid).collections():
+        if col.id not in KEEP_USER_COLLECTIONS:
+            client.recursive_delete(col)
+    for snap in db.devices(uid).get():
+        if snap.id not in base:
+            client.recursive_delete(snap.reference)
+            continue
+        for sub in snap.reference.collections():
+            if sub.id != "history":  # health history the machine itself produced
+                client.recursive_delete(sub)
+    batch = client.batch()
+    for device_id, b in base.items():
+        ref = db.device(uid, device_id)
+        cur = ref.get().to_dict() or {}
+        doc = deepcopy(b["doc"])
+        doc["version"] = max(int(cur.get("version") or 0), int(doc.get("version") or 0)) + 1
+        batch.set(ref, doc)
+        for svc_id, svc in (b.get("services") or {}).items():
+            batch.set(db.services(uid, device_id).document(svc_id), svc)
+    batch.commit()
+    _verify_wiped(uid, base)
+
+
+VERIFY_FIELDS = ("name", "tags", "x", "y", "favorite", "favoriteApps", "issueStates", "permissions", "manage")
+
+
+def _verify_wiped(uid: str, base: dict) -> None:
+    extra = [c.id for c in db.user(uid).collections() if c.id not in KEEP_USER_COLLECTIONS]
+    if extra:
+        raise RuntimeError("left_collections:" + ",".join(sorted(extra)))
+    devices = {s.id: s.to_dict() or {} for s in db.devices(uid).get()}
+    if set(devices) != set(base):
+        raise RuntimeError("devices_differ")
+    for device_id, b in base.items():
+        if any(devices[device_id].get(f) != b["doc"].get(f) for f in VERIFY_FIELDS):
+            raise RuntimeError("device_fields_differ")
+        if [c.id for c in db.device(uid, device_id).collections() if c.id not in ("services", "history")]:
+            raise RuntimeError("device_collections_left")
 
 
 def release_expired(limit: int | None = None) -> int:
@@ -632,7 +758,7 @@ def release_expired(limit: int | None = None) -> int:
     now = _now()
     for name in pool():
         d = slots().document(name).get().to_dict() or {}
-        due = (d.get("state") == "leased" and d.get("expiresAt") is not None and d["expiresAt"] <= now) or \
+        due = (d.get("state") == "leased" and not _live(d, now)) or \
               (d.get("state") == "releasing" and (d.get("releaseStartedAt") or now) <= now - RELEASE_STALE)
         if due and _release(name):
             n += 1
@@ -646,6 +772,16 @@ def sweep() -> dict:
     if not enabled():
         return {"enabled": False}
     released = release_expired()
+    for name in pool():  # maintenance after a failed cleanup: try again; back to restoring/free only when it works
+        d = slots().document(name).get().to_dict() or {}
+        if d.get("state") == "maintenance" and d.get("needsCleanup") and d.get("uid"):
+            try:
+                cleanup(d["uid"])
+                slots().document(name).update({"state": "restoring" if d.get("restore") else "free",
+                                               "needsCleanup": firestore.DELETE_FIELD,
+                                               "reason": firestore.DELETE_FIELD, "freedAt": _now()})
+            except Exception as e:
+                log.warning("live cleanup retry %s failed: %s", name, type(e).__name__)
     restored = advance_restores(budget=240)  # the scheduled request may run 15 min; a restore takes ~1-2
     stopped = []
     now = _now()
@@ -685,8 +821,9 @@ def status() -> dict:
     machines = []
     for name in pool():
         d = slots().document(name).get().to_dict() or {}
+        st = d.get("state", "free")
         state = "in_use" if _live(d, now) else (
-            "free" if d.get("state", "free") == "free" else "resetting")  # releasing, restoring or expired
+            "free" if st == "free" else "maintenance" if st == "maintenance" else "resetting")
         machines.append({"machine": _label(name), "state": state, "vm": vms.get(name, "UNKNOWN")})
     return {"enabled": True, "total": len(machines), "inUse": sum(m["state"] == "in_use" for m in machines),
             "free": sum(m["state"] == "free" for m in machines),

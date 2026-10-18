@@ -36,6 +36,10 @@ else:
         t = time.time()
         print("sweep:", json.dumps(live.sweep()), f"{time.time() - t:.0f}s")
         print("vms:", live.all_status(0))
+    elif cmd == "baseline":  # with the golden snapshots: record each clean pool account, and bind uid -> slot for rules
+        for n, uid in live.pool().items():
+            live.db.client().collection("livePoolUids").document(uid).set({"slot": n})
+            print(n, uid, live.record_baseline(uid))
     elif cmd == "free-all":  # after maintenance (e.g. new golden snapshots): every slot free, VMs must be stopped
         for n in live.pool():
             live.slots().document(n).set({"state": "free"})
