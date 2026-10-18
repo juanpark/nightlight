@@ -65,10 +65,10 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
         Expert sessions {on ? "(on)" : "(off)"} {open ? "▾" : "▸"}</button>
       {open && (
         <div className="expert-body">
-          <p className="muted">Let Nightlight investigate with real commands, the way a system administrator would.
-            Read-only commands need one tap of your passkey per 15 minutes; anything that changes something needs
-            your passkey on each command. The device checks your signature itself, so even Nightlight&apos;s own
-            servers can&apos;t run anything without you.</p>
+          <p className="muted">For tricky problems: let Nightlight run its own checks on this device, the way an IT
+            expert would, and only with your face or fingerprint (a passkey). Checks that only look need one tap per
+            15 minutes; anything that changes something needs your tap on each command. The device checks your
+            approval itself, so even Nightlight&apos;s own servers can&apos;t run anything without you.</p>
           <ol>
             <li>Your passkey: {key?.enabled
               ? mine === NO_CODE

@@ -64,9 +64,9 @@ function BreakSomething({ devices, disabled, onAsk }: { devices: Device[]; disab
 }
 
 const MODES: { id: Mode; name: string; hint: string }[] = [
-  { id: "quick", name: "Quick", hint: "Fast answers from what Nightlight already knows" },
+  { id: "quick", name: "Quick answers", hint: "Fast answers from what Nightlight already knows" },
   { id: "investigate", name: "Investigate deeply",
-    hint: "Works like an administrator: hypotheses, checks, commands. Slower, a few cents" },
+    hint: "Digs in step by step like an IT expert would, then explains the likely cause. Slower, a few cents" },
 ];
 
 function savedMode(): Mode {
@@ -290,7 +290,7 @@ const Chat = forwardRef<ChatHandle, {
           ))}
           <span className="mode-hint small muted">{MODES.find((m) => m.id === mode)?.hint}</span>
         </div>
-        <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
+        <form className="chat-input" data-tour="chat" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} />
           {busy

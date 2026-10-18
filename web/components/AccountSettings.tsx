@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { UserDoc } from "@/lib/types";
 
-export default function AccountSettings({ me, anonymous, onSave }: {
+export default function AccountSettings({ me, anonymous, onSave, onTour }: {
   me: UserDoc | null | undefined; anonymous: boolean; onSave: () => void; // demo accounts can look, not change
+  onTour: () => void; // the first-run tour, from the start
 }) {
   const saved = me?.settings?.deviceNames !== false;
   const [draft, setDraft] = useState<boolean | null>(null); // tapped here, not yet back from the account
@@ -38,6 +39,8 @@ export default function AccountSettings({ me, anonymous, onSave }: {
       {anonymous && <p id="names-demo" className="small muted">Settings are for your own account.{" "}
         <button className="linkish small" onClick={onSave}>Save with Google</button> to change them.</p>}
       {err && <p className="small" role="alert" style={{ color: "var(--crit)" }}>{err}</p>}
+      <p className="small setting-help"><button className="small" onClick={onTour}>Show the tour again</button>{" "}
+        <span className="muted">A short walk through what each part of the screen does.</span></p>
     </div>
   );
 }

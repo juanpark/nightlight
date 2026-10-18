@@ -174,7 +174,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           ? <p className="small muted">{loaded ? "That app isn't on this device any more." : "Loading…"}</p>
           : <section className="drawer-section">
               {loaded && services.length === 0 && <p className="muted small">{real ? "Nothing running that Nightlight "
-                + "recognises yet. It lists Docker containers and failed system services." : "Nothing listed."}</p>}
+                + "recognises yet. It lists apps that run in the background (a media server, say) and built-in services "
+                + "that have stopped working." : "Nothing listed."}</p>}
               {services.length > 0 && <p className="small muted" style={{ marginTop: 0 }}>Tap one to see how it is and
                 what Nightlight knows about it.</p>}
               <AppGrid apps={appOrder(services, fav.apps)} fav={fav} onApp={openApp} />
@@ -190,14 +191,21 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           <h4>Details</h4>
           <div className="details small">
             <div><span className="muted">System</span>{device.os ?? "–"}</div>
-            <div><span className="muted">Chip</span>{device.arch ?? "–"}</div>
             <div><span className="muted">Running for</span>{uptime(device.vitals?.uptime)}</div>
-            <div><span className="muted">Containers</span>{device.containerCount != null
+            <div><span className="muted">Background apps</span>{device.containerCount != null
               ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
-            <div><span className="muted">System updates</span>{device.updatesPending ?? "–"}</div>
-            <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}
+            <div><span className="muted">Updates waiting</span>{device.updatesPending ?? "–"}</div>
+            <div><span className="muted">Nightlight helper</span>{device.helperVersion ? `version ${device.helperVersion}` : "–"}
               {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
           </div>
+          <details className="small">
+            <summary className="muted">Technical details</summary>
+            <div className="details small">
+              <div><span className="muted">Processor type</span>{device.arch ?? "–"}</div>
+              <div><span className="muted">Docker containers</span>{device.containerCount != null
+                ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
+            </div>
+          </details>
           {device.purpose && <p className="muted small">{device.purpose}</p>}
         </section>}
       </>}
@@ -218,7 +226,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           <HelperUpdate device={device} actions={actions} latest={release?.version}
             origin={typeof window === "undefined" ? "" : window.location.origin} />
           {!(release && device.helperVersion && release.version !== device.helperVersion) &&
-            <p className="muted small">Up to date (v{device.helperVersion ?? "?"}) · {updateMode(device)}.</p>}
+            <p className="muted small">Up to date (version {device.helperVersion ?? "?"}) · {updateMode(device)}.</p>}
         </section>
         <ExpertSessions uid={uid} device={device} open={needs.some((n) => n.kind === "expertHalf")} />
         <RemoveDevice device={device} onRemoved={onClose} />

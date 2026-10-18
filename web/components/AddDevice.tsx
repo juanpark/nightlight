@@ -22,15 +22,15 @@ function setupMessage(owner: string | null, line: string, minutes: number) {
     `${owner ?? "Someone you know"} uses Nightlight to keep an eye on their home devices and is asking you to set it up `
       + "on one of them now. It takes about a minute.",
     "",
-    "1. On that device, open Terminal (or connect to it over SSH).",
-    "2. Paste this line:",
+    "1. On that device, open its command window (Terminal). If you usually reach it from another computer, for example over SSH, that works too.",
+    "2. Paste this line (it installs Nightlight's helper, a small program that reports how the device is doing):",
     "",
     line,
     "",
-    "3. Press Enter. It may ask for the device's password once.",
+    "3. Press Enter. It may ask once for the password you use to log in to that device.",
     "",
     `The line works once and expires in about ${minutes} minute${minutes === 1 ? "" : "s"}. If it has, ask them for a `
-      + "new one. After this nobody needs the terminal again: everything else happens in the Nightlight app.",
+      + "new one. After this nobody needs the command window again: everything else happens in the Nightlight app.",
   ].join("\n");
 }
 
@@ -88,8 +88,9 @@ function Reassure() {
     <div className="promise small">
       <ul>
         <li><strong>Watches, changes nothing.</strong> A fix or clean-up happens only after you tap Approve.</li>
-        <li><strong>Nothing listens on your computer.</strong> It only calls out, so no firewall prompt.</li>
-        <li><strong>Stays on the machine:</strong> its host name, IP addresses, files, passwords and keys.</li>
+        <li><strong>It opens no way in to your computer.</strong> It only reaches out to Nightlight, so your
+          computer never shows a security pop-up about it.</li>
+        <li><strong>Stays on the machine:</strong> its name and addresses on your network, files, passwords and keys.</li>
         <li><strong>One line removes it</strong>, or remove it from the app.</li>
       </ul>
       <p className="muted">In the first minute: your device&apos;s disk, memory and apps, and <em>Found nearby</em>, the
@@ -153,11 +154,11 @@ export default function AddDevice({ anonymous, onSave, devices }: {
         <button role="radio" aria-checked={mac} className={mac ? "on" : ""} onClick={() => pick("mac")}>
           <Laptop size={22} strokeWidth={1.6} /> A Mac</button>
         <button role="radio" aria-checked={os === "linux"} className={os === "linux" ? "on" : ""} onClick={() => pick("linux")}>
-          <Cpu size={22} strokeWidth={1.6} /> Linux or Raspberry Pi</button>
+          <Cpu size={22} strokeWidth={1.6} /> Linux computer or Raspberry Pi</button>
       </div>
 
-      {mac && <p className="small muted setup-note">A Mac installer with no Terminal is coming: it is waiting on
-        Apple&apos;s signing certificates. Until then, this one line does the same.</p>}
+      {mac && <p className="small muted setup-note">A Mac installer you double-click is coming; it still needs
+        Apple&apos;s sign-off. Until then, this one line does the same.</p>}
       {os && (
         <ol className="setup-steps">
           {mac
@@ -166,20 +167,21 @@ export default function AddDevice({ anonymous, onSave, devices }: {
                 and press Enter. A window with a blinking cursor opens.
               </Step>
             : <Step n={1} art={<Term text="$ _" />}>
-                <strong>Open a terminal on it.</strong> On the device itself, open Terminal from its menu. Or, from
-                another computer, connect to it with SSH as you usually do.
+                <strong>Open its command window (Terminal).</strong> On the device itself, open Terminal from its
+                menu. Or, if you usually reach it from another computer, connect to it as you normally do.
               </Step>}
           <Step n={2} art={<Term text="$ curl …" />}>
             <strong>Paste this line into it.</strong>
             {code ? <><Copy key={code.code} text={line} /><span className="small muted">Your own line: it works once, for 10
-              minutes.</span></>
+              minutes. It installs Nightlight&apos;s helper, a small program that stays on the device and reports how
+              it is doing, and links it to your account.</span></>
               : !err && <p className="small muted">Making your line…</p>}
             {err && <p className="small" style={{ color: "var(--crit)" }}>{err}{" "}
               <button className="linkish small" onClick={getCode}>Try again</button></p>}
           </Step>
           <Step n={3} art={<span className="art-keys"><kbd>{mac ? "return" : "Enter"}</kbd></span>}>
-            <strong>Press Enter.</strong> It may ask for {mac ? "this Mac's" : "the device's"} password once. Typing
-            it shows nothing on screen; that&apos;s normal, just type it and press Enter.
+            <strong>Press Enter.</strong> It may ask once for the password you use to log in to {mac ? "this Mac"
+              : "that device"}. Typing it shows nothing on screen; that&apos;s normal, just type it and press Enter.
           </Step>
         </ol>)}
 
@@ -195,7 +197,7 @@ export default function AddDevice({ anonymous, onSave, devices }: {
         {other ? "Hide" : "Can't paste on that device? Use a code it shows instead"}</button>
       {other && (
         <div style={{ marginTop: 8 }}>
-          <p className="small muted">Run <code>curl -fsSL {origin}/install.sh | sh</code> on the device. It shows a code
+          <p className="small muted">Paste <code>curl -fsSL {origin}/install.sh | sh</code> on the device. It shows a code
             like WXYZ-1234 (and a link you can open on your phone). Type the code here:</p>
           {!paired
             ? <PairApprove onApprove={snapshot} onDone={setPaired} />
@@ -207,13 +209,15 @@ export default function AddDevice({ anonymous, onSave, devices }: {
 
       <details className="small" style={{ marginTop: 12 }}>
         <summary>What does the helper do? How do I remove it?</summary>
-        <p>A small helper on your device reports its health (disk, memory, what is running). It never sends its host
-          name, IP or hardware addresses, files, passwords or keys. The recent log lines of your apps are sent only
-          scrubbed on the device, and you can switch that off per app. It changes nothing unless you allow a kind of
-          job and then approve each one here.</p>
-        <p>To remove it, run this on the device:</p>
+        <p>The Nightlight helper is a small program that runs on your device and reports its health (disk, memory,
+          what is running). It never sends the device&apos;s name on the network or its network addresses (host name,
+          IP and hardware addresses), files, passwords or keys. Your apps&apos; recent messages (their log lines) are
+          sent only after private details are removed on the device, and you can switch that off per app. It changes
+          nothing unless you allow that kind of job in the device&apos;s Settings and then approve each one here.</p>
+        <p>Pasting the line from another computer you are connected to (over SSH) works just as well.</p>
+        <p>To remove it, paste this on the device:</p>
         <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
-        <p className="soon">Coming: the Mac installer (waiting on signing), then a Linux package and NAS apps.
+        <p className="soon">Coming: the Mac installer, then a Linux package and versions for NAS boxes (home storage).
           Windows isn&apos;t supported yet.</p>
       </details>
     </div>
