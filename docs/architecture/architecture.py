@@ -11,13 +11,14 @@ from pathlib import Path
 
 from diagrams import Cluster, Diagram, Edge
 from diagrams.firebase.develop import Authentication
-from diagrams.gcp.compute import Run
+from diagrams.gcp.compute import ComputeEngine, Run
 from diagrams.gcp.database import Firestore
 from diagrams.gcp.devtools import Build, ContainerRegistry, Scheduler
 from diagrams.gcp.ml import VertexAI
 from diagrams.gcp.security import KeyManagementService
 from diagrams.onprem.client import User
 from diagrams.onprem.compute import Server
+from diagrams.onprem.network import Internet
 from diagrams.programming.framework import Nextjs
 from diagrams.programming.language import Python
 
@@ -43,7 +44,7 @@ with Diagram("", filename=str(OUT), outformat="png", show=False, direction="LR",
         passkey = KeyManagementService("Passkey (WebAuthn)\nsigns expert commands")
 
     with Cluster("Google Cloud", graph_attr={**CLUSTER, "bgcolor": "#eef4ff"}):
-        auth = Authentication("Firebase Authentication\nGoogle sign-in,\nanonymous demo")
+        auth = Authentication("Firebase Authentication\nGoogle sign-in,\nanonymous guided tour")
         with Cluster("Cloud Run (asia-northeast3)", graph_attr=INNER):
             web = Nextjs("Web app\nNext.js")
             api = Run("API: FastAPI + ADK agent\napproval cards, trust ladder,\nbudgets, signed helper release")
@@ -56,10 +57,12 @@ with Diagram("", filename=str(OUT), outformat="png", show=False, direction="LR",
         with Cluster("Deploy (gcloud run deploy --source)", graph_attr=INNER):
             build = Build("Cloud Build")
             registry = ContainerRegistry("Artifact Registry\nimages")
+        pool = ComputeEngine("Compute Engine\n5 demo Linux VMs\nstopped until asked for")
 
     with Cluster("Owner's devices (Linux, macOS)", graph_attr={**CLUSTER, "bgcolor": "#fff8ec"}):
         helper = Python("Signed helper\nsystemd / launchd\nno open ports")
         apps = Server("Apps and services\nDocker, systemd")
+        watched = Internet("Watched, nothing installed:\nrouter, printer, TV, NAS")
 
     owner >> E(label="page, /config") >> web
     owner >> E(label="sign in") >> auth
@@ -75,6 +78,8 @@ with Diagram("", filename=str(OUT), outformat="png", show=False, direction="LR",
     build >> registry >> E(label="deploy", style="dotted") >> api
 
     helper >> E(label="report every minute\n(outgoing HTTPS only)", constraint="false") >> api
-    api >> E(label="answers the helper's own outgoing request:\njob name + target only after a tap;\nsigned release (helper checks signature)",
+    api >> E(label="answers the helper's own outgoing request:\njob name + target only after a tap,\nor your passkey-signed command (helper checks it);\nsigned release (helper checks signature)",
                 color=CONTROL, fontcolor=CONTROL, style="dashed") >> helper
     helper >> E(label="fixed jobs,\nlocal allow-list", style="dotted") >> apps
+    helper >> E(label="does it answer?\n(one port)", style="dotted") >> watched
+    api >> E(label="start, restore\n(demo machines)", style="dotted") >> pool
