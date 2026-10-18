@@ -189,3 +189,11 @@ def test_agent_tools_say_reused_and_refuse_past_the_chain_limit(client, dev):
     assert out["status"] == "error" and out["reason"] == agentlib.CHAIN_LIMIT_SAY
     out = asyncio.run(tools["check_space"](tool_context=None, device_id=dev["deviceId"]))
     assert out["status"] == "error" and out["reason"] == agentlib.CHAIN_LIMIT_SAY
+
+
+def test_read_keys_stay_short_for_long_signed_reads():  # Codex read-chain rev2: Firestore field names <= 1,500 bytes
+    from nightlight_api import actions
+    key = actions._read_key("dev_x", "expert_read", {"command": "journalctl --grep '" + "가" * 400 + "'"})
+    assert len(key.encode()) < 64 and key == actions._read_key("dev_x", "expert_read",
+                                                               {"command": "journalctl --grep '" + "가" * 400 + "'"})
+    assert key != actions._read_key("dev_x", "expert_read", {"command": "df -h"})

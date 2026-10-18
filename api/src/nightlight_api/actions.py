@@ -4,6 +4,7 @@
 update, continuation turn and the stored response commit together or not at all.
 """
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from google.cloud import firestore
@@ -255,7 +256,10 @@ def _chat_turn(tx, uid: str, session_id: str | None, turn_id: str) -> dict | Non
 
 
 def _read_key(device_id: str, name: str, params: dict) -> str:
-    return f"{device_id}|{name}|{canonical_params(params)}"
+    """A fixed-length map key for a read's identity: Firestore field names are capped at 1,500 bytes, and a signed
+    expert read's parameters can be longer (Codex read-chain rev2). A playbook id may follow as "|<playbook>"."""
+    ident = f"{device_id}|{name}|{canonical_params(params)}"
+    return "r" + hashlib.sha256(ident.encode()).hexdigest()[:40]
 
 
 RECENT_READS_KEEP = 20  # entries in a chat's recentReads map (pruned by age too)
