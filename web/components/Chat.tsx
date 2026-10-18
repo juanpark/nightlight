@@ -18,19 +18,19 @@ const rank = (s?: string) => ({ crit: 0, warn: 1, offline: 2 } as Record<string,
 /** Questions to start with, about what is actually on the map: the sample home's story, or the person's own devices. */
 function suggestions(devices: Device[]): string[] {
   if (devices.some((d) => d.realm !== "real")) {
-    return ["Is anything wrong at home?", "My kids say Minecraft is laggy tonight. Can you help?",
+    return ["Is anything wrong with my servers?", "My kids say Minecraft is laggy tonight. Can you help?",
       "When was the Minecraft world last backed up?"];
   }
   const own = devices.filter((d) => d.kind !== "watched");
   if (!own.length) return ["What can you do for me?", "How do I add my first device?"];
   const worst = [...own].sort((a, b) => rank(a.status) - rank(b.status))[0];
-  return ["Is anything wrong at home?", `How is my ${worst.name} doing?`,
+  return ["Is anything wrong with my servers?", `How is my ${worst.name} doing?`,
     own.length > 1 ? "Which device needs attention first?" : `What runs on my ${worst.name}?`];
 }
 
 /** Sample home only: trouble a visitor can cause, so the incident is one they made, not one prepared for them. */
 const BREAK = [
-  { kind: "disk_full", device: "pi-1", label: "Make the Pi's disk fill up", ask: "Is anything wrong at home?" },
+  { kind: "disk_full", device: "pi-1", label: "Make the Pi's disk fill up", ask: "Is anything wrong with my servers?" },
   { kind: "server_lagging", device: "game-1", label: "Make Minecraft lag", ask: "My kids say Minecraft is laggy tonight. Can you help?" },
   { kind: "backup_overdue", device: "game-1", label: "Let the world backup fall behind", ask: "When was the Minecraft world last backed up?" },
 ];

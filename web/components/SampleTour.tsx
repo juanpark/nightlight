@@ -10,7 +10,7 @@ import type { Action, Device, Discovery } from "@/lib/types";
 type StepId = "ask" | "approve" | "break" | "nearby" | "add" | "trust";
 type Saved = { done: StepId[]; open: boolean; started?: number; base?: number; asked?: number; brokeAt?: number };
 
-const ASK = "Is anything wrong at home?";
+const ASK = "Is anything wrong with my servers?";
 const LAG = "Minecraft is laggy, what's going on?";
 const key = (uid: string) => `nl_sample_tour_${uid}`;
 function load(uid: string): Saved {
