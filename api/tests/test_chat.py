@@ -179,6 +179,7 @@ def test_stored_messages_keep_each_steps_outcome(client, started):
     assert all(isinstance(t["textOffset"], int) and t["ok"] is True and t["ms"] >= 0 and "_t" not in t
                for t in msg["toolCalls"])
     assert msg["mode"] == "quick"
+    assert msg["metrics"]["modelCalls"] >= 1 and "latencyMs" in msg["metrics"] and "model" in msg["metrics"]
 
 
 def _moon_then_check(llm_request, stream):

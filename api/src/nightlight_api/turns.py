@@ -232,6 +232,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
                 "role": "assistant", "text": text, "seq": seq, "turnId": c.turn_id, "attempt": c.attempt,
                 "toolCalls": [_stored_step(t, error) for t in tool_calls],
                 "actionIds": action_ids, "demoGeneration": c.generation, "mode": c.turn.get("mode", "quick"),
+                "metrics": metrics,  # the receipt under the answer (steps, time, model, cost) survives a reload
                 **({"error": error} if error else {}),
                 "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": _keep_until()})
             update["finalMessageId"] = msg_id
