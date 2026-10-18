@@ -4,6 +4,25 @@
 // can be turned back on, and names return as things announce them again.
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { firebase } from "@/lib/firebase";
+
+/** "Nightlight 1.0.0 · web a1b2c3d · API e4f5g6h · helper 0.9.34", leaving out what isn't known. */
+function Versions() {
+  const [line, setLine] = useState("");
+  useEffect(() => {
+    let on = true;
+    Promise.all([firebase().then((f) => f.config).catch(() => null),
+      api<{ app?: string; build?: string; helper?: string }>("GET", "/api/version").catch(() => null)])
+      .then(([web, a]) => {
+        const short = (b?: string) => b ? b.slice(0, 7) : "";
+        const parts = [`Nightlight ${web?.version || a?.app || "dev"}`, web?.build && `web ${short(web.build)}`,
+          a?.build && `API ${short(a.build)}`, a?.helper && `helper ${a.helper}`].filter(Boolean);
+        if (on) setLine(parts.join(" · "));
+      });
+    return () => { on = false; };
+  }, []);
+  return line ? <p className="small muted setting-help">{line}</p> : null;
+}
 import type { UserDoc } from "@/lib/types";
 
 export default function AccountSettings({ me, anonymous, live = false, onSave, onTour }: {
@@ -45,6 +64,7 @@ export default function AccountSettings({ me, anonymous, live = false, onSave, o
       {err && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</p>}
       <p className="small setting-help"><button className="small" onClick={onTour}>Show the tour again</button>{" "}
         <span className="muted">A short walk through what each part of the screen does.</span></p>
+      <Versions />
     </div>
   );
 }
