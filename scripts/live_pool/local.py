@@ -36,6 +36,15 @@ else:
         t = time.time()
         print("sweep:", json.dumps(live.sweep()), f"{time.time() - t:.0f}s")
         print("vms:", live.all_status(0))
+    elif cmd == "whoami":  # the principal the server would use (Application Default Credentials), and a live check
+        import google.auth
+        from google.auth.transport.requests import Request
+        creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(Request())
+        who = getattr(creds, "service_account_email", None) or getattr(creds, "_target_principal", None) \
+            or getattr(creds, "signer_email", None) or "a user account (not the runtime identity)"
+        print("ADC principal:", who, "| project:", project)
+        print("pool VM read:", live.vm_status(next(iter(live.pool())), 0))
     elif cmd == "baseline":  # with the golden snapshots: record each clean pool account, and bind uid -> slot for rules
         for n, uid in live.pool().items():
             live.db.client().collection("livePoolUids").document(uid).set({"slot": n})

@@ -21,6 +21,7 @@ from .redact import scrub, scrub_value
 app = FastAPI(title="Nightlight API", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_middleware(db.FenceMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.web_origins, allow_methods=["GET", "POST", "PUT", "DELETE"],
                    allow_headers=["Authorization", "Content-Type"], max_age=600)
 

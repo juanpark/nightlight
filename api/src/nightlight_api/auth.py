@@ -39,8 +39,15 @@ def _claims(request: Request) -> dict:
             raise ApiError(401, "lease_ended")
         if POOL_DENY.search(line):
             raise ApiError(403, "live_demo_machine")
-        if changes and not request.url.path.startswith("/api/demo/live") and (d.get("restore") or d.get("wiping")):
-            raise ApiError(409, "machine_resetting", retryAfter=10)  # no writes race the wipe of a Start fresh
+        if not request.url.path.startswith("/api/demo/live"):
+            if changes and (d.get("restore") or d.get("wiping")):
+                raise ApiError(409, "machine_resetting", retryAfter=10)  # no writes race the wipe of a Start fresh
+            # And every transaction this request makes re-checks the lease (not wiping, same visit) together with its
+            # write: a request admitted just before the lease ended can't write into the next visit.
+            from . import db
+            holder = db.fence_holder()
+            if holder is not None:
+                holder["check"] = live.visitor_check(slot, str(claims["nl_lease"]))
     return claims
 
 

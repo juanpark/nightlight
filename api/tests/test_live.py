@@ -361,3 +361,118 @@ def test_phases_follow_the_machine():
     assert live._phase(d, "RUNNING", ("resetting", "c1", now.timestamp()), None) == "reconnecting"
     assert live._phase(d, "RUNNING", ("ready", "c0", now.timestamp()), now) == "reconnecting"
     assert live._phase(d, "RUNNING", ("ready", "c1", now.timestamp() - 5), now) == "ready"
+
+
+# ------------------------------------------------------------------ rev2: visit epochs and write fences
+
+def _free_after_release(slot):
+    plan = live.slots().document(slot).get().to_dict()["restore"]
+    assert live._restore_done(slot, plan)
+    assert live.slots().document(slot).get().to_dict()["state"] == "free"
+
+
+def _only_first_slot_free(names):
+    for n in names[1:]:
+        live.slots().document(n).set({"state": "maintenance"})
+
+
+def test_a_stale_cleanup_never_touches_the_next_visit_or_its_auth_user(pool):
+    names, uids, calls = pool
+    _only_first_slot_free(names)
+    slot, uid = names[0], uids[0]
+    _seed_pool_account(uid)
+    assert live.lease("v1", "ip1")["slot"] == slot
+    live.slots().document(slot).update({"expiresAt": NOW() - timedelta(seconds=1)})
+    stale = live._claim_release(slot)  # release 1 claims, then stalls before its cleanup
+    live.slots().document(slot).update({"releaseStartedAt": NOW() - timedelta(minutes=10)})
+    assert live._release(slot)  # release 2 takes over (a new epoch), cleans, restores
+    _free_after_release(slot)
+    second = live.lease("v2", "ip2")  # the next visit
+    db.notes(uid, "dev_base").document("n_next").set({"text": "the next judge's note"})
+    calls.clear()
+    with pytest.raises(live.CleanupLost):
+        live.cleanup(slot, uid, stale["epoch"])  # release 1 resumes
+    assert db.notes(uid, "dev_base").document("n_next").get().exists
+    assert ("auth_reset", uid) not in calls
+    assert live.slots().document(slot).get().to_dict()["leaseId"] == second["leaseId"]
+
+
+def test_a_write_admitted_in_one_visit_cannot_land_in_the_next(pool, monkeypatch):
+    names, uids, _ = pool
+    _only_first_slot_free(names)
+    slot, uid = names[0], uids[0]
+    _seed_pool_account(uid)
+    first = live.lease("v1", "ip1")
+    admitted = live.slots().document(slot).get().to_dict()
+    live.end(slot, first["leaseId"])
+    _free_after_release(slot)
+    live.lease("v2", "ip2")
+    # the old request passed auth before its lease ended; its endpoint runs only now
+    real_lease_doc = live.lease_doc
+    monkeypatch.setattr(live, "lease_doc", lambda s, lid, fresh=False: admitted if lid == first["leaseId"]
+                        else real_lease_doc(s, lid, fresh=fresh))
+    c = _client_with(monkeypatch, {"uid": uid, "nl_slot": slot, "nl_lease": first["leaseId"],
+                                   "firebase": {"sign_in_provider": "custom"}})
+    r = c.post("/api/devices/dev_base/layout", json={"name": "Judge one's private box"},
+               headers={"Authorization": "Bearer x"})
+    assert r.status_code == 401 and r.json()["code"] == "lease_ended"
+    assert db.device(uid, "dev_base").get().to_dict()["name"] == "homeserver"
+
+
+def test_restore_completion_waits_for_the_wipe_and_restarts_after_it(pool, monkeypatch):
+    _, _, calls = pool
+    got = live.lease("v1", "ip1")
+    seen = {}
+
+    def wipe_while_restore_finishes(uid):
+        plan = live.slots().document(got["slot"]).get().to_dict()["restore"]
+        seen["during"] = live._restore_done(got["slot"], plan)  # the disk half finishes mid-wipe
+
+    monkeypatch.setattr(live, "wipe", wipe_while_restore_finishes)
+    live.reset_mine(got["slot"], got["leaseId"])
+    assert seen["during"] is False
+    d = live.slots().document(got["slot"]).get().to_dict()
+    assert d["wiping"] is False and d.get("restore")  # the op stays until both halves are done
+    calls.clear()
+    assert live._restore_done(got["slot"], d["restore"])
+    assert ("start", got["slot"]) in calls
+    assert "restore" not in live.slots().document(got["slot"]).get().to_dict()
+
+
+def test_restore_completion_never_restarts_for_an_ended_lease(pool, monkeypatch):
+    _, _, calls = pool
+    monkeypatch.setattr(live, "wipe", lambda uid: None)
+    got = live.lease("v1", "ip1")
+    live.reset_mine(got["slot"], got["leaseId"])
+    plan = live.slots().document(got["slot"]).get().to_dict()["restore"]
+    live.slots().document(got["slot"]).update({"expiresAt": NOW() - timedelta(seconds=1)})
+    calls.clear()
+    assert live._restore_done(got["slot"], plan) is False
+    assert not [c for c in calls if c[0] == "start"]
+
+
+def test_any_visitor_transaction_rechecks_the_lease_with_its_write(pool):
+    from nightlight_api import notebook
+    got = live.lease("v1", "ip1")
+    uid = got["uid"]
+    demo.start(uid, "empty")
+    db.device(uid, "dev_base").set({"realm": "real", "name": "homeserver"})
+    live.slots().document(got["slot"]).update({"expiresAt": NOW() - timedelta(seconds=1)})
+    with db.fenced(live.visitor_check(got["slot"], got["leaseId"])):
+        with pytest.raises(ApiError):
+            notebook.add(uid, "dev_base", "late note", "you", None)
+    assert not list(db.notes(uid, "dev_base").get())
+
+
+def test_a_reset_cleanup_stops_when_a_release_takes_over(pool, monkeypatch):
+    _, _, calls = pool
+    got = live.lease("v1", "ip1")
+
+    def wipe_interrupted(uid):
+        live.slots().document(got["slot"]).update({"expiresAt": NOW() - timedelta(seconds=1)})
+        live._claim_release(got["slot"])  # a release takes the slot: new epoch
+        db.fence_now()  # the reset's next destructive step
+
+    monkeypatch.setattr(live, "wipe", wipe_interrupted)
+    live.reset_mine(got["slot"], got["leaseId"])  # returns; its cleanup stopped at the fence
+    assert live.slots().document(got["slot"]).get().to_dict()["state"] == "releasing"

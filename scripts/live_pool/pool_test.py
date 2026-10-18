@@ -55,6 +55,7 @@ def visitor(i, a, barrier, rows):
     row = {"visitor": i}
     rows.append(row)
     tok = anon()
+    time.sleep(a.skew)  # a local server whose clock runs behind Google's refuses brand-new tokens ("used too early")
     ip = "198.51.100.7" if a.same_ip else f"198.51.100.{10 + i}"
     barrier.wait()
     if a.late and i > a.n - a.late:
@@ -70,6 +71,7 @@ def visitor(i, a, barrier, rows):
         c2, r2 = http("POST", a.api + "/api/demo/live", {}, {"Authorization": "Bearer " + tok, "X-Forwarded-For": ip})
         row["again"] = r2.get("slot") if c2 == 200 else c2
     pool = {"Authorization": "Bearer " + custom(r["token"])}
+    time.sleep(a.skew)
     row["token"] = pool["Authorization"]
     running = None
     while time.time() - t0 < 240:
@@ -145,7 +147,7 @@ def main():
     p.add_argument("--late", type=int, default=0); p.add_argument("--late-delay", type=float, default=0)
     p.add_argument("--reset-visitor", type=int, default=0); p.add_argument("--reset-scenario", default="none")
     p.add_argument("--drift", type=int, nargs="*", default=[]); p.add_argument("--check", action="store_true")
-    p.add_argument("--job", action="store_true"); p.add_argument("--wait-free", action="store_true")
+    p.add_argument("--skew", type=float, default=0); p.add_argument("--job", action="store_true"); p.add_argument("--wait-free", action="store_true")
     a = p.parse_args()
     barrier = threading.Barrier(a.n)
     rows = []

@@ -84,9 +84,14 @@ def add(uid: str, device_id: str, text: str, by: str, generation: int | None, fe
 
 def remove(uid: str, device_id: str, note_id: str) -> dict:
     ref = db.notes(uid, device_id).document(note_id)
-    if not ref.get().exists:
-        raise not_found()
-    ref.delete()
+
+    @firestore.transactional
+    def run(tx):  # a transaction, so the request's fence (a live demo machine's lease) is checked with the delete
+        if not ref.get(transaction=tx).exists:
+            raise not_found()
+        tx.delete(ref)
+
+    db.run_transaction(run)
     return {"ok": True}
 
 

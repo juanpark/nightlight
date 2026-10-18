@@ -14,10 +14,12 @@
 #     plainly. A dedicated pool project would contain it fully (roadmap).
 #  4. liveDemoPoolAuth (project level): delete a Firebase Auth user, used to reset a pool account after each visit.
 #     Firebase Auth permissions can't be scoped to some uids; the same boundary as (1).
-# After granting, validate with the runtime identity itself (not owner credentials):
-#   gcloud config set auth/impersonate_service_account api-runtime@nightlight-aibc.iam.gserviceaccount.com
-#   (from api/) uv run python ../scripts/live_pool/local.py serve   # then: pool_test.py ... 1 --reset-visitor 1 --end --wait-free
-#   gcloud config unset auth/impersonate_service_account
+# After granting, validate with the runtime identity itself (not owner credentials). Python reads Application Default
+# Credentials, so impersonate there (the gcloud CLI property alone does not change what the server uses):
+#   gcloud auth application-default login --impersonate-service-account=api-runtime@nightlight-aibc.iam.gserviceaccount.com
+#   (from api/) uv run python ../scripts/live_pool/local.py whoami     # must print api-runtime@..., else stop
+#   (from api/) uv run python ../scripts/live_pool/local.py serve      # then: pool_test.py ... 1 --reset-visitor 1 --end --wait-free
+#   gcloud auth application-default login                              # back to your own ADC afterwards
 # (impersonating needs Token Creator on api-runtime for your own user, granted temporarily.)
 set -euo pipefail
 PROJECT=${PROJECT:-nightlight-aibc}
