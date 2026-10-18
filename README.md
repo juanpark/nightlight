@@ -331,6 +331,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `docs/SECURITY.md`, `docs/DESIGN-trust.md` | the security model; safety vs power, and why |
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
 | `docs/BENCHMARKS.md`, `scripts/bench.py` | measured latency and cost |
+| `docs/COSTS.md` | what we spent on Google Cloud and Gemini, the guards that cap it, and why |
 | `docs/architecture/` | the architecture diagram as code |
 | `contracts/mocks/` | sample data for every state of the demo story |
 | `firebase.json`, `firestore.rules` | emulator settings; browsers read only their own data |
