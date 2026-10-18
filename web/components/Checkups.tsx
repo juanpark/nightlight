@@ -57,10 +57,9 @@ export default function Checkups({ uid, generation, deviceId, actions, cleanupOn
   const pb = last?.result?.playbook;
   return (
     <section className="checkups">
-      <h4>Checkups <span className="muted small">known problems, checked step by step (no AI needed)</span></h4>
       <div className="checkup-buttons">
         {offers.map((o) => (
-          <button key={o.id} className={o.suggested ? "primary" : ""} disabled={!!busy} title={o.about}
+          <button key={o.id} className={o.id === offers.find((x) => x.suggested)?.id ? "primary" : ""} // one suggestion leads disabled={!!busy} title={o.about}
             onClick={() => run(o.id)}>{busy === o.id ? "Starting…" : o.title}</button>))}
       </div>
       {error && <p className="small" style={{ color: "var(--crit-ink)" }}>{error}</p>}

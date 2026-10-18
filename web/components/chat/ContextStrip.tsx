@@ -16,7 +16,7 @@ export default function ContextStrip({ devices, onShow }: { devices: Device[]; o
         const st = stepState(f, d.id) ?? (f.done ? "done" : "checking");
         const note = f.steps[d.id]?.note;
         return (
-          <button key={d.id} role="listitem" className={`ctx-chip ${st}`} title={note ? `${d.name}: ${note}` : d.name}
+          <button key={d.id} role="listitem" className={`ctx-chip ${st} ${d.status}`} title={note ? `${d.name}: ${note}` : d.name}
             onClick={() => { followShow(d.id); onShow?.(); }}>
             <span className="ctx-dot" aria-hidden /><span className="ctx-name">{d.name}</span>
             <span className="ctx-state">{WORDS[st]}</span>

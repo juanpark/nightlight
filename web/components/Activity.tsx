@@ -1,9 +1,10 @@
 "use client";
 import { useMemo, useState } from "react";
+import { StatusIcon, type Tone } from "./StatusWord";
 import type { Action, Device, EventDoc } from "@/lib/types";
 
 type Who = "you" | "auto" | "device" | "nightlight";
-interface Row { id: string; at: number; who: Who; deviceId?: string; text: string; dot: string; problem: boolean }
+interface Row { id: string; at: number; who: Who; deviceId?: string; text: string; dot: string; word: string; problem: boolean }
 
 const WHO_LABEL: Record<Who, string> = { you: "You", auto: "Automatically", device: "Device", nightlight: "Nightlight" };
 const RANGES = { today: 1, week: 7, all: 3650 } as const;
@@ -33,7 +34,8 @@ export default function Activity({ events, actions, devices }: {
       const verb = a.type === "diagnose" ? "looked into" : a.status === "denied" ? "declined" : "approved";
       const what = a.result?.summary ?? a.plan;
       out.push({ id: a.id, at: a.createdAt?.getTime() ?? 0, who: by, deviceId: a.deviceId, problem: a.status === "failed",
-        dot: a.status === "done" ? "ok" : a.status === "failed" ? "crit" : "offline",
+        dot: a.status === "done" ? "ok" : a.status === "failed" ? "crit" : "later",
+        word: a.status === "done" ? "Done" : a.status === "failed" ? "Didn't work" : "Not done",
         text: by === "auto" ? `Handled on its own on ${name(a.deviceId)}: ${what}`
           : by === "nightlight" ? `Nightlight ${verb} ${a.deviceId ? name(a.deviceId) : ""}: ${what}`
           : `You ${verb}: ${what}` });
@@ -41,7 +43,8 @@ export default function Activity({ events, actions, devices }: {
     for (const e of events) {
       const w: Who = e.who === "you" || e.who === "auto" || e.who === "nightlight" ? e.who : "device";
       out.push({ id: e.id, at: e.at?.getTime() ?? 0, who: w, deviceId: e.deviceId ?? undefined, text: e.message,
-        dot: e.severity === "info" ? "ok" : e.severity, problem: e.severity !== "info" });
+        dot: e.severity === "info" ? "ok" : e.severity,
+        word: e.severity === "crit" ? "Problem" : e.severity === "warn" ? "Needs a look" : "Note", problem: e.severity !== "info" });
     }
     return out.sort((a, b) => b.at - a.at);
   }, [actions, events, devices]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -78,7 +81,7 @@ export default function Activity({ events, actions, devices }: {
           <div className="list">
             {list.map((r) => (
               <div key={r.id} className="item">
-                <span className={`dot ${r.dot}`} style={{ marginTop: 4 }} />
+                <StatusIcon tone={r.dot as Tone} word={r.word} />
                 <span style={{ flex: 1 }}>{r.text}</span>
                 <span className="small muted">{r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
               </div>

@@ -141,7 +141,8 @@ export function needsYou(i: NeedsInput): Need[] {
     if (real && d.manage === "app" && sent && i.now - sent > PERMS_GRACE
         && !applied(normal(d.permissions), d.allowedJobs ?? {}, (d.containerCount ?? 0) === 0)) {
       out.push({ id: `perms:${d.id}`, kind: "permsWaiting", priority: 3, deviceId: d.id,
-        title: "Permission change not yet applied", detail: "The device hasn't picked it up",
+        title: "Your new settings haven't reached this device yet",
+        detail: "It picks them up the next time it checks in, usually within a minute",
         cta: { label: "Details", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: sent });
     }
     // Only a real mismatch: the device trusts a passkey the app no longer has (expert sessions are opt-in per
@@ -183,10 +184,13 @@ export function byDevice(needs: Need[]): Map<string, Need[]> {
 }
 
 export function verdict(needs: Need[]): string {
-  if (needs.length === 0) return "All quiet at home";
+  if (needs.length === 0) return "All good";
+  // the urgent ones lead, since that is what to act on first; the rest follow as "and N more"
   const urgent = needs.filter((n) => n.priority === 1).length;
-  return `${needs.length} ${needs.length === 1 ? "thing needs" : "things need"} you` + (urgent && needs.length > 1
-    ? `, ${urgent} urgent` : "");
+  const rest = needs.length - urgent;
+  const things = (n: number, kind = "") => `${n} ${kind}${n === 1 ? "thing needs" : "things need"} you`;
+  if (!urgent) return things(needs.length);
+  return things(urgent, "urgent ") + (rest ? `, and ${rest} more` : "");
 }
 
 /** One plain sentence about a device, for the top of its panel. */

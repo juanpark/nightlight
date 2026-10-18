@@ -39,7 +39,11 @@ function LookNearby({ devices, discoveries, onGo, again, sample }: {
         : "Couldn't ask your devices to look.");
     } finally { setBusy(false); }
   }
-  if (!own.length && !sample) return <p className="small muted">Add one of your own devices first; it can then look for others nearby.</p>;
+  if (!own.length && !sample) return (
+    <div className="look-row">
+      <p className="small muted" style={{ margin: 0 }}>Add one of your own devices first; it can then look for others nearby.</p>
+      <button className="small" onClick={() => onGo({ to: "panel", panel: "add" })}>Add a device</button>
+    </div>);
   const looking = run?.asked.filter((a) => !looked(a.deviceId)) ?? [];
   return (
     <div className="look-nearby">

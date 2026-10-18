@@ -1,0 +1,1075 @@
+/* "/": one night in a clay house, told on scroll over a 3D scene.
+   Three colours carry the page: steps of navy for the ground and every
+   surface, cream for the words, and star yellow for the light (the action,
+   the wire, anything that needs you). Two status colours sit outside the
+   three and are kept for status only, each always paired with a word:
+   green for "fine", amber for "needs a look". The 3D scene reads its colours
+   from these same tokens. They are set on the html element too (where :has is
+   supported) so the page's edges, overscroll and first paint share the navy; not while the
+   returning-visitor loading screen stands in for the page (AppGate). */
+.page,
+:global(html:not([data-session])):has(.page) {
+  --night: #0b1430;
+  --surface: #111c3d;
+  --surface-2: #18254b;
+  --line: #22305c;
+  --line-strong: #33457a;
+  --text: #f4efe4;
+  --muted: #aab3cf;
+  --star: #fdd83a;
+  --star-hover: #ffe36a;
+  --star-ink: #15224a;
+  --ok: #8fd6a8;
+  --warn: #f5b84a;
+  --error: #ffb4a3;
+  --logo-light: #fdd83a;
+  /* The same colours as channels, for see-through glass and glows. */
+  --night-rgb: 11 20 48;
+  --surface-rgb: 17 28 61;
+  --surface-2-rgb: 24 37 75;
+  --line-rgb: 51 69 122;
+  --star-rgb: 253 216 58;
+  --ok-rgb: 143 214 168;
+  --warn-rgb: 245 184 74;
+  --shadow-rgb: 3 7 20;
+  /* The 3D scene's clear colour: tone mapping darkens it, so it is set a
+     step lighter than --night in order to land on it on screen. */
+  --scene-ground: #1b233c;
+  --gutter: clamp(16px, 3.4vw, 48px);
+  --col: 30rem;
+}
+.page {
+  position: relative;
+  min-height: 100svh;
+  background: var(--night);
+  color: var(--text);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+:global(html:not([data-session])):has(.page),
+:global(html:not([data-session])):has(.page) :global(body) {
+  background: var(--night);
+}
+
+.page ::selection { background: rgb(var(--star-rgb) / 0.85); color: var(--star-ink); }
+.page :focus-visible { outline: 2px solid var(--star); outline-offset: 3px; border-radius: 6px; }
+.page a { color: inherit; }
+
+.skip {
+  position: absolute;
+  left: 16px;
+  top: -60px;
+  z-index: 50;
+  padding: 10px 14px;
+  background: var(--star);
+  color: var(--star-ink) !important;
+  border-radius: 10px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.skip:focus { top: 12px; }
+
+/* ---------- The scene, fixed behind everything ---------- */
+.scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 1.4s ease;
+}
+.page[data-gl="on"] .scene { opacity: 1; }
+/* No WebGL: a quiet warm glow where the house would be. */
+.page[data-gl="off"] .scene { display: none; }
+.page[data-gl="off"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(60% 45% at 50% 72%, rgb(var(--star-rgb) / 0.16), transparent 70%);
+}
+/* Keeps the top copy and the edges readable over the scene. */
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(70% 38% at 50% 0%, rgb(var(--night-rgb) / 0.8), transparent 75%),
+    radial-gradient(120% 90% at 50% 50%, transparent 55%, rgb(var(--night-rgb) / 0.55));
+}
+
+/* ---------- Callouts pinned to the scene: a label, and a line to the card ---------- */
+.link {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+  overflow: visible;
+}
+.link path {
+  fill: none;
+  stroke: var(--star);
+  stroke-width: 1.25;
+  stroke-opacity: 0.7;
+  filter: drop-shadow(0 0 6px rgb(var(--star-rgb) / 0.55));
+}
+.link circle { fill: var(--night); stroke: var(--star); stroke-width: 1.5; }
+.link circle + circle { fill: var(--star); stroke: none; }
+.tag {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0;
+  translate: -50% calc(-100% - 22px);
+  padding: 6px 11px 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  background: rgb(var(--night-rgb) / 0.78);
+  border: 1px solid rgb(var(--warn-rgb) / 0.5);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+.tag::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 10px var(--warn);
+}
+.tag[data-tone="live"] { border-color: rgb(var(--star-rgb) / 0.5); }
+.tag[data-tone="live"]::before { background: var(--star); box-shadow: 0 0 10px var(--star); animation: blink 1.1s ease-in-out infinite; }
+.tag[data-tone="ok"] { border-color: rgb(var(--ok-rgb) / 0.5); }
+.tag[data-tone="ok"]::before { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+@keyframes blink { 50% { opacity: 0.35; } }
+
+/* ---------- Nav: one glass capsule floating over the scene ---------- */
+.nav {
+  position: fixed;
+  inset: 12px 0 auto;
+  z-index: 20;
+  padding-inline: var(--gutter);
+  pointer-events: none;
+}
+.bar {
+  position: relative;
+  pointer-events: auto;
+  max-width: 1180px;
+  height: 60px;
+  margin: 0 auto;
+  padding: 0 8px 0 10px;
+  display: grid;
+  /* The sides grow to fit what they hold, so the actions never wrap near the
+     breakpoint; while there's room the links sit dead centre. */
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  grid-template-areas: "brand links end";
+  align-items: center;
+  gap: 16px;
+  border-radius: 999px;
+  background: rgb(var(--night-rgb) / 0.55);
+  border: 1px solid rgb(var(--line-rgb) / 0.55);
+  backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: 0 18px 40px -18px rgb(var(--shadow-rgb) / 0.8);
+}
+.bar .actionsSmall .error { right: 0; top: 70px; }
+/* The logo on the left, the links in the middle, the actions on the right. */
+.brand { grid-area: brand; justify-self: start; display: inline-flex; align-items: center; min-height: 44px; padding-left: 14px; color: var(--text); }
+.links {
+  grid-area: links;
+  position: relative;
+  justify-self: center;
+  display: flex;
+  gap: 4px;
+}
+.links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--muted);
+  transition: color 0.25s ease, background-color 0.25s ease;
+}
+.links a:hover { color: var(--text); background: rgb(var(--line-rgb) / 0.35); }
+.links a[aria-current],
+.links a[aria-current]:hover { color: var(--star); }
+.navActions { grid-area: end; justify-self: end; }
+.navActions .actionRow { flex-wrap: nowrap; }
+.menuButton {
+  grid-area: links;
+  justify-self: start;
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgb(var(--surface-2-rgb) / 0.6);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.25s ease;
+}
+.menuButton:hover:not(:disabled) { background: rgb(var(--surface-2-rgb) / 0.6); border-color: var(--muted); }
+.menuIcon { display: grid; gap: 5px; width: 16px; }
+.menuIcon span {
+  display: block;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transition: translate 0.35s cubic-bezier(0.16, 1, 0.3, 1), rotate 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav[data-open] .menuIcon span:first-child { translate: 0 3.25px; rotate: 45deg; }
+.nav[data-open] .menuIcon span:last-child { translate: 0 -3.25px; rotate: -45deg; }
+.menu {
+  pointer-events: none;
+  max-width: 1180px;
+  margin: 8px auto 0;
+  padding: 8px;
+  display: none;
+  border-radius: 24px;
+  background: rgb(var(--night-rgb) / 0.8);
+  border: 1px solid rgb(var(--line-rgb) / 0.55);
+  backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow: 0 24px 48px -18px rgb(var(--shadow-rgb) / 0.8);
+  opacity: 0;
+  translate: 0 -8px;
+  transition: opacity 0.3s ease, translate 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav[data-open] .menu { pointer-events: auto; opacity: 1; translate: 0 0; }
+.menu a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.125rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--text);
+}
+.menu a:hover { background: rgb(var(--line-rgb) / 0.35); }
+.menu a::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.menu a[aria-current] { color: var(--star); }
+.menu nav { display: grid; }
+.menuActions {
+  margin: 8px 8px 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgb(var(--line-rgb) / 0.7);
+}
+.menuActions .actions { justify-items: stretch; }
+.menuActions .actionRow { display: grid; justify-content: stretch; }
+.menuActions .secondary { width: 100%; min-height: 52px; }
+@media (max-width: 1100px) {
+  .links { display: none; }
+  /* 44px controls in a 56px capsule: the same 6px of glass on every side,
+     so the pill and the round button sit concentric with the bar. */
+  .bar { height: 56px; gap: 6px; padding: 0 6px; }
+  /* Both outer columns stay equal, so the logo sits exactly in the middle. */
+  .bar { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-areas: "links brand end"; }
+  .brand { justify-self: center; padding-left: 0; }
+  .navActions .secondary { display: none; }
+  .navActions .primary { padding: 0 14px 0 18px; font-size: 0.875rem; letter-spacing: 0.01em; }
+  .menuButton { display: inline-grid; }
+  .menu { display: grid; }
+}
+/* Phones: no room for a centred logo between two controls. The logo leads,
+   the action and the menu share the right end. */
+@media (max-width: 560px) {
+  .bar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "brand end menu";
+    padding-left: 18px;
+  }
+  .brand { justify-self: start; }
+  .menuButton { grid-area: menu; }
+}
+@media (max-width: 340px) {
+  .navActions .primary svg { display: none; }
+  .navActions .primary { padding-inline: 16px; }
+}
+
+/* ---------- Buttons (AuthButtons reads these names) ---------- */
+.actions { display: grid; gap: 10px; justify-items: center; }
+.actionsSmall { display: grid; }
+.actionRow { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; align-items: center; }
+.primary,
+.secondary {
+  font: inherit;
+  min-height: 44px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+.actions .primary,
+.actions .secondary { font-size: 1rem; font-weight: 600; padding: 13px 22px; }
+.actionsSmall .primary,
+.actionsSmall .secondary { font-size: 0.8125rem; font-weight: 600; padding: 10px 18px; letter-spacing: 0.02em; }
+.primary {
+  background: var(--star);
+  color: var(--star-ink);
+  border: 1px solid var(--star);
+  box-shadow: 0 0 0 0 rgb(var(--star-rgb) / 0);
+}
+/* :not(:disabled) outranks the app's global button hover, which would swap in a panel fill and hide the text. */
+.primary:hover:not(:disabled) {
+  background: var(--star-hover);
+  border-color: var(--star-hover);
+  box-shadow: 0 0 28px 2px rgb(var(--star-rgb) / 0.35);
+}
+.primary svg { transition: transform 0.2s ease; }
+.primary:hover svg { transform: translateX(2px); }
+.primary:active,
+.secondary:active { transform: translateY(1px); }
+.secondary {
+  background: rgb(var(--surface-2-rgb) / 0.7);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  backdrop-filter: blur(8px);
+}
+.secondary:hover:not(:disabled) { background: rgb(var(--surface-2-rgb) / 0.7); border-color: var(--muted); }
+.primary:disabled,
+.secondary:disabled { cursor: progress; opacity: 0.7; }
+.error { margin: 0; font-size: 0.875rem; color: var(--error); max-width: 26rem; text-align: center; }
+.actionsSmall .error {
+  position: absolute;
+  right: var(--gutter);
+  top: 72px;
+  max-width: 20rem;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  text-align: left;
+}
+
+/* ---------- Hero ---------- */
+.main { position: relative; z-index: 1; }
+/* Every line of the hero shares one left edge, lined up with the text inside the
+   nav capsule; on wide screens the house fills the right half, and the way on waits
+   at the bottom. Sizes follow the screen's height too, so short laptops fit. */
+.hero {
+  --hero-inset: max(var(--gutter), calc((100% - 1180px) / 2));
+  --h1-size: clamp(2.75rem, min(6.6vw, 11.5svh), 6rem);
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  justify-items: start;
+  padding: clamp(104px, 15svh, 152px) calc(var(--hero-inset) + 24px) 40px;
+}
+.h1 {
+  margin: 0;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: var(--h1-size);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+}
+.h1Sleep,
+.h1Watch { display: block; white-space: nowrap; }
+.lede {
+  margin: clamp(16px, 2.8svh, 32px) 0 0;
+  max-width: 30rem;
+  font-size: clamp(1rem, 1.25vw, 1.125rem);
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+/* The hero's own way in: the demo, lined up with the lede. */
+.heroCta { margin-top: clamp(20px, 3.2svh, 36px); }
+.heroCta .actions { justify-items: start; }
+/* Mid widths: the house comes closer on the right, so the lede wraps sooner. */
+@media (max-width: 1100px) {
+  .lede { max-width: 26rem; }
+}
+.cue {
+  position: absolute;
+  bottom: 28px;
+  left: calc(var(--hero-inset) + 24px);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding-right: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--text);
+  white-space: nowrap;
+}
+.cueIcon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgb(var(--night-rgb) / 0.4);
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+.cueIcon svg { transition: translate 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+.cue:hover .cueIcon { border-color: var(--star); color: var(--star); }
+.cue:hover .cueIcon svg { translate: 0 2px; }
+.sample {
+  position: absolute;
+  /* The pill's padding hangs outside the text edge, so the words line up. */
+  right: calc(var(--hero-inset) + 12px);
+  bottom: 36px;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  /* It sits over the house, so it carries a little night behind it. */
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgb(var(--night-rgb) / 0.72);
+}
+.sampleDot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; }
+
+/* ---------- Story: a pinned rail on the left, a card per step on the right ---------- */
+.story { position: relative; }
+/* The rail sticks to the bottom of the screen only while the story is on screen. */
+.railWrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: clamp(32px, 7vh, 72px);
+  pointer-events: none;
+  z-index: 2;
+}
+.rail {
+  position: sticky;
+  bottom: clamp(32px, 7vh, 72px);
+  margin-left: var(--gutter);
+  width: min(26rem, 34vw);
+  padding: 14px 20px 14px 14px;
+  border-radius: 22px;
+  background: rgb(var(--surface-rgb) / 0.55);
+  border: 1px solid rgb(var(--line-rgb) / 0.6);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 24px 48px -16px rgb(var(--shadow-rgb) / 0.6);
+  opacity: 0;
+  translate: 0 16px;
+  transition: opacity 0.5s ease, translate 0.5s ease;
+}
+.rail[data-show="true"] { opacity: 1; translate: 0 0; pointer-events: auto; }
+.rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rail a {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  text-decoration: none;
+  padding: 4px 0;
+}
+.num {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  transition: background-color 0.35s ease, color 0.35s ease, box-shadow 0.35s ease;
+}
+.railTitle {
+  font-size: 0.9375rem;
+  color: var(--muted);
+  transition: font-size 0.35s ease, color 0.35s ease;
+}
+.rail li[data-active] .num {
+  background: var(--star);
+  color: var(--star-ink);
+  font-weight: 650;
+  box-shadow: 0 0 24px rgb(var(--star-rgb) / 0.35);
+}
+.rail li[data-active] .railTitle {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.rail a:hover .railTitle { color: var(--text); }
+.railText {
+  margin: 0 0 0 21px;
+  padding-left: 41px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.55;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.5s ease, opacity 0.4s ease, margin 0.5s ease;
+}
+.rail li[data-active] .railText { max-height: 10rem; opacity: 1; margin-block: 6px 10px; }
+
+.step {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: 1fr var(--col);
+  align-items: center;
+  padding: 96px var(--gutter) 48px;
+}
+/* On wide screens the step's words and card sit straight in its grid. */
+.stepStick { display: contents; }
+.stepPips { display: none; }
+/* On wide screens the rail tells the step; the article keeps it for screen readers. */
+.stepCopy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cardSlot {
+  grid-column: 2;
+  /* Waiting cards only fade, never blur: a control is never distorted (they're inert until their step). */
+  opacity: 0.35;
+  translate: 0 28px;
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), translate 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.step[data-active] .cardSlot { opacity: 1; translate: 0 0; }
+/* The cards' own buttons (Approve, Not now, the trust choices) get full-size tap areas here. */
+.cardSlot button { min-height: 44px; }
+/* The cards are glass here, so the house stays visible behind them. */
+.cardSlot > :first-child {
+  background: rgb(var(--surface-rgb) / 0.72);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
+
+/* ---------- After the story: the house stays under every section ---------- */
+/* Panels are glass so the scene keeps moving behind the words. */
+
+.watchGrid,
+.whoList,
+.privacyCols {
+  background: rgb(var(--surface-rgb) / 0.58);
+  border: 1px solid rgb(var(--line-rgb) / 0.6);
+  border-radius: 24px;
+  backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 30px 60px -24px rgb(var(--shadow-rgb) / 0.7);
+}
+.h2 {
+  margin: 0 0 clamp(32px, 4vw, 56px);
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(2.25rem, 5vw, 4.25rem);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  text-shadow: 0 2px 30px rgb(var(--night-rgb) / 0.8);
+}
+
+/* While the light makes its rounds: one statement, left, the house on the right. */
+.intro {
+  position: relative;
+  min-height: 130svh;
+  display: grid;
+  align-items: center;
+  padding: 0 var(--gutter);
+}
+.statement {
+  margin: 0;
+  max-width: 17em;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(1.625rem, 3vw, 2.625rem);
+  font-weight: 500;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+  text-wrap: pretty;
+  text-shadow: 0 2px 24px rgb(var(--night-rgb) / 0.9), 0 0 2px rgb(var(--night-rgb) / 0.6);
+}
+.statement strong { font-weight: 700; color: var(--star); }
+
+/* High above the house: four things it watches, in one glass panel. */
+.watch {
+  min-height: 100svh;
+  display: grid;
+  align-content: center;
+  padding: clamp(96px, 14vh, 160px) var(--gutter);
+}
+.watchGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+}
+.watchBlock {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 22px;
+  padding: clamp(22px, 2.4vw, 34px);
+  transition: background-color 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.watchBlock + .watchBlock { border-left: 1px solid rgb(var(--line-rgb) / 0.6); }
+.watchBlock:hover { background: rgb(var(--surface-2-rgb) / 0.6); }
+.watchTitle {
+  margin: 0;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(1.375rem, 1.9vw, 1.75rem);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.watchItems { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; align-content: start; }
+.watchItems li { transition: translate 0.6s cubic-bezier(0.16, 1, 0.3, 1), color 0.4s ease; }
+.watchBlock:hover .watchItems li { translate: 8px 0; color: var(--text); }
+.watchBlock:hover .watchItems li:nth-child(2) { transition-delay: 0.04s; }
+.watchBlock:hover .watchItems li:nth-child(3) { transition-delay: 0.08s; }
+.watchBlock:hover .watchItems li:nth-child(4) { transition-delay: 0.12s; }
+.watchText { margin: 0; color: var(--muted); font-size: 0.9375rem; }
+
+/* On the way back down: who it's for, then what leaves the house. */
+.who,
+.privacy {
+  padding: clamp(96px, 14vh, 160px) var(--gutter) 0;
+}
+.whoList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.whoRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding: clamp(18px, 2.2vw, 28px) clamp(20px, 2.6vw, 36px);
+  transition: background-color 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.whoRow + .whoRow { border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
+.whoRow:hover { background: rgb(var(--surface-2-rgb) / 0.6); }
+.whoName {
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(1.25rem, 2.4vw, 2rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  transition: translate 0.7s cubic-bezier(0.16, 1, 0.3, 1), color 0.4s ease;
+}
+.whoRow:hover .whoName { translate: 10px 0; color: var(--text); }
+
+.privacyCols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px;
+  padding: clamp(24px, 3vw, 44px);
+}
+.privacyHead {
+  margin: 0 0 18px;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(1.25rem, 1.8vw, 1.625rem);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.privacyList { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.privacyList li { display: flex; gap: 10px; align-items: baseline; }
+.privacyList li::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--star);
+  translate: 0 -2px;
+}
+.privacyList[data-never] li::before { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.privacyList[data-never] li { color: var(--muted); }
+.privacyNote { align-self: end; margin: 0; color: var(--text); }
+
+/* The reveal: the words hold still while the street rises behind them. */
+.beyond {
+  position: relative;
+  height: 240svh;
+  padding: 0 var(--gutter);
+}
+.beyondPin {
+  position: sticky;
+  top: 0;
+  padding-top: clamp(110px, 18vh, 180px);
+}
+.beyondText {
+  margin: 0;
+  max-width: 30rem;
+  font-size: clamp(1.0625rem, 1.3vw, 1.25rem);
+  color: var(--text);
+  text-wrap: pretty;
+  text-shadow: 0 1px 18px rgb(var(--night-rgb) / 0.95);
+}
+
+.hint {
+  margin: 18px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+  color: var(--muted);
+  text-shadow: 0 1px 14px rgb(var(--night-rgb) / 0.95), 0 0 2px rgb(var(--night-rgb) / 0.8);
+}
+.hint::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text);
+  opacity: 0.7;
+}
+.hintTouch { display: none; }
+@media (hover: none) {
+  .hintMouse { display: none; }
+  .hintTouch { display: inline; }
+}
+
+/* Pulled back over the whole street, under the last words. */
+.closing {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 22px;
+  padding: clamp(140px, 22vh, 220px) var(--gutter) clamp(96px, 14vh, 160px);
+  text-align: center;
+}
+.ctaTitle {
+  margin: 0;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: clamp(2.75rem, 7vw, 6rem);
+  font-weight: 700;
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+  text-shadow: 0 2px 30px rgb(var(--night-rgb) / 0.8);
+}
+.fine { margin: 0; max-width: 30rem; color: var(--muted); text-wrap: balance; }
+
+/* The live demo machine, under the closing buttons (LiveStart.tsx) */
+.live { display: grid; gap: 12px; justify-items: center; margin-top: 18px; padding-top: 22px; max-width: 34rem;
+  border-top: 1px solid var(--line-strong); }
+.liveLabel { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.875rem; }
+.liveLabel select { min-height: 44px; border-radius: 999px; padding: 0 16px; background-color: var(--surface);
+  color: var(--text); border: 1px solid var(--line-strong); font: inherit; }
+.liveCount { margin: 0; color: var(--muted); font-size: 0.8125rem; text-wrap: balance; }
+
+.footer {
+  position: relative;
+  z-index: 1;
+  background: rgb(var(--night-rgb) / 0.6);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid rgb(var(--line-rgb) / 0.5);
+  padding: 28px var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 32px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.footer nav { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.footer nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}
+.footer nav a:hover { color: var(--text); }
+.footer > p { margin: 0 0 0 auto; max-width: 30rem; }
+.footer .footerBase {
+  flex-basis: 100%;
+  margin: 0;
+  padding-top: 16px;
+  border-top: 1px solid rgb(var(--line-rgb) / 0.4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  max-width: none;
+}
+
+/* The step list's own heading. */
+.railHead {
+  margin: 4px 0 10px 6px;
+  font-family: var(--font-display), system-ui, sans-serif;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ---------- Layouts ----------
+   Phone layout: upright phones, and phones on their side (short and wide).
+   Keep these queries in step with PHONE_QUERY and SIDEWAYS_QUERY in layout.ts,
+   which the scene and the callout line read. */
+@media (max-width: 1080px) {
+  .watchGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .watchBlock:nth-child(3) { border-left: 0; }
+  .watchBlock:nth-child(n + 3) { border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
+  .privacyCols { grid-template-columns: 1fr 1fr; }
+  .privacyNote { grid-column: 1 / -1; }
+}
+
+/* Phones: no rail, each step carries its own words; the big panels drop the live
+   blur (re-blurring a moving 3D scene behind each of them is the heaviest thing
+   on the page) and turn more opaque instead, while the nav, menu and small tags
+   keep their glass; and the reveal's words, which sit straight on the moving
+   street, get a soft wash of night behind them. */
+@media (max-width: 820px), (max-height: 520px) and (orientation: landscape) {
+  .hero { --h1-size: clamp(2.75rem, 13vw, 4.25rem); row-gap: 20px; padding: 112px var(--gutter) 40px; }
+  .lede { margin: 0; font-size: 1.0625rem; }
+  .heroCta { margin-top: 0; }
+  .cue { left: var(--gutter); }
+  .sample { right: auto; left: calc(var(--gutter) - 12px); bottom: 88px; }
+  .railWrap { display: none; }
+  /* Each step is a stretch of scroll with its sheet at the foot. The sheet sticks
+     to the bottom of the screen for the whole stretch, so the camera plays out
+     above it, then the next step's sheet pushes it away. */
+  .step {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 100svh;
+    padding: 46svh var(--gutter) 28px;
+  }
+  .stepStick {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    gap: 16px;
+    opacity: 0.3;
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .step[data-active] .stepStick { opacity: 1; }
+  .stepCopy {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+  /* Number, title and where you are in the four, on one line. */
+  .stepHead { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .stepNum {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    border-radius: 9px;
+    background: var(--star);
+    color: var(--star-ink);
+    font-size: 0.75rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 6px 18px -6px rgb(var(--star-rgb) / 0.55);
+  }
+  .stepTitle {
+    margin: 0;
+    font-family: var(--font-display), system-ui, sans-serif;
+    font-size: clamp(1.375rem, 5.6vw, 1.75rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .stepPips { display: flex; gap: 4px; margin-left: auto; }
+  .stepPips span { width: 14px; height: 3px; border-radius: 2px; background: rgb(var(--line-rgb) / 0.9); }
+  .stepPips span[data-on] { background: var(--star); }
+  .stepText { margin: 0; color: var(--muted); font-size: 0.9375rem; line-height: 1.5; text-wrap: pretty; }
+  .cardSlot { grid-column: 1; position: relative; opacity: 1; translate: none; filter: none; transition: none; }
+  /* The cards, tightened so the sheet leaves the house room above it. */
+  .cardSlot > :first-child { padding: 16px; gap: 12px; border-radius: 20px; }
+  .cardSlot dl { gap: 10px; }
+  .cardSlot dt { font-size: 0.8125rem; }
+  .cardSlot dd { font-size: 0.875rem; }
+  .intro { min-height: 110svh; align-items: end; padding-bottom: 18svh; }
+  .watchGrid, .privacyCols { grid-template-columns: 1fr; }
+  .watchBlock + .watchBlock { border-left: 0; border-top: 1px solid rgb(var(--line-rgb) / 0.6); }
+  .footer > p { margin-left: 0; }
+  .cardSlot > :first-child,
+  .watchGrid,
+  .whoList,
+  .privacyCols,
+  .footer,
+  .secondary {
+    backdrop-filter: none;
+  }
+  .cardSlot > :first-child { background: rgb(var(--surface-rgb) / 0.94); }
+  .watchGrid,
+  .whoList,
+  .privacyCols { background: rgb(var(--surface-rgb) / 0.9); }
+  .watchBlock:hover,
+  .whoRow:hover { background: rgb(var(--surface-2-rgb) / 0.9); }
+  .footer { background: rgb(var(--night-rgb) / 0.92); }
+  .secondary { background: rgb(var(--surface-2-rgb) / 0.92); }
+  .beyondPin {
+    margin-inline: calc(-1 * var(--gutter));
+    padding-inline: var(--gutter);
+    padding-bottom: 48px;
+    background: linear-gradient(rgb(var(--night-rgb) / 0.92) 0, rgb(var(--night-rgb) / 0.86) calc(100% - 48px), rgb(var(--night-rgb) / 0));
+  }
+  .hint { color: var(--text); }
+}
+
+/* Phones on their side: the hero and the reveal's words fit a short screen, and
+   the reveal's wash comes from the left, since the street is to the right. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .hero { --h1-size: clamp(2rem, 10svh, 3.25rem); row-gap: 14px; padding-top: 84px; padding-bottom: 24px; min-height: auto; }
+  .lede { font-size: 1rem; max-width: 40rem; }
+  .cue { display: none; }
+  .sample { position: static; }
+  .beyondPin .h2 { font-size: clamp(1.75rem, 9svh, 2.5rem); margin-bottom: 14px; }
+  .beyondText { max-width: 26rem; font-size: 0.9375rem; }
+  .beyondPin {
+    padding-top: 84px;
+    padding-bottom: 0;
+    min-height: 100svh;
+    background: linear-gradient(90deg, rgb(var(--night-rgb) / 0.9) 0, rgb(var(--night-rgb) / 0.7) 42%, rgb(var(--night-rgb) / 0) 62%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene, .rail, .num, .railTitle, .railText, .cardSlot { transition: none; }
+  .tag[data-tone="live"]::before { animation: none; }
+  .menu, .menuIcon span { transition: none; }
+}
+
+/* ---------- The story sheet (phones and tablets held upright) ----------
+   One panel at the foot of the screen for the whole story. The panel stays put
+   while the camera plays above it; only its contents slide across, step to
+   step. The steps themselves become stretches of scroll that drive the camera.
+   Short screens and phones on their side keep each step in the flow instead,
+   where a tall card can still be read top to bottom. */
+.sheet { display: none; }
+@media (max-width: 820px) and (min-height: 640px) {
+  .step { min-height: 115svh; padding: 0; }
+  .step .stepStick { display: none; }
+  .sheet {
+    position: sticky;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    z-index: 2;
+    display: block;
+    isolation: isolate;
+    margin: 0 var(--gutter) 24px;
+    border-radius: 24px;
+    background: rgb(var(--surface-rgb) / 0.96);
+    border: 1px solid rgb(var(--line-rgb) / 0.8);
+    box-shadow: 0 -12px 40px -16px rgb(var(--shadow-rgb) / 0.7), 0 24px 48px -16px rgb(var(--shadow-rgb) / 0.8);
+  }
+  /* Where you are in the four stays fixed in the panel's corner. */
+  .sheetPips { position: absolute; z-index: 1; top: 30px; right: 20px; display: flex; gap: 4px; }
+  .sheetPips span {
+    width: 14px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgb(var(--line-rgb) / 0.9);
+    transition: background-color 0.4s ease;
+  }
+  .sheetPips span[data-on] { background: var(--star); }
+  .sheetView {
+    overflow: hidden;
+    border-radius: inherit;
+    transition: height 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .sheetTrack {
+    display: flex;
+    align-items: flex-start;
+    transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform;
+  }
+  .sheetPanel {
+    flex: 0 0 100%;
+    min-width: 0;
+    display: grid;
+    gap: 14px;
+    padding: 20px;
+    opacity: 0.25;
+    transition: opacity 0.5s ease;
+  }
+  .sheetPanel[data-active] { opacity: 1; }
+  .sheetCopy .stepHead { padding-right: 76px; }
+  /* The card's content sits straight on the panel: no box inside a box. */
+  .sheetCard > :first-child {
+    max-width: none;
+    padding: 0;
+    gap: 12px;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .sheetCard button { min-height: 44px; }
+  .sheetCard dl { gap: 10px; }
+  .sheetCard dt { font-size: 0.8125rem; }
+  .sheetCard dd { font-size: 0.875rem; }
+}
+/* Tablets: the words on the left, the card on the right, so the panel stays low
+   and the house keeps most of the screen. */
+@media (min-width: 600px) and (max-width: 820px) and (min-height: 640px) {
+  .sheetPanel { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); align-items: start; column-gap: 28px; padding: 22px 24px; }
+  .sheetCopy .stepHead { padding-right: 0; }
+  .sheetPips { top: auto; bottom: 26px; left: 24px; right: auto; }
+  .sheetCopy .stepText { font-size: 1rem; }
+}
+/* Phones: the house keeps the top half. The step's sentence stays for screen
+   readers only (the title and the card tell it on screen). */
+@media (max-width: 599px) and (min-height: 640px) {
+  .sheetPanel { gap: 12px; padding: 16px; }
+  .sheetPips { top: 26px; right: 16px; }
+  .sheetCopy .stepHead { margin-bottom: 0; }
+  .sheetCopy .stepTitle { font-size: 1.25rem; }
+  .sheetCopy .stepNum { width: 28px; height: 28px; border-radius: 8px; }
+  .sheetCopy .stepText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .sheetCard dl { gap: 12px 16px; }
+  .sheetCard dd { font-size: 0.8125rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stepStick, .sheetView, .sheetTrack, .sheetPanel, .sheetPips span { transition: none; }
+}

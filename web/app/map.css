@@ -1,16 +1,42 @@
 /* The home map (components/map). Existing tokens only; React Flow's own styles are imported with it. */
 .homeview { display: flex; flex-direction: column; gap: 8px; flex: none; } /* never squeezed: the pane scrolls instead */
 .view-switch { padding: 0; }
-/* the bar above the map (HomeBar.tsx): Map or List, then place / kind / show chips, wrapping on narrow screens */
-.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-.homebar .chips { align-items: center; }
+.homebar .view-switch button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; font-size: 13px; } /* the same size as the pills beside it */
+/* the bar above the map (HomeBar.tsx): Map or List, the quick toggles, then one menu per kind of filter. It wraps
+   onto a second line on narrow panes instead of scrolling choices out of sight. */
+.homebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.hb-gap { flex: 1; } /* wider gaps set the groups apart */
+.fgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fpill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px; font-size: 13px;
+  font-weight: 500; border-color: var(--line); white-space: nowrap; }
+.fpill:hover:not(:disabled) { border-color: var(--line-strong); }
+/* on: the colours flip, ink ground and paper text, like the chosen view */
+.fpill.on, .fpill.on:hover:not(:disabled) { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
+.fpill > svg { flex: none; color: var(--muted); }
+.fpill.on > svg { color: var(--bg); }
+.fpill.on > svg.dstar { color: var(--glow); }
+.fcount { min-width: 20px; padding: 0 6px; border-radius: 99px; line-height: 19px; font-size: 11.5px; font-weight: 700;
+  text-align: center; background: var(--glow); color: var(--on-primary); }
+.fclear { margin-left: auto; }
+/* a filter menu: the pill opens a short checklist under it */
+.fmenu { position: relative; }
+.fmenu-caret { transition: transform .15s ease-out; }
+.fmenu > [aria-expanded="true"] .fmenu-caret { transform: rotate(180deg); }
+.fmenu-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 220px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; gap: 1px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px;
+  background: var(--panel); box-shadow: var(--shadow); }
+.fmenu-panel label { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 10px; border-radius: 8px;
+  font-size: 13.5px; cursor: pointer; }
+.fmenu-panel label:hover { background: var(--panel-2); }
+.fmenu-panel input[type="checkbox"], .fmenu-panel input[type="radio"] { width: 16px; height: 16px; margin: 0;
+  accent-color: var(--accent); }
+.fcount-quiet { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.fmenu-panel .linkish { align-self: flex-start; margin: 4px 10px 2px; }
+.fmenu-panel .place-name { flex-wrap: wrap; padding: 6px 10px; }
+@media (prefers-reduced-motion: reduce) { .fmenu-caret { transition: none; } }
+.dapps-text b.crit { color: var(--crit); }
 .place-name { display: inline-flex; gap: 6px; align-items: center; }
 .place-name input { width: 180px; }
-@media (max-width: 600px) { /* one swipeable row per group */
-  .homebar .chips { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; padding-bottom: 2px; }
-  .homebar .chips > * { flex: none; }
-}
-.view-switch button { display: inline-flex; align-items: center; gap: 5px; }
 .homemap { display: flex; flex-direction: column; gap: 6px; }
 /* the canvas is sized by its wrapper: React Flow sets an inline height: 100% on itself */
 .hm-canvas { position: relative; height: min(64vh, 620px); min-height: 360px; }
@@ -18,59 +44,69 @@
   align-items: center; gap: 4px 10px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line);
   border-radius: 12px; box-shadow: var(--shadow); }
 .homemap .react-flow { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--bg); }
-.homemap .react-flow { --xy-edge-stroke-default: var(--offline); --xy-controls-button-background-color-default: var(--panel);
+.homemap .react-flow { --xy-edge-stroke-default: var(--offline-fill); --xy-controls-button-background-color-default: var(--panel);
   --xy-controls-button-color-default: var(--ink); --xy-controls-button-border-color-default: var(--line);
   --xy-minimap-background-color-default: var(--panel); --xy-attribution-background-color-default: transparent;
   --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--bg) 65%, transparent); }
-.homemap .react-flow__attribution { opacity: .5; }
+.homemap .react-flow__attribution { opacity: .5; background: transparent; }
+.homemap .react-flow__attribution a { color: var(--muted); }
 /* React Flow places its panels with classes "top" and "right", which the page's header and chat pane also use */
 .homemap .react-flow__panel.top, .homemap .react-flow__panel.right { position: absolute; padding: 0; border: 0;
   background: transparent; gap: 0; min-height: 0; flex-wrap: nowrap; }
 
 /* a device */
-.dnode { position: relative; width: 200px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 9px 10px;
+.dnode { position: relative; width: 200px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 11px 12px;
   box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px; cursor: pointer; transition: box-shadow .15s; }
 .dnode.sample { border-style: dashed; }
-.dnode.warn { border-color: var(--warn); }
-.dnode.crit { border-color: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 18%, transparent), var(--shadow); }
+.dnode.warn { border-color: var(--warn-fill); }
+.dnode.crit { border-color: var(--crit-fill); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit-fill) 18%, transparent), var(--shadow); }
 .dnode.offline { opacity: .8; }
-.dnode.sel { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent), var(--shadow); }
+/* Selected: the status border stays (it is the device's status); a light ring sits just outside it with a hairline
+   gap of the paper between, the card lifts a touch, and the ring settles in from a wider, fainter halo. */
+/* "This is the one": the card you picked, and the one the chat is checking, wear a ring in the device's own status
+   colour, with a gap of paper between, and it breathes slowly so the eye finds it again. No new colour: the ring says
+   which device, its colour still says how it is. Reduced motion: the same ring, still. */
+.dnode { --sel-ring: var(--ok-fill); }
+.dnode.warn { --sel-ring: var(--warn-fill); }
+.dnode.crit { --sel-ring: var(--crit-fill); }
+.dnode.offline { --sel-ring: var(--offline-fill); }
+.dnode.sel, .dnode.lit-working, .dnode.lit-done {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), var(--lift); }
+.dnode.sel { background: color-mix(in oklab, var(--sel-ring) 5%, var(--panel)); }
+.dnode.sel, .dnode.lit-working { animation: ring-breathe 2.4s ease-in-out infinite; }
+@keyframes ring-breathe {
+  50% { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring),
+    0 0 0 11px color-mix(in srgb, var(--sel-ring) 18%, transparent), var(--lift); }
+}
+@media (prefers-reduced-motion: reduce) { .dnode.sel, .dnode.lit-working { animation: none; } }
 .dnode.compact { width: 200px; align-items: center; padding: 14px 10px; }
 .dnode.compact .dhead { flex-direction: column; gap: 6px; }
 .dnode.compact .dname { font-size: 26px; text-align: center; }
 .dhead { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .dicon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; flex: none; color: var(--ink);
-  background: var(--bg); box-shadow: inset 0 0 0 2.5px var(--ok); }
-.dnode.compact .dicon { width: 52px; height: 52px; box-shadow: inset 0 0 0 4px var(--ok); }
-.dicon.warn { box-shadow: inset 0 0 0 2.5px var(--warn); }
-.dicon.crit { box-shadow: inset 0 0 0 2.5px var(--crit); }
-.dicon.offline { box-shadow: inset 0 0 0 2.5px var(--offline); color: var(--muted); }
-.dnode.compact .dicon.warn { box-shadow: inset 0 0 0 4px var(--warn); }
-.dnode.compact .dicon.crit { box-shadow: inset 0 0 0 4px var(--crit); }
-.dnode.compact .dicon.offline { box-shadow: inset 0 0 0 4px var(--offline); }
+  background: var(--bg); box-shadow: inset 0 0 0 2.5px var(--ok-fill); }
+.dnode.compact .dicon { width: 52px; height: 52px; box-shadow: inset 0 0 0 4px var(--ok-fill); }
+.dicon.warn { box-shadow: inset 0 0 0 2.5px var(--warn-fill); }
+.dicon.crit { box-shadow: inset 0 0 0 2.5px var(--crit-fill); }
+.dicon.offline { box-shadow: inset 0 0 0 2.5px var(--offline-fill); color: var(--muted); }
+.dnode.compact .dicon.warn { box-shadow: inset 0 0 0 4px var(--warn-fill); }
+.dnode.compact .dicon.crit { box-shadow: inset 0 0 0 4px var(--crit-fill); }
+.dnode.compact .dicon.offline { box-shadow: inset 0 0 0 4px var(--offline-fill); }
 .dnode .needs-mark { position: absolute; top: -8px; right: -8px; }
-.dgauges { display: flex; justify-content: space-between; }
-.gauge { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); gap: 1px; }
-.gauge text { font-size: 11px; font-weight: 700; fill: var(--ink); }
-.g-track { fill: none; stroke: var(--line); stroke-width: 3.5; }
-.g-arc { fill: none; stroke: var(--ok); stroke-width: 3.5; stroke-linecap: round; }
-.gauge.warn .g-arc { stroke: var(--warn); }
-.gauge.crit .g-arc { stroke: var(--crit); }
-.gauge.none .g-arc { stroke: none; }
-.dsilent { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; border-radius: 8px;
-  background: repeating-linear-gradient(45deg, transparent 0 6px, color-mix(in srgb, var(--offline) 12%, transparent) 6px 12px); }
+/* its status in a word, then one plain line: its top problem, or "All good" */
+.dstate { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dline { font-size: 13px; line-height: 1.35; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.dnode.crit .dline, .dnode.warn .dline { color: var(--ink); }
 .dapps { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line);
   padding-top: 6px; }
 .dapps .dot { width: 7px; height: 7px; }
 /* a watched thing: whether it answers, and who checks it */
 .dnode.watched { gap: 4px; }
 .dnode.watched.router { border-width: 2px; border-color: var(--accent); }
-.dnode.watched.router.crit { border-color: var(--crit); }
-.dwatch { font-size: 13px; padding-left: 40px; color: var(--ink); }
-.dwatch.crit { color: var(--crit-ink); font-weight: 600; }
-.dwatch.offline { color: var(--muted); }
-.dby { font-size: 11px; color: var(--muted); padding-left: 40px; }
+.dnode.watched.router.crit { border-color: var(--crit-fill); }
+.dby { font-size: 12px; color: var(--muted); }
 .dapps .more { font-size: 10px; }
 .dapps-text { margin-left: auto; white-space: nowrap; }
 .dapps-text b { color: var(--warn-ink); font-weight: 600; }
@@ -81,7 +117,7 @@
 /* link handles: quiet until you hover the device */
 .dhandle.react-flow__handle { width: 10px; height: 10px; background: var(--panel); border: 2px solid var(--accent); opacity: 0;
   transition: opacity .15s; }
-.dnode:hover .dhandle.react-flow__handle, .react-flow__node.selected .dhandle.react-flow__handle,
+.dnode:hover .dhandle.react-flow__handle,
 .react-flow.connecting .dhandle.react-flow__handle { opacity: 1; }
 /* a bigger invisible target than the dot itself, so a finger can start a line even zoomed out */
 .dhandle.react-flow__handle::after { content: ""; position: absolute; inset: -10px; border-radius: 50%; }
@@ -106,7 +142,7 @@
 .etools { display: flex; flex-wrap: wrap; gap: 4px; }
 .etools button { font-size: 13px; padding: 0 10px; min-height: 34px; min-width: 34px; border: 0; display: inline-flex;
   align-items: center; justify-content: center; }
-.etools button.on { background: var(--accent); color: var(--bg); }
+.etools button.on { background: var(--accent); color: var(--on-accent); }
 
 /* legend and controls */
 .homemap .hm-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; color: var(--muted);
@@ -116,26 +152,25 @@
 
 @media (max-width: 900px) {
   .hm-canvas { height: min(calc(100dvh - 320px), 440px); min-height: 340px; }
-  .hm-minimap { display: none; }
 }
 
 /* Starred: a small filled star by the name, and up to three starred apps as chips under the gauges. */
-.dnode .dstar { color: var(--glow-ink); fill: var(--glow-ink); flex: none; }
+.dnode .dstar { flex: none; }
 .dfavs { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
 .dchip { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; max-width: 100%;
   font-size: 12px; line-height: 1; padding: 4px 6px; border-radius: 999px; background: var(--bg);
   border: 1px solid var(--line); color: var(--ink); }
 .dchip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dchip svg { flex: none; }
-.dchip.ok svg { color: var(--ok-ink); }
-.dchip.warn { border-color: var(--warn); }
-.dchip.warn svg { color: var(--warn-ink); }
-.dchip.crit { border-color: var(--crit); }
-.dchip.crit svg { color: var(--crit-ink); }
+.dchip.ok svg { color: var(--ok); }
+.dchip.warn { border-color: var(--warn-fill); }
+.dchip.warn svg { color: var(--warn); }
+.dchip.crit { border-color: var(--crit-fill); }
+.dchip.crit svg { color: var(--crit); }
 .dfavs.hl .dchip { border-color: var(--glow); box-shadow: 0 0 0 1px var(--glow); }
 
 /* An opened card: every app as a chip, two to a row; the cards below move down to make room. */
-.dnode.focused { z-index: 5; box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.dnode.focused { z-index: 5; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), var(--lift); } /* opened in place: the same ring as selected */
 .dappgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .dappgrid .dchip { cursor: pointer; justify-content: flex-start; min-height: 28px; font: inherit; font-size: 12px; }
 .dappgrid .dchip:hover { border-color: var(--accent); }
@@ -154,18 +189,12 @@
 .app-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; text-align: left; width: 100%; }
 .app-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.dapps { width: 100%; background: none; border: 0; border-top: 1px solid var(--line); padding: 6px 0 0; border-radius: 0; font: inherit; font-size: 12px; text-align: left;
-  cursor: pointer; min-height: 0; }
+  cursor: pointer; min-height: 24px; }
 button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underline; }
 
 /* The map follows the chat: a soft breathing ring on the devices the answer is working on, a steady one when it is
    done, and a few pulses on the apps it named. Reduced motion: the rings and highlights stay, nothing moves. */
-.dnode.lit-working { animation: lit-ring 1.6s ease-in-out infinite; }
-.dnode.lit-done { box-shadow: 0 0 0 3px var(--glow-ink), var(--shadow); }
 .dchip.lit-app { border-color: var(--glow); box-shadow: 0 0 0 2px var(--glow); animation: lit-chip 1.1s ease-in-out 5; }
-@keyframes lit-ring {
-  0%, 100% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 6px color-mix(in srgb, var(--glow) 30%, transparent), var(--shadow); }
-  50% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 14px color-mix(in srgb, var(--glow) 45%, transparent), var(--shadow); }
-}
 @keyframes lit-chip {
   0%, 100% { box-shadow: 0 0 0 2px var(--glow); }
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--glow) 40%, transparent); }
@@ -175,19 +204,25 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 .dlit { position: absolute; top: -11px; left: 10px; z-index: 2; font-size: 11px; font-weight: 600; line-height: 1;
   padding: 3px 8px; border-radius: 99px; background: var(--panel); border: 1px solid var(--glow-ink); color: var(--ink);
   white-space: nowrap; }
-.dlit.found { border-color: var(--warn); color: var(--warn-ink); }
-.dlit.done { border-color: var(--ok); color: var(--ok-ink); }
+.dlit.found { border-color: var(--warn-fill); color: var(--warn-ink); }
+.dlit.done { border-color: var(--ok-fill); color: var(--ok-ink); }
 .homemap.following .dnode:not(.lit-working):not(.lit-done) { opacity: .6; filter: saturate(.6); transition: opacity .3s; }
 .dnode.settle { animation: lit-settle .7s ease-out 2; }
 @keyframes lit-settle {
-  0% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 0 color-mix(in srgb, var(--glow) 60%, transparent), var(--shadow); }
-  100% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 18px transparent, var(--shadow); }
+  0% { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), 0 0 0 5px color-mix(in srgb, var(--sel-ring) 50%, transparent), var(--lift); }
+  100% { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), 0 0 0 20px transparent, var(--lift); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 6px color-mix(in srgb, var(--glow) 35%, transparent), var(--shadow); }
   .dnode.settle { animation: none; }
   .dchip.lit-app { animation: none; }
 }
+
+/* Touch screens: the map sits still until "Move the map", so swipes scroll the page. */
+.hm-canvas.still .react-flow__pane, .hm-canvas.still .react-flow__node, .hm-canvas.still .react-flow__edge,
+.hm-canvas.still .react-flow__renderer { touch-action: pan-x pan-y pinch-zoom; cursor: default; }
+.hm-move { position: absolute; left: 10px; bottom: 22px; z-index: 5; display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 16px; border-radius: 99px; box-shadow: var(--shadow); font-weight: 600; }
+.hm-move.on { background: var(--primary); color: var(--on-primary); border-color: transparent; }
 /* Status board (StatusBoard.tsx): an ops-script look, one block per device */
 .status-board { padding: 12px 14px; }
 .sb-head { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -211,3 +246,66 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 /* the map library's credit link, readable in both themes */
 .react-flow__attribution { background: transparent; }
 .react-flow__attribution a { color: var(--muted); }
+
+/* The list view (Board.tsx): rows grouped by kind, the status in a word, one plain line, tap to open. */
+.dlist { display: flex; flex-direction: column; gap: 18px; }
+.dlist-group ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden; }
+.dlist-group li + li { border-top: 1px solid var(--line); }
+.dlist-kind { margin: 0 0 8px 2px; font: 600 12.5px/1.2 var(--font-ui); color: var(--muted); }
+.dlist-row { position: relative; display: grid; grid-template-columns: minmax(150px, 1.1fr) 8.75rem minmax(0, 2fr);
+  align-items: center; gap: 4px 16px; width: 100%; padding: 12px 40px 12px 16px; border: 0; border-radius: 0; text-align: left;
+  background: transparent; font-weight: 400; }
+.dlist-row:hover:not(:disabled) { background: var(--panel-2); }
+.dlist-row.sel { background: var(--select); box-shadow: inset 3px 0 0 var(--accent); }
+.dlist-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-weight: 650; }
+.dlist-line { color: var(--muted); overflow-wrap: anywhere; }
+.dlist-row.crit .dlist-line, .dlist-row.warn .dlist-line { color: var(--ink); }
+.dlist-row .needs-mark { top: 50%; right: 14px; transform: translateY(-50%); box-shadow: none; }
+.pill.sample { border-style: dashed; }
+.dlist-empty { padding: 28px 20px; border: 1px dashed var(--line-strong); border-radius: var(--radius); text-align: center; }
+@media (max-width: 700px) {
+  .dlist-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name status" "line line"; }
+  .dlist-name { grid-area: name; } .dlist-row .status-word { grid-area: status; } .dlist-line { grid-area: line; }
+  .dlist-row { padding-right: 16px; }
+  .dlist-row .needs-mark { position: static; transform: none; }
+}
+
+/* "Working on it": whatever an answer is checking right now (a device on the map, its row in the list, its item in
+   the "needs you" strip, a card running on the device) gets the same signal: a soft band of the star's light sweeping
+   across it, and a few words ("Checking…"). It is an indicator, never on a control being pressed, and it stops when
+   the answer does. Reduced motion: a still tint and the words. */
+.dnode.lit-working, .dlist-row.working, .needs-item.working, .card.working { position: relative; isolation: isolate; }
+.dnode.lit-working::after { content: none; }
+.dlist-row.working::after, .needs-item.working::after, .card.working::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgb(var(--glow-rgb) / .16) 50%, transparent 65%) no-repeat;
+  background-size: 260% 100%; animation: working-sweep 2.2s cubic-bezier(.45, 0, .2, 1) infinite; }
+@keyframes working-sweep { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+.needs-item.working::after { inset: 0 -12px; border-radius: 10px; }
+.working-tag { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; font-size: 12px; font-weight: 600;
+  color: var(--ink); }
+.working-tag::before, .dlit.checking::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--glow);
+  animation: working-dot 1.1s ease-in-out infinite; }
+.dlit.checking { display: inline-flex; align-items: center; gap: 5px; }
+@keyframes working-dot { 50% { opacity: .3; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce) {
+  .dnode.lit-working::after, .dlist-row.working::after, .needs-item.working::after, .card.working::after {
+    animation: none; background: rgb(var(--glow-rgb) / .08); }
+  .working-tag::before, .dlit.checking::before { animation: none; }
+}
+
+/* A filter menu near the right edge of the home column opens leftwards (HomeBar decides on open), so it never runs
+   under the chat beside it; the column scrolls, so anything past its edge would be cut off. */
+.homebar .fmenu-panel.to-left { left: auto; right: 0; }
+
+/* The filters in one line on a phone: the long label gets its short name (the full one stays its accessible name),
+   the pills a little tighter, still 44px tall. A very narrow screen may still wrap them. */
+.fp-short { display: none; }
+@media (max-width: 560px) {
+  .fp-long { display: none; }
+  .fp-short { display: inline; }
+  .homebar { column-gap: 8px; }
+  .homebar .fgroup { gap: 8px; }
+  .homebar .fpill, .homebar .fmenu > button { padding-inline: 12px; }
+}

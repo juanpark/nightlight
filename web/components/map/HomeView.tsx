@@ -13,14 +13,21 @@ import WatchedRow from "../WatchedRow";
 import HomeBar, { type View } from "./HomeBar";
 import HomeMap from "./HomeMap";
 
+const isPhone = () => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches;
+const viewKey = () => isPhone() ? "nl_view_phone" : "nl_view";
+function startView(): View {
+  try { const v = localStorage.getItem(viewKey()); if (v === "map" || v === "list" || v === "board") return v; } catch { /* default */ }
+  return isPhone() ? "list" : "map";
+}
+
 export default function HomeView({ uid, devices, watches, links, marks, selected, onSelect, onApp, onAsk, now, settingUp }: {
   uid: string; devices: Device[]; watches: Watch[]; links: Link[]; marks?: Map<string, Need[]>; selected: string | null;
   onSelect: (id: string) => void; onApp?: (id: string, svcId: string) => void; onAsk: (q: string) => void; now: number;
   settingUp: boolean;
 }) {
-  const [view, setView] = useState<View>("map");
+  // Phones start on the list (the map is too small to read there) and remember their own choice, apart from a computer's.
+  const [view, setView] = useState<View>(() => startView());
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
-  useEffect(() => { try { const v = localStorage.getItem("nl_view"); if (v === "list" || v === "board") setView(v); } catch { /* default */ } }, []);
   // the chat's context strip asked to see a device: the map shows it
   const show = useFollowed().show;
   const box = useRef<HTMLDivElement>(null);
@@ -32,7 +39,7 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
       behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 80);
     return () => clearTimeout(t);
   }, [show]);
-  const pick = (v: View) => { setView(v); try { localStorage.setItem("nl_view", v); } catch { /* this visit */ } };
+  const pick = (v: View) => { setView(v); try { localStorage.setItem(viewKey(), v); } catch { /* this visit */ } };
   const names = usePlaces(uid);
   const places = useMemo(() => placesOf(devices, names), [devices, names]);
   const shown = useMemo(() => applyFilter(filter, devices, marks), [filter, devices, marks]);
@@ -40,7 +47,7 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
   return (
     <div className="homeview" data-tour="map" ref={box}>
       {(devices.length > 0 || watches.length > 0 || filtering(filter)) && <HomeBar devices={devices} watches={watches}
-        places={places} filter={filter} onFilter={setFilter} view={view} onView={pick} />}
+        places={places} filter={filter} onFilter={setFilter} view={view} onView={pick} marks={marks} />}
       {devices.length > 0 && shown.length === 0
         ? <p className="small muted">Nothing here matches.{" "}
             <button className="linkish small" onClick={() => setFilter(NO_FILTER)}>Show everything</button></p>

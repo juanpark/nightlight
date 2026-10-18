@@ -91,6 +91,13 @@ export function useFollowed(): Followed {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
+/** Whether an answer is working on this device right now (its steps touched it and the answer hasn't finished):
+ *  the list and the "needs you" strip show it the same way the map does. */
+export function useWorkingOn(): (deviceId?: string) => boolean {
+  const f = useFollowed();
+  return (id) => !!id && !f.done && f.devices.includes(id);
+}
+
 /** Whether a step named this app ("immich", "pihole-FTL.service", "the immich container"…). */
 export function named(s: Service, names: string[] | undefined): boolean {
   if (!names?.length) return false;

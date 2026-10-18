@@ -1,19 +1,30 @@
 "use client";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { Mascot } from "@/src/components/mascot/Mascot";
+import { Stopped, Switched, ToLatest } from "@/src/components/icons";
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, openSession, pickSession } from "@/lib/session";
 import Conversations from "./chat/Conversations";
 import { api, ApiError, stream } from "@/lib/api";
 import { followBegin, followCard, followEnd, followReset, followResult, followStep, followText } from "@/lib/follow";
 import ContextStrip from "./chat/ContextStrip";
-import type { Action, Device, StreamEvent } from "@/lib/types";
+import type { Action, Device, Status, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
-import TurnView, { afterLine } from "./chat/TurnView";
+import TurnView, { JobLine } from "./chat/TurnView";
 import "@/app/chat.css";
 
 export interface ChatHandle { ask: (text: string) => void; followUp: (turnId: string) => void }
 
 const rank = (s?: string) => ({ crit: 0, warn: 1, offline: 2 } as Record<string, number>)[s ?? ""] ?? 3;
+
+/** The home's health for the mascot's star: the worst device, and offline only when every device is. */
+function homeHealth(devices: Device[]): Status {
+  const s = devices.map((d) => d.status ?? "ok");
+  if (s.includes("crit")) return "crit";
+  if (s.includes("warn")) return "warn";
+  if (s.length && s.every((x) => x === "offline")) return "offline";
+  return s.includes("offline") ? "warn" : "ok";
+}
 
 /** Questions to start with, about what is actually on the map: the sample home's story, or the person's own devices. */
 function suggestions(devices: Device[]): string[] {
@@ -66,7 +77,7 @@ function BreakSomething({ devices, disabled, onAsk }: { devices: Device[]; disab
 }
 
 const MODES: { id: Mode; name: string; hint: string }[] = [
-  { id: "quick", name: "Quick answers", hint: "Fast answers from what Nightlight already knows" },
+  { id: "quick", name: "Quick answers", hint: "Fast answers from what Nightlight already knows" }, // hint shown for Investigate only
   { id: "investigate", name: "Investigate deeply",
     hint: "Digs in step by step like an IT expert would, then explains the likely cause. Slower, a few cents" },
 ];
@@ -77,9 +88,11 @@ function savedMode(): Mode {
 
 const Chat = forwardRef<ChatHandle, {
   uid: string; actions: Action[]; devices: Device[]; disabled: boolean; generation?: number;
+  onBusy?: (busy: boolean) => void; // so the header's mascot can watch the answer being written
   onShowMap?: () => void; // the context strip's device was tapped: bring the map into view
+  title?: ReactNode; end?: ReactNode; // the column's heading, and the control at the end of that row
 }>(
-  function Chat({ uid, actions, devices, disabled, generation, onShowMap }, ref) {
+  function Chat({ uid, actions, devices, disabled, generation, onBusy, onShowMap, title, end }, ref) {
     const [turns, setTurns] = useState<Turn[]>([]);
     const [text, setText] = useState("");
     const [mode, setMode] = useState<Mode>("quick");
@@ -101,12 +114,34 @@ const Chat = forwardRef<ChatHandle, {
     const [sending, setSending] = useState(false); // from Send until the answer's turn exists (session may be created)
     const sendingRef = useRef(false);
     const busy = sending || turns.some((t) => t.kind === "agent" && t.busy);
+    useEffect(() => { onBusy?.(busy); }, [busy, onBusy]);
+    const health = homeHealth(devices);
+    const latest = turns.findLast((t) => t.kind === "agent")?.key;
 
     useEffect(() => { setMode(savedMode()); }, []);
     // Follow the conversation only while the person is at the bottom; reading further up is never interrupted.
+    // Further up, something new arriving below offers a way back instead of pulling the reader down.
+    const [behind, setBehind] = useState(false);
+    const height = useRef(0);
     useEffect(() => {
-      if (nearBottom.current) log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
-    }, [turns]);
+      const el = log.current;
+      if (!el) return;
+      if (nearBottom.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      else if (el.scrollHeight > height.current + 4) setBehind(true);
+      height.current = el.scrollHeight;
+    }, [turns, actions]); // a card's status can bring the mascot in after the turn itself
+    const toLatest = () => {
+      log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
+      setBehind(false);
+    };
+    // The question box grows with what is typed (up to about five lines); Enter sends, Shift+Enter starts a new line.
+    const box = useRef<HTMLTextAreaElement>(null);
+    useEffect(() => {
+      const el = box.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+    }, [text]);
     // Answers belong to this account and home: a new one (or leaving) makes the map forget what older answers lit.
     const life = useRef(0); // which account-and-home this chat is for; work begun for an earlier one is dropped
     useEffect(() => { life.current++; followReset(); return () => { life.current++; followReset(); }; }, [uid, generation]);
@@ -185,7 +220,7 @@ const Chat = forwardRef<ChatHandle, {
         update(k, (t) => ({ ...t, busy: false }));
       } catch (e) {
         if (ctl.signal.aborted) {
-          update(k, stop);
+          update(k, (t) => ({ ...stop(t), stopped: true }));
         } else {
           update(k, (t) => ({ ...stop(t), error: t.error ?? (e instanceof ApiError
             ? e.code === "turn_in_progress" ? "Nightlight is still finishing the last answer. Try again in a minute." : e.code
@@ -275,14 +310,17 @@ const Chat = forwardRef<ChatHandle, {
 
     return (
       <>
+        <div className="chat-head">{title}{end}</div>
         <Conversations uid={uid} generation={generation} open={open} disabled={busy} onPick={switchTo} />
         <ContextStrip devices={devices} onShow={onShowMap} />
         <div className="chat-log" ref={log} onScroll={(e) => {
           const el = e.currentTarget;
           nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          if (nearBottom.current) setBehind(false);
         }}>
           {turns.length === 0 && (
             <div className="chat-empty">
+              <Mascot size={56} className="chat-mascot" health={health} />
               <strong>Ask about your home</strong>
               <p className="muted small">Nightlight looks at your devices, explains what it finds in plain words, and asks
                 before it changes anything.</p>
@@ -296,23 +334,18 @@ const Chat = forwardRef<ChatHandle, {
           )}
           {turns.map((t, i) => {
             if (t.kind === "user") return <div key={t.key} className={`bubble user ${t.past ? "past" : ""}`}>{t.text}</div>;
-            if (t.kind === "system") return <div key={t.key} className={`chat-system ${t.icon}`}>{t.text}</div>;
-            const line = afterLine(t.after, actions, devices);
+            if (t.kind === "system") return <div key={t.key} className={`chat-system ${t.icon}`}>
+              {t.icon === "stopped" ? <Stopped size={14} aria-hidden /> : <Switched size={14} aria-hidden />} {t.text}</div>;
             return (
               <div key={t.key} className="turn-wrap">
-                {line && <div className="chat-system job">{line}</div>}
+                <JobLine ids={t.after} turnId={t.turnId} actions={actions} />
                 <TurnView turn={t} actions={actions} devices={devices} onFollowUp={followUp}
+                  latest={t.key === latest} health={health}
                   onRetry={i === turns.length - 1 && !busy ? retry(i) : undefined} />
               </div>
             );
           })}
-        </div>
-        <div className="mode-switch" role="radiogroup" aria-label="How Nightlight answers">
-          {MODES.map((m) => (
-            <button key={m.id} role="radio" aria-checked={mode === m.id} className={mode === m.id ? "on" : ""}
-              onClick={() => pickMode(m.id)}>{m.name}</button>
-          ))}
-          <span className="mode-hint small muted">{MODES.find((m) => m.id === mode)?.hint}</span>
+          {behind && <button className="to-latest" onClick={toLatest}><ToLatest size={15} aria-hidden /> Jump to latest</button>}
         </div>
         {(() => {
           // a long chat: older parts are left out of what the model sees (or, at the limit, it can't go on)
@@ -328,13 +361,25 @@ const Chat = forwardRef<ChatHandle, {
             </div>);
         })()}
         <form className="chat-input" data-tour="chat" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
-          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
-            maxLength={1000} disabled={disabled} />
+          <textarea ref={box} rows={1} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
+            maxLength={1000} disabled={disabled} aria-label="Ask Nightlight" enterKeyHint="send"
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return; // keep IME input (e.g. Korean) intact
+              e.preventDefault();
+              if (!busy) ask(text);
+            }} />
           {busy
             ? <button type="button" onClick={stopWatching} title="Stop this answer (what was already done is kept)">
                 Stop</button>
             : <button className="primary" disabled={disabled || !text.trim()}>Send</button>}
         </form>
+        <div className="mode-switch chat-mode" role="radiogroup" aria-label="How Nightlight answers" data-tour="mode-switch">
+          {MODES.map((m) => (
+            <button key={m.id} role="radio" aria-checked={mode === m.id} className={mode === m.id ? "on" : ""}
+              onClick={() => pickMode(m.id)}>{m.name}</button>
+          ))}
+          {mode === "investigate" && <span className="mode-hint small muted">{MODES[1].hint}</span>}
+        </div>
       </>
     );
   });
