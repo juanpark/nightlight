@@ -262,7 +262,7 @@ export default function Home({ user, account }: { user: User; account?: string }
           tabIndex={stripSeen ? -1 : undefined} aria-hidden={stripSeen ? true : undefined}>
           <span className="verdict-light" aria-hidden />{needs.length ? `${needs.length} need you` : "All good"}</button>
         <span className="spacer" />
-        <button className="top-add" onClick={() => open("add")} data-tour="add-device" aria-current={panel === "add" ? "page" : undefined}>
+        <button className="top-add primary" onClick={() => open("add")} data-tour="add-device" aria-current={panel === "add" ? "page" : undefined}>
           <Plus size={18} aria-hidden /><span>Add a device</span></button>
         <div className="more">
           <button ref={moreBtn} className="top-more" aria-haspopup="menu" aria-expanded={menu} aria-controls="more-menu"
