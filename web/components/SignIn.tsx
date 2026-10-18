@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { GoogleAuthProvider, signInAnonymously, signInWithPopup } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
+import WhichDevices from "./WhichDevices";
 import { clearProblem, LIVE_DEMO, startLive, useLive, type LiveStatus, type Problem } from "@/lib/live";
 
 function problemText(p: Problem): string | null {
@@ -64,6 +65,7 @@ export default function SignIn() {
           <p><strong>The real thing:</strong> sign in with Google and add your own Mac or Linux machine (including
             Raspberry Pi) in about two minutes.</p>
           <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
+          <WhichDevices />
         </div>
 
         <div className="start-option start-sample">
@@ -82,8 +84,8 @@ export default function SignIn() {
           <div className="start-option">
             <p><strong>Want hands on a real server without installing anything?</strong> Borrow a demo Linux machine in
               Google Cloud.</p>
-            <p className="small"><span className="pill">Limited</span> No passkeys, no adding devices, nothing nearby to
-              find.</p>
+            <p className="small"><span className="pill">Limited demo</span> No passkeys, no adding devices, nothing nearby
+              to find. To see everything, use your own device or the sample home.</p>
             <button disabled={off} onClick={() => startLive("crash")}>
               {live.starting ? "Starting your machine…" : "See it on a real cloud machine (about a minute)"}</button>
             <p className="small muted" aria-live="polite">{status.free} of {status.total} free · reset to a clean copy

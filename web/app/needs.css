@@ -243,3 +243,4 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
   min-height: 3em; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .try-real { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
 .start-lead { text-align: center; font-size: 18px; margin: 4px 0 0; }
+.start-option .which-devices { margin-top: 8px; }
