@@ -112,6 +112,7 @@ const Chat = forwardRef<ChatHandle, {
     // A reset (new generation) starts clean.
     const [pick, setPick] = useState(0); // bumped to load another conversation
     const [open, setOpen] = useState<string | null>(null);
+    const chosen = useRef<string | null | undefined>(undefined); // picked in Conversations (null: New chat) for the next load
     useEffect(() => {
       setTurns([]);
       saved.current.clear();
@@ -126,7 +127,9 @@ const Chat = forwardRef<ChatHandle, {
         for (const q of waiting) followUpRef.current(q.turnId, q.retries);
       };
       setOpen(null);
-      openSession(uid, generation).then((sid) => {
+      const picked = chosen.current;
+      chosen.current = undefined;
+      (picked !== undefined ? Promise.resolve(picked) : openSession(uid, generation)).then((sid) => {
         if (cancelled) return [];
         setOpen(sid);
         return sid ? loadMessages(uid, sid) : [];
@@ -139,6 +142,7 @@ const Chat = forwardRef<ChatHandle, {
     }, [uid, generation, pick]);
     const switchTo = (sid: string | null) => {
       if (sid) pickSession(uid, generation, sid); else newChat(uid, generation);
+      chosen.current = sid;
       setPick((n) => n + 1);
     };
 

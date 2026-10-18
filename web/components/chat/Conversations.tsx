@@ -1,6 +1,6 @@
 "use client";
-// The chat's "Conversations" control: the account's recent chats (newest first, by date and first question), to switch
-// between them on any device, and New chat.
+// The chat's "Conversations" control: the account's recent chats (most recently used first, with that time and the
+// first question), to switch between them on any device, and New chat.
 import { useEffect, useState } from "react";
 import { recentSessions, type Conversation } from "@/lib/session";
 
@@ -42,7 +42,7 @@ export default function Conversations({ uid, generation, open, disabled, onPick 
                   <button key={c.id} role="listitem" className="convo" aria-current={c.id === open || undefined}
                     disabled={disabled} onClick={() => choose(c.id)} title={c.title}>
                     <span className="convo-title">{c.title}</span>
-                    <span className="small muted">{when(c.createdAt)}</span>
+                    <span className="small muted">{when(c.usedAt)}</span>
                   </button>))}
         </div>)}
     </div>
