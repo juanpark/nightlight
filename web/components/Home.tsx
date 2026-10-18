@@ -151,7 +151,7 @@ export default function Home({ user, account }: { user: User; account?: string }
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
-          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} onSave={saveWithGoogle}
+          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}
             onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
           {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
@@ -159,7 +159,7 @@ export default function Home({ user, account }: { user: User; account?: string }
             expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
           {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
+          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
           <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
             onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
             onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
