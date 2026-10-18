@@ -140,7 +140,10 @@ default device name comes from the hardware ("Mac mini", "Raspberry Pi"). Addres
 keyed fingerprints (HMAC-SHA256 with the account's own key). Log lines leave only for targets the owner allowed, and
 are scrubbed on the device first. The server's schema rejects any field it does not expect. Expert transcripts stay on
 the device (`expert-transcript.log` in the helper's owner-only folder); only scrubbed output (at most about 3.5 KB)
-is sent back. Details: [`SECURITY.md`](SECURITY.md) "What leaves the device".
+is sent back. Details: [`SECURITY.md`](SECURITY.md) "What leaves the device". The device also keeps its own audit trail (helper
+0.9.34+): one line per verified or refused signature (key fingerprint, nonce, expiry, the scrubbed command) and per exit
+code, in the helper log and `expert-transcript.log`, shown by `nightlight audit` at the device; no output, tokens or
+signature bytes.
 
 ## The trust ladder (sample home only)
 
