@@ -237,3 +237,29 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 /* Start screen: your own computers first, highlighted; the live machine's waiting clock */
 .start-own { border: 2px solid var(--glow); background: color-mix(in srgb, var(--glow) 12%, var(--panel)); }
 .live-elapsed { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 4px 0; }
+
+/* Add a device on the sample home: the simulated install's terminal, and the real path beside it */
+.sim-term { background: #11151f; color: #e6e9f0; font-size: 12px; line-height: 1.5; padding: 10px 12px; border-radius: 10px;
+  min-height: 3em; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.try-real { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.start-lead { text-align: center; font-size: 18px; margin: 4px 0 0; }
+.start-option .which-devices { margin-top: 8px; }
+
+/* The sample home's guided tour (SampleTour.tsx): a docked checklist at the top of the home pane */
+.sample-tour { border: 2px solid var(--glow); padding: 10px 14px; }
+.tour-head { all: unset; cursor: pointer; display: flex; align-items: baseline; gap: 6px; width: 100%; }
+.tour-head:focus-visible { outline: 2px solid var(--accent); border-radius: 6px; }
+.tour-steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.tour-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.tour-steps li.done { color: var(--muted); }
+.tour-steps li.done strong { text-decoration: line-through; font-weight: 500; }
+.tour-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--line); display: grid;
+  place-items: center; font-size: 12px; color: var(--ok-ink); margin-top: 1px; }
+.tour-steps li.done .tour-tick { border-color: var(--ok); }
+.tour-steps li.now .tour-tick { border-color: var(--glow-ink); }
+.tour-act { margin-top: 4px; }
+.tour-acts { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.tour-end { margin: 10px 0 0; }
+.tour-flash { outline: 3px solid var(--glow-ink); outline-offset: 3px; transition: outline-color .3s; }
+.tour-head .spacer { flex: 1; }
+.try-sep { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }

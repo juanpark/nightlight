@@ -157,7 +157,11 @@ const Chat = forwardRef<ChatHandle, {
       watching.current.add(ctl);
       setTurns((cur) => [...cur, { kind: "agent", key: k, mode: turnMode, blocks: [], busy: true, after }]);
       const followed = followBegin(); // the map lights up what this answer's steps touch
+      let failed = false; // an error event: the answer did not end well (the sample home's tour ticks only a good one)
       const onEvent = (e: StreamEvent) => {
+        if (e.type === "error") failed = true;
+        // the answer is over at its done event (the connection can stay open a little longer)
+        if (e.type === "done") followEnd(followed, !failed);
         if (e.type === "tool_call") followStep(followed, e.args, e.name, e.callId);
         else if (e.type === "tool_result") followResult(followed, e.name, e.callId, e.ok !== false, e.summary);
         else if (e.type === "approval_request") followCard(followed);
@@ -189,7 +193,7 @@ const Chat = forwardRef<ChatHandle, {
         }
       } finally {
         watching.current.delete(ctl);
-        followEnd(followed);
+        followEnd(followed); // no done event came (stopped, failed, or closed early): not a good ending
       }
     }, []);
 

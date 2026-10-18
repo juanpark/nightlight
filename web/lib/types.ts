@@ -213,7 +213,8 @@ export interface UserDoc {
   demo?: { state: "ready" | "resetting" };
   trustDefault?: Level;
   isDemo?: boolean;
-  settings?: { deviceNames?: boolean }; // deviceNames missing: on
+  settings?: { deviceNames?: boolean; timeZone?: string; timeZoneAuto?: boolean }; // deviceNames missing: on
+  // timeZone: IANA name the assistant speaks in; timeZoneAuto: taken from the browser, not chosen
 }
 
 export type StreamEvent =
@@ -232,7 +233,7 @@ export interface FoundItem { cid: string; guess: string; vendor?: string | null;
 export interface FoundThing { guess: string; vendor?: string | null; name?: string | null; maker?: string | null;
   model?: string | null; services: string[]; ports: number[];
   tag?: string | null; seenBy: { deviceId: string; name: string; cid: string; canWatch?: boolean }[];
-  router?: boolean; privateAddress?: boolean }
+  router?: boolean; privateAddress?: boolean; simulated?: boolean } // simulated: found by the sample home
 export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
   expiresAt?: Date | null }
 

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signInWithPopup, signOut, type AuthCredential, type User } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, signOut, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
@@ -20,6 +20,7 @@ import { restartTour } from "@/lib/tour";
 import { leaveLive, useLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
+import SampleTour from "./SampleTour";
 import Activity from "./Activity";
 import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
@@ -117,30 +118,21 @@ export default function Home({ user, account }: { user: User; account?: string }
     else if (g.to === "chat") askChat(g.ask);
   }
 
-  // Save with Google links this visit to a Google account; one that already has its own home can't take it, so say
-  // so and offer to sign in to that account instead
-  const [linkTaken, setLinkTaken] = useState<AuthCredential | null | false>(false); // null: sign in afresh
-  const [linkExpired, setLinkExpired] = useState(false);
-  async function saveWithGoogle() {
+  // "Try the real app": a plain Google sign-in; the anonymous sample visit is simply left behind (a signed-in owner can
+  // open the sample home again with Take the tour)
+  // after "Try it on your own computer" signed in: open Add a device (the wish waited in this tab)
+  useEffect(() => {
+    if (user.isAnonymous) return;
+    try {
+      if (sessionStorage.getItem("nl_after_sign_in") === "add") { sessionStorage.removeItem("nl_after_sign_in"); setPanel("add"); }
+    } catch { /* nothing waits */ }
+  }, [user.uid, user.isAnonymous]);
+  async function signInReal() {
     const { auth } = await firebase();
-    if (!auth.currentUser) return;
-    await linkWithPopup(auth.currentUser, new GoogleAuthProvider()).catch((e: { code?: string }) => {
-      if (e?.code === "auth/credential-already-in-use" || e?.code === "auth/email-already-in-use") {
-        setLinkExpired(false);
-        setLinkTaken(GoogleAuthProvider.credentialFromError(e as Parameters<typeof GoogleAuthProvider.credentialFromError>[0]));
-      }
-      else alertless(e);
+    await signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => {
+      try { sessionStorage.removeItem("nl_after_sign_in"); } catch { /* nothing waits */ } // closed or failed: no wish left behind
+      alertless(e);
     });
-  }
-  // the anonymous visit stays until one of these succeeds
-  async function useTakenAccount() {
-    const { auth } = await firebase();
-    if (linkTaken) {
-      // the credential from the failed link can expire: then ask for a fresh Google sign-in instead
-      await signInWithCredential(auth, linkTaken).catch((e) => { alertless(e); setLinkTaken(null); setLinkExpired(true); });
-    } else {
-      await signInWithPopup(auth, new GoogleAuthProvider()).catch(alertless);
-    }
   }
 
   return (
@@ -150,7 +142,7 @@ export default function Home({ user, account }: { user: User; account?: string }
         {user.isAnonymous
           ? <span className="pill">Sample home: simulated</span>
           : !live && <button className="small" disabled={switching || !me} onClick={toggleSample}
-              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide the sample home" : "Try the sample home"}</button>}
+              title="A pretend home with a guided tour; your real devices aren't touched">{sampleOn ? "Hide the tour" : "Take the tour (simulated)"}</button>}
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
@@ -158,7 +150,7 @@ export default function Home({ user, account }: { user: User; account?: string }
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
         {user.isAnonymous
-          && <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>}
+          && <button onClick={signInReal} title="Sign in with Google and add your own Mac or Raspberry Pi">Try the real app</button>}
         <div className="more">
           <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
             onClick={() => setMore(!more)}>More</button>
@@ -176,19 +168,8 @@ export default function Home({ user, account }: { user: User; account?: string }
       </header>
       <div className="main" data-pane={pane}>
         <section className="left">
-          {linkTaken !== false && (
-            <div className="panel" role="alert">
-              <p style={{ marginTop: 0 }}>That Google account already has its own Nightlight home, so this visit can&apos;t
-                be saved into it.</p>
-              <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button className="primary" onClick={useTakenAccount}>{linkExpired ? "Sign in with Google again"
-                  : "Sign in to that account instead"}</button>
-                <button onClick={() => setLinkTaken(false)}>Stay here</button>
-              </div>
-              {linkExpired && <p className="small" style={{ color: "var(--crit-ink)" }}>That sign-in expired. Sign in with
-                Google again.</p>}
-              <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
-            </div>)}
+          {me && sampleShown && <SampleTour uid={visit} actions={actions} devices={devices} discoveries={discoveries}
+            onAsk={askChat} onPanel={(p) => { setPanel(p); setPane("home"); }} onSave={signInReal} />}
           <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
           <div className="panel needs needs-strip" data-tour="needs">
             <strong className="verdict">{verdict(needs)}</strong>
@@ -208,15 +189,15 @@ export default function Home({ user, account }: { user: User; account?: string }
           {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && sampleShown && <DemoTools devices={devices} />}
-          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}
+          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={signInReal}
             onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
           {panel === "memory" && !live && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
           {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
-            expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={saveWithGoogle}
+            expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")} onSave={signInReal}
             onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
+          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} sample={sampleShown} />}
+          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} sample={sampleShown} onSave={signInReal} devices={devices} />}
           <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
             onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
             onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
