@@ -7,6 +7,7 @@ import { getFirestore, type Firestore } from "firebase/firestore";
 export interface RuntimeConfig {
   apiUrl: string;
   appUrl?: string;
+  version?: string; build?: string; // this web app's version and exact build (git commit)
   firebase: { apiKey: string; authDomain: string; projectId: string; appId: string };
 }
 
