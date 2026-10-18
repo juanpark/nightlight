@@ -2,6 +2,13 @@
    a menu, and every pane scrolling on its own. Wide screens are unchanged. */
 .menu-toggle, .pane-tabs { display: none; }
 .top-nav { display: contents; }
+/* Mid-width screens: the header's links go quiet (no box until hover) so they fit on one row */
+@media (min-width: 901px) and (max-width: 1600px) {
+  .top { gap: 6px; }
+  .top-nav > button { padding: 6px 9px; border-color: transparent; background: transparent; }
+  .top-nav > button:hover, .top-nav > button:focus-visible { border-color: var(--line); }
+  .top-nav > .small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 
 @media (max-width: 900px) {
   /* minmax(0, …): a wide child (a long command, a wide table) scrolls inside its pane instead of widening the page */

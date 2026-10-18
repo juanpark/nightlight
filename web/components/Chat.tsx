@@ -2,7 +2,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, savedSession } from "@/lib/session";
-import { ApiError, stream } from "@/lib/api";
+import { api, ApiError, stream } from "@/lib/api";
 import { followBegin, followEnd, followReset, followStep, followText } from "@/lib/follow";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
@@ -26,6 +26,42 @@ function suggestions(devices: Device[]): string[] {
     own.length > 1 ? "Which device needs attention first?" : `What runs on my ${worst.name}?`];
 }
 
+/** Sample home only: trouble a visitor can cause, so the incident is one they made, not one prepared for them. */
+const BREAK = [
+  { kind: "disk_full", device: "pi-1", label: "Make the Pi's disk fill up", ask: "Is anything wrong at home?" },
+  { kind: "server_lagging", device: "game-1", label: "Make Minecraft lag", ask: "My kids say Minecraft is laggy tonight. Can you help?" },
+  { kind: "backup_overdue", device: "game-1", label: "Let the world backup fall behind", ask: "When was the Minecraft world last backed up?" },
+];
+
+function BreakSomething({ devices, disabled, onAsk }: { devices: Device[]; disabled: boolean; onAsk: (q: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ text: string; ask?: string } | null>(null);
+  const can = BREAK.filter((b) => devices.some((d) => d.id === b.device && d.realm !== "real"));
+  if (!can.length) return null;
+  async function run(b: (typeof BREAK)[number]) {
+    setBusy(true); setNote(null);
+    try {
+      await api("POST", "/api/demo/inject", { kind: b.kind, deviceId: b.device });
+      setNote({ text: "Done. Now ask Nightlight:", ask: b.ask });
+    } catch (e) {
+      setNote(e instanceof ApiError && e.status === 422
+        ? { text: "That doesn't apply here right now. Reset the demo in Demo tools and try again.", ask: b.ask }
+        : e instanceof ApiError && e.status === 409 ? { text: "The demo is resetting. Try again in a moment." }
+          : { text: "Couldn't do that. Try again." });
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="chat-break">
+      <span className="small muted">Or break something first:</span>
+      <div className="chat-break-row">
+        {can.map((b) => <button key={b.kind} className="small" disabled={busy || disabled} onClick={() => run(b)}>
+          {b.label}</button>)}
+      </div>
+      {note && <p className="small muted" role="status">{note.text}{note.ask && <>{" "}
+        <button className="linkish small" disabled={disabled} onClick={() => onAsk(note.ask!)}>{note.ask}</button></>}</p>}
+    </div>
+  );
+}
 
 const MODES: { id: Mode; name: string; hint: string }[] = [
   { id: "quick", name: "Quick", hint: "Fast answers from what Nightlight already knows" },
@@ -220,6 +256,7 @@ const Chat = forwardRef<ChatHandle, {
                 before it changes anything.</p>
               {suggestions(devices).map((s) => (
                 <button key={s} className="chat-starter" disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>))}
+              <BreakSomething devices={devices} disabled={busy || disabled} onAsk={ask} />
             </div>
           )}
           {turns.some((t) => "past" in t && t.past) && (

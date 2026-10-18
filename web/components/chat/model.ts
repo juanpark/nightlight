@@ -2,7 +2,7 @@
 // Nightlight checked or ran, and what came back) and approval cards. Live events and stored messages build the same
 // shape, so a reloaded chat reads like the live one. UX spec 2026-10-17 §4.
 import type { PastMessage, PastStep } from "@/lib/data";
-import type { Device, StreamEvent } from "@/lib/types";
+import type { Device, Metrics, StreamEvent } from "@/lib/types";
 
 export type Mode = "quick" | "investigate";
 export type StepStatus = "running" | "done" | "failed" | "stopped";
@@ -20,7 +20,7 @@ export type Turn =
   | { kind: "system"; key: string; text: string; icon: "mode" | "stopped" }
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
-      past?: boolean; after?: string[]; ms?: number };
+      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics };
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -42,6 +42,11 @@ export function label(name: string, args: Record<string, unknown> | undefined, d
     propose_command: `Preparing a command for the ${dev}`, update_profile: `Updating what I know about the ${dev}`,
     research: `Searching the web: ${(args?.question as string) ?? ""}`,
     link_devices: "Adding a line to your map",
+    rotate_logs: `Preparing a log clean-up for the ${dev}`, backup_world: `Preparing a backup on the ${dev}`,
+    restart_server: `Preparing a restart for the ${dev}`, clear_images: `Preparing a clean-up for the ${dev}`,
+    restart_app: `Preparing a restart for the ${dev}`, update_server: `Preparing an update for the ${dev}`,
+    use_runbook: `Following saved steps for the ${dev}`, read_device_log: `Reading recent log lines on the ${dev}`,
+    save_runbook: `Saving these steps for the ${dev}`,
   } as Record<string, string>)[name] ?? `Working on the ${dev}`;
 }
 
@@ -86,7 +91,7 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
     case "error": // the turn is over: a step still waiting will never answer
       return { ...stop(t), busy: t.busy, error: e.message || e.code };
     case "done":
-      return { ...t, ms: e.metrics?.latencyMs };
+      return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
       return t;
   }
@@ -129,7 +134,7 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
     const after = prev?.kind === "agent"
       ? prev.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []) : undefined;
     out.push({ kind: "agent", key: m.id, mode: m.mode ?? "quick", blocks, busy: false, past: true,
-      error: m.error?.message, after });
+      error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
 }
