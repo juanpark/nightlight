@@ -126,7 +126,8 @@ export function needsYou(i: NeedsInput): Need[] {
         && !newer("0.9.0", d.helperVersion)
         && !i.actions.some((a) => a.deviceId === d.id && a.type === "update_helper" && open(a))) {
       out.push({ id: `update:${d.id}:${i.release.version}`, kind: "update", priority: 3, deviceId: d.id,
-        title: `Helper update ${d.helperVersion} → ${i.release.version}`,
+        title: "A new version of the Nightlight helper is ready",
+        detail: `${d.helperVersion} → ${i.release.version}`,
         cta: { label: "Update", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: i.now });
     }
     const sent = d.permissionsAt?.getTime();
@@ -147,7 +148,8 @@ export function needsYou(i: NeedsInput): Need[] {
     const pinned = (d.allowedJobs?.expert ?? []).includes("on");
     if (real && i.expert && pinned && !i.expert.enabled) {
       out.push({ id: `expert:${d.id}`, kind: "expertHalf", priority: 3, deviceId: d.id,
-        title: "Expert sessions half set up", detail: "This device trusts a passkey: create it again in the app",
+        title: "Deeper checks (Expert sessions) are half set up",
+        detail: "The device trusts an approval key (passkey) this app no longer has: create it again in the app",
         cta: { label: "Finish", go: { to: "drawer", deviceId: d.id, tab: "settings" } }, at: i.now });
     }
   }

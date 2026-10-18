@@ -108,9 +108,9 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
       <dl>
         {command && <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>}
         <dt>What happens</dt><dd>{action.dryRun}</dd>
-        <dt>Touches</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (live device)" : " (sample)"}
+        <dt>Affects</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (your real device)" : " (sample, nothing real)"}
           {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit)" }}> (signed for a different device!)</strong> : null}</dd>
-        <dt>Undo</dt><dd>{action.rollback}</dd>
+        <dt>Can it be undone?</dt><dd>{action.rollback}</dd>
         <dt>Status</dt><dd>{STATUS[action.status]}{action.decision?.by === "auto" ? " (handled on its own, as you allowed)" : ""}</dd>
         {action.result && <><dt>Result</dt><dd>{action.result.summary}</dd></>}
       </dl>

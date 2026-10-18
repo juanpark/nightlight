@@ -13,13 +13,16 @@ export default function TrustPanel({ trust }: { trust: TrustDoc[] }) {
   const [err, setErr] = useState("");
   async function call(fn: () => Promise<unknown>) {
     setErr("");
-    try { await fn(); } catch (e) { setErr(e instanceof ApiError ? e.code : "Something went wrong"); }
+    try { await fn(); } catch (e) { setErr(e instanceof ApiError ? "Couldn't change that. Please try again." : "Something went wrong"); }
   }
   return (
     <div className="panel">
-      <h3>How much freedom Nightlight has</h3>
-      <p className="small muted" style={{ marginTop: 0 }}>Per kind of job. Risky jobs have a ceiling: they always ask.
-        A failure moves a job back down a step.</p>
+      <h3>How much Nightlight does on its own</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>For each kind of job, choose whether Nightlight asks you first.
+        Risky jobs always ask. If a job ever fails, it goes back to asking.</p>
+      <p className="small muted" style={{ marginTop: 0 }}>This works on the sample home for now. On your own devices,
+        every restart, clean-up or removal waits for your tap whatever you choose here; what Nightlight may do on
+        each of them is set in that device&apos;s Settings.</p>
       <div className="list">
         {trust.map((t) => (
           <div key={t.id} className="item" style={{ flexWrap: "wrap" }}>
