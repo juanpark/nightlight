@@ -57,3 +57,12 @@
 .chat-break { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .chat-break-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .chat-break p { margin: 0; }
+
+/* Conversations: switch between recent chats, or start a new one */
+.convos { border-bottom: 1px solid var(--line); padding: 8px 14px; }
+.convos-bar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.convos-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 40vh; overflow: auto; }
+.convo { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; min-width: 0; }
+.convo[aria-current] { border-color: var(--accent); }
+.convo-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.convo .muted { flex: none; }
