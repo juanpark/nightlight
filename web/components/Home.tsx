@@ -195,7 +195,8 @@ export default function Home({ user, account }: { user: User; account?: string }
             onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} hidden={pane === "chat"} />
         )}
         <aside className="right">
-          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me} />
+          <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me}
+            onShowMap={() => { setPanel("none"); setPane("home"); }} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
