@@ -1,5 +1,5 @@
 /* Nightlight app tokens. Two sets that share names: night (navy, cream text, the star) and day (cream, navy ink,
-   the same star). The app shell sets data-theme; outside it (/pair) the system setting picks. Status colours are
+   the same star). The app shell sets data-theme; outside it only /pair follows the system setting. Status colours are
    only ever shown with a word. Secondary text (--muted) is the same ink at 70%, mixed toward the ground in OKLab, so
    it reads as a quieter shade of the main text rather than a second colour.
    Each status has two strengths: --ok/--warn/--crit/--offline for text and anything with text on it (≥ 4.5:1), and
@@ -29,7 +29,7 @@
   --font-head: var(--font-display, var(--font-ui)), system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) { /* only pages without a theme of their own (/pair); the app is day unless night is picked */
+  :root:not([data-theme]):has(.pair-page) { /* only /pair follows the system; the landing, start screens and app are day unless night is picked */
   --bg: #0b1430; --panel: #111c3d; --panel-2: #18254b; --line: #22305c; --line-strong: #33457a;
   --ink: #f4efe4; --muted: #a5a7ab; --glow: #fdd83a; --glow-rgb: 253 216 58;
   --accent: #fdd83a; --on-accent: #15224a; --primary: #fdd83a; --primary-hover: #ffe36a; --on-primary: #15224a;
