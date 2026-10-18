@@ -213,7 +213,8 @@ export interface UserDoc {
   demo?: { state: "ready" | "resetting" };
   trustDefault?: Level;
   isDemo?: boolean;
-  settings?: { deviceNames?: boolean }; // deviceNames missing: on
+  settings?: { deviceNames?: boolean; timeZone?: string; timeZoneAuto?: boolean }; // deviceNames missing: on
+  // timeZone: IANA name the assistant speaks in; timeZoneAuto: taken from the browser, not chosen
 }
 
 export type StreamEvent =

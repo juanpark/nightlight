@@ -6,6 +6,36 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 
+/** The time zone the assistant speaks in: the browser's unless the owner picks another. */
+function TimeZone({ me }: { me: UserDoc | null | undefined }) {
+  const here = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; } })();
+  const saved = me?.settings?.timeZone;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const zones = (() => {
+    try { return (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? []; }
+    catch { return []; }
+  })();
+  const shown = draft ?? saved ?? here;
+  const auto = !saved || me?.settings?.timeZoneAuto;
+  async function pick(z: string) {
+    setDraft(z); setErr("");
+    try { await api("POST", "/api/settings", { timeZone: z }); }
+    catch { setDraft(null); setErr("Couldn't save the time zone, so it stays as it was. Try again in a moment."); }
+  }
+  return (
+    <div className="setting-row" style={{ flexWrap: "wrap", gap: 8 }}>
+      <span><strong>Time zone</strong>: {shown}{auto && !draft ? " (from this browser)" : ""}</span>
+      {zones.length > 0 && me && (
+        <select aria-label="Time zone" value={shown} onChange={(e) => pick(e.target.value)}>
+          {!zones.includes(shown) && <option value={shown}>{shown}</option>}
+          {zones.map((z) => <option key={z} value={z}>{z}</option>)}
+        </select>)}
+      {err && <span className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</span>}
+    </div>
+  );
+}
+
 /** "Nightlight 1.0.0 · web a1b2c3d · API e4f5g6h · helper 0.9.34", leaving out what isn't known. */
 function Versions() {
   const [line, setLine] = useState("");
@@ -69,6 +99,7 @@ export default function AccountSettings({ me, anonymous, live = false, onSave, o
         names kept so far; they come back only when things announce them again.</p>
       {live && <p id="names-demo" className="small muted">This live machine is shared with other visitors, so its
         settings can&apos;t be changed here. On your own account this is a switch.</p>}
+      {!live && !anonymous && <TimeZone me={me} />}
       {anonymous && <p id="names-demo" className="small muted">Settings are for your own account.{" "}
         <button className="linkish small" onClick={onSave}>Save with Google</button> to change them.</p>}
       {err && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</p>}

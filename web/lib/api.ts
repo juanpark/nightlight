@@ -12,7 +12,12 @@ export class ApiError extends Error {
 async function headers() {
   const { auth } = await firebase();
   const token = await auth.currentUser?.getIdToken();
-  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  // the browser's time zone, so the assistant can speak in local time (the server keeps it once, unless the owner
+  // chose one in Settings)
+  let tz = "";
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""; } catch { /* old browser: the server keeps UTC */ }
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(tz ? { "X-Time-Zone": tz } : {}) };
 }
 
 export async function api<T = Record<string, unknown>>(method: string, path: string, body?: unknown): Promise<T> {
