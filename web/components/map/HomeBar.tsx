@@ -2,12 +2,12 @@
 // The bar above the map: Map or List, then what to show: a place (one per router), kinds of things, only what needs
 // you, favourites, tags. Groups combine; within a group any choice matches. A chosen place can be renamed.
 import { useState } from "react";
-import { List, Map as MapIcon, Star } from "lucide-react";
+import { ListChecks, List, Map as MapIcon, Star } from "lucide-react";
 import { api } from "@/lib/api";
 import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, NO_FILTER, starred, type Category, type Filter, type Place } from "@/lib/homeFilter";
 import type { Device, Watch } from "@/lib/types";
 
-export type View = "map" | "list";
+export type View = "map" | "list" | "board";
 
 const toggle = <T,>(xs: T[], x: T) => xs.includes(x) ? xs.filter((y) => y !== x) : [...xs, x];
 
@@ -37,6 +37,8 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
           <MapIcon size={14} /> Map</button>
         <button role="radio" aria-checked={view === "list"} className={view === "list" ? "on" : ""} onClick={() => onView("list")}>
           <List size={14} /> List</button>
+        <button role="radio" aria-checked={view === "board"} className={view === "board" ? "on" : ""} onClick={() => onView("board")}
+          title="Every check as a ✓ ! ✗ line, from what devices last reported"><ListChecks size={14} /> Status</button>
       </div>}
       {places.length > 1 && (
         <div className="chips" role="group" aria-label="Place">
