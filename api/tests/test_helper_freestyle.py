@@ -61,7 +61,7 @@ def test_each_program_says_whether_it_is_inside_an_app_or_on_the_computer(helper
     assert "thumbnailer (on the computer itself, not inside any app)" in out
     assert "postgres (inside app notes-db)" in out and "redis (inside a container)" in out
     got = playbooks.summary(playbooks.evaluate(playbooks.library()["slow"], out, {}))
-    assert "thumbnailer (on the computer itself, not inside any app) keeps a processor core busy" in got
+    assert "thumbnailer keeps a processor core busy" in got and "runs on the computer itself, not inside any of your apps" in got
 
 
 def test_where_a_program_runs_is_only_said_for_layouts_it_knows(helper):
