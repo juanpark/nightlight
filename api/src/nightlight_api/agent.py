@@ -1425,6 +1425,7 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
             instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
                             "always win):\n" + memory_summary(ctx.memories))
     chosen = model or (settings.deep_model if ctx.deep and not continuation else settings.model)
+    ctx.metrics["model"] = chosen if isinstance(chosen, str) else getattr(chosen, "model", "")  # shown with the answer
     return LlmAgent(
         name="nightlight",
         model=chosen,
