@@ -140,7 +140,7 @@ fi
 
 COMPONENT="$BUILD_DIR/Nightlight-component.pkg"
 PKG="$BUILD_DIR/Nightlight.pkg"
-rm -f "$COMPONENT" "$PKG" "$PKG.sha256"
+rm -f "$COMPONENT" "$PKG" "$PKG.sha256" "$PKG.version"
 pkgbuild --root "$STAGE/root" --scripts "$STAGE/scripts" --identifier "$PKG_ID" --version "$VERSION" \
   --install-location / "$COMPONENT"
 cat > "$STAGE/distribution.xml" <<XML
@@ -182,6 +182,7 @@ else
 fi
 
 sha256 "$PKG" > "$PKG.sha256"
+echo "$VERSION" > "$PKG.version"  # deploy_web.sh rebuilds the package when this no longer matches the helper
 echo "Built $PKG ($(du -h "$PKG" | cut -f1 | tr -d ' '), helper $VERSION) sha256 $(cat "$PKG.sha256")"
 if [ ${#todo[@]} -gt 0 ]; then
   echo

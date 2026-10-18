@@ -18,6 +18,13 @@ val() { python3 -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])
 mkdir -p web/public && cp helper/nightlight_helper.py web/public/nightlight_helper.py  # served for /install.sh (not committed)
 # The Mac installer, served at /download/Nightlight.pkg (built by scripts/build_mac_pkg.sh; not committed). Only a
 # notarized one ships: other Macs refuse to open anything else. ALLOW_UNSIGNED_PKG=1 ships it anyway (previews).
+# The Mac installer carries the helper: whenever the helper's version moves, the package is rebuilt here, so the
+# download never lags behind the helper the API serves.
+HELPER_VERSION=$(sed -n 's/^VERSION = "\([0-9.]*\)"$/\1/p' helper/nightlight_helper.py)
+if [ "$(cat build/mac/Nightlight.pkg.version 2>/dev/null)" != "$HELPER_VERSION" ]; then
+  echo "Mac installer is not built for helper $HELPER_VERSION: rebuilding it."
+  ./scripts/build_mac_pkg.sh
+fi
 rm -rf web/public/download
 if [ -f build/mac/Nightlight.pkg ]; then
   if xcrun stapler validate build/mac/Nightlight.pkg >/dev/null 2>&1 || [ "${ALLOW_UNSIGNED_PKG:-}" = 1 ]; then
