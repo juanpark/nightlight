@@ -24,7 +24,7 @@ from google.genai import types
 
 from . import actions, db, guide, knowledge, memory, notebook, playbooks, quota, real, runbooks, sim
 from .config import settings
-from .errors import ApiError
+from .errors import ApiError, Outcome
 from .fence import turn_fence
 from .ids import continuation_turn_id
 from .redact import scrub, scrub_value
@@ -411,16 +411,18 @@ def make_tools(ctx: TurnContext, read_only: bool):
         return _bounded({"events": [{k: e.get(k) for k in ("deviceId", "kind", "severity", "message", "at")}
                                     for e in evs[:15]]}, ctx)
 
-    def _propose(action_type: str, device_id: str, params: dict | None = None) -> dict:
+    def _propose(action_type: str, device_id: str, params: dict | None = None, **extra) -> dict:
         try:
             a = actions.propose(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode, generation=ctx.generation,
                                 action_type=action_type, device_id=device_id, params=params or {},
                                 fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation),
-                                ask=ctx.promised == (action_type, device_id))
+                                ask=ctx.promised == (action_type, device_id), **extra)
         except ApiError as e:
             if e.code == "stale":
                 raise
             return {"status": "error", "reason": e.code}
+        except Outcome as e:  # not a failure: the answer itself (e.g. nothing to free)
+            return _bounded({"status": str(e), **e.info}, ctx)
         except ValueError as e:
             reason = {"not_allowed_on_device": "the owner hasn't allowed this on the device",
                       "already_running": "it is already running",
@@ -435,6 +437,14 @@ def make_tools(ctx: TurnContext, read_only: bool):
                "risk": a["riskClass"]}
         if a.get("result"):
             out["result"] = a["result"]["summary"]
+        if a.get("waiting") or a.get("saferFirst"):
+            # Nothing new was asked for: the card that came back is another job (or the same one, from earlier).
+            job = {"job": a["type"], "status": a["status"], "plan": a["plan"], **({"result": out["result"]}
+                                                                                 if "result" in out else {})}
+            out = {"status": "safer_first" if a.get("saferFirst") else "waiting", "actionId": a["id"],
+                   "proposed": job, "awaitingTap": a["status"] == "pending", **(a.get("saferFirst") or {})}
+        if a.get("lastAttempt"):
+            out["lastAttempt"] = a["lastAttempt"]
         return _bounded(out, ctx)
 
     def _rotate_logs_sync(device_id: str, tool_context: ToolContext) -> dict:
@@ -458,15 +468,22 @@ def make_tools(ctx: TurnContext, read_only: bool):
         """
         return _propose("backup_world", device_id)
 
-    def _restart_server_sync(device_id: str, tool_context: ToolContext) -> dict:
+    def _restart_server_sync(device_id: str, tool_context: ToolContext, skip_backup: bool = False) -> dict:
         """Propose restarting a game server to clear its memory when the game lags.
 
-        Players online are disconnected for about a minute. Always needs the person's approval.
+        Players online are disconnected for about a minute. Always needs the person's approval. If the world hasn't
+        been backed up for over a week, the result is "safer_first": the backup's card is put up instead.
 
         Args:
             device_id: the game server's device id, for example "game-1".
+            skip_backup: true only when the person said to restart without backing up first.
         """
-        return _propose("restart_server", device_id)
+        return _propose("restart_server", device_id, skip_safer=skip_backup)
+
+    async def restart_server(device_id: str, tool_context: ToolContext, skip_backup: bool = False) -> dict:
+        return await asyncio.to_thread(_restart_server_sync, device_id, tool_context, skip_backup)
+
+    restart_server.__doc__ = _restart_server_sync.__doc__
 
     def _clear_images_sync(device_id: str, tool_context: ToolContext) -> dict:
         """Propose removing Docker images no app uses on a sample device (an alternative to clearing its logs when it
@@ -625,6 +642,52 @@ def make_tools(ctx: TurnContext, read_only: bool):
     async def run_playbook(device_id: str, playbook: str, tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_run_playbook_sync, device_id, playbook, tool_context)
 
+    def _check_space_sync(tool_context: ToolContext, device_id: str = "") -> dict:
+        """Find what takes the disk space and what can safely be cleared ("junk", "free up space", "disk full").
+        Read-only, no approval. Without device_id it covers every sample device at once; a REAL device is measured
+        when you pass its id (its helper runs the disk checks it offers; the result says which it checked and which
+        it doesn't offer).
+
+        Args:
+            device_id: one device's id, or "" for the whole home.
+        """
+        docs = [dict(s.to_dict(), id=s.id) for s in db.devices(ctx.uid).get()
+                if real.is_current(s.to_dict(), ctx.generation) and (not device_id or s.id == device_id)]
+        if not docs:
+            return {"status": "error", "reason": "no such device"}
+        if device_id and docs[0].get("realm") == "real":
+            checked, missing = playbooks.space_checks(docs[0])
+            if not checked:
+                return {"status": "error", "reason": "the device doesn't offer any disk checks", "not_offered": missing}
+            try:
+                a = actions.request_inspection(ctx.uid, session_id=ctx.session_id, turn_id=ctx.turn_id, mode=ctx.mode,
+                                               generation=ctx.generation, device_id=device_id, what=checked,
+                                               extra={"playbook": playbooks.SPACE},
+                                               fence=turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt,
+                                                                ctx.generation))
+            except ApiError as e:
+                if e.code == "stale":
+                    raise
+                return {"status": "error", "reason": e.code}
+            except ValueError as e:
+                return {"status": "error", "reason": "the device isn't reporting right now"
+                        if str(e) == "device_not_reporting" else "not applicable to this device"}
+            return _bounded({**_await_read(a), "checked": checked, "not_offered": missing}, ctx)
+        out = []
+        for d in docs:
+            if d.get("realm") == "real":
+                out.append({"device": d["id"], "name": d.get("name"), "measured": False,
+                            "how": "call check_space with this device_id to measure it"})
+            elif d.get("diskConsumers"):
+                svcs = {s.id: s.to_dict() for s in db.services(ctx.uid, d["id"]).get()}
+                out.append(sim.space(d, svcs))
+        return _bounded({"status": "done", "devices": out}, ctx)
+
+    async def check_space(tool_context: ToolContext, device_id: str = "") -> dict:
+        return await asyncio.to_thread(_check_space_sync, tool_context, device_id)
+
+    check_space.__doc__ = _check_space_sync.__doc__
+
     def _restart_service_sync(device_id: str, service: str, tool_context: ToolContext) -> dict:
         """Propose restarting a stopped system service (e.g. "pihole-FTL.service") on a REAL device.
 
@@ -661,8 +724,9 @@ def make_tools(ctx: TurnContext, read_only: bool):
         tool.__doc__ = sync.__doc__
         return tool
 
-    action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync, _restart_server_sync,
+    action_tools = [_wrap(f) for f in (_rotate_logs_sync, _backup_world_sync,
                                        _restart_app_sync, _clear_images_sync, _update_server_sync)]
+    action_tools.insert(2, restart_server)
     action_tools.append(restart_container)
     action_tools.append(restart_service)
 
@@ -1040,7 +1104,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                           (update_profile, _update_profile_sync), (research, _research_sync),
                           (read_device_log, _read_device_log_sync), (save_runbook, _save_runbook_sync)):
         wrapper.__doc__ = sync.__doc__
-    tools = [list_fleet, get_device, get_recent_events, look_into, inspect, run_playbook, write_note,
+    tools = [list_fleet, get_device, get_recent_events, check_space, look_into, inspect, run_playbook, write_note,
              how_nightlight_works, run_command, update_profile, research, link_devices, read_device_log, save_runbook]
     if memory.enabled():
         tools.append(remember)

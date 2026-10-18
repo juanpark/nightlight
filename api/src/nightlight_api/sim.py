@@ -379,3 +379,45 @@ def apply(device: dict, services: dict, action_type: str, params: dict) -> tuple
                        "before": snap, "after": dict(snap)}, d, svcs
     result, d, svcs = ACTIONS[action_type]["apply"](d, svcs)
     return True, {"ok": True, **result}, d, svcs
+
+
+def same_problem(action_type: str) -> set[str]:
+    """The jobs that answer the same problem as this one (FIX_FOR read backwards): a card for any of them already
+    waiting on a device is the answer to asking for another, so two fixes for one problem never pile up."""
+    out = {action_type}
+    for jobs in FIX_FOR.values():
+        jobs = (jobs,) if isinstance(jobs, str) else jobs
+        if action_type in jobs:
+            out.update(jobs)
+    return out
+
+
+def safer_first(device: dict, services: dict, action_type: str) -> tuple[str, str] | None:
+    """(job, why) when a safer step should come before this job, else None: a game world not backed up for over a
+    week is backed up before the server restarts."""
+    if action_type == "restart_server":
+        days = (_game(services) or {}).get("lastBackupDaysAgo")
+        if days is not None and days > 7:
+            return "backup_world", f"the world hasn't been backed up in {days} days"
+    return None
+
+
+# What frees each kind of disk consumer; the others (a world, its backups) are the owner's data and never cleared.
+FREED_BY = {"logs": "rotate_logs", "images": "clear_images"}
+
+
+def space(device: dict, services: dict) -> dict:
+    """What takes the space on a sample device, biggest first, with the job that frees each one (when one applies)."""
+    used = []
+    for c in sorted(device.get("diskConsumers") or [], key=lambda c: -(c.get("sizeGb") or 0)):
+        row = {"what": c.get("what") or c["id"], "sizeGb": round(c.get("sizeGb") or 0, 1)}
+        job = FREED_BY.get(c["id"])
+        if job and c.get("sizeGb"):
+            try:
+                card(device, services, job, {})
+                row["freedBy"] = job
+            except ValueError:
+                pass
+        used.append(row)
+    return {"device": device["id"], "name": device.get("name"), "diskPct": disk_pct(device),
+            "diskGb": device.get("diskGb"), "usedBy": used}

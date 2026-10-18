@@ -532,8 +532,8 @@ def test_a_restart_card_warns_when_the_world_isnt_backed_up(client, started):
     from conftest import generation
     client.post("/api/demo/inject", json={"kind": "server_lagging", "deviceId": "game-1"})
     card = actions.propose(started, session_id="s", turn_id="t_r", generation=generation(started),
-                           action_type="restart_server", device_id="game-1", params={})
-    assert "hasn't been backed up in 9 days: back it up first" in card["dryRun"]
+                           action_type="restart_server", device_id="game-1", params={}, skip_safer=True)
+    assert "hasn't been backed up in 9 days: back it up first" in card["dryRun"]  # backup skipped: still warned
 
 
 def test_a_narration_follow_up_never_gets_a_made_up_tool_call(client, started):  # Codex final polish #1
