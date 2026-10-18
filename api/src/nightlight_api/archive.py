@@ -170,14 +170,28 @@ def _delete_fenced(dref, claim: str, refs: list) -> bool:
     return db.run_transaction(run)
 
 
+def _drop_stale_entry(uid: str, device_id: str) -> None:
+    """Remove the archive entry only if the device is still gone or back in use, read in the same transaction: a removal
+    that slips in writes a fresh entry and archives the device again, and that new schedule must survive."""
+    dref, iref = db.device(uid, device_id), index().document(f"{uid}__{device_id}")
+
+    @firestore.transactional
+    def run(tx):
+        snap = dref.get(transaction=tx)
+        entry = iref.get(transaction=tx)
+        if entry.exists and (not snap.exists or not (snap.to_dict() or {}).get("archived")):
+            tx.delete(iref)
+
+    db.run_transaction(run)
+
+
 def purge(uid: str, device_id: str, due_only: bool = False) -> bool:
     """Delete an archived device and everything kept about it: claimed first (see _claim), then deleted in fenced
     batches, the device document last. False when it wasn't deleted (not archived, not due, or restored)."""
     dref = db.device(uid, device_id)
     claim = _claim(uid, device_id, due_only)
     if not claim:
-        if not dref.get().exists or not (dref.get().to_dict() or {}).get("archived"):
-            index().document(f"{uid}__{device_id}").delete()  # gone or brought back: the entry is stale
+        _drop_stale_entry(uid, device_id)
         return False
     refs = [s.reference for sub in ("services", "history", "notes", "profile", "runbooks")
             for s in dref.collection(sub).stream()]

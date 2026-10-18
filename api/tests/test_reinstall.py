@@ -215,3 +215,15 @@ def test_the_pairing_request_keeps_only_the_keyed_fingerprint_once_decided(clien
     client.post(f"/api/devices/pair/{p['code']}", json={"approve": True})
     doc = db.client().collection("pairRequests").document(real._sha(p["code"].replace("-", ""))).get().to_dict()
     assert "machine" not in doc and doc["machineTag"] and doc["machineTag"] != MAC
+
+
+def test_stale_entry_cleanup_never_erases_a_fresh_archive_schedule(started):  # Codex reinstall rev2
+    from nightlight_api import archive
+    dev, iref = db.device(started, "dz1"), archive.index().document(f"{started}__dz1")
+    dev.set({"name": "Old Mac", "realm": "real", "archived": True})  # removed again: archived, with a new entry
+    iref.set({"uid": started, "deviceId": "dz1"})
+    archive._drop_stale_entry(started, "dz1")
+    assert iref.get().exists  # the new schedule survives
+    dev.update({"archived": False})  # brought back: now the entry really is stale
+    archive._drop_stale_entry(started, "dz1")
+    assert not iref.get().exists
