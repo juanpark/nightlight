@@ -453,20 +453,26 @@ def test_a_declined_card_says_nothing_changed_and_carries_the_known_state(client
     assert "Up 3 days (unhealthy)" in turn["input"]  # the state the server knows, never a guess
     FakeLlm.log.clear()
     events(client.post(f"/api/turns/{cont}/stream", json={}))
-    assert "declined a card: say plainly that nothing was changed" in FakeLlm.log[0]["system"]
+    assert "If they declined with a reason, acknowledge" in " ".join(FakeLlm.log[0]["system"].split())
     assert "Up 3 days (unhealthy)" in FakeLlm.log[0]["text"]
 
 
-def test_why_questions_build_on_what_was_already_found():
-    assert "When they ask why something broke, start from what this conversation" in agentlib.INSTRUCTION
-    assert "the note records the cause, not just" in agentlib.INSTRUCTION
+def test_the_prompt_is_a_short_charter():
+    # Which tool to call when lives in the tools and the home summary; the prompt says who Nightlight is.
+    assert len(agentlib.INSTRUCTION) <= 2400 and len(agentlib.DEEP) <= 900
+    assert len(agentlib.CONTINUATION) <= 500 and len(agentlib.MEMORY_RULES) <= 300
+    said = " ".join((agentlib.INSTRUCTION + agentlib.DEEP).split())
+    assert "Let me check" not in said and "I've put a card up" not in said and "simulated" not in said
+    assert "write down a cause you found" in said and "don't contradict a cause this conversation established" in said
 
 
 def test_the_home_summary_lists_apps_and_never_calls_unknown_healthy(client, started):
     from conftest import generation
     text = agentlib.fleet_summary(started, generation(started))
     assert "Apps: " in text and "plex" in text
-    assert "unknown (Nightlight only sees whether it answers; never call it healthy)" in text
+    camera = next(line for line in text.splitlines() if line.startswith("- nvr-1 "))
+    assert "Health: not checked (nothing reports from it" in camera and "answer" not in camera
+    assert "simulated" not in text and "sample" not in text.lower()  # no word in the context it shouldn't say
 
 
 def test_a_decline_reason_and_an_opened_trust_offer_reach_the_chat(client, started):
