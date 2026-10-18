@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Star, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { Copy } from "./AddDevice";
 import { useServicesState } from "@/lib/data";
 import { useFavorites } from "@/lib/favorites";
 import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
@@ -307,6 +308,21 @@ function IssueActions({ device, finding: f }: { device: Device; finding: Finding
     : <button className="linkish small issue-actions" onClick={() => mark("new")}>Needs a look again</button>;
 }
 
+/** The fix a finding names, when the page can offer it: a reinstalled helper looks nearby again, or the line for it. */
+function FindingFix({ device, fix }: { device: Device; fix: string }) {
+  const [note, setNote] = useState("");
+  if (fix === "discover_on_device") return <Copy text="nightlight discover" />;
+  if (fix !== "discover") return null;
+  return (
+    <div className="small">
+      <button className="small" disabled={!!note} onClick={() => api("POST", `/api/devices/${device.id}/discover`, {})
+        .then(() => setNote("Looking. Keep them switched on; they are checked again within a minute or two."),
+          () => setNote("Couldn't ask the device to look. Try again in a moment."))}>Look nearby</button>
+      {note && <span className="muted"> {note}</span>}
+    </div>
+  );
+}
+
 function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) => boolean; onAsk: (q: string) => void }) {
   const [showKnown, setShowKnown] = useState(false);
   const all = device.findings ?? [];
@@ -323,6 +339,7 @@ function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) 
         {state === "new" && <button className="linkish small issue-actions"
           onClick={() => onAsk(`What should I do about this on my ${device.name}: ${f.message}`)}>What should I do?</button>}
         <IssueActions device={device} finding={f} />
+        {state === "new" && f.fix && <FindingFix device={device} fix={f.fix} />}
       </div>
     );
   };

@@ -12,6 +12,7 @@ export interface Finding {
   evidence?: string;
   svcId?: string;
   state?: "new" | "known" | "snoozed";
+  fix?: string; // a fix the page can offer itself: "discover" (Look nearby), "discover_on_device" (a line to run there)
 }
 
 export interface Service {
