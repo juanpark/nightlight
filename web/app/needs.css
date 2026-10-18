@@ -166,3 +166,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 .setting-row input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--accent); }
 .setting-row.off { cursor: default; }
 .setting-help { margin: 4px 0 0 30px; }
+.promise { margin: 8px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; } /* AddDevice */
+.promise ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.promise p { margin: 8px 0 0; }
+.setup-note { margin: 0 0 6px; }
