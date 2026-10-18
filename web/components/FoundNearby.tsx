@@ -27,7 +27,6 @@ function LookNearby({ devices, discoveries, onGo, again, sample }: {
   // a device has looked once its list is newer than the one it had when we asked (or it had none)
   const looked = (id: string) => !!run
     && (discoveries.find((x) => x.id === id)?.at?.getTime() ?? -1) > (run.base[id] ?? -1);
-  // one device per network by default; every device sees more (each mostly knows what it talked to lately)
   async function look(everyDevice = false) {
     setErr(""); setBusy(true);
     const base = Object.fromEntries(discoveries.map((d) => [d.id, d.at?.getTime() ?? 0])); // before asking
@@ -45,10 +44,10 @@ function LookNearby({ devices, discoveries, onGo, again, sample }: {
   return (
     <div className="look-nearby">
       <div className="look-row">
-        <button className={again ? "" : "primary"} onClick={() => look()} disabled={busy || looking.length > 0}>
+        {/* one button: every one of your devices looks (each mostly knows what it talked to lately); the line below
+            says which ones */}
+        <button className={again ? "" : "primary"} onClick={() => look(own.length > 1)} disabled={busy || looking.length > 0}>
           {again ? "Look again" : "Look for devices nearby"}</button>
-        {own.length > 1 && <button className="linkish small" onClick={() => look(true)} disabled={busy || looking.length > 0}>
-          Look from all my devices (more complete)</button>}
       </div>
       {looking.length > 0 && (
         <p className="small live-status"><span className="dot offline pulse" /> Looking from the {names(looking.map((a) => a.name))}…
