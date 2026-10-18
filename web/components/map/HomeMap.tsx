@@ -13,7 +13,7 @@ import "@/app/map.css";
 import { api } from "@/lib/api";
 import type { Need } from "@/lib/needsYou";
 import type { Device, Link, LinkKind } from "@/lib/types";
-import { litApps, mainDevice, useFollowed } from "@/lib/follow";
+import { litApps, mainDevice, stepState, useFollowed } from "@/lib/follow";
 import AppSheet from "./AppSheet";
 import DeviceNode, { type DeviceNodeType } from "./DeviceNode";
 import LinkEdge, { type LinkEdgeType } from "./LinkEdge";
@@ -144,6 +144,19 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followed]);
   const sized = useCallback((id: string, h: number) => setFocusH((x) => (x === h ? x : h)), []);
+  // the context strip's "show me": center that device, on a phone too (the person just switched to the map for it)
+  const showN = useRef(0);
+  useEffect(() => {
+    const s = followed.show;
+    if (!s || s.n === showN.current || !devices.some((d) => d.id === s.id)) return;
+    showN.current = s.n;
+    setDimmed(0);
+    shown.current = null;
+    setFocusH(0);
+    setFocus({ id: s.id, by: "chat" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed.show]);
+  const working = !followed.done && followed.devices.length > 0 && followed.seq !== dimmed;
 
   // Devices from the database become nodes. A node being dragged keeps its place, and a dropped one stays where it
   // was dropped until the database has the new spot (or the save fails). base is where each one really is (what gets
@@ -170,6 +183,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask, favorites,
           focused: d.id === focusId, onFocus: focusOn, onApp: app, onSize: sized,
           lit: lit(d.id), litApps: lit(d.id) ? litApps(followed, d.id) : undefined,
+          litState: lit(d.id) ? stepState(followed, d.id) : undefined,
+          settle: lit(d.id) === "done" && d.id === mainDevice(followed),
           by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
@@ -299,7 +314,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   }
 
   return (
-    <div className="homemap" aria-label="Map of your home" onKeyDown={(e) => {
+    <div className={`homemap ${working ? "following" : ""}`} aria-label="Map of your home" onKeyDown={(e) => {
       // Enter on a focused device opens it, as a click does (Tab moves between devices)
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);

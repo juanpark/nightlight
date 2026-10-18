@@ -4,7 +4,8 @@ import { loadMessages } from "@/lib/data";
 import { chatSession, newChat, openSession, pickSession } from "@/lib/session";
 import Conversations from "./chat/Conversations";
 import { api, ApiError, stream } from "@/lib/api";
-import { followBegin, followEnd, followReset, followStep, followText } from "@/lib/follow";
+import { followBegin, followCard, followEnd, followReset, followResult, followStep, followText } from "@/lib/follow";
+import ContextStrip from "./chat/ContextStrip";
 import type { Action, Device, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
 import TurnView, { afterLine } from "./chat/TurnView";
@@ -76,8 +77,9 @@ function savedMode(): Mode {
 
 const Chat = forwardRef<ChatHandle, {
   uid: string; actions: Action[]; devices: Device[]; disabled: boolean; generation?: number;
+  onShowMap?: () => void; // the context strip's device was tapped: bring the map into view
 }>(
-  function Chat({ uid, actions, devices, disabled, generation }, ref) {
+  function Chat({ uid, actions, devices, disabled, generation, onShowMap }, ref) {
     const [turns, setTurns] = useState<Turn[]>([]);
     const [text, setText] = useState("");
     const [mode, setMode] = useState<Mode>("quick");
@@ -156,7 +158,9 @@ const Chat = forwardRef<ChatHandle, {
       setTurns((cur) => [...cur, { kind: "agent", key: k, mode: turnMode, blocks: [], busy: true, after }]);
       const followed = followBegin(); // the map lights up what this answer's steps touch
       const onEvent = (e: StreamEvent) => {
-        if (e.type === "tool_call") followStep(followed, e.args);
+        if (e.type === "tool_call") followStep(followed, e.args, e.name, e.callId);
+        else if (e.type === "tool_result") followResult(followed, e.name, e.callId, e.ok !== false, e.summary);
+        else if (e.type === "approval_request") followCard(followed);
         else if (e.type === "text") followText(followed, e.delta);
         // A device that answers later promises a follow-up turn: open it once its action points to it.
         if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
@@ -268,6 +272,7 @@ const Chat = forwardRef<ChatHandle, {
     return (
       <>
         <Conversations uid={uid} generation={generation} open={open} disabled={busy} onPick={switchTo} />
+        <ContextStrip devices={devices} onShow={onShowMap} />
         <div className="chat-log" ref={log} onScroll={(e) => {
           const el = e.currentTarget;
           nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;

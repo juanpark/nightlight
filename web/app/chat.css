@@ -79,3 +79,18 @@
 
 /* long paths and names in the work log wrap inside the narrow chat pane */
 .wl-step, .wl-note, .wl-receipt, .wl-head, .turn-error, .bubble { min-width: 0; overflow-wrap: anywhere; }
+
+/* Context strip: what the answer's steps touched, one row, scrolls sideways */
+.ctx-strip { display: flex; gap: 6px; overflow-x: auto; padding: 6px 14px; border-bottom: 1px solid var(--line);
+  scrollbar-width: thin; }
+.ctx-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px;
+  border-radius: 99px; max-width: 240px; }
+.ctx-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ctx-state { color: var(--muted); white-space: nowrap; }
+.ctx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--glow); flex: none; }
+.ctx-chip.checking { border-color: var(--glow-ink); }
+.ctx-chip.checking .ctx-dot { animation: ctx-pulse 1.2s ease-in-out infinite; }
+.ctx-chip.found .ctx-dot { background: var(--warn); } .ctx-chip.found .ctx-state { color: var(--warn-ink); }
+.ctx-chip.done .ctx-dot { background: var(--ok); } .ctx-chip.done .ctx-state { color: var(--ok-ink); }
+@keyframes ctx-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .ctx-chip.checking .ctx-dot { animation: none; } }
