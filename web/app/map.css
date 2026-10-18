@@ -145,7 +145,8 @@
 .etools button.on { background: var(--accent); color: var(--on-accent); }
 
 /* the overview in the corner (HomeMap's MiniMap): a small card on the paper, its devices in their status fills */
-.homemap .hm-minimap { margin: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+.homemap .hm-minimap { margin: 12px; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden;
+  background: var(--panel);
   box-shadow: 0 1px 2px rgb(26 26 24 / .04), 0 12px 24px -16px rgb(26 26 24 / .3); }
 .homemap .hm-minimap .react-flow__minimap-mask { stroke: var(--line-strong); stroke-width: 1; }
 @media (max-width: 900px) { .homemap .hm-minimap { display: none; } }
