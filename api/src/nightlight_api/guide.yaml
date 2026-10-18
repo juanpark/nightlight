@@ -34,7 +34,9 @@ remove_device:
     stops by itself when it next wakes up; to clean the files off it, run this on the device:
     curl -fsSL {web}/uninstall.sh | sh
     A removed device's history, notes and activity are kept (archived) for 30 days, then deleted for good; the app
-    has no button to delete them sooner. Adding the same machine again later makes it a new device.
+    has no button to delete them sooner. Within those 30 days, installing the helper on the same machine again and
+    choosing "Continue its history" when you approve it brings the device back with its history; otherwise (or after
+    the 30 days) it joins as a new device.
 
 uninstall_by_hand:
   title: Uninstall the helper by hand
@@ -153,7 +155,8 @@ approvals_and_trust:
     for now: there, after the same safe, routine kind of job (cleaning up logs, removing leftover app downloads,
     backing up the game world) has gone well three times, Nightlight offers to do that kind on its own and tell you
     afterwards. Restarts and updates never get that offer; they always ask. The Trust panel shows each kind's step
-    and can move it back, and a failure moves it back a step by itself. On your own devices,
+    and can move it back, and a failure moves it back a step by itself (unless that level was pinned, which only
+    the API can do, not the app). On your own devices,
     every restart and clean-up asks you each time. Jobs that can't be undone always ask.
 
 sample_home:
