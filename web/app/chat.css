@@ -76,3 +76,6 @@
 .md li > ul { margin: 2px 0 0; }
 .md code { font-size: .9em; padding: 1px 4px; border-radius: 5px; background: var(--bg); word-break: break-word; }
 .md a { color: var(--accent); }
+
+/* long paths and names in the work log wrap inside the narrow chat pane */
+.wl-step, .wl-note, .wl-receipt, .wl-head, .turn-error, .bubble { min-width: 0; overflow-wrap: anywhere; }
