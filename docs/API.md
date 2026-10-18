@@ -115,7 +115,14 @@ when the helper then polls, its old tokens are revoked, a new token is bound to 
 device is restored, and every subcollection (history, notes, saved fixes, jobs, events), its place on the map and
 its name stay. The device gets `helperSince`, `installedWith` (`installer`/`command_line`), and its version and
 managed mode from its first report; Activity gets "Helper reinstalled (installer) on <name>; history kept." A device
-still reporting is never offered. Enrolling with a typed code (`/helper/enrol`) always makes a new device.
+still reporting is never offered. The poll checks again, in the transaction that binds the token: if the device's
+own helper is reporting again, a purge has claimed it, or its fingerprint changed, the helper becomes a new device
+instead (a working token is never revoked). After the decision the pairing request keeps only the keyed fingerprint
+(`machineTag`). Deleting an archived device (the 30-day sweep or "forget for good") first claims it on the device
+document (`purgeClaim`) in a transaction that requires it to be archived (and, for the sweep, its own `purgeAt` to
+have passed); every delete batch and the final delete re-check that claim, so a device restored by a reinstall is
+never deleted, and a claimed device is never restored. Enrolling with a typed code (`/helper/enrol`) always makes a
+new device.
 
 **Uninstall vs remove.** Uninstalling on the device (`helper uninstall`, `curl …/uninstall.sh | sh`, the Mac
 installer's uninstall) calls `/helper/leave {}`: the token is revoked and the device stays on the map as offline

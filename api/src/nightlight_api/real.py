@@ -256,6 +256,13 @@ def _machine_tag(tx, uid: str, machine: str | None) -> str | None:
     return keyed_machine((snap.to_dict() or {}).get("key") if snap.exists else None, machine)
 
 
+def _may_continue(d: dict) -> bool:
+    """A helper device not reporting (offline, uninstalled, revoked) or archived, and not being deleted (a purge that
+    has claimed it always wins: see archive.purge)."""
+    return d.get("realm") == "real" and d.get("kind") != "watched" and not d.get("purgeClaim") \
+        and bool(d.get("archived") or view(d).get("stale"))
+
+
 def _continuable(snaps) -> tuple[str, dict] | None:
     """Of this account's devices with the same machine fingerprint, the one a reinstall may continue: a helper device
     that is offline, uninstalled or removed (archived, not yet deleted); the most recently seen. A device still
@@ -263,9 +270,7 @@ def _continuable(snaps) -> tuple[str, dict] | None:
     out = []
     for s in snaps:
         d = s.to_dict() or {}
-        if d.get("realm") != "real" or d.get("kind") == "watched":
-            continue
-        if d.get("archived") or view(d).get("stale"):
+        if _may_continue(d):
             out.append((s.id, d))
     if not out:
         return None
@@ -318,13 +323,15 @@ def pair_decide(uid: str, code: str, approve: bool, continue_device: bool = Fals
         if data["status"] != "waiting":
             raise ApiError(409, "already_decided")
         target = None
+        tag, found = _same_machine(tx, uid, data.get("machine")) if approve else (None, None)
         if approve and continue_device:
-            _, found = _same_machine(tx, uid, data.get("machine"))
             if not found:
                 raise ApiError(409, "nothing_to_continue")
             target = found[0]
+        # from here on only the account-keyed fingerprint is kept with the request
         tx.update(ref, {"status": "approved" if approve else "denied", "uid": uid if approve else None,
-                        "continues": target, "decidedAt": _now()})
+                        "continues": target, "machineTag": tag, "machine": firestore.DELETE_FIELD,
+                        "decidedAt": _now()})
         return target
 
     target = db.run_transaction(run)
@@ -362,15 +369,16 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
 
 def _continue_reads(tx, data: dict):
     """Everything the continuation needs, read: (device snapshot, its tokens), or None when the device can't be
-    continued any more (deleted meanwhile, its fingerprint changed, or another reinstall took it over after this
-    approval). Then the helper becomes a new device instead: nothing is ever merged without the owner's choice."""
+    continued any more: deleted or being deleted (a purge claimed it), its fingerprint changed, its own helper is
+    reporting again (its working token is never revoked), or another reinstall took it over after this approval.
+    Then the helper becomes a new device instead: nothing is ever merged without the owner's choice."""
     uid, device_id = data["uid"], data["continues"]
     dsnap = db.device(uid, device_id).get(transaction=tx)
     d = dsnap.to_dict() if dsnap.exists else None
-    tag = _machine_tag(tx, uid, data.get("machine"))
+    tag = data.get("machineTag")
     tokens = [t for t in tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id)).get(transaction=tx)
               if (t.to_dict() or {}).get("uid") == uid]
-    if not d or not tag or d.get("machine") != tag or d.get("realm") != "real" or d.get("kind") == "watched":
+    if not d or not tag or d.get("machine") != tag or not _may_continue(d):
         return None
     since, decided = d.get("helperSince"), data.get("decidedAt")
     if isinstance(since, datetime) and isinstance(decided, datetime) and since > decided:

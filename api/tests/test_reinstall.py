@@ -17,6 +17,7 @@ OTHER_MAC = "0" * 31 + "1"
 @pytest.fixture(autouse=True)
 def quick_polls(monkeypatch):
     monkeypatch.setattr(real, "POLL_MIN_SECONDS", 0)
+    monkeypatch.setattr(real, "PAIR_PER_IP_HOUR", 10_000)  # every test here pairs from the test client's address
 
 
 def on_map(client, uid, machine=MAC, name="MacBook Pro"):
@@ -145,3 +146,72 @@ def test_machine_fingerprint_is_hashed_and_keyed_per_account(client, started):
     stored = db.device(started, old["deviceId"]).get().to_dict()["machine"]
     assert stored != MAC and len(stored) == 20
     assert client.post("/helper/pair/start", json={"name": "x", "machine": "not-hex"}).status_code == 422
+
+
+def _archived_and_due(client, uid):
+    old = on_map(client, uid)
+    client.post(f"/api/devices/{old['deviceId']}/remove", json={})
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.device(uid, old["deviceId"]).update({"purgeAt": past})
+    archive.index().document(f"{uid}__{old['deviceId']}").update({"purgeAt": past})
+    return old
+
+
+def test_a_sweep_that_saw_the_entry_before_a_restore_deletes_nothing(client, started):
+    old = _archived_and_due(client, started)
+    entry = archive.index().document(f"{started}__{old['deviceId']}").get().to_dict()  # the sweep's snapshot
+    p = pair(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True, "continueDevice": True})
+    new = poll(client, p).json()
+    assert new["continued"] is True
+    assert archive.purge(entry["uid"], entry["deviceId"], due_only=True) is False  # the paused purge resumes
+    assert db.device(started, old["deviceId"]).get().exists
+    assert len(list(db.notes(started, old["deviceId"]).get())) == 1
+    assert beat(client, new["token"], {**FACTS, "machine": MAC}).status_code == 200
+
+
+def test_a_purge_that_claimed_the_device_wins_and_the_reinstall_becomes_new(client, started):
+    old = _archived_and_due(client, started)
+    p = pair(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True, "continueDevice": True})
+    assert archive._claim(started, old["deviceId"], due_only=True)  # the sweep claims it first
+    new = poll(client, p).json()
+    assert new["deviceId"] != old["deviceId"] and "continued" not in new
+    assert archive.purge(started, old["deviceId"], due_only=True) is True
+    assert not db.device(started, old["deviceId"]).get().exists
+    assert db.device(started, new["deviceId"]).get().exists
+
+
+def test_forget_after_a_restore_refuses(client, started, monkeypatch):
+    old = _archived_and_due(client, started)
+    claimed = archive._claim
+
+    def restore_first(uid, device_id, due_only):  # a reinstall continues it between the check and the claim
+        p = pair(client)
+        client.post(f"/api/devices/pair/{p['code']}", json={"approve": True, "continueDevice": True})
+        assert poll(client, p).json()["continued"] is True
+        return claimed(uid, device_id, due_only)
+
+    monkeypatch.setattr(archive, "_claim", restore_first)
+    assert client.delete(f"/api/devices/{old['deviceId']}").status_code == 409
+    assert len(list(db.notes(started, old["deviceId"]).get())) == 1
+
+
+def test_if_the_old_helper_comes_back_before_the_poll_it_keeps_its_device(client, started):
+    old = on_map(client, started)
+    p = pair(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True, "continueDevice": True})
+    db.client().collection("helperTokens").document(real._sha(old["token"])).update({"lastSeen": None})
+    assert beat(client, old["token"], {**FACTS, "machine": MAC}).status_code == 200  # reporting again
+    new = poll(client, p).json()
+    assert new["deviceId"] != old["deviceId"] and "continued" not in new
+    db.client().collection("helperTokens").document(real._sha(old["token"])).update({"lastSeen": None})
+    assert beat(client, old["token"], {**FACTS, "machine": MAC}).status_code == 200  # its token still works
+
+
+def test_the_pairing_request_keeps_only_the_keyed_fingerprint_once_decided(client, started):
+    on_map(client, started)
+    p = pair(client)
+    client.post(f"/api/devices/pair/{p['code']}", json={"approve": True})
+    doc = db.client().collection("pairRequests").document(real._sha(p["code"].replace("-", ""))).get().to_dict()
+    assert "machine" not in doc and doc["machineTag"] and doc["machineTag"] != MAC

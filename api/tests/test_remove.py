@@ -76,8 +76,8 @@ def test_forget_for_good_and_purge_after_30_days(client, started):
     other = enrolled(client, "Other")
     beat(client, other["token"], FACTS)
     client.post(f"/api/devices/{other['deviceId']}/remove", json={})
-    archive.index().document(f"{started}__{other['deviceId']}").update(
-        {"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})
+    for ref in (archive.index().document(f"{started}__{other['deviceId']}"), db.device(started, other["deviceId"])):
+        ref.update({"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})  # the device's own date decides
     assert archive.purge_due() == 1 and not db.device(started, other["deviceId"]).get().exists
 
 
