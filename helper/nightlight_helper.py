@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.32"
+VERSION = "0.9.33"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -290,7 +290,34 @@ def facts():
     net = _net()
     if net:
         out["net"] = net
+    machine = _hourly("machine", machine_fingerprint, every=86400)
+    if machine:
+        out["machine"] = machine
     return out
+
+
+def machine_fingerprint():
+    """A fingerprint of this machine that survives reinstalling the helper, so a reinstall can continue the same
+    device on the map (the owner chooses, when approving it): SHA-256 of the machine's own id (macOS IOPlatformUUID,
+    Linux /etc/machine-id), never the id itself. The server keys it per account before keeping it. None if unknown."""
+    import hashlib
+    ident = None
+    if sys.platform == "darwin":
+        m = re.search(r'"IOPlatformUUID" = "([0-9A-Fa-f-]{36})"', _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]))
+        ident = m.group(1) if m else None
+    else:
+        for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            try:
+                with open(path) as f:
+                    v = f.read().strip()
+                if re.fullmatch(r"[0-9a-f]{32}", v):
+                    ident = v
+                    break
+            except OSError:
+                pass
+    if not ident:
+        return None
+    return hashlib.sha256(b"nightlight-machine:" + ident.lower().encode()).hexdigest()[:32]
 
 
 def _mac_folders_state():
@@ -2565,7 +2592,11 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
             _notify(text)
         sys.exit("  " + text)
 
-    status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
+    start = {"name": (name or default_name())[:40], "os": _os_name(), "via": "installer" if browser else "command_line"}
+    machine = machine_fingerprint()
+    if machine:
+        start["machine"] = machine  # lets the owner continue this machine's device if it was on the map before
+    status, body = _post(api + "/helper/pair/start", start)
     if status != 201:
         give_up(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
     code, interval = body["code"], max(int(body.get("interval", 3)), 2)
@@ -2586,7 +2617,8 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
         st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
         if st == 200 and res.get("token"):
             _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
-            print("  Approved. This device is now on your Nightlight map.")
+            print("  Approved. This device continues where it left off on your Nightlight map, history kept."
+                  if res.get("continued") else "  Approved. This device is now on your Nightlight map.")
             if then_install:
                 try:
                     install(manage="app")

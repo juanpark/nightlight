@@ -1,6 +1,13 @@
 """Removing a real device: soft delete first. A removed device leaves the map and the agent's view at once; its
 history, notes, activity and the audit trail of what Nightlight did there stay archived for ARCHIVE_DAYS, then the
-sweep deletes them. "Forget for good" deletes them at once. Re-adding the same machine makes a new device."""
+sweep deletes them. "Forget for good" deletes them at once.
+
+Two ways a helper goes away, on purpose different:
+- Removed in the app (the remove card): the device is archived (off the map, purged after ARCHIVE_DAYS).
+- Uninstalled on the device itself (`helper uninstall`, /uninstall.sh, the Mac installer's uninstall): the token is
+  revoked but the device stays on the map as offline, history kept, as if switched off.
+Either way, installing the helper again on the same machine can continue the same device (and bring an archived
+one back) when the owner chooses "Continue its history" while approving it (real.pair_preview / pair_decide)."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -81,10 +88,15 @@ def left(tx, uid: str, device_id: str, dsnap, cleanup: str | None) -> None:
     for a in running:
         tx.update(a.reference, {"status": "done", "finishedAt": _now(), "followUp": "none",
                                 "result": {"ok": True, "summary": summary}})
-    if running or d.get("realm") == "real":
-        archive(tx, uid, device_id, name, (f"{name} was removed: " if running else f"{name} was uninstalled and ")
-                + ("the helper uninstalled itself." if running else f"left your map (archived for {ARCHIVE_DAYS} days).")
-                + files, "you" if running else "device")
+    if running:
+        archive(tx, uid, device_id, name, f"{name} was removed: the helper uninstalled itself.{files}", "you")
+    elif d.get("realm") == "real":  # uninstalled on the device itself (command line or the Mac installer's uninstall)
+        tx.update(dsnap.reference, {"status": "offline", "health": "unknown", "revoked": True, "uninstalled": True,
+                                    "uninstalledAt": _now()})
+        tx.delete(db.client().collection("realDevices").document(f"{uid}__{device_id}"))
+        real.event(tx, uid, device_id, "uninstalled", "info",
+                   f"The helper was uninstalled on {name}. It stays on your map as offline, with its history: "
+                   "install the helper again to continue it, or remove it.", "device")
 
 
 def request(uid: str, device_id: str) -> dict:

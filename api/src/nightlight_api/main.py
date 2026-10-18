@@ -532,6 +532,7 @@ class WatchResult(Strict):
 
 
 TAG = r"^[0-9a-f]{20}$"
+MACHINE = r"^[0-9a-f]{32}$"  # SHA-256 (first 32 hex) of the machine's own hardware id; never the id itself
 
 
 class Peer(Strict):
@@ -598,6 +599,7 @@ class HeartbeatBody(Strict):
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
     net: Net | None = None  # for lines on the map; helpers before 0.9.20 send none
+    machine: str | None = Field(default=None, pattern=MACHINE)  # lets a reinstall continue this device (0.9.33+)
 
     @model_validator(mode="after")
     def short_units(self):
@@ -650,6 +652,8 @@ def revoke_device(device_id: str, body: Empty, uid: str = Depends(current_uid)):
 class PairStartBody(Strict):
     name: str = Field(min_length=1, max_length=40)
     os: str | None = Field(default=None, max_length=80)
+    machine: str | None = Field(default=None, pattern=MACHINE)  # to offer "continue its history" (0.9.33+)
+    via: Literal["installer", "command_line"] | None = None
 
 
 class PairPollBody(Strict):
@@ -659,6 +663,8 @@ class PairPollBody(Strict):
 
 class PairDecideBody(Strict):
     approve: bool
+    # Continue the device the preview offered (`continues`); the server finds it again itself, never by an id from here
+    continueDevice: bool = False
 
 
 def _pair_code(code: str) -> str:
@@ -669,7 +675,8 @@ def _pair_code(code: str) -> str:
 
 @app.post("/helper/pair/start", status_code=201)
 def helper_pair_start(body: PairStartBody, request: Request):
-    return real.pair_start(scrub(body.name)[0], scrub(body.os)[0] if body.os else None, _client_ip(request))
+    return real.pair_start(scrub(body.name)[0], scrub(body.os)[0] if body.os else None, _client_ip(request),
+                           machine=body.machine, via=body.via)
 
 
 @app.post("/helper/pair/poll")
@@ -686,7 +693,7 @@ def pair_preview(code: str, uid: str = Depends(owner_uid)):
 @app.post("/api/devices/pair/{code}")
 def pair_decide(code: str, body: PairDecideBody, request: Request, uid: str = Depends(owner_uid)):
     _remember_owner_hint(request, uid)
-    return real.pair_decide(uid, _pair_code(code), body.approve)
+    return real.pair_decide(uid, _pair_code(code), body.approve, body.continueDevice)
 
 
 class LeaveBody(Strict):
