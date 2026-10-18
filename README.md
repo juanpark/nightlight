@@ -354,6 +354,31 @@ Two AI coding sessions worked in parallel on one repository, with a human lead d
   Unreviewed work stays on its side branch, and peers are merged at the exact commit that was approved.
 - **The product's AI is Gemini only.** Claude and Codex were development tools; nothing of them ships in Nightlight.
 
+### The day we stopped adding features
+
+AI makes features cheap. The cost moves elsewhere: every quick fix narrows what the next change can safely do. Kent
+Beck calls what you keep open "options"; we were spending ours.
+
+On the last night, role-played judges scored the chat agent 7.0 → 7.6 → 7.8 → 7.6. The dip came from the previous
+round's fixes: 41 commits to one file had answered each complaint with a patch, mostly server code that rewrote the
+model's answer after it was written, and an instruction that had grown to about 70 rules. So on the last morning we
+stopped adding features and asked why each class of bug existed:
+
+- **Prose was standing in for state.** The model narrated its own steps and cards while the server already streamed
+  both. We deleted the rewriting code (about 300 lines); steps and cards now come from events.
+- **Rules lived in the prompt.** The instruction became a short charter (11,035 → about 2,100 characters). The rules
+  became tool contracts that hold whatever the model writes: a waiting card answers a second request for the same fix,
+  a restart of an unbacked world puts up the backup first, a clean-up that measured empty says so.
+- **Time was faked.** An "answer now" instruction made answers thinner to look faster. It is gone; a slow call is cut
+  off and retried once, then the turn says honestly that Gemini is slow, with the time budget shown on screen.
+- **We measured instead of guessing.** A 30-case eval suite runs every case three times. The rebuild scored the same
+  as before (81 of 90) without the patches; the model switch, not the rebuild, raised the score. Its remaining
+  failures are one class we can name, and they are visible instead of quietly rewritten.
+
+Every agent's findings went through review before `main`. What we could not fix in time is written down with its root
+cause in [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md), and what it all cost is in
+[`docs/COSTS.md`](docs/COSTS.md).
+
 ## Team
 
 **8yte**
