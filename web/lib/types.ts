@@ -116,6 +116,7 @@ export interface Action {
   result?: { ok: boolean; summary: string; playbook?: PlaybookResult };
   playbook?: string;
   params?: Record<string, unknown>;
+  command?: string; // the exact command it runs, when it runs one (shown folded; the plan says it in words)
   continuationTurnId?: string;
   createdAt?: Date | null;
   finishedAt?: Date | null;

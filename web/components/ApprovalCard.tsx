@@ -97,7 +97,9 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   const until = payload?.expires ? new Date(payload.expires * 1000).toLocaleString() : "";
   const command = payload?.command ? `${payload.command}   (valid until ${until})`
     : payload?.mode ? `${payload.mode} commands until ${until}`
-    : (action.params as { command?: string } | undefined)?.command;
+    : action.command ?? (action.params as { command?: string } | undefined)?.command;
+  // on an expert card the command is the point; elsewhere the plan says it in words and the command is one tap away
+  const showCommand = SIGNED.has(action.type) || action.type === "expert_read";
   const signedCard = SIGNED.has(action.type);
   return (
     <div className="card" data-tour="card">
@@ -106,7 +108,9 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
         <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
       </div>
       <dl>
-        {command && <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>}
+        {command && (showCommand ? <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>
+          : <><dt>Command</dt><dd><details><summary className="small">Show the exact command</summary>
+              <code className="perm-cmd">{command}</code></details></dd></>)}
         <dt>What happens</dt><dd>{action.dryRun}</dd>
         <dt>Affects</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (your real device)" : " (sample, nothing real)"}
           {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit)" }}> (signed for a different device!)</strong> : null}</dd>
