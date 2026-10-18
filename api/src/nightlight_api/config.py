@@ -73,8 +73,11 @@ class Settings:
     deep_max_output_tokens: int = int(os.environ.get("DEEP_MAX_OUTPUT_TOKENS", "4096"))
     deep_calls_per_turn: int = int(os.environ.get("DEEP_CALLS_PER_TURN", "24"))
     deep_turn_seconds: int = int(os.environ.get("DEEP_TURN_SECONDS", "240"))
-    # No words for the person after this long: the next model call is told to answer now (first words by ~90 s).
-    deep_first_words_seconds: int = int(os.environ.get("DEEP_FIRST_WORDS_SECONDS", "40"))
+    quick_turn_seconds: int = int(os.environ.get("QUICK_TURN_SECONDS", "120"))
+    # A model call that sends nothing at all for this long is cancelled and retried once (Agent Platform has a
+    # latency tail: single Quick calls of 30-60 s with no thinking, where the usual call takes 2-5 s).
+    call_gap_seconds: float = float(os.environ.get("CALL_GAP_SECONDS", "30"))
+    deep_call_gap_seconds: float = float(os.environ.get("DEEP_CALL_GAP_SECONDS", "45"))
 
     @property
     def deep_c_max(self) -> float:

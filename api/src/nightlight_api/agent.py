@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 
 from google import genai
-from typing import Any
+from typing import Any, Callable
 
 from google.adk.agents import LlmAgent
 from google.adk.models.base_llm import BaseLlm
@@ -102,7 +102,9 @@ class TurnContext:
     narrating: bool = False  # a follow-up that only puts a finished event into words: it has no tools
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
-    spoke: bool = False  # a finished model response had words for the person (for the first-words deadline)
+    # Called with True when a model call starts or streams a chunk, False when its response is complete: turns.py
+    # cancels a call that stays silent too long (ADK's callbacks can't wrap the call itself).
+    watch_call: Callable[[bool], None] = lambda active: None
     retry_from: int | None = None  # modelCalls when the answer-only retry began (turns.SHORTER): one call, no tools
     command_call: int = -1  # the model call whose response ran a run_command (one per response)
 
@@ -114,6 +116,19 @@ class TurnContext:
     @property
     def max_calls(self) -> int:
         return settings.deep_calls_per_turn if self.deep else settings.model_calls_per_turn
+
+    @property
+    def turn_seconds(self) -> int:
+        """The turn's time budget: no new checks after it, and the next call is told to answer with what it has."""
+        return settings.deep_turn_seconds if self.deep else settings.quick_turn_seconds
+
+    @property
+    def call_gap_seconds(self) -> float:
+        """How long one model call may stay silent (no chunk at all) before it is cancelled and retried once."""
+        return settings.deep_call_gap_seconds if self.deep else settings.call_gap_seconds
+
+    def out_of_time(self) -> bool:
+        return time.monotonic() - self.started > self.turn_seconds
 
     @property
     def max_tools(self) -> int:
@@ -1170,8 +1185,10 @@ def model_busy(e: BaseException) -> bool:
     return not isinstance(e, ApiError) and (getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e))
 
 
-HURRY = ("Time is nearly up and the person has seen nothing yet: answer now, in plain words, with what you have "
-         "found so far and what you would check next. Don't start new checks.")
+# The turn's time budget is spent: said plainly, with no tools left, at the mode's normal thinking level. The answer
+# is not made shallower in secret; it says what was and wasn't checked.
+BUDGET_SPENT = ("[Nightlight] The time budget for this answer is spent, so no more checks can run. Answer now: say "
+                "plainly what you checked and found, and what you did not get to check.")
 
 
 def make_callbacks(ctx: TurnContext):
@@ -1183,32 +1200,30 @@ def make_callbacks(ctx: TurnContext):
                 raise ApiError(429, "too_many_steps")
         elif ctx.metrics["modelCalls"] >= ctx.max_calls:
             raise ApiError(429, "too_many_steps")
-        if ctx.retry_from is not None:  # asked again for an answer (turns.SHORTER): words only, no new checks
+        spent = ctx.out_of_time()
+        if spent:
+            llm_request.append_instructions([BUDGET_SPENT])
+        if ctx.retry_from is not None or spent:  # words only, no new checks (turns.SHORTER, or the budget is spent)
             llm_request.config.tool_config = types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.NONE))
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
             scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
-        if ctx.deep and not ctx.spoke and time.monotonic() - ctx.started > settings.deep_first_words_seconds:
-            # Nothing said yet after a minute: this call answers now, thinking less, so first words come by ~90 s.
-            llm_request.append_instructions([HURRY])
-            if llm_request.config.thinking_config is not None:
-                llm_request.config.thinking_config = types.ThinkingConfig(thinking_level="LOW")
         await asyncio.to_thread(bound_input, llm_request)
         # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
         ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence,
                                                         settings.deep_c_max if ctx.deep else None))
         ctx.metrics["modelCalls"] += 1
+        ctx.watch_call(True)  # the call itself starts now: its silence is timed from here
         return None
 
     async def after_model(callback_context, llm_response: LlmResponse):
+        ctx.watch_call(bool(llm_response.partial))  # a chunk restarts the silence clock; the full response stops it
         if llm_response.partial:
             return None
         # Scrub the model's own words (as one text) before they become history for the next call.
         scrub_content(llm_response.content)
         _tidy_thinking(ctx, llm_response)  # ids → names: a lookup on a known table, nothing else
-        if any(p.text and not p.thought for p in (llm_response.content.parts if llm_response.content else None) or []):
-            ctx.spoke = True
         reserved = ctx.reservations.pop() if ctx.reservations else 0.0
         u = llm_response.usage_metadata
         actual = quota.cost_of(u, (settings.deep_price_in_per_m, settings.deep_price_out_per_m) if ctx.deep else None)
@@ -1232,8 +1247,8 @@ def make_callbacks(ctx: TurnContext):
                 return {"status": "error", "reason": "one command at a time: this one was not run; read the first "
                         "command's result, then choose the next"}
             ctx.command_call = ctx.metrics["modelCalls"]
-        if ctx.deep and time.monotonic() - ctx.started > settings.deep_turn_seconds:
-            return {"error": "time is up for this investigation; reply with what you found and what to check next"}
+        if ctx.out_of_time():
+            return {"error": "the time budget for this answer is spent; reply with what you checked and what you didn't"}
         ctx.metrics["toolCalls"] += 1
         return None
 

@@ -100,32 +100,3 @@ def test_a_busy_model_ends_the_turn_with_a_plain_message_and_no_second_call(clie
     ev = events(client.post(f"/api/chat/sessions/{new_session(client)}/messages",
                             json={"text": "hi", "clientRequestId": str(uuid.uuid4())}))
     assert ev[-1]["code"] == "busy" and ev[-1]["message"] == "Nightlight is busy right now. Try again in a minute."
-
-
-def test_a_silent_investigation_is_told_to_answer_now(client, started, monkeypatch):
-    monkeypatch.setattr(settings, "deep_first_words_seconds", 0)
-    seen = []
-
-    async def behave(llm_request, stream):
-        seen.append((agentlib.HURRY in str(llm_request.config.system_instruction),
-                     str(llm_request.config.thinking_config.thinking_level)))
-        if len(seen) == 1:
-            yield _answer("Let me check the NAS first.")  # not a final answer in practice, but words for the person
-        else:
-            yield _answer("Done.")
-    FakeLlm.behavior = behave
-    events(dig(client, new_session(client)))
-    assert seen[0][0] is True and seen[0][1].endswith("LOW")
-    seen.clear()
-
-    async def speaks_then_checks(llm_request, stream):
-        seen.append(agentlib.HURRY in str(llm_request.config.system_instruction))
-        if len(seen) == 1:
-            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text="Let me check the NAS."),
-                types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "nas-1"}))]),
-                partial=False, usage_metadata=_usage(), turn_complete=True)
-        else:
-            yield _answer("The NAS is fine.")
-    FakeLlm.behavior = speaks_then_checks
-    events(dig(client, new_session(client)))
-    assert seen == [True, False]  # once the person has words, the next call isn't hurried
