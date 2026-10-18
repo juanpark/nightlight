@@ -164,13 +164,19 @@ expert_sessions:
   title: Expert sessions (real commands, signed with your passkey)
   text: |
     For problems the usual checks don't cover, Nightlight can investigate with real commands, like a system
-    administrator. Set it up once: open the device in the app, then its Settings tab, "Expert sessions" > "Create my passkey" (Face ID, Touch
-    ID or your phone), then on the device run `nightlight expert` (or `~/.local/bin/nightlight expert` if the shell
-    says "command not found") and confirm it shows the same code. After that:
-    read-only commands (logs, disk use, running programs, network) need one passkey tap per 15 minutes; any command
-    that changes something comes as a card you sign with your passkey. The device checks your signature itself and
-    refuses anything unsigned, expired, meant for another device, or (in an investigation) anything that could change
-    something or read where secrets are kept. `nightlight expert --off` on the device turns it off.
+    administrator. A passkey is a key that lives on your phone or computer and is unlocked by your face, fingerprint
+    or PIN; Nightlight keeps only its public half, and the device checks your signature itself, so even Nightlight's
+    own servers can't run a command without you. Set it up once, signed in with Google at Nightlight's own address
+    (not the demo): open the device in the app, then its Settings tab, "Expert sessions" > "Create my passkey" (Face
+    ID, Touch ID, Windows Hello, a phone by QR code, or a security key), then on the device run `nightlight expert`
+    (or `~/.local/bin/nightlight expert` if the shell says "command not found") and confirm it shows the same code.
+    Each device is switched on this way, one by one; without it a device keeps working with the fixed checks and
+    fixes. After that: read-only commands (logs, disk use, running programs, network) need one passkey tap per 15
+    minutes; any command that changes something comes as a card you sign with your passkey. A card is valid for 15
+    minutes, then expires; ask again for a fresh one. The device refuses anything unsigned, expired, meant for
+    another device, or (in an investigation) anything that could change something or read where secrets are kept.
+    There is no fallback by email or SMS code, on purpose. `nightlight expert --off` on the device turns it off
+    there; the app has no button yet to remove the passkey itself. Full guide: docs/PASSKEYS.md in the repository.
 
 investigate_mode:
   title: Investigate deeply

@@ -154,7 +154,9 @@ judging model itself hitting Google's rate limit, because we ran both evaluation
 **Security and data** (details in `docs/SECURITY.md`): scrubbing of names, addresses and secrets is pattern-based and
 best effort; the design relies first on not collecting them. Device tokens are revocable but do not expire or rotate.
 `curl | sh` trusts the HTTPS origin. There is no account deletion yet; removed devices are kept 30 days unless you choose
-"forget for good". Browser notifications work only while the tab is open.
+"forget for good". Browser notifications work only while the tab is open. The expert-sessions passkey cannot be removed
+or replaced from the app yet (one per account; `nightlight expert --off` at each device is the switch today), and
+ordinary approval cards have no second factor: a signed-in session can tap Approve (`docs/SECURITY-MODEL.md`).
 
 ## The way forward
 

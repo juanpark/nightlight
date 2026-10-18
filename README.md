@@ -10,6 +10,8 @@ Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterpri
 Everything here was written during the hackathon window.
 
 **What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).
+**How a cloud command center can be trusted with your machines:** [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);
+**passkeys for owners, step by step:** [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
 
 ## Try it in 30 seconds
 
@@ -191,8 +193,10 @@ No server-side API keys: the API reaches Firestore, Gemini and Memory Bank throu
 The hard problem in Nightlight is **safety against power and convenience**. The benchmark we hold ourselves to is a
 person running an AI agent in a terminal with their own SSH keys: it can fix anything, and it is only as safe as the
 person watching. Nightlight has to come close to that for people who have never opened a terminal, while staying safe
-even if Nightlight's own cloud is breached. The full reasoning is in [`docs/DESIGN-trust.md`](docs/DESIGN-trust.md);
-the code-level details are in [`docs/SECURITY.md`](docs/SECURITY.md).
+even if Nightlight's own cloud is breached. The threat model (a stolen login, a breached cloud, prompt injection, a
+lost phone, a demo visitor) and the layer that answers each is [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);
+the full reasoning is in [`docs/DESIGN-trust.md`](docs/DESIGN-trust.md); the code-level details are in
+[`docs/SECURITY.md`](docs/SECURITY.md); the owner's guide to passkeys is [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
 
 | Layer | What it means |
 |---|---|
@@ -392,7 +396,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `helper/nightlight_helper.py`, `.sig` | the device helper and its release signature |
 | `web/` | Next.js app: `components/` (`map/`, Chat, ApprovalCard, DeviceDrawer, AppDetail, FoundNearby, TrustPanel, ExpertSessions, ...), `lib/` (Firebase, API, listeners, passkeys), `app/install.sh` and `app/uninstall.sh` routes |
 | `docs/API.md` | the contract between web, helper and API |
-| `docs/SECURITY.md`, `docs/DESIGN-trust.md` | the security model; safety vs power, and why |
+| `docs/SECURITY-MODEL.md`, `docs/SECURITY.md`, `docs/DESIGN-trust.md`, `docs/PASSKEYS.md` | threat model and layers; code-level details; safety vs power, and why; passkeys for owners |
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
 | `docs/BENCHMARKS.md`, `scripts/bench.py` | measured latency and cost |
 | `docs/COSTS.md` | what we spent on Google Cloud and Gemini, the guards that cap it, and why |
