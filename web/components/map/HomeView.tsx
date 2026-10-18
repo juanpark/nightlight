@@ -1,6 +1,7 @@
 "use client";
 // The home as a map (pan, zoom, lines between devices) or as a plain list of tiles, narrowed by the bar above it;
 // Map or List is remembered here. Watched websites follow below with the filters that apply to them.
+import { useFollowed } from "@/lib/follow";
 import { useEffect, useMemo, useState } from "react";
 import { usePlaces } from "@/lib/data";
 import { applyFilter, applyToWatches, filtering, NO_FILTER, placesOf, type Filter } from "@/lib/homeFilter";
@@ -20,6 +21,9 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
   const [view, setView] = useState<View>("map");
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   useEffect(() => { try { const v = localStorage.getItem("nl_view"); if (v === "list" || v === "board") setView(v); } catch { /* default */ } }, []);
+  // the chat's context strip asked to see a device: the map shows it
+  const show = useFollowed().show;
+  useEffect(() => { if (show) setView("map"); }, [show]);
   const pick = (v: View) => { setView(v); try { localStorage.setItem("nl_view", v); } catch { /* this visit */ } };
   const names = usePlaces(uid);
   const places = useMemo(() => placesOf(devices, names), [devices, names]);

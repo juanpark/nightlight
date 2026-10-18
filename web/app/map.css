@@ -160,18 +160,32 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 /* The map follows the chat: a soft breathing ring on the devices the answer is working on, a steady one when it is
    done, and a few pulses on the apps it named. Reduced motion: the rings and highlights stay, nothing moves. */
 .dnode.lit-working { animation: lit-ring 1.6s ease-in-out infinite; }
-.dnode.lit-done { box-shadow: 0 0 0 3px color-mix(in srgb, var(--glow) 70%, transparent), var(--shadow); }
+.dnode.lit-done { box-shadow: 0 0 0 3px var(--glow-ink), var(--shadow); }
 .dchip.lit-app { border-color: var(--glow); box-shadow: 0 0 0 2px var(--glow); animation: lit-chip 1.1s ease-in-out 5; }
 @keyframes lit-ring {
-  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--glow) 35%, transparent), var(--shadow); }
-  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--glow) 55%, transparent), var(--shadow); }
+  0%, 100% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 6px color-mix(in srgb, var(--glow) 30%, transparent), var(--shadow); }
+  50% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 14px color-mix(in srgb, var(--glow) 45%, transparent), var(--shadow); }
 }
 @keyframes lit-chip {
   0%, 100% { box-shadow: 0 0 0 2px var(--glow); }
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--glow) 40%, transparent); }
 }
+/* while an answer works: its state on each device it touches, the rest of the map a little quieter, and a short
+   settle on the main device when it finishes */
+.dlit { position: absolute; top: -11px; left: 10px; z-index: 2; font-size: 11px; font-weight: 600; line-height: 1;
+  padding: 3px 8px; border-radius: 99px; background: var(--panel); border: 1px solid var(--glow-ink); color: var(--ink);
+  white-space: nowrap; }
+.dlit.found { border-color: var(--warn); color: var(--warn-ink); }
+.dlit.done { border-color: var(--ok); color: var(--ok-ink); }
+.homemap.following .dnode:not(.lit-working):not(.lit-done) { opacity: .6; filter: saturate(.6); transition: opacity .3s; }
+.dnode.settle { animation: lit-settle .7s ease-out 2; }
+@keyframes lit-settle {
+  0% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 0 color-mix(in srgb, var(--glow) 60%, transparent), var(--shadow); }
+  100% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 18px transparent, var(--shadow); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--glow) 70%, transparent), var(--shadow); }
+  .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 6px color-mix(in srgb, var(--glow) 35%, transparent), var(--shadow); }
+  .dnode.settle { animation: none; }
   .dchip.lit-app { animation: none; }
 }
 /* Status board (StatusBoard.tsx): an ops-script look, one block per device */
