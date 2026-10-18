@@ -410,7 +410,11 @@ def _rebind(tx, data: dict, token: str, dsnap, old_tokens) -> None:
         "revoked": False, "uninstalled": False, "status": "offline", "health": "unknown", "registered": True,
         "helperSince": _now(), "installedWith": data.get("via"),
         # what the new install says about itself (version, managed from the app or not) comes with its first report
-        "helperVersion": None, "manage": None, "allowedJobs": {}})
+        "helperVersion": None, "manage": None, "allowedJobs": {},
+        # The owner's app-side permissions ("permissions") are kept and reach the new helper with its first report.
+        # What it watched nearby is not: the old helper's local list of found things (their addresses, which never
+        # leave a device) went with it, so the watched things are looked up again (see _rewatch).
+        "rewatch": {"state": "new", "at": _now()}})
     how = {"installer": "installer", "command_line": "command line"}.get(data.get("via"))
     event(tx, uid, device_id, "reinstalled", "info",
           f"Helper reinstalled{f' ({how})' if how else ''} on {d.get('name', 'a device')}; history kept."
@@ -582,6 +586,32 @@ def _filled_in(d: dict, device_id: str, items: list[dict], taken: set) -> dict:
     return update
 
 
+def _rebound(watched, items: list[dict], device_id: str) -> dict:
+    """Things this helper watches that a new look found under another id (a reinstalled helper starts its local list
+    afresh, so it names them anew): {doc id: the new id, and a port to check that the look saw open}. Matched by
+    hardware or address fingerprint (_same_thing); each found item binds at most one watched thing."""
+    out, used = {}, {(w.to_dict() or {}).get("cid") for w in watched}
+    for w in watched:
+        d = w.to_dict() or {}
+        if d.get("revoked") or any(it.get("cid") == d.get("cid") for it in items):
+            continue
+        hw = (d.get("net") or {}).get("hw")
+        free = [i for i in items if i.get("cid") not in used]
+        # A known hardware fingerprint is the only evidence for it: its old address may belong to another machine now
+        # (left to the owner's ask when no item carries it). Without one, the address fingerprint stands in.
+        it = next((i for i in free if i.get("hw") == hw), None) if hw else \
+            next((i for i in free if _same_thing({**d, "cid": None}, i, device_id)), None)
+        if not it:
+            continue
+        ports = it.get("ports") or []
+        port = d.get("checkPort") if d.get("checkPort") in ports else next((p for p in WATCH_PORTS if p in ports), None)
+        if port is None:
+            continue  # nothing to check answers on it now
+        used.add(it["cid"])
+        out[w.id] = {"cid": it["cid"], "checkPort": port}
+    return out
+
+
 def save_discoveries(token: str, items: list[dict]) -> dict:
     """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list. Names are
     kept only while the account shows them."""
@@ -597,11 +627,17 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
         kept = [{**it, "name": found_name(it.get("name")) if names else None,
                  "added": any(_same_thing(w, it, device_id) for w in mapped if not w.get("revoked"))} for it in items]
         taken = {(w.to_dict().get("net") or {}).get("hw") for w in on_map} - {None}
+        moved = _rebound(watched, kept, device_id)
+        rw = (dsnap.to_dict() or {}).get("rewatch")
+        if isinstance(rw, dict) and rw.get("state") != "unmatched" and \
+                any(w.to_dict().get("checkPort") and not w.to_dict().get("revoked") and w.id not in moved
+                    and not any(it.get("cid") == w.to_dict().get("cid") for it in kept) for w in watched):
+            tx.update(dsnap.reference, {"rewatch": {**rw, "state": "unmatched"}})  # the owner is asked about the rest
         tx.set(discoveries_ref(uid).document(device_id), {
             "items": kept, "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
         for w in on_map:
-            update = _filled_in(w.to_dict(), device_id, kept, taken)
+            update = {**moved.get(w.id, {}), **_filled_in(w.to_dict(), device_id, kept, taken)}
             if update:
                 tx.update(w.reference, update)
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
@@ -1212,7 +1248,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         net_key, lines_due = links.net_state(tx, uid, net_changed)  # the last read (it may write)
         trend, to_full = disk_forecast(device.get("diskTrend"), facts.get("diskPct"), _now())
         escalate_disk(findings, facts.get("diskPct"), to_full)
-        marked, states = apply_issue_states(findings, device.get("issueStates") or {})
+        rewatch, ask_look, asked = _rewatch(device, watched, facts)
+        look[0] = ask_look
+        marked, states = apply_issue_states(findings + asked, device.get("issueStates") or {})
         status = health_of(marked)
         previous = real_status(device)
         if previous != status:
@@ -1242,6 +1280,8 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         extra["diskTrend"] = trend
         if net_changed:
             extra["net"] = net
+        if rewatch is not None:
+            extra["rewatch"] = rewatch
         mtag = keyed_machine(net_key, machine)
         if mtag and mtag != device.get("machine"):
             extra["machine"] = mtag  # lets a later reinstall on this machine continue this device
@@ -1290,15 +1330,54 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         jobs = _hand_over(tx, approved, user, uid, device_id) if take_jobs else []
         return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, lines_due
 
-    restarted = [False]
+    restarted, look = [False], [False]
     uid, device_id, jobs, poll, watch_list, about, lines_due = db.run_transaction(run)
     if restarted[0]:
         post_mortem(token, device_id, facts)
+    if look[0]:  # a reinstalled app-managed device looks nearby once, so it finds what it watched again
+        try:
+            request_discover(uid, device_id)
+        except (ValueError, ApiError):
+            pass  # the owner gets the ask instead, once the grace runs out
     if lines_due:
         links.infer_quietly(uid)  # fingerprints changed (or an earlier attempt failed): lines may have too
     offer = release.latest()
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
             "watch": watch_list, **about, **({"latestHelper": offer["version"]} if offer else {})}
+
+
+REWATCH_GRACE = timedelta(minutes=15)  # a look asked for after a reinstall that hasn't brought them back by then
+
+
+def _rewatch(device: dict, watched, facts: dict) -> tuple:
+    """After a reinstall continued this device, the things it watched keep it as their watcher, but the new helper
+    can check them only once it has found them nearby again. An app-managed helper is asked to look once (its
+    results are matched to the watched things in save_discoveries); a strict one, or a look that didn't find them,
+    puts an ask in front of the owner on this device. Returns (new value of the device's `rewatch`: DELETE_FIELD, a
+    dict, or None for unchanged; whether to ask for a look; findings to add). Pure: the caller writes."""
+    rw = device.get("rewatch")
+    if not isinstance(rw, dict):
+        return None, False, []
+    reported = {r.get("cid") for r in facts.get("watchResults") or []}
+    missing = [w.to_dict() for w in watched if (w.to_dict() or {}).get("checkPort")
+               and (w.to_dict() or {}).get("cid") not in reported]
+    if not missing:
+        return firestore.DELETE_FIELD, False, []  # every watched thing is checked again (or there is none)
+    app = facts.get("manage") == "app" and not release.newer(DISCOVER_FROM, facts.get("helperVersion"))
+    if app and rw.get("state") == "new":
+        return {"state": "asked", "at": _now()}, True, []
+    at = rw.get("at")
+    if app and rw.get("state") == "asked" and isinstance(at, datetime) and _now() - at < REWATCH_GRACE:
+        return None, False, []  # the look is under way
+    names = [m.get("name") or "a watched device" for m in missing]
+    said = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    how = ("Tap Look nearby on this device while they are switched on: it finds them again and checks them as "
+           "before." if app else "Run `nightlight discover` on this device and pick them: it then checks them as "
+           "before.")
+    return None, False, [{"id": "f_rewatch", "check": "reinstalled_watch", "severity": "warn",
+                          "message": f"Reinstalled: re-allow watching {said}? {how}",
+                          "evidence": "the helper was reinstalled; its list of things found nearby starts empty",
+                          "fix": "discover" if app else "discover_on_device"}]
 
 
 def post_mortem(token: str, device_id: str, facts: dict) -> None:
