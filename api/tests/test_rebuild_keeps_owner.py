@@ -54,9 +54,10 @@ def test_signed_in_owner_keeps_chats_across_template_switch_and_reset(client, ui
     assert before == {"sessions": 2, "messages": 2, "turns": 2, "turnIndex": 2}
 
     assert client.post("/api/demo/template", json={"template": "home-pi"}).status_code == 200
-    assert _counts(uid, chats) == before
+    after = {**before, "messages": 4}  # each queued turn was ended with a closing "reset" message, nothing deleted
+    assert _counts(uid, chats) == after
     assert client.post("/api/demo/reset", json={}).status_code == 200
-    assert _counts(uid, chats) == before
+    assert _counts(uid, chats) == after
     assert forgets == []  # the owner's memories are theirs
     assert db.device(uid, "dev_real").get().exists
 
@@ -65,7 +66,7 @@ def test_signed_in_owner_keeps_chats_across_template_switch_and_reset(client, ui
         s = db.session(uid, sid).get().to_dict()
         assert s["demoGeneration"] == gen and s["activeTurn"] is None
     turns.accept_message(uid, sid0, "and now?", str(uuid.uuid4()))
-    assert len(db.messages(uid, sid0).get()) == 2
+    assert len(db.messages(uid, sid0).get()) == 3
     # a card about the old sample home is withdrawn, not left live
     assert db.action(uid, "act_card").get().to_dict()["status"] == "stale"
 
@@ -74,7 +75,7 @@ def test_signed_in_owner_without_real_devices_keeps_chats(client, started, forge
     uid = started
     chats = _chats(client, uid, 1)
     assert client.post("/api/demo/reset", json={}).status_code == 200
-    assert _counts(uid, chats)["messages"] == 1 and forgets == []
+    assert _counts(uid, chats)["messages"] == 2 and forgets == []
 
 
 def test_direct_call_defaults_to_keeping(client, started, forgets):
@@ -107,3 +108,28 @@ def test_anonymous_account_with_a_real_device_keeps_chats(anon_client, uid, forg
     chats = _chats(anon_client, uid)
     assert anon_client.post("/api/demo/template", json={"template": "empty"}).status_code == 200
     assert _counts(uid, chats)["sessions"] == 2 and forgets == []
+
+
+@pytest.mark.parametrize("claim", [False, True])
+def test_unfinished_turn_in_a_kept_chat_ends_with_an_honest_error(client, started, claim):
+    uid = started
+    (sid, turn_id), = _chats(client, uid, 1)
+    claimed = turns.claim(uid, turn_id) if claim else None  # running, or still queued
+    demo.reset(uid)
+    turn = db.turns(uid, sid).document(turn_id).get().to_dict()
+    assert turn["status"] == "failed" and turn["error"]["code"] == "reset"
+    msgs = sorted((m.to_dict() for m in db.messages(uid, sid).get()), key=lambda m: m["seq"])
+    assert [m["role"] for m in msgs] == ["user", "assistant"] and msgs[1]["error"]["code"] == "reset"
+    assert msgs[1]["turnId"] == turn_id and msgs[1]["seq"] == 2
+    session = db.session(uid, sid).get().to_dict()
+    assert session["nextSeq"] == 3 and session["activeTurn"] is None
+    from nightlight_api.errors import ApiError
+    with pytest.raises(ApiError) as e:  # the old turn stays fenced: no attempt can claim it again
+        turns.claim(uid, turn_id)
+    assert e.value.code == "stale"
+    if claimed:
+        with pytest.raises(ApiError) as e:  # and the interrupted attempt can't write
+            turns.finish(uid, claimed, text="late", metrics={}, tool_calls=[], action_ids=[])
+        assert e.value.code == "stale"
+    turns.accept_message(uid, sid, "again", str(uuid.uuid4()))  # the chat goes on
+    assert len(db.messages(uid, sid).get()) == 3

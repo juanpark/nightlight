@@ -123,7 +123,8 @@ def test_reset_mid_turn_ends_stale_and_writes_nothing(client, started):
 
     ev = asyncio.run(collect())
     assert ev[-1]["type"] == "error" and ev[-1]["code"] == "stale"
-    assert not any(m.to_dict()["role"] == "assistant" for m in db.messages(uid, sid).get())
+    answers = [m.to_dict() for m in db.messages(uid, sid).get() if m.to_dict()["role"] == "assistant"]
+    assert [a["error"]["code"] for a in answers] == ["reset"]  # only the reset's closing notice, nothing from the turn
 
 
 def test_kill_switch_and_budget_block_before_model(client, started):

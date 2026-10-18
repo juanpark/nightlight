@@ -190,17 +190,40 @@ def _finalize(uid: str, op: str, generation: int, hook) -> None:
     db.run_transaction(run)
 
 
-def _carry_forward(uid: str, op: str, generation: int, refs: list, hook) -> None:
-    """Move kept chats into the new generation (the chat list and new messages only see the current one). An old
-    turn still running loses its lease here, so it stops instead of writing into the kept chat."""
-    for chunk in _chunks(refs, settings.reset_batch_size):
-        hook("batch")
+RESET_ERROR = {"code": "reset", "message": "The sample home was reset while this was being answered. Ask again."}
 
-        def work(tx, chunk=chunk):
-            snaps = [r.get(transaction=tx) for r in chunk]
-            for r, s in zip(chunk, snaps, strict=True):
-                if s.exists and (s.to_dict() or {}).get("demoGeneration", 0) < generation:
-                    tx.update(r, {"demoGeneration": generation, "activeTurn": None})
+
+def _carry_forward(uid: str, op: str, generation: int, refs: list, hook) -> None:
+    """Move kept chats into the new generation (the chat list and new messages only see the current one). A turn
+    still queued or running is ended honestly (failed, with a closing message saying why), so the chat shows a finished
+    state instead of hanging. The turn keeps its old generation, so an old attempt still can't claim it or write."""
+    from .turns import _keep_until as keep_until  # lazy: turns pulls in the agent
+    for ref in refs:
+        hook("batch")
+        open_turns = [t.reference for t in ref.collection("turns").where(
+            filter=FieldFilter("status", "in", ["queued", "running"])).get()]
+
+        def work(tx, ref=ref, open_turns=open_turns):
+            snap = ref.get(transaction=tx)
+            turn_snaps = [t.get(transaction=tx) for t in open_turns]
+            session = (snap.to_dict() or {}) if snap.exists else None
+            if session is None or session.get("demoGeneration", 0) >= generation:
+                return
+            seq = session.get("nextSeq", 1)
+            for t_ref, t in zip(open_turns, turn_snaps, strict=True):
+                turn = t.to_dict() if t.exists else None
+                if not turn or turn.get("status") not in ("queued", "running") \
+                        or turn.get("demoGeneration", 0) >= generation:
+                    continue
+                msg = ref.collection("messages").document(new_id("msg"))
+                tx.set(msg, {"role": "assistant", "text": RESET_ERROR["message"], "seq": seq, "turnId": t_ref.id,
+                             "attempt": turn.get("attempt", 0), "toolCalls": [], "actionIds": [],
+                             "demoGeneration": generation, "mode": turn.get("mode", "quick"), "error": RESET_ERROR,
+                             "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": keep_until()})
+                tx.update(t_ref, {"status": "failed", "error": RESET_ERROR, "leaseUntil": None,
+                                  "finalMessageId": msg.id, "finishedAt": firestore.SERVER_TIMESTAMP})
+                seq += 1
+            tx.update(ref, {"demoGeneration": generation, "activeTurn": None, "nextSeq": seq})
 
         _fenced(uid, op, generation, work)
 
