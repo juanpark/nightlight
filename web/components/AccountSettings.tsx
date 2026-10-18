@@ -3,7 +3,7 @@
 // announce. On by default (it is the owner's own map); off deletes the names kept so far. No confirmation: the switch
 // can be turned back on, and names return as things announce them again.
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 
 /** "Nightlight 1.0.0 · web a1b2c3d · API e4f5g6h · helper 0.9.34", leaving out what isn't known. */
@@ -44,21 +44,31 @@ export default function AccountSettings({ me, anonymous, live = false, onSave, o
     const next = !on;
     setDraft(next); setErr("");
     try { await api("POST", "/api/settings", { deviceNames: next }); }
-    catch { setDraft(null); setErr("Couldn't change that. Try again."); }
+    catch (e) {
+      setDraft(null);
+      setErr(e instanceof ApiError && (e.status === 401 || e.status === 403)
+        ? "This account can't change its settings, so the switch stays as it was."
+        : "Couldn't save that, so the switch stays as it was. Try again in a moment.");
+    }
     finally { busy.current = false; setSaving(false); }
   }
   return (
     <div className="panel">
       <h3>Settings</h3>
-      <label className={`setting-row ${!me || locked ? "off" : ""}`}>
-        <input type="checkbox" role="switch" checked={on} onChange={flip} disabled={!me || locked}
-          aria-busy={saving || undefined} aria-describedby={`names-help${locked ? " names-demo" : ""}`} />
-        <span><strong>Show names things announce</strong> <span className="muted">(Living Room TV, Alex&apos;s iPhone)</span></span>
-      </label>
+      {live
+        // a shared live machine can't change settings: say what the setting is, rather than a greyed switch that
+        // looks off and does nothing when tapped
+        ? <p className="setting-row" style={{ margin: 0 }}><span><strong>Show names things announce</strong>{" "}
+            <span className="muted">(Living Room TV, Alex&apos;s iPhone)</span>: <strong>{on ? "on" : "off"}</strong></span></p>
+        : <label className={`setting-row ${!me || locked ? "off" : ""}`}>
+            <input type="checkbox" role="switch" checked={on} onChange={flip} disabled={!me || locked}
+              aria-busy={saving || undefined} aria-describedby={`names-help${locked ? " names-demo" : ""}`} />
+            <span><strong>Show names things announce</strong> <span className="muted">(Living Room TV, Alex&apos;s iPhone)</span></span>
+          </label>}
       <p id="names-help" className="small muted setting-help">Names stay on your own map. Turning this off deletes the
         names kept so far; they come back only when things announce them again.</p>
       {live && <p id="names-demo" className="small muted">This live machine is shared with other visitors, so its
-        settings stay as they are.</p>}
+        settings can&apos;t be changed here. On your own account this is a switch.</p>}
       {anonymous && <p id="names-demo" className="small muted">Settings are for your own account.{" "}
         <button className="linkish small" onClick={onSave}>Save with Google</button> to change them.</p>}
       {err && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</p>}
