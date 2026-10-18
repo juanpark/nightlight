@@ -71,16 +71,71 @@ def test_a_check_still_running_is_not_asked_twice(client, dev):
     assert again["id"] == a["id"] and again["reused"] is True and again["status"] == "approved"
 
 
-def test_a_change_on_the_device_since_means_measure_again(client, dev):
+BOTH = {**OFFERS, "allowedJobs": {**OFFERS["allowedJobs"], "restart_container": ["pi-grafana-1"]}}
+
+
+def test_a_failed_partial_change_on_the_device_means_measure_again(client, dev):
     uid = dev["uid"]
+    beat_again = lambda: (_again(dev["token"]), beat(client, dev["token"], BOTH).json())[1]  # noqa: E731
+    beat_again()
     _turn(uid, "turn_q")
     _turn(uid, "turn_q2")
     a = _ask(uid, dev["deviceId"], ["disk"], "turn_q")
     _finish_late(client, dev, a["id"])
-    db.actions(uid).document("act_cleanup").set({"deviceId": dev["deviceId"], "type": "fix", "status": "done",
-                                                 "finishedAt": datetime.now(timezone.utc)})
+    beat_again()  # the device offers the restart again (the helper's last report set what it allows)
+    card = actions.propose(uid, session_id=SESSION, turn_id="turn_q", generation=generation(uid),
+                           action_type="restart_container", device_id=dev["deviceId"],
+                           params={"container": "pi-grafana-1"})
+    actions.decide(uid, card["id"], "approve")
+    handed = db.device(uid, dev["deviceId"]).get().to_dict().get("changedAt")
+    assert [j["id"] for j in beat_again()["jobs"]] == [card["id"]]
+    after_handover = db.device(uid, dev["deviceId"]).get().to_dict()["changedAt"]
+    assert handed is None or after_handover > handed  # handing a changing job over marks the device
+    r = client.post(f"/helper/jobs/{card['id']}/result", json={"ok": False, "summary": "Stopped halfway."},
+                    headers={"X-Device-Token": dev["token"]})
+    assert r.status_code == 200
+    assert db.device(uid, dev["deviceId"]).get().to_dict()["changedAt"] >= after_handover
     b = _ask(uid, dev["deviceId"], ["disk"], "turn_q2")
     assert b["id"] != a["id"] and not b.get("reused")
+
+
+def test_reuse_lookup_is_constant_no_scan_over_old_actions(client, dev, monkeypatch):
+    from google.cloud.firestore_v1.collection import CollectionReference
+    uid = dev["uid"]
+    batch = db.client().batch()
+    old = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for i in range(100):
+        batch.set(db.actions(uid).document(f"act_old{i:03d}"),
+                  {"deviceId": dev["deviceId"], "type": "inspect", "status": "done", "sessionId": SESSION,
+                   "params": {"what": ["disk"]}, "demoGeneration": generation(uid), "createdAt": old,
+                   "finishedAt": old})
+    batch.commit()
+    queried = []
+    where = CollectionReference.where
+    monkeypatch.setattr(CollectionReference, "where",
+                        lambda self, *a, **k: (queried.append(self.id), where(self, *a, **k))[1])
+    _turn(uid, "turn_q")
+    _turn(uid, "turn_q2")
+    a = _ask(uid, dev["deviceId"], ["disk"], "turn_q")
+    assert not a.get("reused")
+    assert _ask(uid, dev["deviceId"], ["disk"], "turn_q2")["id"] == a["id"]
+    assert "actions" not in queried
+    recent = db.session(uid, SESSION).get().to_dict()["recentReads"]
+    assert len(recent) == 1
+
+
+def test_concurrent_asks_from_two_turns_make_one_job(client, dev):
+    import threading
+    uid = dev["uid"]
+    turns = [f"turn_c{i}" for i in range(4)]
+    for t in turns:
+        _turn(uid, t)
+    got = []
+    threads = [threading.Thread(target=lambda t=t: got.append(_ask(uid, dev["deviceId"], ["disk"], t)["id"]))
+               for t in turns]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(got) == 4 and len(set(got)) == 1
 
 
 def test_other_chats_and_the_app_still_get_their_own_job(client, dev):

@@ -1287,7 +1287,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
                  "permissions": device.get("permissions") or DEFAULT_PERMISSIONS,
                  "deviceNames": names_on(user)}  # whether the helper sends names of things nearby
-        jobs = _hand_over(tx, approved, user) if take_jobs else []
+        jobs = _hand_over(tx, approved, user, uid, device_id) if take_jobs else []
         return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, lines_due
 
     restarted = [False]
@@ -1580,8 +1580,9 @@ def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days:
     return db.run_transaction(run)
 
 
-def _hand_over(tx, approved, user: dict) -> list[dict]:
+def _hand_over(tx, approved, user: dict, uid: str, device_id: str) -> list[dict]:
     """Approved jobs are handed over once (at most once: a job claimed here is never handed out again)."""
+    from . import capabilities
     ready = user.get("demo", {}).get("state") == "ready"
     jobs = []
     for a in approved:
@@ -1589,7 +1590,15 @@ def _hand_over(tx, approved, user: dict) -> list[dict]:
             continue  # a reset is withdrawing it (or has): never hand it out
         tx.update(a.reference, {"status": "running", "claimedAt": firestore.SERVER_TIMESTAMP})
         jobs.append({"id": a.id, "type": a.get("type"), "params": a.get("params")})
+    if any(not getattr(capabilities.get(j["type"]), "reads", False) for j in jobs):
+        mark_changed(tx, uid, device_id)
     return jobs
+
+
+def mark_changed(tx, uid: str, device_id: str) -> None:
+    """The device may change from now on (a changing job was handed over, or one reported, whatever its outcome):
+    readings taken before this are no longer reused (actions._same_read). Writes only."""
+    tx.set(db.device(uid, device_id), {"changedAt": firestore.SERVER_TIMESTAMP}, merge=True)
 
 
 def _poll_every(user: dict) -> int:
@@ -1616,7 +1625,7 @@ def claim(token: str, rate_limited: bool = True) -> dict:
             filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
         user = db.user(uid).get(transaction=tx).to_dict() or {}
         tx.update(tref, {"lastClaimAt": _now()})
-        return _hand_over(tx, approved, user), _poll_every(user)
+        return _hand_over(tx, approved, user, uid, device_id), _poll_every(user)
 
     jobs, poll = db.run_transaction(run)
     return {"ok": True, "jobs": jobs, "pollEverySec": poll}
