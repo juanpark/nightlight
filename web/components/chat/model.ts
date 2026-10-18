@@ -28,7 +28,7 @@ export const key = () => Math.random().toString(36).slice(2);
 /** What a step is doing, in plain words. */
 export function label(name: string, args: Record<string, unknown> | undefined, devices: Device[]): string {
   const id = (args?.device_id as string) ?? "";
-  const dev = devices.find((d) => d.id === id)?.name ?? "the device";
+  const dev = devices.find((d) => d.id === id)?.name ?? "device"; // read as "the device" in every label
   return ({
     list_fleet: "Looking over your home", get_device: `Checking the ${dev}`,
     get_recent_events: "Reading what happened recently", restart_container: `Preparing a fix for the ${dev}`,
