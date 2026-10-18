@@ -15,6 +15,8 @@ import AwayBanner from "./AwayBanner";
 import HomeView from "./map/HomeView";
 import DeviceDrawer, { type Tab } from "./DeviceDrawer";
 import AccountSettings from "./AccountSettings";
+import Tour from "./Tour";
+import { restartTour } from "@/lib/tour";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import Activity from "./Activity";
@@ -110,14 +112,14 @@ export default function Home({ user }: { user: User }) {
         <span className="spacer" />
         <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
         <nav className={`top-nav ${menu ? "open" : ""}`}>
-        <button onClick={() => toggle("trust")}>Trust</button>
+        <button data-tour="trust" onClick={() => toggle("trust")}>Trust</button>
         <button onClick={() => toggle("activity")}>Activity</button>
         <button onClick={() => toggle("memory")}>Memory</button>
-        <button onClick={() => toggle("add")}>Add a device</button>
+        <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
         <button onClick={() => toggle("watch")}>Watch a website</button>
-        <button onClick={() => toggle("found")}>Found nearby</button>
+        <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
         <button onClick={() => toggle("demo")}>Demo tools</button>
-        <button onClick={() => toggle("settings")}>Settings</button>
+        <button data-tour="settings" onClick={() => toggle("settings")}>Settings</button>
         {user.isAnonymous
           ? <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>
           : <span className="small muted">{user.email}</span>}
@@ -127,7 +129,7 @@ export default function Home({ user }: { user: User }) {
       <div className="main" data-pane={pane}>
         <section className="left">
           <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
-          <div className="panel needs needs-strip">
+          <div className="panel needs needs-strip" data-tour="needs">
             <strong className="verdict">{verdict(needs)}</strong>
             <span className="spacer" />
             {notify.supported && (
@@ -145,7 +147,8 @@ export default function Home({ user }: { user: User }) {
           {panel === "trust" && <TrustPanel trust={trust} />}
           {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
           {panel === "demo" && <DemoTools devices={devices} />}
-          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} onSave={saveWithGoogle} />}
+          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} onSave={saveWithGoogle}
+            onTour={() => { setPanel("none"); setPane("home"); restartTour(uid); }} />}
           {panel === "memory" && <MemoryPanel />}
           {panel === "watch" && <WatchPanel watches={watches} now={now} />}
           {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
@@ -174,6 +177,9 @@ export default function Home({ user }: { user: User }) {
           Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
         <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
       </nav>
+      <Tour uid={uid} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)}
+        state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
+          realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
       {resetting && <div className="overlay"><div className="modal">Resetting the demo…</div></div>}
     </div>
   );
