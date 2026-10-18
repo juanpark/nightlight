@@ -10,6 +10,7 @@ export type Followed = {
   devices: string[]; // in the order the steps first touched them
   apps: Record<string, string[]>; // device id → app names the steps named (lower case)
   done: boolean; // the answer has finished
+  ok: boolean; // ...and finished well (not stopped, failed or reset)
   said: string; // the answer's words (lower case, capped): names an app on a device a step touched when no step did
   last: string | null; lastWithApp: string | null; // the device the latest step touched, and that named an app
   steps: Record<string, DeviceSteps>; // device id → how the steps on it are going
@@ -20,18 +21,18 @@ export type DeviceSteps = { running: number; found: boolean; note?: string };
 export type StepState = "checking" | "found" | "done";
 
 const EMPTY = { devices: [], apps: {}, said: "", last: null, lastWithApp: null, steps: {}, open: [] };
-let state: Followed = { seq: 0, done: true, show: null, ...EMPTY };
+let state: Followed = { seq: 0, done: true, ok: false, show: null, ...EMPTY };
 const SAID_MAX = 4000;
 const listeners = new Set<() => void>();
 const set = (next: Followed) => { state = next; listeners.forEach((l) => l()); };
 
 /** A new answer has started: forget what the last one touched. Returns the answer's number: an older answer still
  * streaming (a follow-up started while it finished) no longer moves the map. */
-export function followBegin(): number { set({ ...state, seq: state.seq + 1, done: false, ...EMPTY }); return state.seq; }
+export function followBegin(): number { set({ ...state, seq: state.seq + 1, done: false, ok: false, ...EMPTY }); return state.seq; }
 
 /** The chat that owns the answers went away or changed home (sign-out, another sample): its answers still streaming
  * no longer count, and nothing they lit stays lit. */
-export function followReset() { set({ seq: state.seq + 1, done: true, show: null, ...EMPTY }); }
+export function followReset() { set({ seq: state.seq + 1, done: true, ok: false, show: null, ...EMPTY }); }
 
 /** A step started: the device it works on, and the app it names, if any. */
 export function followStep(seq: number, args: Record<string, unknown> | undefined, name = "", callId?: string) {
@@ -82,7 +83,7 @@ export function followText(seq: number, delta: string) {
 }
 
 /** The answer is over (finished, stopped or failed). */
-export function followEnd(seq: number) { if (!state.done && seq === state.seq) set({ ...state, done: true }); }
+export function followEnd(seq: number, ok = false) { if (!state.done && seq === state.seq) set({ ...state, done: true, ok }); }
 
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
 const snapshot = () => state;

@@ -30,7 +30,11 @@ export default function FirstRun({ uid, anonymous, devices, discoveries, expert,
         This is a sample home. The devices are pretend; the AI answering you is real Gemini, so answers take a few
         seconds.
         {/* sign in, then straight to the line for their own computer */}
-        <button className="small" onClick={async () => { await onSave(); onAdd(); }}>Try it on your own computer</button>
+        <button className="small" onClick={() => {
+          // signing in starts a new Home (another account), so the wish to add a device waits in this tab for it
+          try { sessionStorage.setItem("nl_after_sign_in", "add"); } catch { /* it just opens Home */ }
+          onSave();
+        }}>Try it on your own computer</button>
       </div>
     );
   }

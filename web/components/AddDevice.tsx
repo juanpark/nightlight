@@ -220,8 +220,9 @@ function TrySimulated() {
 
 const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
 
-export default function AddDevice({ anonymous, live = false, onSave, devices }: {
+export default function AddDevice({ anonymous, live = false, sample = false, onSave, devices }: {
   anonymous: boolean; live?: boolean; onSave: () => void; devices: Device[];
+  sample?: boolean; // the sample home is showing: its simulated install is offered too
 }) {
   const [os, setOs] = useState<Os | null>(null);
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
@@ -282,6 +283,7 @@ export default function AddDevice({ anonymous, live = false, onSave, devices }: 
   return (
     <div className="panel">
       <h3>Add one of your devices</h3>
+      {sample && <><TrySimulated /><hr className="try-sep" /></>}
       <p className="small muted" style={{ marginTop: 0 }}>Three steps, about a minute. You&apos;ll see it on your map
         the moment it connects.</p>
       <Reassure />

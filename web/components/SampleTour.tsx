@@ -33,14 +33,17 @@ export default function SampleTour({ uid, actions, devices, discoveries, onAsk, 
   const own = devices.filter((d) => d.kind !== "watched").length;
 
   // ticks from what really happened
-  useEffect(() => { if (s.asked !== undefined && f.seq > s.asked && f.done) tick("ask"); }, [f.seq, f.done, s.asked]);
+  // the answer the tour's own question started (the next one after the tap), finished well
+  useEffect(() => { if (s.asked !== undefined && f.seq === s.asked + 1 && f.done && f.ok) tick("ask"); }, [f.seq, f.done, f.ok, s.asked]);
   // only jobs from this visit's tour count (the sample home comes with some history)
   useEffect(() => {
     if (s.started && actions.some((a) => a.status === "done" && a.decision?.by === "user"
       && (a.createdAt?.getTime() ?? 0) >= s.started! - 60000)) tick("approve");
   }, [actions, s.started]);
   useEffect(() => {
-    if (s.brokeAt && actions.some((a) => a.type === "backup_world" && (a.createdAt?.getTime() ?? 0) >= s.brokeAt! - 5000)) tick("break");
+    // it offers a backup first, or (with a fresh backup already) the restart itself
+    if (s.brokeAt && actions.some((a) => (a.type === "backup_world" || (a.type === "restart_server" && a.deviceId === "game-1"))
+      && (a.createdAt?.getTime() ?? 0) >= s.brokeAt! - 5000)) tick("break");
   }, [actions, s.brokeAt]);
   useEffect(() => { if (discoveries.some((d) => d.items.length > 0)) tick("nearby"); }, [discoveries]);
   useEffect(() => {
@@ -71,7 +74,8 @@ export default function SampleTour({ uid, actions, devices, discoveries, onAsk, 
 
   const steps: { id: StepId; title: string; why: string; act: ReactNode; hint?: string }[] = [
     { id: "ask", title: "Ask what's wrong", why: "Nightlight looks at every device before it answers.",
-      act: <button className="small primary" onClick={() => { setS((c) => ({ ...c, asked: f.seq })); onAsk(ASK); }}>Ask: {ASK}</button>,
+      act: <button className="small primary" disabled={!f.done} title={f.done ? undefined : "Nightlight is answering; one moment"}
+        onClick={() => { setS((c) => ({ ...c, asked: f.seq })); onAsk(ASK); }}>Ask: {ASK}</button>,
       hint: "Watch the steps appear as it checks, and the Pi glow on the map." },
     { id: "approve", title: "Approve the fix", why: "Nothing changes until you tap Approve on its card.",
       act: <button className="small" onClick={showCard}>Show me the card</button>, hint: "The Pi's disk goes from 94% to about 61%." },
