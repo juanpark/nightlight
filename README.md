@@ -9,6 +9,8 @@ them only with your permission, earning more freedom one kind of job at a time.
 Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterprise Productivity) by team **8yte**.
 Everything here was written during the hackathon window.
 
+**What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).
+
 ## Try it in 30 seconds
 
 1. Open the live app and tap "Try the demo (no account)". You get a **simulated sample home**, labelled "Sample": a
@@ -332,6 +334,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
 | `docs/BENCHMARKS.md`, `scripts/bench.py` | measured latency and cost |
 | `docs/COSTS.md` | what we spent on Google Cloud and Gemini, the guards that cap it, and why |
+| `docs/LIMITS-AND-ROADMAP.md` | how we tested, known limits and their root causes, what comes next |
 | `docs/architecture/` | the architecture diagram as code |
 | `contracts/mocks/` | sample data for every state of the demo story |
 | `firebase.json`, `firestore.rules` | emulator settings; browsers read only their own data |
