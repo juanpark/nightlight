@@ -279,9 +279,7 @@ const Chat = forwardRef<ChatHandle, {
             </div>
           )}
           {turns.some((t) => "past" in t && t.past) && (
-            <div className="chat-past-note small muted">Earlier in this chat (kept 30 days) ·{" "}
-              <button className="linkish" disabled={busy} onClick={() => switchTo(null)}>
-                Start a new chat</button></div>
+            <div className="chat-past-note small muted">Earlier in this chat (kept 30 days)</div>
           )}
           {turns.map((t, i) => {
             if (t.kind === "user") return <div key={t.key} className={`bubble user ${t.past ? "past" : ""}`}>{t.text}</div>;
