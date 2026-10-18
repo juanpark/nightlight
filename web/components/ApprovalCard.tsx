@@ -95,7 +95,7 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   const payload = (action.params as { payload?: { command?: string; mode?: string; expires?: number; device?: string } }
     | undefined)?.payload;
   const until = payload?.expires ? new Date(payload.expires * 1000).toLocaleString() : "";
-  const command = payload?.command ? `${payload.command}   (valid until ${until})`
+  const command = payload?.command ? payload.command
     : payload?.mode ? `${payload.mode} commands until ${until}`
     : action.command ?? (action.params as { command?: string } | undefined)?.command;
   // on an expert card the command is the point; elsewhere the plan says it in words and the command is one tap away
@@ -104,11 +104,12 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   return (
     <div className="card" data-tour="card">
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <strong style={{ flex: 1 }}>{action.plan}</strong>
+        <strong className="card-title">{action.plan}</strong>
         <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
       </div>
       <dl>
-        {command && (showCommand ? <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>
+        {command && (showCommand ? <><dt>Command</dt><dd><code className="perm-cmd">{command}</code>
+            {payload?.command && until && <span className="small muted">Valid until {until}</span>}</dd></>
           : <><dt>Command</dt><dd><details><summary className="small">Show the exact command</summary>
               <code className="perm-cmd">{command}</code></details></dd></>)}
         <dt>What happens</dt><dd>{action.dryRun}</dd>

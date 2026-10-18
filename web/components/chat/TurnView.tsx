@@ -6,6 +6,7 @@ import { useNow } from "@/lib/data";
 import type { Action, Device, Metrics } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
 import type { AgentTurn, Block } from "./model";
+import Markdown from "./Markdown";
 
 type Step = Extract<Block, { kind: "step" }>;
 
@@ -71,7 +72,7 @@ function WorkLog({ blocks, busy, investigate, ms, metrics, from, budget }: {
       {visible.length > 0 && (
         <div className="wl-body">
           {visible.map((b, i) => b.kind === "text"
-            ? <p key={i} className="wl-note">{b.text.trim()}</p>
+            ? <div key={i} className="wl-note"><Markdown text={b.text.trim()} /></div>
             : b.kind === "step" ? <StepRow key={i} s={b} show={investigate} /> : null)}
         </div>)}
     </div>
@@ -100,7 +101,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp, onRetry }
         investigate={turn.mode === "investigate"} ms={isLast ? turn.ms : undefined}
         metrics={isLast ? turn.metrics : undefined} from={turn.startedAt} budget={turn.budget} />);
     } else {
-      blocks.forEach((b, j) => b.kind === "text" && parts.push(<p key={`n${i}.${j}`} className="wl-note">{b.text.trim()}</p>));
+      blocks.forEach((b, j) => b.kind === "text" && parts.push(<div key={`n${i}.${j}`} className="wl-note"><Markdown text={b.text.trim()} /></div>));
     }
   };
   blocks.forEach((b, i) => {
@@ -111,7 +112,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp, onRetry }
         onFollowUp={onFollowUp} />);
     } else if (i === final) {
       flush(i);
-      parts.push(<div key="answer" className="bubble agent">{(b as { text: string }).text.trim()}</div>);
+      parts.push(<div key="answer" className="bubble agent"><Markdown text={(b as { text: string }).text.trim()} /></div>);
     } else {
       seg.push(b);
     }

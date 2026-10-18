@@ -212,3 +212,16 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 .pair-continue legend { padding: 0 4px; }
 /* the live bar floats over the bottom of the home pane: leave room so it never covers the map's legend */
 .live-bar ~ .shell .left { padding-bottom: 72px; }
+
+/* Approval cards in a narrow chat pane: values wrap inside the card instead of running off its edge; under about
+   420px the labels stack above their values */
+.card { min-width: 0; container-type: inline-size; }
+.card .card-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.card dl { grid-template-columns: 92px minmax(0, 1fr); }
+.card dd { min-width: 0; overflow-wrap: anywhere; }
+.card .perm-cmd { white-space: pre-wrap; word-break: break-word; overflow-x: visible; }
+.card .actions { flex-wrap: wrap; }
+@container (max-width: 420px) {
+  .card dl { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .card dd { margin-bottom: 6px; }
+}
