@@ -1,0 +1,65 @@
+"use client";
+// Live demo machines: a real VM in Google Cloud, one per visitor, leased through the API (docs: GET/POST
+// /api/demo/live…). Starting one signs the visitor in to the machine's own account with a custom token; leaving (or the
+// lease ending) signs them out again. This module keeps the little state the start screen and the session share.
+import { useSyncExternalStore } from "react";
+import { signInAnonymously, signInWithCustomToken, signOut } from "firebase/auth";
+import { api, ApiError } from "./api";
+import { firebase } from "./firebase";
+
+export type Scenario = "none" | "crash" | "unhealthy" | "disk" | "leftovers";
+export const SCENARIOS: { id: Scenario; label: string }[] = [
+  { id: "none", label: "Everything fine" }, { id: "crash", label: "An app has crashed" },
+  { id: "unhealthy", label: "An app is unhealthy" }, { id: "disk", label: "The disk is filling up" },
+  { id: "leftovers", label: "Old leftovers take up space" },
+];
+
+export type LiveStatus = { enabled: boolean; total: number; inUse: number; free: number; running: number;
+  etaSeconds?: number; restoreSeconds?: number; idleMinutes?: number; maxMinutes?: number };
+export type LiveMe = { phase: "starting" | "reconnecting" | "stopping" | "restoring" | "ready"; machine?: string;
+  vm?: string; helperSeenAt?: string | null; secondsSinceLease?: number; restoreSeconds?: number; etaSeconds?: number;
+  scenario?: Scenario };
+export type Problem = { code: string; total?: number; inUse?: number };
+
+type State = { starting: boolean; problem: Problem | null; resumed: boolean; eta?: number; restore?: number; ended: boolean };
+let state: State = { starting: false, problem: null, resumed: false, ended: false };
+const listeners = new Set<() => void>();
+const set = (p: Partial<State>) => { state = { ...state, ...p }; listeners.forEach((l) => l()); };
+const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l); }; };
+export function useLive(): State { return useSyncExternalStore(subscribe, () => state, () => state); }
+export function clearProblem() { set({ problem: null, ended: false }); }
+export function resumedSeen() { set({ resumed: false }); }
+
+/** Lease a machine (the visitor's own again if they still hold one) and sign in to it. */
+export async function startLive(scenario: Scenario) {
+  set({ starting: true, problem: null, ended: false });
+  const { auth } = await firebase();
+  const made = !auth.currentUser;
+  try {
+    if (made) await signInAnonymously(auth); // the lease belongs to this visitor
+    const r = await api<{ token: string; resumed?: boolean; etaSeconds?: number; restoreSeconds?: number }>(
+      "POST", "/api/demo/live", { scenario });
+    await signInWithCustomToken(auth, r.token);
+    set({ starting: false, resumed: !!r.resumed, eta: r.etaSeconds, restore: r.restoreSeconds });
+  } catch (e) {
+    // back to the start screen with the reason (an anonymous visitor made just for this goes away again)
+    if (made && (auth.currentUser as { isAnonymous: boolean } | null)?.isAnonymous) await signOut(auth).catch(() => {});
+    set({ starting: false, problem: e instanceof ApiError
+      ? { code: e.code, total: Number(e.body.total) || undefined, inUse: Number(e.body.inUse) || undefined }
+      : { code: "network" } });
+  }
+}
+
+/** Leave the machine: release it now, then sign out (back to the start screen). */
+export async function leaveLive(ended = false) {
+  if (!ended) await api("POST", "/api/demo/live/end", {}).catch(() => {});
+  set({ ended, resumed: false });
+  await signOut((await firebase()).auth).catch(() => {});
+}
+
+/** Whether this sign-in is a live demo machine's account (its token carries the lease). */
+export async function isLiveSession(user: { getIdTokenResult: () => Promise<{ claims: Record<string, unknown> }> }) {
+  try { return "nl_lease" in (await user.getIdTokenResult()).claims; } catch { return false; }
+}
+
+export const minutes = (s?: number) => s == null ? "" : s < 90 ? `${Math.round(s)} seconds` : `${Math.round(s / 60)} minutes`;
