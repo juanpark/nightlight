@@ -3,7 +3,7 @@
 Nightlight was built in about 72 hours (2026-10-15 22:00 to 2026-10-19 03:29 KST) by two people with AI coding tools.
 This page says plainly how we tested it, what we know is wrong, why, and what we will do about it. Every number here
 comes from a log, a report or a commit in this repository; anything we could not re-verify is marked *(unverified)*.
-Placeholders marked **TBD** are measurements still running when this was written; we fill them, we do not invent them.
+Every number below was measured; where a figure is an estimate, it says so.
 
 ## How we tested
 
@@ -36,7 +36,7 @@ they're mid-game") followed by a more disruptive card. Both are gone; both are i
 Flash-Lite's failures were mostly cards described in words but never created, and once calling a sample device
 "simulated". We chose 3.8 Flash for both modes: a card that is there when we say it is matters more than four seconds.
 The price is a slow tail: about one answer in ten takes over 18 s, we have seen 60 s in probes, and one live production
-answer took 24.6 s *(unverified: from a session note, not a log we re-read)*.
+answer took 24.6 s (21 s to first words; production smoke test, 2026-10-18 09:30 KST).
 
 ### Real device, freestyle round (Sunday)
 
@@ -60,7 +60,18 @@ below the 66% floor were `deny_reason`, `invented_cause` (0 of 2), `risk_first` 
 | Run | Code | Repeat | Passed | Classes below 66% |
 |---|---|---|---|---|
 | Baseline | before the rebuild (Sunday 09:13 KST) | 1 | 23/30 | deny_reason, invented_cause, risk_first, second_card |
-| After the rebuild | charter + tool contracts (`be-agent-v2`) | 3 | **TBD** | **TBD** |
+| Flash, old prompt and patches | `main` before the rebuild (3.8 Flash) | 3 | 81/90 | invented_cause (2/6) |
+| After the rebuild | charter + tool contracts (`be-agent-v2`) | 3 | 81/90 | invented_cause (2/6) |
+
+What this says, honestly: the rebuild did **not** raise the pass rate on this suite; the model switch did (Flash-Lite
+scored 23/30 that morning). What the rebuild bought is the same score without the patches: a prompt about 80% smaller,
+about 300 fewer lines of rewriting code, failures that are visible instead of quietly rewritten (two answers out of 90
+claimed a card that wasn't there; the old code would have edited those sentences), and rules that hold as tool
+contracts. The two versions fail differently: the old code still stalled, said an app was absent and chose the wrong
+device; the rebuilt one did not. Its remaining failures are all one class, a sentence claiming more than the tools
+showed (an unhedged "restarting will clear the lag", a "working normally" for a device whose health is unknown), which
+is the claim-level citation item under "The way forward". Two of the 18 failed runs across both evaluations were the
+judging model itself hitting Google's rate limit, because we ran both evaluations at once.
 
 ## Root causes we understand, and what we did about them on the last day
 
@@ -90,8 +101,10 @@ below the 66% floor were `deny_reason`, `invented_cause` (0 of 2), `risk_first` 
 
 - An answer can still state a cause in prose that no tool stated. The charter forbids it and the eval suite has a class
   for it (`invented_cause`), but there is no claim-level citation yet. Treat "likely cause" as likely.
-- The slow tail is real (see A/B). There is no per-call timeout and no visible time budget yet; under load the agent
-  gets an "answer now" instruction after about a minute of silence, which makes answers thinner, not faster.
+- The slow tail is real (see A/B). Since Sunday a model call that goes silent (30 s Quick, 45 s Investigate) is cancelled
+  and retried once; a second time the turn ends saying Gemini is slow, and never claims nothing changed when something
+  did. The budget (2 min Quick, 4 min Investigate) is shown while it works. The old "answer now" instruction, which
+  made answers thinner, is gone. The budget is soft: a call already running when it ends may finish.
 - The Quick fallback (when Investigate cannot run) happens only before any output has been produced.
 - Fixed time windows: "recent failures" means the last 6 hours; a measurement counts as fresh for 3 hours.
 - `write_note` records a finding but does not link it to the measurement it came from.
@@ -123,8 +136,12 @@ below the 66% floor were `deny_reason`, `invented_cause` (0 of 2), `risk_first` 
   unsupported.
 - If a visitor's Google account already owns a Nightlight account, linking the anonymous demo visit to it fails
   silently; sign in first.
-- Demo VMs for judges: a pool with on-demand start and snapshot restore is in progress (Sunday). **TBD**: pool size,
-  start time, restore time.
+- Live demo machines for judges: a pool of 5 real VMs, one per judge, kept stopped until asked for. Measured Sunday:
+  48–59 s from click to ready (22 runs); "Start fresh" restores the disk from a clean copy in 105–110 s (4 runs); a
+  judge leaving frees the machine in about a minute. Copying a VM per judge instead took about 70 s plus pairing, so we
+  keep a stopped pool. Limits: 5 at once (a sixth is offered the simulated home or their own computer), one zone, no
+  waiting list; restores advance only when the 5-minute sweep or a status check runs; a judge's lease is kept alive by
+  the open tab, not by chatting.
 
 **Security and data** (details in `docs/SECURITY.md`): scrubbing of names, addresses and secrets is pattern-based and
 best effort; the design relies first on not collecting them. Device tokens are revocable but do not expire or rotate.
