@@ -128,6 +128,17 @@ judging model itself hitting Google's rate limit, because we ran both evaluation
   without them, so on most Linux devices they are not offered.
 - Linux (systemd) and macOS (launchd) only. Windows PCs, phones, routers, printers and cameras can only be watched.
 
+**Advice about personal cache folders (found on our own Mac mini, Sunday)**
+
+- The disk checkup measures correctly, but its advice to "look inside ~/.cache and remove folders for tools you no
+  longer use" assumes the owner can tell which folders are in use. On the team's Mac mini, two of those folders were
+  being used by running programs at that moment (a coding tool's runtime and a local database emulator), and a blanket
+  delete of ~/.npm would have broken a running browser-automation tool. Nightlight's own clean-up jobs were safe (its
+  npm job uses `npm cache clean`, not a folder delete), but the free-text advice was not careful enough for a
+  non-technical owner. Way forward: the checkup marks which cache folders a running program has open (macOS and Linux
+  can report this) and never suggests deleting those; ~/.gradle/caches becomes a fixed clean-up job with its own
+  safe recipe.
+
 **Trying it yourself**
 
 - Linux and Mac: a one-line install, or on a Mac the installer package (no Terminal), offered under Add a device
