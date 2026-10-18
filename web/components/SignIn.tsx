@@ -53,48 +53,47 @@ export default function SignIn() {
     <div className="signin">
       <div className="modal start">
         <div className="brand" style={{ justifyContent: "center" }}><span className="bulb" /> Nightlight</div>
-        <h1>A house-sitter for your home servers</h1>
-        <p className="muted">One friendly map of every device you run. An assistant that watches, explains in plain
-          words, and fixes things only when you say so.</p>
+        <h1>Nightlight for your servers and devices</h1>
+        <p className="muted">One friendly map of devices you run. Nightlight watches, explains in plain words, and helps
+          you fix things.</p>
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
           for the next visitor.</p>}
 
         <p className="start-lead"><strong>Nightlight is live.</strong></p>
 
         <div className="start-option start-own">
-          <p><strong>The real thing:</strong> sign in with Google and add your own Mac or Linux machine (including
-            Raspberry Pi) in about two minutes.</p>
+          <p><strong>The real thing:</strong> Sign in with Google and add your own devices in a few minutes.</p>
+          <p className="small">(Mac or Linux machine like the Raspberry Pi)</p>
           <button className="primary" disabled={off} onClick={() => go("google")}>Sign in with Google</button>
-          <WhichDevices />
+          <WhichDevices label="Which devices are supported (as of 2026-10-18)" />
         </div>
 
         <div className="start-option start-sample">
-          <p><strong>Just looking?</strong> Take a guided tour of a sample home.</p>
-          <p className="small">The devices are pretend; Nightlight&apos;s AI is real, so each answer takes a few seconds (we
-            cover the cost).</p>
-          <button className="primary" disabled={off} onClick={() => go("demo")}>Open the sample home (instant)</button>
+          <p><strong>A guided tour:</strong> Explore a sample home with sample devices. Nightlight&apos;s AI responses are
+            real, so the interactions take a few seconds.</p>
+          <button className="primary" disabled={off} onClick={() => go("demo")}>Take the tour (instant demo)</button>
         </div>
 
         {busyAll ? (
           <div className="start-option" role="alert">
             <p className="small">All {total ?? "the"} cloud machines are in use right now. One is reset and freed within
-              a few minutes after each visit; the sample home above is instant.</p>
+              a few minutes after each visit; the guided tour above is instant.</p>
           </div>
         ) : liveOn && status && (
           <div className="start-option">
-            <p><strong>Want hands on a real server without installing anything?</strong> Borrow a demo Linux machine in
+            <p><strong>Hands-on experience without installing anything on your device:</strong> Rent a demo Linux VM in
               Google Cloud.</p>
-            <p className="small"><span className="pill">Limited demo</span> No passkeys, no adding devices, nothing nearby
-              to find. To see everything, use your own device or the sample home.</p>
+            <p className="small"><span className="pill">Limited demo</span> No passkeys, no adding devices, and nothing
+              nearby to find. To experience the full app, use your own device or take the guided tour.</p>
             <button disabled={off} onClick={() => startLive("crash")}>
-              {live.starting ? "Starting your machine…" : "See it on a real cloud machine (about a minute)"}</button>
+              {live.starting ? "Starting your machine…" : "Hands on with a VM (takes about a minute to boot)"}</button>
             <p className="small muted" aria-live="polite">{status.free} of {status.total} free · reset to a clean copy
               after you leave ({status.idleMinutes ?? 15} minutes without activity, at most {status.maxMinutes ?? 60}).</p>
           </div>
         )}
         {said && <p className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{said}</p>}
 
-        <p className="small muted">Signed in to Nightlight before? Sign out or use a private window to see these choices.</p>
+        <p className="small muted">*Signed in to Nightlight before? Sign out or use a private window to see the choices.</p>
         {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
       </div>
     </div>
