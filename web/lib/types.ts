@@ -238,4 +238,5 @@ export interface Discovery { id: string; by: string; byName: string; items: Foun
 
 /** What one answer took: from the stream's `done`, and on stored messages once the server keeps them there. */
 export interface Metrics { latencyMs?: number; toolCalls?: number; modelCalls?: number; costUsd?: number; model?: string;
-  budgetSeconds?: number; slowCalls?: number }
+  budgetSeconds?: number; slowCalls?: number;
+  longChat?: boolean } // longChat: the chat is long enough that older parts are left out of what the model sees

@@ -3,14 +3,23 @@
 // fresh, Break something for real, and Leave. Keeps the lease alive while the page is visible; when the lease ends,
 // signs out back to the start screen.
 import { useCallback, useEffect, useState } from "react";
+import { useNow } from "@/lib/data";
 import { api, ApiError } from "@/lib/api";
-import { leaveLive, machineState, minutes, resumedSeen, SCENARIOS, useLive, type LiveMe, type Scenario } from "@/lib/live";
+import { leaveLive, machineState, minutes, resumedSeen, useLive, type LiveMe, type Scenario } from "@/lib/live";
 
 const PHASE: Record<LiveMe["phase"], string> = {
   stopping: "Stopping your machine…", restoring: "Putting back a clean copy of its disk…", starting: "Starting it up…",
   reconnecting: "Waiting for your machine to check in…", ready: "Ready.",
 };
 const ORDER: LiveMe["phase"][] = ["stopping", "restoring", "starting", "reconnecting", "ready"];
+
+/** A clock that counts up from a moment: "0:42". */
+function Elapsed({ from }: { from?: number }) {
+  const now = useNow(1000);
+  if (!from) return null;
+  const s = Math.max(0, Math.floor((now - from) / 1000));
+  return <p className="live-elapsed" aria-live="off">{Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")}</p>;
+}
 
 /** The waiting screen before the machine is signed in to (the lease is being made). */
 export function LiveStarting() {
@@ -19,6 +28,7 @@ export function LiveStarting() {
     <div className="signin"><div className="modal start" role="status" aria-live="polite">
       <div className="brand" style={{ justifyContent: "center" }}><span className="bulb" /> Nightlight</div>
       <p><strong>{PHASE.starting}</strong></p>
+      <Elapsed from={live.clicked} />
       <p className="small muted">Starting your machine: about {minutes(live.eta ?? 60)}.</p>
     </div></div>
   );
@@ -29,6 +39,7 @@ export default function LiveSession() {
   const [me, setMe] = useState<LiveMe | null>(null);
   const [err, setErr] = useState("");
   const [working, setWorking] = useState(false);
+  const [restartAt, setRestartAt] = useState<number>(); // Start fresh: the waiting clock counts from that tap
   const ended = useCallback((e: unknown) => {
     if (e instanceof ApiError && e.status === 401) { leaveLive(true); return true; }
     return false;
@@ -55,7 +66,7 @@ export default function LiveSession() {
   }, [ended]);
 
   async function act(path: string, body: unknown) {
-    setWorking(true); setErr(""); resumedSeen();
+    setWorking(true); setErr(""); resumedSeen(); setRestartAt(Date.now());
     try {
       const r = await api<{ phase?: LiveMe["phase"] }>("POST", path, body);
       setMe((m) => ({ ...(m ?? {}), phase: r.phase ?? "reconnecting" }));
@@ -89,14 +100,14 @@ export default function LiveSession() {
     return (
       <div className="overlay"><div className="modal start" role="status" aria-live="polite">
         <p><strong>{me?.machine ?? "Your machine"}</strong></p>
+        <Elapsed from={restartAt ?? live.clicked ?? leaseStart} />
         <ol className="live-phases">
           {ORDER.slice(me?.phase === "stopping" || me?.phase === "restoring" ? 0 : 2).map((p) => (
             <li key={p} className={ORDER.indexOf(p) < at ? "done" : ORDER.indexOf(p) === at ? "now" : ""}>{PHASE[p]}</li>))}
         </ol>
         <p className="small muted">{me?.phase === "stopping" || me?.phase === "restoring"
           ? `Restoring your machine from a clean copy: about ${minutes(restore)}.`
-          : `Starting your machine: about ${minutes(me?.etaSeconds ?? live.eta ?? 60)}.`}
-          {me?.secondsSinceLease != null && ` ${minutes(me.secondsSinceLease)} so far.`}</p>
+          : `Starting your machine: about ${minutes(me?.etaSeconds ?? live.eta ?? 60)}.`}</p>
         <button className="small" onClick={() => leaveLive()}>Leave</button>
       </div></div>
     );
@@ -105,11 +116,6 @@ export default function LiveSession() {
     <div className="live-bar" role="region" aria-label="Live demo machine">
       <span className="live-dot" aria-hidden /> <strong>{me?.machine ?? "Live machine"}</strong>
       <span className="small muted">real VM</span>
-      <label className="small">Break something for real{" "}
-        <select value="" disabled={working} onChange={(e) => e.target.value && act("/api/demo/live/scenario", { scenario: e.target.value })}>
-          <option value="">Choose…</option>
-          {SCENARIOS.filter((s) => s.id !== "none").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </select></label>
       <button className="small" disabled={working} onClick={() => fresh()}>Start fresh</button>
       <button className="small" onClick={() => leaveLive()}>Leave</button>
       {err && <span className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</span>}

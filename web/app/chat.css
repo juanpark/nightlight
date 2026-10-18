@@ -94,3 +94,8 @@
 .ctx-chip.done .ctx-dot { background: var(--ok); } .ctx-chip.done .ctx-state { color: var(--ok-ink); }
 @keyframes ctx-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .ctx-chip.checking .ctx-dot { animation: none; } }
+
+/* a long chat: a gentle note above the input with New chat */
+.chat-long { display: flex; gap: 10px; align-items: center; margin: 0 14px 8px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--glow) 10%, var(--panel)); }
+.chat-long > span { flex: 1; min-width: 0; }
