@@ -66,10 +66,12 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
         Expert sessions {on ? "(on)" : "(off)"} <Caret className="caret" size={11} aria-hidden /></button>
       {open && (
         <div className="expert-body">
-          <p className="muted">Let Nightlight investigate with real commands, the way a system administrator would.
-            Read-only commands need one tap of your passkey per 15 minutes; anything that changes something needs
-            your passkey on each command. The device checks your signature itself, so even Nightlight&apos;s own
-            servers can&apos;t run anything without you.</p>
+          <p className="muted">For tricky problems: let Nightlight run its own checks on this device, the way an IT
+            expert would, and only with your face or fingerprint (a passkey). Checks that only look need one tap per
+            15 minutes; anything that changes something needs your tap on each command. The device checks your
+            approval itself, so even Nightlight&apos;s own servers can&apos;t run anything without you.{" "}
+            <a href="https://github.com/juanpark/nightlight/blob/main/docs/PASSKEYS.md" target="_blank" rel="noreferrer">
+              Learn more</a></p>
           <ol>
             <li>Your passkey: {key?.enabled
               ? mine === NO_CODE
@@ -78,7 +80,7 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
               : mine
                 ? mine === key.fingerprint
                   ? <>ready, code <strong>{mine}</strong></>
-                  : <strong style={{ color: "var(--crit)" }}>the server shows a different key ({key.fingerprint}) than
+                  : <strong style={{ color: "var(--crit-ink)" }}>the server shows a different key ({key.fingerprint}) than
                       the passkey this browser made ({mine}): don&apos;t switch it on anywhere; tell us.</strong>
                 : <>ready (made in another browser: compare the code there), server copy <strong>{key.fingerprint}</strong></>
               : !passkeysSupported()
@@ -93,7 +95,7 @@ export default function ExpertSessions({ uid, device, open: openFirst = false }:
               (if that says &quot;command not found&quot;: <code className="perm-cmd">~/.local/bin/nightlight expert</code>) and
               check it shows exactly the code above{mine ? <> ({mine})</> : null}.</>}</li>
           </ol>
-          {err && <div style={{ color: "var(--crit)" }}>{err}</div>}
+          {err && <div style={{ color: "var(--crit-ink)" }}>{err}</div>}
         </div>)}
     </section>
   );

@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.26"
+VERSION = "0.9.34"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -106,6 +106,9 @@ def _cpu_mem_uptime():
         cpu = min(round(load / (os.cpu_count() or 1) * 100, 1), 100.0)
     except (OSError, AttributeError):
         pass
+    busy = _cpu_busy(0.5)  # Linux: how busy the processor really is, not the load average dressed up as a percent
+    if busy is not None:
+        cpu = busy
     if sys.platform == "darwin":
         mem, up = _mac_mem_uptime()
         return cpu, mem, up
@@ -121,6 +124,33 @@ def _cpu_mem_uptime():
     except (OSError, KeyError, ValueError):
         pass
     return cpu, mem, up
+
+
+_PROC = "/proc"
+
+
+def _cpu_times():
+    """(idle ticks, all ticks) of the whole processor from /proc/stat, or None (not Linux)."""
+    try:
+        with open(f"{_PROC}/stat") as f:
+            fields = [int(x) for x in f.readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    if len(fields) < 4:
+        return None
+    return fields[3] + (fields[4] if len(fields) > 4 else 0), sum(fields[:8])
+
+
+def _cpu_busy(seconds):
+    """Percent of all cores busy over the next `seconds` (two /proc/stat reads), or None."""
+    a = _cpu_times()
+    if a is None or seconds <= 0:
+        return None
+    time.sleep(seconds)
+    b = _cpu_times()
+    if b is None or b[1] <= a[1]:
+        return None
+    return round(min(100.0, max(0.0, 100 * (1 - (b[0] - a[0]) / (b[1] - a[1])))), 1)
 
 
 def _mac_mem_uptime():
@@ -260,7 +290,34 @@ def facts():
     net = _net()
     if net:
         out["net"] = net
+    machine = _hourly("machine", machine_fingerprint, every=86400)
+    if machine:
+        out["machine"] = machine
     return out
+
+
+def machine_fingerprint():
+    """A fingerprint of this machine that survives reinstalling the helper, so a reinstall can continue the same
+    device on the map (the owner chooses, when approving it): SHA-256 of the machine's own id (macOS IOPlatformUUID,
+    Linux /etc/machine-id), never the id itself. The server keys it per account before keeping it. None if unknown."""
+    import hashlib
+    ident = None
+    if sys.platform == "darwin":
+        m = re.search(r'"IOPlatformUUID" = "([0-9A-Fa-f-]{36})"', _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]))
+        ident = m.group(1) if m else None
+    else:
+        for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            try:
+                with open(path) as f:
+                    v = f.read().strip()
+                if re.fullmatch(r"[0-9a-f]{32}", v):
+                    ident = v
+                    break
+            except OSError:
+                pass
+    if not ident:
+        return None
+    return hashlib.sha256(b"nightlight-machine:" + ident.lower().encode()).hexdigest()[:32]
 
 
 def _mac_folders_state():
@@ -387,6 +444,12 @@ def _container_state(name):
     return out[:32] or None
 
 
+def _container_health(name):
+    """"healthy", "unhealthy", "starting", or "" when the container has no health check."""
+    out = _run(["docker", "inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{end}}", name])
+    return out.strip()[:16]
+
+
 # ------------------------------------------------------------------ read-only looks (diagnose)
 # Scrubbed here, before anything leaves the device (the server scrubs again). Best effort: logs can contain things no
 # pattern recognises, which is why sending log lines needs its own `allow logs NAME`.
@@ -459,9 +522,14 @@ def _run_both(cmd, timeout=15, cap=256 * 1024):
     return b"".join(chunks)[:cap].decode("utf-8", "replace")
 
 
-EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was stopped forcibly (often out of memory, "
-                "or someone stopped it)", 143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was force-stopped (killed, or out of memory)",
+                143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
                 127: "couldn't find its program"}
+OOM_MEANING = "was force-stopped because it ran out of memory"
+KILLED_MEANING = ("was force-stopped: something killed it (a person, a program or the system); Docker didn't record "
+                  "it running out of memory")
+HEALTH_MEANING = {"unhealthy": "is running, but failing its health check", "starting": "is running, but its health "
+                  "check hasn't passed yet", "healthy": "is running and passing its health check"}
 
 
 def _look_container(name, logs):
@@ -474,14 +542,34 @@ def _look_container(name, logs):
     code = st.get("ExitCode")
     status = st.get("Status", "unknown")
     meaning = EXIT_MEANING.get(code, f"exited with code {code}") if status != "running" else "is running"
+    if status != "running" and st.get("OOMKilled"):
+        meaning = OOM_MEANING  # Docker saw the memory limit hit: say it plainly, not "killed, or out of memory"
+    elif status != "running" and code == 137:
+        meaning = KILLED_MEANING  # Docker recorded no out-of-memory: say what is known, the plain fact first
+    health = st.get("Health") if isinstance(st.get("Health"), dict) else {}
+    if status == "running" and health.get("Status") in HEALTH_MEANING:
+        meaning = HEALTH_MEANING[health["Status"]]
     lines = [f"status: {status}", f"exit code: {code} ({meaning})", f"out of memory: {'yes' if st.get('OOMKilled') else 'no'}",
              f"restarts: {restarts}", f"started: {st.get('StartedAt', '')[:19]}", f"stopped: {st.get('FinishedAt', '')[:19]}"]
+    if health.get("Status"):
+        lines.append(f"health check: {health['Status']}, failed {health.get('FailingStreak', 0)} times in a row")
+        last = (health.get("Log") or [{}])[-1] if isinstance(health.get("Log"), list) else {}
+        # what the check printed is log text: only with the logs permission
+        if logs and isinstance(last, dict) and str(last.get("Output") or "").strip():
+            lines.append(f"last health check said: {_one_line(str(last['Output']).strip(), 200)}")
     if st.get("Error"):
         lines.append(f"error: {st['Error'][:200]}")
-    summary = f"{name} {meaning}" + (", out of memory" if st.get("OOMKilled") else "")
+    summary = f"{name} {meaning}"
     if logs:
         lines += ["last log lines:", _tail(scrub(_run_both(["docker", "logs", "--tail", "30", "--timestamps", name]))[0])]
+    else:
+        lines.append(LOGS_NOT_ALLOWED)
     return summary, "\n".join(lines)
+
+
+# Said when the owner hasn't allowed reading this target's logs: what was not read, and which permission would allow it
+LOGS_NOT_ALLOWED = "last log lines: not read (reading this one's logs isn't allowed on this device: the \"read logs\" " \
+    "permission for it would allow it)"
 
 
 def _look_unit(name, logs):
@@ -492,11 +580,31 @@ def _look_unit(name, logs):
     if not info.get("ActiveState"):
         return None
     summary = f"{unit} is {info.get('ActiveState')} ({info.get('Result', '')}, exit status {info.get('ExecMainStatus')})"
+    why = _unit_meaning(info)
+    if why:
+        summary += f": it {why}"
     lines = [f"{k}: {v}" for k, v in info.items()]
     if logs:
         lines += ["last log lines:", _tail(scrub(_run_both(["journalctl", "-u", unit, "-n", "30", "--no-pager",
                                                             "-o", "short-iso"]))[0])]
+    else:
+        lines.append(LOGS_NOT_ALLOWED)
     return summary, "\n".join(lines)
+
+
+def _unit_meaning(info):
+    """What a stopped service's result and exit status mean, in words ("" when it is running or nothing is known)."""
+    if info.get("ActiveState") == "active":
+        return ""
+    result, code = info.get("Result", ""), info.get("ExecMainStatus", "")
+    if result == "oom-kill":
+        return OOM_MEANING
+    if result == "signal" and code == "9" or code == "137":
+        return EXIT_MEANING[137]
+    try:
+        return EXIT_MEANING.get(int(code), "") if result not in ("", "success") else ""
+    except ValueError:
+        return ""
 
 
 def look_into(target):
@@ -631,9 +739,206 @@ def _disk_places():
         if _mac_private_ok():
             places = _mac_private_places() + places
     else:
-        places = [("System logs", "/var/log"), ("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
+        places = [("Package cache (apt)", "/var/cache/apt"), ("User caches", f"{h}/.cache"),
                   ("Downloads", f"{h}/Downloads"), ("Temporary files", "/tmp"), ("npm cache", f"{h}/.npm")]
-    return places
+    return places  # /var/log is measured on its own (_logs), so one big log is named, not just "System logs"
+
+
+_LOGS = "/var/log"
+LOG_NAMES = 300  # at most this many names are looked at in /var/log, and in each big folder inside it
+BIG_LOG_MB = 100  # a log entry this big gets a line of its own
+
+
+def _size(mb):
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
+
+
+def _scan(folder):
+    """(name, is a folder, MB on disk) for what is right inside `folder`, or None when it can't be read. The folder
+    is pinned and no link is followed (a link counts 0); MB is None for a folder (measure it with `du`). Blocks really
+    used, so a sparse file (lastlog) doesn't look huge. Bounded: stops after LOG_NAMES names, or when the inspect
+    job's time is nearly up, without listing the rest."""
+    fd = _pin(folder)
+    if fd is None:
+        return None
+    out = []
+    try:
+        with os.scandir(fd) as names:
+            for entry in names:
+                if len(out) >= LOG_NAMES or _left(5) < 1:
+                    break
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    out.append((entry.name, True, None))
+                else:
+                    out.append((entry.name, False, round(st.st_blocks * 512 / 1024 ** 2)
+                                if stat.S_ISREG(st.st_mode) else 0))
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return out
+
+
+def _biggest_file(folder):
+    """(name, MB) of the biggest file right inside `folder` (pinned, no link followed), or None."""
+    files = [(mb, n) for n, is_dir, mb in _scan(folder) or [] if not is_dir and mb]
+    return max(files)[::-1] if files else None
+
+
+def _logs():
+    """What /var/log holds, the journal apart: (MB of everything else or None, MB of the journal or None, the biggest
+    few entries as (path, MB)). A big folder is named by its biggest file when that file is most of it, so the owner
+    sees the one log that grew (say an app's debug log), not just "System logs". Bounded: LOG_NAMES names per folder
+    and the inspect job's time budget."""
+    entries = _scan(_LOGS)
+    if entries is None:
+        return None, None, []
+    journal, total, rows = None, 0, []
+    for name, is_dir, mb in entries:
+        if _left(5) < 1:
+            break
+        if is_dir:
+            mb = _du(f"{_LOGS}/{name}")
+        if mb is None:
+            continue
+        if name == "journal":
+            journal = mb
+        else:
+            total += mb
+            rows.append((mb, name, is_dir))
+    big = []
+    for mb, name, is_dir in sorted(rows, reverse=True)[:5]:
+        if mb < BIG_LOG_MB or _left(5) < 1:
+            break
+        inside = _biggest_file(f"{_LOGS}/{name}") if is_dir else None
+        if inside and inside[1] * 2 >= mb:
+            name, mb = f"{name}/{inside[0]}", inside[1]
+        big.append((f"/var/log/{name}", mb))  # as the owner knows it (tests point _LOGS elsewhere)
+    return total, journal, big
+
+
+_ROOT = "/"
+_ROOT_SKIP = {"proc", "sys", "dev", "run", "tmp"}  # not on the disk (or measured on its own: Temporary files)
+_SYSTEM_TOP = {"usr", "boot", "etc", "bin", "sbin", "lib", "lib32", "lib64", "libx32"}  # the system itself: listed,
+# never named as "the biggest folder" to move or delete things from
+ROOT_MIN_MB = 50  # a main-disk folder smaller than this is not listed
+ROOT_DEPTH = 2  # how deep under each top folder sizes are taken (one `du` pass per top folder)
+
+
+DU_ROWS = 500  # sizes kept per top folder (the biggest ones): a tree with 100k folders can't fill the memory
+DU_BYTES = 16 * 1024 * 1024  # at most this much of du's output is read per top folder, then it is stopped
+DU_LINE = 8192  # a longer line (a strange name) is skipped, not kept
+
+
+def _du_cmd(depth):
+    return ["du", "-k", "-x", "-d", str(depth), "."]
+
+
+def _du_tree(path, depth=ROOT_DEPTH):
+    """({"." or "./a" or "./a/b": MB}, why) for a pinned folder and the folders up to `depth` levels inside it, in one
+    `du -x` pass that never follows links or leaves the folder's own disk. Bounded in time (the job's deadline), in
+    bytes read (DU_BYTES) and in what is kept (the DU_ROWS biggest folders and the total); du's complaints about
+    unreadable folders are discarded. ({}, why) when it couldn't be measured: why is "time", "too much output" or
+    "unreadable"."""
+    import heapq
+    import select
+    if _guarded(path) or _left(25) < 1:
+        return {}, "time"
+    fd = _pin(path)
+    if fd is None:
+        return {}, "unreadable"
+    try:
+        p = subprocess.Popen(_du_cmd(depth), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=(fd,),
+                             preexec_fn=lambda: os.fchdir(fd))
+    except OSError:
+        os.close(fd)
+        return {}, "unreadable"
+    os.close(fd)
+    keep, total, read, partial, why = [], None, 0, b"", None
+    out = p.stdout.fileno()
+    try:
+        while True:
+            left = _left(25)
+            if left <= 0 or not select.select([out], [], [], left)[0]:
+                why = "time"
+                break
+            block = os.read(out, 65536)
+            if not block:
+                break
+            read += len(block)
+            if read > DU_BYTES:
+                why = "too much output"
+                break
+            lines = (partial + block).split(b"\n")
+            partial = lines.pop()
+            if len(partial) > DU_LINE:
+                partial = b"\xff"  # never a valid row: the rest of that long line is skipped
+            for line in lines:
+                kb, _, rel = line.decode("utf-8", "replace").partition("\t")
+                if not kb.isdigit():
+                    continue
+                if rel == ".":
+                    total = int(kb)
+                elif rel.startswith("./"):
+                    heapq.heappush(keep, (int(kb), rel))
+                    if len(keep) > DU_ROWS:
+                        heapq.heappop(keep)  # the smallest goes
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.stdout.close()
+        p.wait()
+    if why or total is None:
+        return {}, why or "unreadable"
+    sizes = {rel: round(kb / 1024) for kb, rel in keep}
+    sizes["."] = round(total / 1024)
+    return sizes, None
+
+
+def _root_folders():
+    """The main disk's top folders by size (no other disk mounted inside is entered), the biggest folder that isn't
+    the system's own (followed down while one folder holds at least half of its parent), and how much of the used
+    space they account for. Returns ([(MB, "/name")], ("/path", MB) or None, MB measured, MB in use, [top folders
+    that couldn't be measured]) or None."""
+    try:
+        root_dev = os.lstat(_ROOT).st_dev
+        used = shutil.disk_usage(_ROOT).used // 1024 ** 2
+    except OSError:
+        return None
+    tops, trees, unmeasured = [], {}, []
+    for name, is_dir, _mb in sorted(_scan(_ROOT) or []):
+        if not is_dir or name in _ROOT_SKIP or _left(5) < 1:
+            continue
+        path = os.path.join(_ROOT, name)
+        try:
+            if os.lstat(path).st_dev != root_dev:
+                continue  # another disk mounted here: its space isn't this disk's
+        except OSError:
+            continue
+        tree, why = _du_tree(path)
+        if tree:
+            tops.append((tree["."], name))
+            trees[name] = tree
+        else:
+            unmeasured.append(("/" + name, why))
+    tops.sort(reverse=True)
+    biggest = None
+    for mb, name in tops:
+        if name in _SYSTEM_TOP:
+            continue
+        tree, rel, size = trees[name], ".", mb
+        for _ in range(ROOT_DEPTH):  # go one level down while a single folder holds at least half
+            kids = [(m, r) for r, m in tree.items() if r.startswith(rel + "/") and "/" not in r[len(rel) + 1:]]
+            if not kids or max(kids)[0] * 2 < size:
+                break
+            size, rel = max(kids)
+        biggest = ("/" + name + rel[1:], size)  # as the owner knows it (tests point _ROOT elsewhere)
+        break
+    return [(mb, "/" + name) for mb, name in tops], biggest, sum(mb for mb, _ in tops), used, unmeasured
 
 
 def _inspect_disk():
@@ -642,31 +947,221 @@ def _inspect_disk():
         mb = _du(path)
         if mb is not None and mb >= 50:
             rows.append((mb, label))
+    others, journal, big = (None, None, []) if sys.platform == "darwin" else _logs()
+    if others is not None and others >= 50:
+        rows.append((others, "System logs (not counting the journal)"))
     rows.sort(reverse=True)
-    lines = [f"{label}: {mb / 1024:.1f} GB" if mb >= 1024 else f"{label}: {mb} MB" for mb, label in rows[:12]]
-    if shutil.which("journalctl") and _left(10) >= 1:
+    lines = [f"{label}: {_size(mb)}" for mb, label in rows[:12]]
+    if journal is not None:
+        lines.append(f"System journal: {_size(journal)}")
+    elif shutil.which("journalctl") and _left(10) >= 1:
         j = _run(["journalctl", "--disk-usage"], timeout=_left(10)).strip()
         if j:
             lines.append("System journal: " + j.split("take up", 1)[-1].split("in the file system")[0].strip())
+    for path, mb in big:  # one line each, so a playbook (or the agent) can name the very log that grew
+        lines.append(f"Big log: {_one_line(path, 160).replace(': ', ' ')}: {_size(mb)}")
     if sys.platform == "darwin" and not _mac_private_ok():
         lines.append("Not checked (macOS privacy): Downloads, Desktop, Documents, Movies, Trash. Allow once at the Mac "
                      "with `nightlight settings`.")
+    elif sys.platform != "darwin":
+        lines += _root_lines()
     return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
 
 
-def _inspect_processes():
-    out = _run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]
+DU_WHY = {"time": "not measured in time", "too much output": "too many folders to measure",
+          "unreadable": "couldn't be read"}
+
+
+def _root_lines():
+    """Lines about the main disk as a whole, so the biggest folder is always named wherever it is (say /srv), and
+    space no measured folder accounts for is said, not guessed."""
+    found = _root_folders()
+    if found is None:
+        return []
+    tops, biggest, measured, used, unmeasured = found
+    name = lambda p: _one_line(p, 160).replace(": ", " ")
+    lines = []
+    if biggest and biggest[1] >= ROOT_MIN_MB:
+        lines.append(f"Biggest folder on the main disk: {name(biggest[0])}: {_size(biggest[1])}")
+    big = [f"{name(p)} {_size(mb)}" for mb, p in tops[:8] if mb >= ROOT_MIN_MB]
+    if big:
+        lines.append("Folders on the main disk: " + ", ".join(big))
+    missing = used - measured
+    if tops and missing >= 1024 and missing * 10 >= used * 3:
+        skipped = (", in " + ", ".join(f"{name(p)} ({DU_WHY.get(why, why)})" for p, why in unmeasured[:5])) \
+            if unmeasured else ""
+        lines.append(f"Not found in the measured folders: about {_size(missing)} of the {_size(used)} in use (in "
+                     f"folders the helper can't read{skipped}, or in deleted files a program still holds open)")
+    elif unmeasured:  # always said: a folder left out is never silently counted as small
+        lines.append("Not measured on the main disk: " + ", ".join(f"{name(p)} ({DU_WHY.get(why, why)})"
+                                                                     for p, why in unmeasured[:5]))
+    return lines
+
+
+CPU_SAMPLE = 1.0  # seconds between the two looks at what each program used
+TOP_CPU, TOP_MEM = 5, 8
+
+
+def _proc_table():
+    """{pid: (name, CPU ticks used so far, resident memory pages)} from /proc, or None (not Linux)."""
+    try:
+        pids = [p for p in os.listdir(_PROC) if p.isdigit()]
+    except OSError:
+        return None
+    out = {}
+    for pid in pids:
+        try:
+            with open(f"{_PROC}/{pid}/stat") as f:
+                raw = f.read()
+            name = raw[raw.index("(") + 1:raw.rindex(")")]
+            rest = raw[raw.rindex(")") + 2:].split()  # rest[0] is field 3 (state): utime 14, stime 15, rss 24
+            out[pid] = (name, int(rest[11]) + int(rest[12]), int(rest[21]))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _mem_total_kb():
+    try:
+        with open(f"{_PROC}/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _sampled_processes():
+    """Linux: (rows of (cpu % of one core, mem %, pid, name), processor busy % or None, seconds sampled), CPU measured
+    over the last CPU_SAMPLE seconds (two looks at /proc), not averaged over each program's lifetime as `ps` does,
+    so a program that just started spinning shows. None when /proc isn't there."""
+    first, t0, cpu0 = _proc_table(), time.monotonic(), _cpu_times()
+    if first is None:
+        return None
+    wait = _left(CPU_SAMPLE)
+    if wait > 0.05:
+        time.sleep(wait)
+    second, dt, cpu1 = _proc_table() or {}, time.monotonic() - t0, _cpu_times()
+    try:
+        hz, page = os.sysconf("SC_CLK_TCK"), os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        hz, page = 100, 4096
+    total = _mem_total_kb()
     rows = []
-    for line in out:
-        parts = line.split(None, 2)
-        if len(parts) == 3:
-            try:
-                rows.append((float(parts[1]), float(parts[0]), os.path.basename(parts[2])[:40]))
-            except ValueError:
-                pass
-    rows.sort(reverse=True)
-    return "Top programs by memory (memory %, CPU %, program):\n" + "\n".join(
-        f"{m:.1f}% mem, {c:.1f}% cpu, {name}" for m, c, name in rows[:10])
+    for pid, (name, ticks, rss) in second.items():
+        before = first.get(pid)
+        cpu = (ticks - before[1]) / hz / dt * 100 if before and before[0] == name and dt > 0.05 else 0.0
+        mem = rss * page / 1024 / total * 100 if total else 0.0
+        rows.append((max(0.0, cpu), mem, pid, name))
+    busy = None
+    if cpu0 and cpu1 and cpu1[1] > cpu0[1]:
+        busy = round(min(100.0, max(0.0, 100 * (1 - (cpu1[0] - cpu0[0]) / (cpu1[1] - cpu0[1])))))
+    return rows, busy, dt
+
+
+def _inspect_processes():
+    """The programs using the most processor right now and the most memory (both lists, so neither hides the
+    other), and how busy the whole processor is."""
+    head = []
+    sampled = _sampled_processes()
+    if sampled is not None:
+        rows, busy, dt = sampled
+        if busy is not None:
+            head.append(f"Processor busy right now: {busy}% of all {os.cpu_count() or '?'} cores")
+        how = f"CPU % of one core, measured over the last {dt:.1f} seconds" if dt > 0.05 else \
+            "CPU not measured (out of time)"
+    else:  # macOS: ps's CPU figure there is already a recent average
+        rows = []
+        for i, line in enumerate(_run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]):
+            parts = line.split(None, 2)
+            if len(parts) == 3:
+                try:
+                    rows.append((float(parts[0]), float(parts[1]), i, os.path.basename(parts[2])))
+                except ValueError:
+                    pass
+        how = "CPU % of one core, recent"
+    by_cpu = sorted((r for r in rows if r[0] >= 1), key=lambda r: r[0], reverse=True)[:TOP_CPU]
+    by_mem = sorted(rows, key=lambda r: r[1], reverse=True)[:TOP_MEM]
+    seen, shown = set(), []
+    for r in by_cpu + by_mem:
+        if r[2] not in seen:
+            seen.add(r[2])
+            shown.append(r)
+    where = _where_each([pid for _c, _m, pid, _n in shown]) if sampled is not None else {}
+    return "\n".join(head + [f"Top programs by processor and by memory (memory %, {how}, program"
+                             + (", and whether it runs inside an app's container or on the computer itself"
+                                if any(where.values()) else "") + "):"] + [
+        f"{m:.1f}% mem, {c:.1f}% cpu, {_one_line(name, 40)}" + (f" ({where[pid]})" if where.get(pid) else "")
+        for c, m, pid, name in shown])
+
+
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
+
+
+def _container_ids():
+    """{full container id: name} of the running containers ({} without Docker), to say which app a program is in."""
+    if not shutil.which("docker"):
+        return {}
+    out = {}
+    for line in _run(["docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"], timeout=max(_left(5), 1)
+                     ).splitlines()[:100]:
+        parts = line.split()
+        if len(parts) == 2 and _CONTAINER_ID.fullmatch(parts[0]):
+            out[parts[0]] = parts[1][:64]
+    return out
+
+
+# Control-group paths, as /proc/<pid>/cgroup shows them. A container: Docker ("docker-<id>.scope", "/docker/<id>"),
+# Podman ("libpod-<id>"), containerd and Kubernetes ("cri-containerd-", "/containerd/", "kubepods"), LXC ("/lxc/",
+# "lxc.payload"); systemd-machined guests and containers ("machine.slice"). The computer itself: the root, init, and
+# systemd's own system and user slices. Anything else is said as unknown, never guessed.
+# Matched on whole path components, so a host service named like a runtime ("docker-cleanup.service") stays a host
+# service.
+_CONTAINER_SCOPE = re.compile(r"(docker|libpod|cri-containerd|crio)-[0-9a-f]{12,64}(\.scope)?|"
+                              r"kubepods(-[A-Za-z0-9_-]+)?\.slice|kubepods|lxc\.payload\.[^/]+")
+_UNIT = re.compile(r".+\.(service|socket|mount|timer|target|path|swap|device|automount)")  # a systemd unit: never one
+
+
+def _in_container(path):
+    parts = [p for p in path.split("/") if p and not _UNIT.fullmatch(p)]
+    return any(_CONTAINER_SCOPE.fullmatch(p) for p in parts) or any(
+        a in ("docker", "lxc") and (b and (a == "lxc" or _CONTAINER_ID.fullmatch(b)))
+        for a, b in zip(parts, parts[1:]))
+_HOST_PATH = re.compile(r"/|/init\.scope|/system\.slice(/[^/]+\.(service|scope|mount|socket))?|/user\.slice(/.*)?")
+UNKNOWN_WHERE = "couldn't tell whether it runs inside an app"
+
+
+def _cgroup_where(text):
+    """("container", id or None) | ("machine", None) | ("host", None) | ("unknown", None) for one cgroup file."""
+    paths = [ln.split(":", 2)[2].strip() for ln in text.splitlines() if ln.count(":") >= 2]
+    if any(_in_container(p) for p in paths):
+        m = _CONTAINER_ID.search(text)
+        return "container", m.group(0) if m else None
+    if any("machine.slice" in p.split("/") for p in paths):
+        return "machine", None
+    if paths and all(_HOST_PATH.fullmatch(p) for p in paths):
+        return "host", None
+    return "unknown", None
+
+
+def _where_each(pids):
+    """Linux: {pid: where it runs}: inside a container (and which app's), on the computer itself, or unknown, from
+    its control group; None when that can't be read. A program on the computer itself is never part of an app,
+    whatever its name suggests."""
+    found = {}
+    for pid in pids:
+        try:
+            with open(f"{_PROC}/{pid}/cgroup") as f:
+                found[pid] = _cgroup_where(f.read(4096))
+        except (OSError, ValueError):
+            found[pid] = None
+    # Docker is asked for names only when a program is in a container with an id
+    names = _container_ids() if any(w and w[1] for w in found.values()) else {}
+    words = {"host": "on the computer itself, not inside any app", "unknown": UNKNOWN_WHERE,
+             "machine": "inside a virtual machine or system container"}
+    return {pid: None if w is None else f"inside app {names[w[1]]}" if w[0] == "container" and w[1] in names
+            else "inside a container" if w[0] == "container" else words[w[0]] for pid, w in found.items()}
 
 
 def _inspect_updates():
@@ -727,7 +1222,12 @@ def _inspect_load():
         one, five, fifteen = os.getloadavg()
     except OSError:
         return "Load: unknown"
-    return f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {os.cpu_count()} CPU cores"
+    cores = os.cpu_count() or 1
+    out = f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {cores} CPU cores"
+    if one >= cores:  # a load is a count of programs wanting the processor, not a percent: at or over the cores, they queue
+        out += (f"\nProcessor overloaded: over the last minute {one:.1f} programs on average wanted the processor at "
+                f"once, with {cores} core{'s' if cores != 1 else ''} to share")
+    return out
 
 
 def _inspect_failed():
@@ -980,16 +1480,47 @@ def _empty_dir(parts):
     return False, f"{len(errors)} item(s) couldn't be removed; first: {_why(err, path)}{more}"
 
 
+_SUDO_REFUSED = re.compile(r"^sudo: .*(a password is required|no new privileges|not in the sudoers|"
+                           r"is not allowed to)", re.I | re.M)
+
+
 def _fix_cmd(cmd, timeout=300):
+    """Runs a clean-up command. On failure, a reason only when it is known for sure (sudo refused), else "";
+    never the command's raw error text."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
-        return False, "it couldn't run"
-    if r.returncode != 0 and "password" in (r.stderr or "").lower():
-        return False, "this device needs a password for it (sudo)"
-    full = scrub(r.stderr or r.stdout or "")[0]  # scrub the whole text first, then pick the last line
-    said = _one_line((full.strip().splitlines() or [""])[-1], 140)
-    return r.returncode == 0, "" if r.returncode == 0 else f"it reported an error: {said or 'no details'}"
+        return False, ""
+    if r.returncode == 0:
+        return True, ""
+    if cmd[:1] == ["sudo"] and _SUDO_REFUSED.search(r.stderr or ""):  # sudo itself said no, before running anything
+        return False, "it needs administrator rights the helper doesn't have"
+    return False, ""  # the command's own error text stays on the device
+
+
+_ROOT_OK = {}  # the answer to "can the helper act as administrator?", and when it was asked
+
+
+def _can_be_root():
+    """True when the helper runs as root, or sudo works here without a password. Never under NoNewPrivileges (how
+    the installed Linux service runs): sudo can't work there, so clean-ups that need root are not offered at all.
+    `sudo -n` never prompts; it is asked at most once an hour."""
+    if os.geteuid() == 0:
+        return True
+    try:
+        with open("/proc/self/status") as f:
+            if any(ln.split() == ["NoNewPrivs:", "1"] for ln in f):
+                return False
+    except OSError:
+        pass
+    if time.time() - _ROOT_OK.get("at", 0) > 3600:
+        try:
+            ok = bool(shutil.which("sudo")) and subprocess.run(
+                ["sudo", "-n", "true"], capture_output=True, timeout=5, check=False).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        _ROOT_OK.update(ok=ok, at=time.time())
+    return _ROOT_OK["ok"]
 
 
 FIXES = {
@@ -1003,8 +1534,10 @@ FIXES = {
                          "run": lambda: _empty_dir(["Library", "Developer", "Xcode", "DerivedData"])},
     "docker_prune": {"when": lambda: bool(shutil.which("docker")),
                      "run": lambda: _fix_cmd(["docker", "image", "prune", "-f"])},
-    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")), "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
-    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")),
+    # These two need root: offered only when the helper can really use it (see _can_be_root)
+    "apt_clean": {"when": lambda: bool(shutil.which("apt-get")) and _can_be_root(),
+                  "run": lambda: _fix_cmd(_as_root(["apt-get", "clean"]))},
+    "journal_vacuum": {"when": lambda: bool(shutil.which("journalctl")) and _can_be_root(),
                        "run": lambda: _fix_cmd(_as_root(["journalctl", "--vacuum-size=200M"]))},
 }
 
@@ -1037,7 +1570,8 @@ def run_fix(name):
         ok, why = False, f"it hit an error ({type(e).__name__})"
     after = _free_gb()
     freed = f" Freed {max(0.0, after - before):.1f} GB; {after:.1f} GB free now." if None not in (before, after) else ""
-    text = (f"Done.{freed}" if ok else f"It didn't work: {_one_line(str(why), 300)}.{freed}").strip()
+    reason = f": {_one_line(str(why), 300)}" if why else ""
+    text = (f"Done.{freed}" if ok else f"Couldn't run that clean-up on this device{reason}.{freed}").strip()
     return ok, scrub(text)[0], None  # scrubbed again at the boundary
 
 
@@ -1501,14 +2035,22 @@ def run_readonly(params):
     cfg = _load()
     grant, signed, command = params.get("grant"), params.get("signed"), params.get("command")
     if not isinstance(grant, dict) or grant.get("mode") != "read-only":
+        _audit(f"Read-only command refused: there's no read-only investigation grant; asked: {_audit_cmd(command)}")
         return False, "Not run: there's no read-only investigation grant.", None
     why = expert_check(grant, signed, cfg, reusable=True)
     if why:
+        _audit(f"Read-only command refused: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run: {why}.", None
+    nonce = str(grant.get("nonce"))
+    if nonce not in _AUDITED_GRANTS:  # the grant line once per grant, then one line per command run under it
+        _AUDITED_GRANTS.add(nonce)
+        _audit(f"Investigation grant verified: {_audit_signer(cfg, grant)}; read-only until {_audit_time(grant)}")
     argv, why = readonly_command(command)
     if why:
+        _audit(f"Read-only command refused on this device: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run on this device: {why}.", None
-    return _execute(command, argv=argv)
+    _audit(f"Read-only command (grant {nonce[:6]}): running: {_audit_cmd(command)}")
+    return _execute(command, argv=argv, label="Read-only command")
 
 
 def run_expert(params):
@@ -1517,6 +2059,8 @@ def run_expert(params):
     payload, signed = params.get("payload"), params.get("signed")
     why = expert_check(payload, signed, cfg)
     if why:
+        _audit(f"Expert command refused: {why}; asked: "
+               f"{_audit_cmd(payload.get('command') if isinstance(payload, dict) else None)}")
         return False, f"Not run: {why}.", None
     taken = []
 
@@ -1532,11 +2076,145 @@ def run_expert(params):
         taken.append(True)
     _update_config(consume)
     if not taken:
+        _audit(f"Expert command refused: this signed command was already used; asked: {_audit_cmd(payload['command'])}")
         return False, "Not run: this signed command was already used.", None
-    return _execute(payload["command"], shell=True)
+    _audit(f"Expert command verified: {_audit_signer(cfg, payload)}, expires {_audit_time(payload)}; "
+           f"running: {_audit_cmd(payload['command'])}")
+    return _execute(payload["command"], shell=True, label="Expert command")
 
 
-def _execute(command, shell=False, argv=None):
+# The local audit trail: what ran here and on whose signature, readable at the device without trusting the cloud
+# (`nightlight audit`). One short line per step, in the helper's log and in an owner-only file in the app folder that
+# is kept under AUDIT_MAX bytes. Never the output, a token or the signature itself; the command is scrubbed.
+AUDIT_FILE = "expert-transcript.log"
+AUDIT_MAX = 256 * 1024
+_AUDITED_GRANTS = set()
+
+
+# Control characters (C0, C1, Unicode line/paragraph separators and direction overrides) could forge or hide entries.
+_AUDIT_CONTROLS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+# The value after a secret-bearing option or assignment, whole even when quoted with spaces or escaped quotes.
+_AUDIT_QUOTED_SECRET = re.compile(
+    r"((?:^|[\s'\"])(?:-{1,2}" + _SECRET_WORD + r"(?:\s*=\s*|\s+)|" + _SECRET_WORD + r"\s*[=:]\s*))"
+    r"('(?:[^']|'\\'')*'?|\"(?:\\.|[^\"\\])*\"?|\S+)", re.I)
+
+
+def _audit_clean(text, limit):
+    """One safe line: control characters gone, secret values hidden (whole quoted values too), then cut to limit."""
+    text = _CONTROLS.sub(" ", text)  # whole ANSI sequences first, so no "[2J" tail is left behind
+    text = " ".join(_AUDIT_CONTROLS.sub(" ", text).split())
+    text = scrub(_AUDIT_QUOTED_SECRET.sub(lambda m: m.group(1) + "[hidden]", text))[0]
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+_AUDIT_SECRET_NAME = re.compile(_SECRET_WORD, re.I)
+_AUDIT_SECRET_START = re.compile(r"(?:^|\s)(?:-{1,2}" + _SECRET_WORD + r"|" + _SECRET_WORD + r"\s*=)", re.I)
+
+
+def _audit_redact(command):
+    """Hide the whole value of a secret-bearing option (`--password VALUE`, `--token=VALUE`, `PASSWORD=VALUE`), as
+    the shell would split it. If it can't be split (an unterminated quote), everything after the first such option."""
+    import shlex
+    punct = set("();<>|&")
+    try:  # `;`, `&&`, `|`, `(`, `)` become tokens of their own, so `true;API_KEY=...` is seen as an assignment
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        m = _AUDIT_SECRET_START.search(command)
+        return command[:m.end()] + " [hidden]" if m else command
+    out, hide_next, changed = [], False, False
+    for t in tokens:
+        if set(t) <= punct:
+            out.append(t)
+            hide_next = False
+            continue
+        if hide_next:
+            out.append("__HIDDEN__")
+            hide_next, changed = False, True
+            continue
+        name, eq, _ = t.lstrip("-").partition("=")
+        if name and _AUDIT_SECRET_NAME.fullmatch(name) and (t.startswith("-") or eq):
+            if eq:
+                out.append(t.split("=", 1)[0] + "=__HIDDEN__")
+                changed = True
+                continue
+            hide_next = True
+        out.append(t)
+    if not changed:
+        return command  # shown exactly as signed
+    return " ".join(t if set(t) <= punct else shlex.quote(t) for t in out).replace("__HIDDEN__", "[hidden]")
+
+
+def _audit_cmd(command):
+    if not isinstance(command, str):
+        return "(none)"
+    return _audit_clean(_audit_redact(command).replace(_HOME, "~"), 300)
+
+
+def _audit_time(payload):
+    try:
+        return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(int(payload.get("expires"))))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"
+
+
+def _audit_signer(cfg, payload):
+    pinned = cfg.get("expert") or {}
+    fp = pinned.get("fingerprint") or key_fingerprint(pinned.get("pem", "")) or "?"
+    return (f"signed by the owner's passkey (key {str(fp)[:9]}), for this device, "
+            f"nonce {str(payload.get('nonce'))[:6]}")
+
+
+def _audit(line):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {_audit_clean(line, 900)}"  # the complete entry, for both sinks
+    print(line, flush=True)
+    try:
+        _audit_append(line)
+    except (OSError, SystemExit):  # the helper log above still has it; never stop the helper over this file
+        pass
+
+
+def _audit_append(line):
+    """Append to the owner-only audit file (folder 0700, file 0600, never through a link), kept within AUDIT_MAX."""
+    d = _own_dir(APP_DIR)
+    os.chmod(d, 0o700)
+    path = os.path.join(d, AUDIT_FILE)
+    data = (line + "\n").encode()
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+b") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError("not a regular file of this user")
+        os.fchmod(fd, 0o600)
+        if st.st_size + len(data) <= AUDIT_MAX:
+            f.write(data)
+            return
+        keep = max(AUDIT_MAX // 2 - len(data), 0)  # the newest half, with room for this entry
+        f.seek(max(st.st_size - keep, 0))
+        tail = f.read(keep)
+        if st.st_size > keep:
+            tail = tail.split(b"\n", 1)[-1]  # start at a whole line
+    tfd, tmp = tempfile.mkstemp(dir=d, prefix=".audit-")  # created 0600
+    with os.fdopen(tfd, "wb") as t:
+        t.write(tail + data)
+    os.replace(tmp, path)
+
+
+def audit_show(n=20):
+    """At the device: the last n expert entries (verified, refused, ran, finished)."""
+    try:
+        with open(os.path.join(_own_dir(APP_DIR), AUDIT_FILE), errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    if not lines:
+        print("No expert commands have been verified or refused on this device.")
+    for line in lines[-max(int(n), 1):]:
+        print(line)
+
+
+def _execute(command, shell=False, argv=None, label="Command"):
     """Run it (a shell only for a command the owner signed by itself; read-only ones run without a shell), keep a
     transcript on the device, and return the scrubbed output."""
     import shlex
@@ -1550,11 +2228,7 @@ def _execute(command, shell=False, argv=None):
         out, code = "(stopped after 60 seconds)", None
     except OSError as e:
         out, code = f"couldn't run it ({type(e).__name__})", None
-    try:  # a transcript stays on the device (owner-only folder)
-        with open(os.path.join(_own_dir(APP_DIR), "expert-transcript.log"), "a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} exit={code} $ {command}\n")
-    except OSError:
-        pass
+    _audit(f"{label} finished: exit code {code}" if code is not None else f"{label} finished: didn't finish ({out})")
     text, hidden = scrub(out.replace(_HOME, "~"))
     tail = _tail(text, lines=80, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
     return code == 0, f"Ran it (exit code {code})." if code is not None else "It didn't finish.", tail
@@ -1682,7 +2356,21 @@ def run_job(job, wait=5):
     state = _container_state(name)
     if state is None:
         return False, f"There is no container named {name} here, so nothing was done.", None
-    if state == "running":
+    if params.get("restart") is True:  # the owner approved a restart of a running, unhealthy container: only that
+        if state != "running":
+            return False, f"{name} has stopped since the card was approved ({state or 'gone'}), so nothing was " \
+                          "restarted. Ask Nightlight to start it.", state
+        if _container_health(name) != "unhealthy":
+            return True, f"{name} is healthy again, so nothing needed restarting.", state
+        _run(["docker", "restart", name], timeout=90)
+        time.sleep(wait)
+        state, health = _container_state(name), _container_health(name)
+        if state == "running" and health != "unhealthy":
+            return True, f"Restarted {name}; it was running {wait} seconds later" + (
+                f" and its health check says {health}." if health else "."), state
+        return False, f"Restarted {name}, but it is {state or 'not running'}" + (
+            f" and still {health}." if health else "."), state
+    if state == "running":  # a start was approved: never more than that
         return True, f"{name} was already running; nothing needed doing.", state
     _run(["docker", "start", name], timeout=60)
     time.sleep(wait)
@@ -1896,8 +2584,9 @@ def run(every):
         if _RESTART:  # a signed update was installed and reported: become the new version, same process
             sys.stdout.flush()
             os.execv(sys.executable, [sys.executable, os.path.join(APP_DIR, "nightlight_helper.py"), *sys.argv[1:]])
-        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure
-            time.sleep(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
+        if status == 429:  # too soon after the last report (e.g. right after a restart): not a failure. The work
+            # channel stays open meanwhile, so a check the owner's chat asks for still starts within a second.
+            _wait_and_claim(min(max(_RETRY_AFTER["s"], 1), 30) + 1)
             continue
         wait = every if status == 200 else min(max(wait, every) * 2, 900)
         _wait_and_claim(wait)  # returns early after running a job: the change is then reported right away
@@ -2043,7 +2732,11 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
             _notify(text)
         sys.exit("  " + text)
 
-    status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
+    start = {"name": (name or default_name())[:40], "os": _os_name(), "via": "installer" if browser else "command_line"}
+    machine = machine_fingerprint()
+    if machine:
+        start["machine"] = machine  # lets the owner continue this machine's device if it was on the map before
+    status, body = _post(api + "/helper/pair/start", start)
     if status != 201:
         give_up(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
     code, interval = body["code"], max(int(body.get("interval", 3)), 2)
@@ -2064,7 +2757,8 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
         st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
         if st == 200 and res.get("token"):
             _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
-            print("  Approved. This device is now on your Nightlight map.")
+            print("  Approved. This device continues where it left off on your Nightlight map, history kept."
+                  if res.get("continued") else "  Approved. This device is now on your Nightlight map.")
             if then_install:
                 try:
                     install(manage="app")
@@ -2497,14 +3191,15 @@ def _seen_name(text):
     text = re.sub(r"\s*\((?:[0-9A-Fa-f]{2}[:-]){2,5}[0-9A-Fa-f]{2}\)$", "", " ".join(text.split()))
     text = re.sub(r"(?i)\.local\.?$", "", text)
     if not text or not text.isprintable() or scrub(text)[0] != text \
-            or re.search(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
+            or re.search(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[:_-][0-9A-Fa-f]{2}){2,}(?![0-9A-Za-z])|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
             or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
         return None
     return text[:60].strip() or None
 
 
 def _name_from(mine, text, rank):
-    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2)."""
+    """Keep the best name seen: a Bonjour instance name (0), then a UPnP friendlyName (1), then a host name (2), then
+    a HomeKit bridge's name (3)."""
     name = _seen_name(text)
     if name and rank < mine.get("_rank", 9):
         mine["name"], mine["_rank"] = name, rank
@@ -2524,7 +3219,8 @@ def _identify(budget=IDENTIFY_BUDGET):
                 mine["services"].add(MDNS[kind])
             _keep(mine, _txt_about(kind, txt))
             label = label[0] if label and isinstance(label[0], dict) else {}
-            _name_from(mine, label.get("instance"), 0)
+            # A HomeKit bridge's instance names one of its plugins ("homebridge-dyson…"), not the machine itself.
+            _name_from(mine, label.get("instance"), 3 if kind == "_hap._tcp" else 0)
             _name_from(mine, label.get("host"), 2)
         router, about = _router_about(deadline)
         if about:
@@ -3257,6 +3953,7 @@ def main():
     except (AttributeError, ValueError):
         pass
     p = argparse.ArgumentParser(description="Nightlight helper")
+    p.add_argument("--version", action="version", version=f"Nightlight helper {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enrol")
     e.add_argument("api")
@@ -3276,6 +3973,8 @@ def main():
     sub.add_parser("version")
     ex = sub.add_parser("expert", help="switch expert sessions on (pin your passkey) or off, at this device")
     ex.add_argument("--off", action="store_true")
+    au = sub.add_parser("audit", help="show the last expert commands verified, refused and run on this device")
+    au.add_argument("-n", type=int, default=20)
     sub.add_parser("rollback", help="go back to the version before the last update")
     sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
@@ -3303,6 +4002,8 @@ def main():
         print(VERSION)
     elif a.cmd == "expert":
         expert_setup(a.off)
+    elif a.cmd == "audit":
+        audit_show(a.n)
     elif a.cmd == "rollback":
         rollback()
     elif a.cmd == "settings":

@@ -26,8 +26,8 @@ export default function DemoTools({ devices }: { devices: Device[] }) {
           <button key={i.kind} onClick={() => call("/api/demo/inject", { kind: i.kind, deviceId: i.device },
             `${i.label}: done`)}>{i.label}</button>
         ))}
-        <button onClick={() => call("/api/demo/reset", {}, "The sample home is back to its starting state.")}>
-          Reset the demo</button>
+        <button onClick={() => call("/api/demo/reset", {}, "The sample home is back to a clean start.")}>
+          Reset the sample home</button>
       </div>
       {msg && <p className="small muted">{msg}</p>}
     </div>

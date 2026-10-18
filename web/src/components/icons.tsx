@@ -6,10 +6,10 @@ import {
   AppWindow as PAppWindow, Archive as PArchive, ArrowLeft as PArrowLeft, ArrowRight, ArrowsClockwise, ArrowsLeftRight,
   ArrowCounterClockwise, ArrowDown, ArrowsOutCardinal, CaretDown, MapPin, SlidersHorizontal, Tag, Binoculars as PBinoculars, CaretRight, Check as PCheck, Clock, MinusCircle, StopCircle,
   Broadcast, ChatCircle, CheckCircle, HourglassMedium, WarningCircle, Cloud as PCloud, Cpu as PCpu, Cube as PCube, Database as PDatabase, Desktop, DownloadSimple,
-  Eye as PEye, FilmStrip, Flask, FlowArrow, Folder as PFolder, GameController, GitBranch as PGitBranch, Globe as PGlobe, HardDrive,
-  HardDrives, House as PHouse, Image as PImage, Info as PInfo, Key, Laptop as PLaptop, List, ListBullets,
+  Eye as PEye, FilmStrip, Fingerprint, Flask, GearSix, FlowArrow, Folder as PFolder, GameController, GitBranch as PGitBranch, Globe as PGlobe, HardDrive,
+  HardDrives, House as PHouse, Image as PImage, Info as PInfo, Key, Laptop as PLaptop, List, ListBullets, ListChecks,
   Lock as PLock, MapTrifold, Moon as PMoon, Network as PNetwork, NotePencil, Plus as PPlus, Printer as PPrinter, Pulse,
-  Question, SecurityCamera, Shield as PShield, ShieldCheck as PShieldCheck, ShippingContainer, SidebarSimple, SignOut,
+  Question, SecurityCamera, Shield as PShield, ShieldCheck as PShieldCheck, ShieldWarning, ShippingContainer, SidebarSimple, SignOut,
   Signpost as PSignpost, SpeakerHifi, SquaresFour, Star as PStar, Sun as PSun, TerminalWindow, Trash as PTrash,
   WifiHigh, X as PX,
 } from "@phosphor-icons/react/ssr";
@@ -58,17 +58,21 @@ export const House = line(PHouse);
 export const Info = line(PInfo);
 export const ListView = line(ListBullets);
 export const MapView = line(MapTrifold);
+export const StatusView = line(ListChecks); // the ✓ ! ✗ status board
 export const MoveMap = line(ArrowsOutCardinal);
 export const Memory = line(NotePencil);
 export const Menu = line(List);
 export const Moon = line(PMoon);
 export const Plus = line(PPlus);
 export const HideChat = line(SidebarSimple, true); // the panel on the right
+export const Settings = line(GearSix);
 export const SignOutIcon = line(SignOut);
 export const Star = line(PStar);
 export const Sun = line(PSun);
 export const Trash = line(PTrash);
 export const Trust = line(PShieldCheck);
+export const Passkey = line(Fingerprint); // a card that needs your passkey
+export const Risky = line(ShieldWarning); // a risky card
 
 // How a job went (with a word beside it, never alone)
 export const Done = line(CheckCircle);

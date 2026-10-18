@@ -84,7 +84,7 @@ def test_whitespace_only_answer_is_consistent(client, started):  # R4
     uid, sid = started, new_session(client)
     FakeLlm.behavior = reply(" " * 200, " " * 200)
     live, stored, replay = _texts(uid, sid, str(uuid.uuid4()), client)
-    assert live == stored == replay == agentlib.FALLBACK
+    assert live == stored == replay == turns.NO_ANSWER
 
 
 def _multipart(text_parts, with_tool=False):

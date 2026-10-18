@@ -83,9 +83,10 @@ def test_same_turn_finds_the_same_action(started):
     uid = started
     a = propose(uid, turn="turn_fixed")
     b = propose(uid, turn="turn_fixed")
-    assert a["id"] == b["id"] and len(db.actions(uid).get()) == 1
+    cards = lambda: [s for s in db.actions(uid).get() if not s.to_dict().get("seeded")]  # noqa: E731 (not the sample past)
+    assert a["id"] == b["id"] and len(cards()) == 1
     c = propose(uid, turn="turn_other")  # another turn while the card waits: the same card again
-    assert c["id"] == a["id"] and len(db.actions(uid).get()) == 1
+    assert c["id"] == a["id"] and len(cards()) == 1
 
 
 def _earn_offer(uid):
@@ -177,3 +178,27 @@ def test_asking_for_the_same_fix_again_shows_the_waiting_card(started):
     acts.decide(started, first["id"], "deny")
     fresh = propose(started, turn="turn_c")  # once it's decided, asking again is a new card
     assert fresh["id"] != first["id"]
+
+
+
+def test_a_job_trust_let_run_says_so_in_the_chat_step(client, started):
+    """The moment trust pays off is unmistakable: the step line says the job ran on its own, as allowed."""
+    import asyncio
+
+    from nightlight_api import agent as agentlib, turns
+    from conftest import generation
+    uid = started
+    t = _earn_offer(uid)
+    client.post("/api/trust/rotate_logs/promotion", json={"accept": True, "offerId": t["offer"]["offerId"]})
+    demo.inject(uid, "disk_full", "pi-1")
+    db.session(uid, "sess_test").set({"activeTurn": {"turnId": "turn_auto", "attempt": 1}}, merge=True)
+    ctx = agentlib.TurnContext(uid=uid, session_id="sess_test", turn_id="turn_auto", attempt=1,
+                               generation=generation(uid), ip="1.2.3.4", deep=False)
+    tools = {f.__name__: f for f in agentlib.make_tools(ctx, read_only=False)}
+    resp = asyncio.run(tools["rotate_logs"](tool_context=None, device_id="pi-1"))
+    assert resp["status"] == "done" and "on its own" in resp["ranOnItsOwn"]
+    line, _ = turns._commentary("rotate_logs", resp)
+    assert line.startswith("Handled on its own, as you allowed (Trust): ")
+    # A job that waited for a card never claims it ran on its own.
+    pending = {"status": "done", "actionId": "a1", "plan": "p", "result": "Freed 1 GB."}
+    assert not turns._commentary("rotate_logs", pending)[0].startswith("Handled on its own")

@@ -8,9 +8,7 @@ import type { Device, Discovery, FoundThing } from "@/lib/types";
 const LOOKS = "0.9.21"; // first helper that looks nearby when the app asks
 
 /** The command a strict device needs, run on the device itself (where the installer put the helper). */
-const discoverCmd = (d: Device) => /mac/i.test(d.os ?? "")
-  ? "python3 ~/Library/Application\\ Support/Nightlight/nightlight_helper.py discover"
-  : "python3 ~/.local/share/nightlight/nightlight_helper.py discover";
+const DISCOVER = "nightlight discover";
 
 const names = (xs: string[]) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`;
 
@@ -65,10 +63,11 @@ function LookNearby({ devices, discoveries, onGo, again }: {
             {d && d.manage === "app" && newer(LOOKS, d.helperVersion) && <>{" "}
               <button className="linkish small" onClick={() => onGo({ to: "drawer", deviceId: d.id, tab: "settings" })}>
                 Update</button></>}
-            {d && d.manage !== "app" && <> Or on the device: <code>{discoverCmd(d)}</code></>}
+            {d && d.manage !== "app" && <> Or on the device: <code>{DISCOVER}</code> (if it says &quot;command not
+              found&quot;: <code>~/.local/bin/nightlight discover</code>)</>}
           </p>);
       })}
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }
@@ -123,6 +122,8 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
   return (
     <div className="panel">
       <h3>Found nearby</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>Seen from your own computers. What you put on the map is
+        watched from one of them: Nightlight can see it answers, not what&apos;s inside it.</p>
       {items && found.length === 0 && (
         <p className="small muted" style={{ marginTop: 0 }}>Nothing found yet. One of your devices can look around its
           network for printers, storage and other servers. It sends back what it finds, never addresses, and you choose
@@ -159,7 +160,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
           {showPrivate && <ul>{privates.map((t) => <li key={key(t)}>{what(t)}</li>)}</ul>}
         </div>
       )}
-      {msg && <p className="small" style={{ color: "var(--crit)" }}>{msg}</p>}
+      {msg && <p className="small" style={{ color: "var(--crit-ink)" }}>{msg}</p>}
       {items && <LookNearby devices={devices} discoveries={discoveries} onGo={onGo} again={found.length > 0} />}
     </div>
   );

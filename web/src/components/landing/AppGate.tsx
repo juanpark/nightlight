@@ -4,6 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { firebase } from "@/lib/firebase";
 import Home from "@/components/Home";
+import LiveSession, { LiveStarting } from "@/components/LiveSession";
+import { liveAccount, useLive } from "@/lib/live";
 import { Mascot } from "@/src/components/mascot/Mascot";
 import { display, sans } from "@/src/components/landing/fonts";
 
@@ -30,9 +32,9 @@ function rememberSession(signedIn: boolean) {
 
 // The mascot on patrol while the session comes back. Fades in after a beat so a
 // quick restore shows nothing but the night background.
-function SessionLoader() {
+function SessionLoader({ shown = false }: { shown?: boolean }) {
   return (
-    <div className={`session-loader ${display.variable} ${sans.variable}`} role="status">
+    <div className={`session-loader ${shown ? "shown" : ""} ${display.variable} ${sans.variable}`} role="status">
       <Mascot size={112} mood="working" />
       <p>Checking on your home…</p>
     </div>
@@ -41,6 +43,9 @@ function SessionLoader() {
 
 export function AppGate({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  // On a live demo machine, each visit is its own user whose token names the machine's account (lib/live.ts).
+  const [onLive, setOnLive] = useState<{ uid: string; account: string | null } | null>(null);
+  const live = useLive();
 
   useEffect(() => {
     let stop = () => {};
@@ -63,10 +68,22 @@ export function AppGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return user ? <Home key={user.uid} user={user} /> : (
+  useEffect(() => {
+    if (!user || user.isAnonymous) return;
+    let on = true;
+    liveAccount(user).then((a) => { if (on) setOnLive({ uid: user.uid, account: a }); });
+    return () => { on = false; };
+  }, [user]);
+
+  if (live.starting) return <LiveStarting />;
+  if (!user) return (
     <>
       <SessionLoader />
       <div className="landing-gate">{children}</div>
     </>
-  ); // a new account starts the app afresh
+  );
+  const known = user.isAnonymous ? null : onLive?.uid === user.uid ? onLive.account : undefined;
+  if (known === undefined) return <SessionLoader shown />;
+  // a new account starts the app afresh
+  return <>{known && <LiveSession key={`live-${user.uid}`} />}<Home key={user.uid} user={user} account={known ?? undefined} /></>;
 }

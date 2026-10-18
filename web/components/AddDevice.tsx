@@ -4,7 +4,8 @@ import { Cpu, Computer as Laptop } from "@/src/components/icons";
 import { api, ApiError } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import type { Device } from "@/lib/types";
-import PairApprove from "./PairApprove";
+import { leaveLive } from "@/lib/live";
+import PairApprove, { type PairResult } from "./PairApprove";
 
 export function Copy({ text }: { text: string }) {
   const [done, setDone] = useState(false);
@@ -22,15 +23,15 @@ function setupMessage(owner: string | null, line: string, minutes: number) {
     `${owner ?? "Someone you know"} uses Nightlight to keep an eye on their home devices and is asking you to set it up `
       + "on one of them now. It takes about a minute.",
     "",
-    "1. On that device, open Terminal (or connect to it over SSH).",
-    "2. Paste this line:",
+    "1. On that device, open its command window (Terminal). If you usually reach it from another computer, for example over SSH, that works too.",
+    "2. Paste this line (it installs Nightlight's helper, a small program that reports how the device is doing):",
     "",
     line,
     "",
-    "3. Press Enter. It may ask for the device's password once.",
+    "3. Press Enter. It may ask once for the password you use to log in to that device.",
     "",
     `The line works once and expires in about ${minutes} minute${minutes === 1 ? "" : "s"}. If it has, ask them for a `
-      + "new one. After this nobody needs the terminal again: everything else happens in the Nightlight app.",
+      + "new one. After this nobody needs the command window again: everything else happens in the Nightlight app.",
   ].join("\n");
 }
 
@@ -60,9 +61,14 @@ function SendLine({ line, expiresAt }: { line: string; expiresAt: string }) {
   );
 }
 
-/** "Waiting for your device…" until a real device that wasn't there before shows up on the map. */
-function Waiting({ devices, before }: { devices: Device[]; before: Set<string> }) {
-  const fresh = devices.find((d) => d.realm === "real" && !before.has(d.id));
+/** "Waiting for your device…" until a real device that wasn't there before shows up on the map, or, when a reinstall
+ * continues an earlier device, until that device reports after the approval. */
+function Waiting({ devices, before, continued }: {
+  devices: Device[]; before: Set<string>; continued?: { id: string; since: number };
+}) {
+  // either way: the server can still add it as new if the earlier device went away before the helper picked it up
+  const fresh = devices.find((d) => d.realm === "real" && !before.has(d.id))
+    ?? (continued && devices.find((d) => d.id === continued.id && (d.lastSeen?.getTime() ?? 0) > continued.since));
   return fresh
     ? <p className="live-status ok"><span className="dot ok" /> Connected! {fresh.name} is on your map.</p>
     : <p className="live-status"><span className="dot offline pulse" /> Waiting for your device…</p>;
@@ -81,26 +87,120 @@ function Step({ n, art, children }: { n: number; art: React.ReactNode; children:
   );
 }
 
+/** What a careful person wants to know before pasting a line from the internet. Facts as in the README ("What never
+ * leaves a device", "Real devices"). */
+function Reassure() {
+  return (
+    <div className="promise small">
+      <ul>
+        <li><strong>Watches, changes nothing.</strong> A fix or clean-up happens only after you tap Approve.</li>
+        <li><strong>It opens no way in to your computer.</strong> It only reaches out to Nightlight, so your
+          computer never shows a security pop-up about it.</li>
+        <li><strong>Stays on the machine:</strong> its name and addresses on your network, files, passwords and keys.</li>
+        <li><strong>One line removes it</strong>, or remove it from the app.</li>
+      </ul>
+      <p className="muted">In the first minute: your device&apos;s disk, memory and apps, and <em>Found nearby</em>, the
+        printer, TV and phones it can see on your network, by the names they announce.</p>
+    </div>
+  );
+}
+
+const PKG = "/download/Nightlight.pkg";
+
+/** The Mac installer, behind a plain warning first: it isn't signed by Apple yet, so macOS warns about it. Shown only
+ * when this site actually serves the package. */
+function MacInstaller() {
+  const [served, setServed] = useState(false);
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    fetch(PKG, { method: "HEAD" }).then((r) => setServed(r.ok), () => {});
+  }, []);
+  useEffect(() => {
+    if (!asking) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAsking(false); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [asking]);
+  if (!served) return null;
+  return (
+    <div className="setup-alt">
+      <p className="small">Rather not use Terminal on a Mac?{" "}
+        <button onClick={() => setAsking(true)}>Mac installer</button></p>
+      {asking && (
+        <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) setAsking(false); }}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pkg-title">
+            <h3 id="pkg-title">Before you download</h3>
+            <p>This installer isn&apos;t signed by Apple yet (signing is pending). macOS will warn that it can&apos;t
+              check it for malicious software.</p>
+            <p>To open it: right-click the file → <strong>Open</strong>, or <strong>System Settings → Privacy &amp;
+              Security → Open Anyway</strong>.</p>
+            <p className="small muted">It installs the same helper as the command line.</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setAsking(false)}>Cancel</button>
+              <a className="button primary" href={PKG} download autoFocus onClick={() => setAsking(false)}>Download anyway</a>
+            </div>
+          </div>
+        </div>)}
+    </div>
+  );
+}
+
+/** How to remove the helper, for each way it was installed. */
+function Uninstall({ origin }: { origin: string }) {
+  return (
+    <details className="small" style={{ marginTop: 8 }}>
+      <summary>How to uninstall</summary>
+      <p><strong>Installed with the command line:</strong> on the device, run</p>
+      <Copy text="nightlight uninstall" />
+      <p className="muted">If it says &quot;command not found&quot;, use <code>~/.local/bin/nightlight uninstall</code>,
+        or paste this:</p>
+      <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
+      <p><strong>Installed with the Mac installer:</strong> run <code>nightlight uninstall</code> in Terminal the same
+        way. The installer&apos;s own files need an administrator to remove; if nobody else on this Mac uses
+        Nightlight:</p>
+      <Copy text="sudo rm -rf '/Library/Application Support/Nightlight' && sudo pkgutil --forget com.nightlight.installer" />
+      <p><strong>Easiest:</strong> removing the device in the app (open it on the map → <em>Remove this
+        device…</em>) does the uninstall for you.</p>
+      <p className="muted">Uninstalling on the device keeps its history in Nightlight: it shows as offline until you
+        remove it in the app.</p>
+    </details>
+  );
+}
+
 const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
 
-export default function AddDevice({ anonymous, onSave, devices }: {
-  anonymous: boolean; onSave: () => void; devices: Device[];
+export default function AddDevice({ anonymous, live = false, onSave, devices }: {
+  anonymous: boolean; live?: boolean; onSave: () => void; devices: Device[];
 }) {
   const [os, setOs] = useState<Os | null>(null);
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [before, setBefore] = useState<Set<string> | null>(null);
-  const [paired, setPaired] = useState<{ approved: boolean; name: string } | null>(null);
+  const [paired, setPaired] = useState<(PairResult & { at: number }) | null>(null);
   const [origin, setOrigin] = useState("");
   const [err, setErr] = useState("");
   const [other, setOther] = useState(false);
   useEffect(() => { setOrigin(window.location.origin); }, []);
 
+  if (live) {
+    return (
+      <div className="panel">
+        <h3>Try it on your own computer</h3>
+        <p>This live machine is a shared demo, so devices can&apos;t be added to it. To put your own laptop or
+          Raspberry Pi on a map of your own, leave this machine and sign in with Google (about two minutes).</p>
+        <button className="primary" onClick={() => leaveLive()}>Leave and sign in</button>
+        <Reassure />
+      </div>
+    );
+  }
+
   if (anonymous) {
     return (
       <div className="panel">
-        <h3>Add a real device</h3>
-        <p>Real devices stay linked to your account, so first save this home with Google.</p>
-        <button className="primary" onClick={onSave}>Save with Google</button>
+        <h3>Try it on your own computer</h3>
+        <p>Your laptop or Raspberry Pi on your own map in about two minutes. Real devices belong to an account, so
+          first sign in with Google; this sample home stays.</p>
+        <button className="primary" onClick={onSave}>Sign in with Google</button>
+        <Reassure />
       </div>
     );
   }
@@ -129,11 +229,29 @@ export default function AddDevice({ anonymous, onSave, devices }: {
       <h3>Add one of your devices</h3>
       <p className="small muted" style={{ marginTop: 0 }}>Three steps, about a minute. You&apos;ll see it on your map
         the moment it connects.</p>
+      <Reassure />
+      <p className="small">Nightlight looks after Macs (macOS 10.15+) and Linux computers, including Raspberry Pi.
+        Windows PCs, NAS boxes, routers and printers are watched from one of those: install it on one computer and they
+        show up under <em>Found nearby</em>.</p>
+      <details className="small">
+        <summary className="muted">Which devices?</summary>
+        <ul style={{ margin: "6px 0", paddingLeft: 20 }}>
+          <li><strong>Looked after</strong> (the helper runs on it): disk, memory, apps and services, explained in plain
+            words, fixed only after your tap. Linux with systemd (Raspberry Pi OS, Ubuntu, Debian and most others) and
+            macOS 10.15 or newer.</li>
+          <li><strong>Watched</strong> (seen from a computer with the helper): found on your network, named when it
+            announces a name, checked that it still answers; never changed. Routers, NAS boxes, printers, TVs, cameras,
+            Windows PCs.</li>
+          <li><strong>Watched from the cloud</strong>: checks that a website or online service answers (Watch a
+            website).</li>
+        </ul>
+        <p className="muted" style={{ margin: 0 }}>Windows and NAS boxes are next.</p>
+      </details>
       <div className="setup-pick" role="radiogroup" aria-label="Which kind of device?">
         <button role="radio" aria-checked={mac} className={mac ? "on" : ""} onClick={() => pick("mac")}>
           <Laptop size={22} /> A Mac</button>
         <button role="radio" aria-checked={os === "linux"} className={os === "linux" ? "on" : ""} onClick={() => pick("linux")}>
-          <Cpu size={22} /> Linux or Raspberry Pi</button>
+          <Cpu size={22} /> Linux computer or Raspberry Pi</button>
       </div>
 
       {os && (
@@ -144,20 +262,21 @@ export default function AddDevice({ anonymous, onSave, devices }: {
                 and press Enter. A window with a blinking cursor opens.
               </Step>
             : <Step n={1} art={<Term text="$ _" />}>
-                <strong>Open a terminal on it.</strong> On the device itself, open Terminal from its menu. Or, from
-                another computer, connect to it with SSH as you usually do.
+                <strong>Open its command window (Terminal).</strong> On the device itself, open Terminal from its
+                menu. Or, if you usually reach it from another computer, connect to it as you normally do.
               </Step>}
           <Step n={2} art={<Term text="$ curl …" />}>
             <strong>Paste this line into it.</strong>
             {code ? <><Copy key={code.code} text={line} /><span className="small muted">Your own line: it works once, for 10
-              minutes.</span></>
+              minutes. It installs Nightlight&apos;s helper, a small program that stays on the device and reports how
+              it is doing, and links it to your account.</span></>
               : !err && <p className="small muted">Making your line…</p>}
-            {err && <p className="small" style={{ color: "var(--crit)" }}>{err}{" "}
+            {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}{" "}
               <button className="linkish small" onClick={getCode}>Try again</button></p>}
           </Step>
           <Step n={3} art={<span className="art-keys"><kbd>{mac ? "return" : "Enter"}</kbd></span>}>
-            <strong>Press Enter.</strong> It may ask for {mac ? "this Mac's" : "the device's"} password once. Typing
-            it shows nothing on screen; that&apos;s normal, just type it and press Enter.
+            <strong>Press Enter.</strong> It may ask once for the password you use to log in to {mac ? "this Mac"
+              : "that device"}. Typing it shows nothing on screen; that&apos;s normal, just type it and press Enter.
           </Step>
         </ol>)}
 
@@ -169,29 +288,35 @@ export default function AddDevice({ anonymous, onSave, devices }: {
             <button className="linkish small" onClick={getCode}>Get a new line</button>}
         </>)}
 
+      <MacInstaller />
+      <p className="soon small muted">Coming soon: installers for Linux (.deb) and NAS (Docker). Windows isn&apos;t
+        supported yet.</p>
+
       <button className="linkish small" onClick={() => setOther(!other)}>
         {other ? "Hide" : "Can't paste on that device? Use a code it shows instead"}</button>
       {other && (
         <div style={{ marginTop: 8 }}>
-          <p className="small muted">Run <code>curl -fsSL {origin}/install.sh | sh</code> on the device. It shows a code
+          <p className="small muted">Paste <code>curl -fsSL {origin}/install.sh | sh</code> on the device. It shows a code
             like WXYZ-1234 (and a link you can open on your phone). Type the code here:</p>
           {!paired
-            ? <PairApprove onApprove={snapshot} onDone={setPaired} />
+            ? <PairApprove onApprove={snapshot} onDone={(r) => setPaired({ ...r, at: Date.now() })} />
             : paired.approved
-              ? (before && <Waiting devices={devices} before={before} />)
+              ? (before && <Waiting devices={devices} before={before}
+                  continued={paired.continued ? { id: paired.continued, since: paired.at } : undefined} />)
               : <p className="small">Okay, that device was turned away. Nothing was added.</p>}
         </div>
       )}
 
       <details className="small" style={{ marginTop: 12 }}>
-        <summary>What does the helper do? How do I remove it?</summary>
-        <p>A small helper on your device reports its health (disk, memory, what is running). It never sends passwords,
-          logs, file contents or network addresses, and it changes nothing unless you allow a job on the device itself
-          and then approve it here.</p>
-        <p>To remove it, run this on the device:</p>
-        <Copy text={`curl -fsSL ${origin}/uninstall.sh | sh`} />
-        <p className="soon">Coming later: installers for Mac, Windows and NAS app stores, no terminal needed.</p>
+        <summary>What does the helper do?</summary>
+        <p>The Nightlight helper is a small program that runs on your device and reports its health (disk, memory,
+          what is running). It never sends the device&apos;s name on the network or its network addresses (host name,
+          IP and hardware addresses), files, passwords or keys. Your apps&apos; recent messages (their log lines) are
+          sent only after private details are removed on the device, and you can switch that off per app. It changes
+          nothing unless you allow that kind of job in the device&apos;s Settings and then approve each one here.</p>
+        <p>Pasting the line from another computer you are connected to (over SSH) works just as well.</p>
       </details>
+      <Uninstall origin={origin} />
     </div>
   );
 }

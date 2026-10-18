@@ -2,7 +2,7 @@
 // Nightlight checked or ran, and what came back) and approval cards. Live events and stored messages build the same
 // shape, so a reloaded chat reads like the live one. UX spec 2026-10-17 §4.
 import type { PastMessage, PastStep } from "@/lib/data";
-import type { Device, StreamEvent } from "@/lib/types";
+import type { Device, Metrics, StreamEvent } from "@/lib/types";
 
 export type Mode = "quick" | "investigate";
 export type StepStatus = "running" | "done" | "failed" | "stopped";
@@ -10,7 +10,7 @@ export type StepStatus = "running" | "done" | "failed" | "stopped";
 export type Block =
   | { kind: "text"; text: string }
   | { kind: "step"; name: string; label: string; command?: string; status: StepStatus; summary?: string;
-      details?: string; startedAt: number; ms?: number }
+      details?: string; startedAt: number; ms?: number; callId?: string }
   | { kind: "card"; actionId: string };
 
 export type Turn =
@@ -18,7 +18,8 @@ export type Turn =
   | { kind: "system"; key: string; text: string; icon: "mode" | "stopped" }
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
-      past?: boolean; after?: string[]; ms?: number; stopped?: boolean };
+      past?: boolean; after?: string[]; ms?: number; metrics?: Metrics;
+      startedAt?: number; budget?: number; retryable?: boolean; stopped?: boolean }; // budget: the seconds the server gives this answer
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 
@@ -27,7 +28,7 @@ export const key = () => Math.random().toString(36).slice(2);
 /** What a step is doing, in plain words. */
 export function label(name: string, args: Record<string, unknown> | undefined, devices: Device[]): string {
   const id = (args?.device_id as string) ?? "";
-  const dev = devices.find((d) => d.id === id)?.name ?? "the device";
+  const dev = devices.find((d) => d.id === id)?.name ?? "device"; // read as "the device" in every label
   return ({
     list_fleet: "Looking over your home", get_device: `Checking the ${dev}`,
     get_recent_events: "Reading what happened recently", restart_container: `Preparing a fix for the ${dev}`,
@@ -40,6 +41,11 @@ export function label(name: string, args: Record<string, unknown> | undefined, d
     propose_command: `Preparing a command for the ${dev}`, update_profile: `Updating what I know about the ${dev}`,
     research: `Searching the web: ${(args?.question as string) ?? ""}`,
     link_devices: "Adding a line to your map",
+    rotate_logs: `Preparing a log clean-up for the ${dev}`, backup_world: `Preparing a backup on the ${dev}`,
+    restart_server: `Preparing a restart for the ${dev}`, clear_images: `Preparing a clean-up for the ${dev}`,
+    restart_app: `Preparing a restart for the ${dev}`, update_server: `Preparing an update for the ${dev}`,
+    use_runbook: `Following saved steps for the ${dev}`, read_device_log: `Reading recent log lines on the ${dev}`,
+    save_runbook: `Saving these steps for the ${dev}`,
   } as Record<string, string>)[name] ?? `Working on the ${dev}`;
 }
 
@@ -58,17 +64,21 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
   const last = blocks[blocks.length - 1];
   switch (e.type) {
     case "turn_start":
-      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode };
+      return { ...t, turnId: e.turnId, mode: e.mode ?? t.mode, startedAt: t.startedAt ?? Date.now(),
+        budget: e.budgetSeconds ?? t.budget };
     case "text":
       if (last?.kind === "text") blocks[blocks.length - 1] = { ...last, text: last.text + e.delta };
       else blocks.push({ kind: "text", text: e.delta });
       return { ...t, blocks };
     case "tool_call":
       blocks.push({ kind: "step", name: e.name, label: label(e.name, e.args, devices),
-        command: command(e.name, e.args), status: "running", startedAt: Date.now() });
+        command: command(e.name, e.args), status: "running", startedAt: Date.now(), callId: e.callId });
       return { ...t, blocks };
     case "tool_result": {
-      const i = blocks.findIndex((b) => b.kind === "step" && b.name === e.name && b.status === "running");
+      // a result names the step it answers (two parallel checks of one kind each keep their own); older servers send
+      // no id, so the first running step of that name gets it
+      const i = blocks.findIndex((b) => b.kind === "step" && b.status === "running"
+        && (e.callId && b.callId ? b.callId === e.callId : b.name === e.name));
       if (i < 0) return t;
       const s = blocks[i] as Extract<Block, { kind: "step" }>;
       blocks[i] = { ...s, status: failed(e.ok, e.summary) ? "failed" : "done", summary: e.summary ?? "done",
@@ -79,9 +89,9 @@ export function apply(t: AgentTurn, e: StreamEvent, devices: Device[]): AgentTur
       if (blocks.some((b) => b.kind === "card" && b.actionId === e.actionId)) return t;
       return { ...t, blocks: [...blocks, { kind: "card", actionId: e.actionId }] };
     case "error": // the turn is over: a step still waiting will never answer
-      return { ...stop(t), busy: t.busy, error: e.message || e.code };
+      return { ...stop(t), busy: t.busy, error: e.message || e.code, retryable: !!e.retryable };
     case "done":
-      return { ...t, ms: e.metrics?.latencyMs };
+      return { ...t, ms: e.metrics?.latencyMs, metrics: e.metrics };
     default:
       return t;
   }
@@ -96,8 +106,7 @@ export function stop(t: AgentTurn): AgentTurn {
 function pastStep(s: PastStep, devices: Device[]): Block {
   return { kind: "step", name: s.name, label: label(s.name, s.args, devices), command: command(s.name, s.args),
     status: s.unfinished ? "stopped" : failed(s.ok, s.summary) ? "failed" : "done", summary: s.summary,
-    details: s.details, startedAt: 0,
-    ms: s.ms };
+    details: s.details, startedAt: 0, ms: s.ms, callId: s.callId };
 }
 
 /** Stored messages as turns. Steps go back where they happened in the text when the message says where (offsets
@@ -114,7 +123,9 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       if (m.text.slice(at, cut).trim()) blocks.push({ kind: "text", text: m.text.slice(at, cut) });
       at = cut;
       blocks.push(pastStep(s, devices));
-      if (s.actionId) blocks.push({ kind: "card", actionId: s.actionId });
+      // two steps can be answered by one card: it stays where it first appeared
+      if (s.actionId && !blocks.some((b) => b.kind === "card" && b.actionId === s.actionId))
+        blocks.push({ kind: "card", actionId: s.actionId });
     }
     if (m.text.slice(at).trim()) blocks.push({ kind: "text", text: m.text.slice(at) });
     for (const id of m.actionIds ?? []) {
@@ -125,7 +136,7 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
     const after = prev?.kind === "agent"
       ? prev.blocks.flatMap((b) => b.kind === "card" ? [b.actionId] : []) : undefined;
     out.push({ kind: "agent", key: m.id, mode: m.mode ?? "quick", blocks, busy: false, past: true,
-      error: m.error?.message, after });
+      error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
 }

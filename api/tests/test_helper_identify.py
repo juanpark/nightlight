@@ -400,3 +400,36 @@ def test_an_iphone_is_named_by_its_host_and_an_airplay_door_is_seen(helper, monk
     assert (tv["services"], tv["guess"]) == (["AirPlay receiver"], "Speaker or TV")
     text = json.dumps(sent)
     assert "62:d5" not in text and "fe80" not in text and "BB4CF939" not in text and "192.168" not in text
+
+
+def test_a_homekit_bridge_name_never_beats_the_machines_own_name(helper, monkeypatch):
+    # The Mac mini runs Homebridge: its plugins announce themselves at the Mac's address. The Mac's own name wins.
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY,
+                         "deviceNames": True})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.29": "4c:20:b8:eb:3f:30"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.29": [445]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [
+        ("192.168.1.29", "_hap._tcp", {"md": "homebridge"}, {"instance": "homebridge-dyson-pure-cool EB88",
+                                                             "host": "0E_B9_20_9B_31_B7.local"}),
+        ("192.168.1.29", "_companion-link._tcp", {}, {"instance": "mini", "host": "mini.local"})])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: (None, {}))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    assert [i.get("name") for i in sent[0]["items"]] == ["mini"]
+
+
+def test_a_homekit_host_shaped_like_a_hardware_address_never_leaves(helper, monkeypatch):  # Codex depth #1
+    helper._save_config({"api": "https://api.example.com", "token": "t" * 43, "deviceId": "d", "netKey": KEY,
+                         "deviceNames": True})
+    monkeypatch.setattr(helper, "_neighbours", lambda: {"192.168.1.30": "4c:20:b8:eb:3f:31"})
+    monkeypatch.setattr(helper, "_open_ports", lambda ips: {"192.168.1.30": [80]})
+    monkeypatch.setattr(helper, "_mdns_records", lambda seconds=None: [
+        ("192.168.1.30", "_hap._tcp", {"md": "homebridge"}, {"instance": "Homebridge climate bridge",
+                                                             "host": "0E_B9_20_9B_31_B7.local"})])
+    monkeypatch.setattr(helper, "_router_about", lambda deadline: (None, {}))
+    sent = []
+    monkeypatch.setattr(helper, "_post", lambda url, body, headers=None: sent.append(body) or (200, {"ok": True}))
+    helper.discover(yes=True, quiet=True)
+    assert [i.get("name") for i in sent[0]["items"]] == ["Homebridge climate bridge"]
+    assert "0E_B9" not in json.dumps(sent)

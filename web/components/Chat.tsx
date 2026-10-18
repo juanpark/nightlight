@@ -3,9 +3,11 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Mascot } from "@/src/components/mascot/Mascot";
 import { Stopped, Switched, ToLatest } from "@/src/components/icons";
 import { loadMessages } from "@/lib/data";
-import { chatSession, newChat, savedSession } from "@/lib/session";
-import { ApiError, stream } from "@/lib/api";
-import { followBegin, followEnd, followReset, followStep, followText } from "@/lib/follow";
+import { chatSession, newChat, openSession, pickSession } from "@/lib/session";
+import Conversations from "./chat/Conversations";
+import { api, ApiError, stream } from "@/lib/api";
+import { followBegin, followCard, followEnd, followReset, followResult, followStep, followText } from "@/lib/follow";
+import ContextStrip from "./chat/ContextStrip";
 import type { Action, Device, Status, StreamEvent } from "@/lib/types";
 import { apply, fromHistory, key, stop, type AgentTurn, type Mode, type Turn } from "./chat/model";
 import TurnView, { JobLine } from "./chat/TurnView";
@@ -37,11 +39,47 @@ function suggestions(devices: Device[]): string[] {
     own.length > 1 ? "Which device needs attention first?" : `What runs on my ${worst.name}?`];
 }
 
+/** Sample home only: trouble a visitor can cause, so the incident is one they made, not one prepared for them. */
+const BREAK = [
+  { kind: "disk_full", device: "pi-1", label: "Make the Pi's disk fill up", ask: "Is anything wrong at home?" },
+  { kind: "server_lagging", device: "game-1", label: "Make Minecraft lag", ask: "My kids say Minecraft is laggy tonight. Can you help?" },
+  { kind: "backup_overdue", device: "game-1", label: "Let the world backup fall behind", ask: "When was the Minecraft world last backed up?" },
+];
+
+function BreakSomething({ devices, disabled, onAsk }: { devices: Device[]; disabled: boolean; onAsk: (q: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ text: string; ask?: string } | null>(null);
+  const can = BREAK.filter((b) => devices.some((d) => d.id === b.device && d.realm !== "real"));
+  if (!can.length) return null;
+  async function run(b: (typeof BREAK)[number]) {
+    setBusy(true); setNote(null);
+    try {
+      await api("POST", "/api/demo/inject", { kind: b.kind, deviceId: b.device });
+      setNote({ text: "Done. Now ask Nightlight:", ask: b.ask });
+    } catch (e) {
+      setNote(e instanceof ApiError && e.status === 422
+        ? { text: "That doesn't apply here right now. Use Reset the sample home in Demo tools and try again.", ask: b.ask }
+        : e instanceof ApiError && e.status === 409 ? { text: "The demo is resetting. Try again in a moment." }
+          : { text: "Couldn't do that. Try again." });
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="chat-break">
+      <span className="small muted">Or break something first:</span>
+      <div className="chat-break-row">
+        {can.map((b) => <button key={b.kind} className="small" disabled={busy || disabled} onClick={() => run(b)}>
+          {b.label}</button>)}
+      </div>
+      {note && <p className="small muted" role="status">{note.text}{note.ask && <>{" "}
+        <button className="linkish small" disabled={disabled} onClick={() => onAsk(note.ask!)}>{note.ask}</button></>}</p>}
+    </div>
+  );
+}
 
 const MODES: { id: Mode; name: string; hint: string }[] = [
-  { id: "quick", name: "Quick", hint: "Fast answers from what Nightlight already knows" }, // shown for Investigate only
+  { id: "quick", name: "Quick answers", hint: "Fast answers from what Nightlight already knows" }, // hint shown for Investigate only
   { id: "investigate", name: "Investigate deeply",
-    hint: "Works like an administrator: hypotheses, checks, commands. Slower, a few cents" },
+    hint: "Digs in step by step like an IT expert would, then explains the likely cause. Slower, a few cents" },
 ];
 
 function savedMode(): Mode {
@@ -51,8 +89,9 @@ function savedMode(): Mode {
 const Chat = forwardRef<ChatHandle, {
   uid: string; actions: Action[]; devices: Device[]; disabled: boolean; generation?: number;
   onBusy?: (busy: boolean) => void; // so the header's mascot can watch the answer being written
+  onShowMap?: () => void; // the context strip's device was tapped: bring the map into view
 }>(
-  function Chat({ uid, actions, devices, disabled, generation, onBusy }, ref) {
+  function Chat({ uid, actions, devices, disabled, generation, onBusy, onShowMap }, ref) {
     const [turns, setTurns] = useState<Turn[]>([]);
     const [text, setText] = useState("");
     const [mode, setMode] = useState<Mode>("quick");
@@ -105,7 +144,11 @@ const Chat = forwardRef<ChatHandle, {
     // Answers belong to this account and home: a new one (or leaving) makes the map forget what older answers lit.
     const life = useRef(0); // which account-and-home this chat is for; work begun for an earlier one is dropped
     useEffect(() => { life.current++; followReset(); return () => { life.current++; followReset(); }; }, [uid, generation]);
-    // The saved conversation comes back when the chat opens (kept 30 days); a reset (new generation) starts clean.
+    // The open conversation comes back when the chat opens (kept 30 days): this browser's, else the account's latest.
+    // A reset (new generation) starts clean.
+    const [pick, setPick] = useState(0); // bumped to load another conversation
+    const [open, setOpen] = useState<string | null>(null);
+    const chosen = useRef<string | null | undefined>(undefined); // picked in Conversations (null: New chat) for the next load
     useEffect(() => {
       setTurns([]);
       saved.current.clear();
@@ -119,15 +162,25 @@ const Chat = forwardRef<ChatHandle, {
         queued.current = [];
         for (const q of waiting) followUpRef.current(q.turnId, q.retries);
       };
-      const sid = savedSession(uid, generation);
-      if (!sid) { ready(); return () => { cancelled = true; }; }
-      loadMessages(uid, sid).then((msgs) => {
+      setOpen(null);
+      const picked = chosen.current;
+      chosen.current = undefined;
+      (picked !== undefined ? Promise.resolve(picked) : openSession(uid, generation)).then((sid) => {
+        if (cancelled) return [];
+        setOpen(sid);
+        return sid ? loadMessages(uid, sid) : [];
+      }).then((msgs) => {
         if (cancelled) return;
         for (const m of msgs) if (m.turnId) saved.current.add(m.turnId);
         if (msgs.length) setTurns((cur) => [...fromHistory(msgs, devicesRef.current), ...cur]);
       }).catch(() => {}).finally(ready);
       return () => { cancelled = true; };
-    }, [uid, generation]);
+    }, [uid, generation, pick]);
+    const switchTo = (sid: string | null) => {
+      if (sid) pickSession(uid, generation, sid); else newChat(uid, generation);
+      chosen.current = sid;
+      setPick((n) => n + 1);
+    };
 
     const update = (k: string, fn: (t: AgentTurn) => AgentTurn) =>
       setTurns((cur) => cur.map((t) => t.kind === "agent" && t.key === k ? fn(t) : t));
@@ -139,7 +192,9 @@ const Chat = forwardRef<ChatHandle, {
       setTurns((cur) => [...cur, { kind: "agent", key: k, mode: turnMode, blocks: [], busy: true, after }]);
       const followed = followBegin(); // the map lights up what this answer's steps touch
       const onEvent = (e: StreamEvent) => {
-        if (e.type === "tool_call") followStep(followed, e.args);
+        if (e.type === "tool_call") followStep(followed, e.args, e.name, e.callId);
+        else if (e.type === "tool_result") followResult(followed, e.name, e.callId, e.ok !== false, e.summary);
+        else if (e.type === "approval_request") followCard(followed);
         else if (e.type === "text") followText(followed, e.delta);
         // A device that answers later promises a follow-up turn: open it once its action points to it.
         if (e.type === "followup_pending") { pending.current.add(e.turnId); setPendingTick((n) => n + 1); }
@@ -192,6 +247,7 @@ const Chat = forwardRef<ChatHandle, {
       let sid: string;
       try {
         sid = await chatSession(uid, generation);
+        setOpen(sid);
       } catch {
         setTurns((cur) => [...cur, { kind: "agent", key: key(), mode, blocks: [], busy: false,
           error: "Couldn't start the chat. Please try again." }]);
@@ -241,8 +297,16 @@ const Chat = forwardRef<ChatHandle, {
       }
     }
 
+    /** Asking again the question an answer was for (the nearest question above it), when there is one. */
+    const retry = (i: number) => {
+      const q = turns.slice(0, i).reverse().find((t) => t.kind === "user");
+      return q?.kind === "user" ? () => ask(q.text) : undefined;
+    };
+
     return (
       <>
+        <Conversations uid={uid} generation={generation} open={open} disabled={busy} onPick={switchTo} />
+        <ContextStrip devices={devices} onShow={onShowMap} />
         <div className="chat-log" ref={log} onScroll={(e) => {
           const el = e.currentTarget;
           nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -256,14 +320,13 @@ const Chat = forwardRef<ChatHandle, {
                 before it changes anything.</p>
               {suggestions(devices).map((s) => (
                 <button key={s} className="chat-starter" disabled={busy || disabled} onClick={() => ask(s)}>{s}</button>))}
+              <BreakSomething devices={devices} disabled={busy || disabled} onAsk={ask} />
             </div>
           )}
           {turns.some((t) => "past" in t && t.past) && (
-            <div className="chat-past-note small muted">Earlier in this chat (kept 30 days) ·{" "}
-              <button className="linkish" disabled={busy} onClick={() => { newChat(uid, generation); setTurns([]); }}>
-                Start a new chat</button></div>
+            <div className="chat-past-note small muted">Earlier in this chat (kept 30 days)</div>
           )}
-          {turns.map((t) => {
+          {turns.map((t, i) => {
             if (t.kind === "user") return <div key={t.key} className={`bubble user ${t.past ? "past" : ""}`}>{t.text}</div>;
             if (t.kind === "system") return <div key={t.key} className={`chat-system ${t.icon}`}>
               {t.icon === "stopped" ? <Stopped size={14} aria-hidden /> : <Switched size={14} aria-hidden />} {t.text}</div>;
@@ -271,7 +334,8 @@ const Chat = forwardRef<ChatHandle, {
               <div key={t.key} className="turn-wrap">
                 <JobLine ids={t.after} turnId={t.turnId} actions={actions} />
                 <TurnView turn={t} actions={actions} devices={devices} onFollowUp={followUp}
-                  latest={t.key === latest} health={health} />
+                  latest={t.key === latest} health={health}
+                  onRetry={i === turns.length - 1 && !busy ? retry(i) : undefined} />
               </div>
             );
           })}
@@ -284,7 +348,7 @@ const Chat = forwardRef<ChatHandle, {
           ))}
           {mode === "investigate" && <span className="mode-hint small muted">{MODES[1].hint}</span>}
         </div>
-        <form className="chat-input" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
+        <form className="chat-input" data-tour="chat" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
           <textarea ref={box} rows={1} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Nightlight…"
             maxLength={1000} disabled={disabled} aria-label="Ask Nightlight" enterKeyHint="send"
             onKeyDown={(e) => {

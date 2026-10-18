@@ -16,10 +16,11 @@ add_device:
 found_nearby:
   title: Find other devices nearby (and the lines on the map)
   text: |
-    Under "Found nearby", choose "Look for devices nearby": one of your devices on each network (managed from the
-    app, helper 0.9.21 or newer) looks around and lists what answers, each thing once, with a guess at what each thing is, its maker, model, the
+    Under "Found nearby", choose "Look for devices nearby": one of your devices on each network (one whose
+    permissions are changed from the app, with an up-to-date helper) looks around and lists what answers, each thing once, with a guess at what each thing is, its maker, model, the
     name it announces (unless you turned names off in Settings) and services. No address leaves the device. Add what you want to watch; adding your router lets the map draw "connected through"
-    lines to it. A device set to strict only looks when someone runs `nightlight discover` on it.
+    lines to it. A device whose permissions are set only on the device itself (strict) looks only when someone runs
+    `nightlight discover` on it (or `~/.local/bin/nightlight discover` if the shell says "command not found").
     Lines between your devices are drawn three ways: by you (drag from one device to another), by me when you tell
     me how two devices relate, and automatically from what the helpers see (Time Machine, shared folders, services
     in use, the router), matched by fingerprints so no address is ever sent.
@@ -32,8 +33,10 @@ remove_device:
     files and its key) and the device leaves the map. If it isn't reporting, its access is cut at once and the helper
     stops by itself when it next wakes up; to clean the files off it, run this on the device:
     curl -fsSL {web}/uninstall.sh | sh
-    A removed device's history, notes and activity are kept (archived) for 30 days, then deleted; "Forget for good"
-    deletes them at once. Adding the same machine again later makes it a new device.
+    A removed device's history, notes and activity are kept (archived) for 30 days, then deleted for good; the app
+    has no button to delete them sooner. Within those 30 days, installing the helper on the same machine again and
+    choosing "Continue its history" when you approve it brings the device back with its history; otherwise (or after
+    the 30 days) it joins as a new device.
 
 uninstall_by_hand:
   title: Uninstall the helper by hand
@@ -56,14 +59,21 @@ what_the_helper_does:
   text: |
     It reports health every minute (disk, memory, processor, containers, failed services, updates waiting) and runs
     only a fixed list of jobs: read-only checks (why something stopped, disk use, busiest programs, network, updates),
-    restarting a stopped container or system service, and safe clean-ups (empty the Trash, clear caches that rebuild
-    themselves, remove Docker's leftover images), installing signed helper updates and removing itself. Restarts,
+    restarting a stopped app (container) or background service, and safe clean-ups (empty the Trash, clear caches
+    that rebuild themselves, remove leftover app downloads), installing signed helper updates and removing itself. Restarts,
     clean-ups and removal need your approval (a card or your confirmation in the app); updates install when you tap
     Update, or by themselves if you switched that on. It can't run any other command, open a remote shell, or move
-    your files; it reads file contents only for recent log lines of apps you allowed. The cloud sends job names,
-    never commands, and the device checks every job against what its owner allowed. Approval cards protect against
+    your files; it reads file contents only for recent log lines of apps you allowed. The one exception is expert
+    sessions, which are off unless you set them up on that device: then a command that changes something runs only
+    if you signed that exact command with your passkey, and read-only commands run during an investigation you
+    approved with one passkey tap (15 minutes, no further taps; the device itself refuses anything that isn't
+    read-only). Apart from those passkey-signed requests, the cloud sends job names, never commands, and the device
+    checks every job against what its owner allowed. Approval cards protect against
     mistakes; the real limit is what the device itself allows, which a hacked account or server can't widen beyond
     what the device's owner delegated.
+    The helper runs on Macs and Linux machines (a Raspberry Pi, a Linux server or NAS). Windows isn't supported yet;
+    Nightlight can still watch whether a Windows PC answers on the network (Found nearby), and phones, routers,
+    printers and cameras can only be watched that way too.
 
 ssh_and_remote_access:
   title: Remote access (SSH, screen sharing)
@@ -89,9 +99,10 @@ silent_device:
 permissions:
   title: What Nightlight may do on a device
   text: |
-    Each device chose once, at install: "managed from the app" (switches under the device in the app: check why
-    something stopped and look around, read recent log lines, clean up space, restart specific apps, install signed
-    updates) or "strict" (only what was allowed on the device itself; change it there with `nightlight settings`).
+    Each device chose once, at install, where its permissions are changed: from the app (switches in the device's
+    Settings tab: check why something stopped and look around, read recent log lines, clean up space, restart
+    specific apps, install signed updates) or only on the device itself, also called strict (only what was allowed
+    there; change it there with `nightlight settings`).
     Restarts and clean-ups always ask you with a card, in both modes.
 
 mac_privacy:
@@ -99,7 +110,7 @@ mac_privacy:
   text: |
     macOS protects Downloads, Desktop, Documents, Movies and the Trash with a prompt. Nightlight never reads them from
     the background unless you allowed it, so no dialog pops up on a Mac nobody is watching. Installing asks once
-    (helper 0.9.19 or newer): say yes and click Allow when macOS asks, and the helper measures their sizes (and can
+    (with an up-to-date helper): say yes and click Allow when macOS asks, and the helper measures their sizes (and can
     empty the Trash after your OK) from then on. Changing your mind later is the only time it needs the Mac's
     terminal again: `nightlight settings`.
 
@@ -131,51 +142,64 @@ memories:
 checkups_and_cleanups:
   title: Checkups and clean-ups
   text: |
-    A checkup is a playbook: an expert's steps for a common problem (disk filling up, running slowly, internet
+    A checkup is a fixed list of steps an expert would follow for a common problem (disk filling up, running slowly, internet
     problems, updates waiting) that run the same way every time without AI: it measures, recognises the usual causes
     and puts up a card for each safe clean-up the device allows. Open a device and use "Checkups", or ask in the chat.
 
 approvals_and_trust:
   title: Approval cards and trust
   text: |
-    Restarts, clean-ups and removals on a real device come as a card (what it will do, what it touches, whether it
-    can be undone) and run only after you approve. Helper updates run when you tap Update, or by themselves if you
-    allowed that. On the sample home, kinds of jobs you approve often can be allowed to run on their own.
+    Restarts, clean-ups and removals on a real device come as a card (what it will do, what it affects, whether it
+    can be undone, and the exact command where there is one) and run only after you approve. Helper updates run when
+    you tap Update, or by themselves if you allowed that. Earning trust step by step works only on the sample home
+    for now: there, after the same safe, routine kind of job (cleaning up logs, removing leftover app downloads,
+    backing up the game world) has gone well three times, Nightlight offers to do that kind on its own and tell you
+    afterwards. Restarts and updates never get that offer; they always ask. The Trust panel shows each kind's step
+    and can move it back, and a failure moves it back a step by itself (unless that level was pinned, which only
+    the API can do, not the app). On your own devices,
+    every restart and clean-up asks you each time. Jobs that can't be undone always ask.
 
 sample_home:
   title: The sample home
   text: |
     A simulated home (a Raspberry Pi, a NAS, a game server...) to try Nightlight without installing anything. Show or
-    hide it from the menu; "Reset" starts it over. Real devices you add are never touched by a reset.
+    hide it from the menu; "Reset the sample home" (under More, Demo tools) starts it over. Real devices you add are never touched by a reset.
 
 expert_sessions:
   title: Expert sessions (real commands, signed with your passkey)
   text: |
     For problems the usual checks don't cover, Nightlight can investigate with real commands, like a system
-    administrator. Set it up once: open the device in the app, "Expert sessions" > "Create my passkey" (Face ID, Touch
-    ID or your phone), then on the device run `nightlight expert` (or `~/.local/bin/nightlight expert` if the shell
-    says "command not found") and confirm it shows the same code. After that:
-    read-only commands (logs, disk use, running programs, network) need one passkey tap per 15 minutes; any command
-    that changes something comes as a card you sign with your passkey. The device checks your signature itself and
-    refuses anything unsigned, expired, meant for another device, or (in an investigation) anything that could change
-    something or read where secrets are kept. `nightlight expert --off` on the device turns it off.
+    administrator. A passkey is a key that lives on your phone or computer and is unlocked by your face, fingerprint
+    or PIN; Nightlight keeps only its public half, and the device checks your signature itself, so even Nightlight's
+    own servers can't run a command without you. Set it up once, signed in with Google at Nightlight's own address
+    (not the demo): open the device in the app, then its Settings tab, "Expert sessions" > "Create my passkey" (Face
+    ID, Touch ID, Windows Hello, a phone by QR code, or a security key), then on the device run `nightlight expert`
+    (or `~/.local/bin/nightlight expert` if the shell says "command not found") and confirm it shows the same code.
+    Each device is switched on this way, one by one; without it a device keeps working with the fixed checks and
+    fixes. After that: read-only commands (logs, disk use, running programs, network) need one passkey tap per 15
+    minutes; any command that changes something comes as a card you sign with your passkey. A card is valid for 15
+    minutes, then expires; ask again for a fresh one. The device refuses anything unsigned, expired, meant for
+    another device, or (in an investigation) anything that could change something or read where secrets are kept.
+    There is no fallback by email or SMS code, on purpose. `nightlight expert --off` on the device turns it off
+    there; the app has no button yet to remove the passkey itself. Full guide: docs/PASSKEYS.md in the repository.
 
 investigate_mode:
   title: Investigate deeply
   text: |
-    Tick "Investigate deeply" under the chat to let a stronger model dig in step by step: it forms hypotheses, runs
-    checks (and read-only commands, if expert sessions are on), reads the results and tries again, then tells you what
-    it checked, what it found, the likely cause and what to do. It is slower (up to a few minutes) and costs a few cents.
+    Choose "Investigate deeply" (the switch under the chat) to let Nightlight dig in step by step: it forms
+    hypotheses, runs its standard checks, reads the results and tries again, then tells you what it checked, what it
+    found, the likely cause and what to do. It runs its own read-only commands only on a device where you set up
+    expert sessions, and each 15 minutes of that needs your passkey; otherwise it uses the standard checks only. It is slower (up to a few minutes) and costs a few cents.
 
 device_knowledge:
-  title: What Nightlight keeps per device (notes, runbooks, job log)
+  title: What Nightlight keeps per device (notes, fixes that worked here, job log)
   text: |
     Each device has its own folder, like an administrator keeps for a machine. The profile ("About this device") says
     what it is and how it is set up. The notebook holds short dated notes from you and from Nightlight, for the device
-    as a whole or for one service on it (the Minecraft server, a container). Runbooks are fixes that worked there
-    before, kept as steps ("Clear old Docker images"): Nightlight saves one after a fix worked and offers it the next
-    time the same problem shows up. A runbook never runs by itself: using it puts its steps up as cards you approve
+    as a whole or for one service on it (the Minecraft server, an app). "Fixes that worked here" (saved fixes) are
+    kept as steps ("Clear old app downloads"): Nightlight saves one after a fix worked and offers it the next
+    time the same problem shows up. A saved fix never runs by itself: using it puts its steps up as cards you approve
     (an expert command still needs your passkey). The log lists every job that ran on the device, newest first: what
     it was, who started it, whether it worked and what it reported. Nightlight reads all of this before it looks into
-    a device. Runbooks can be renamed or deleted and notes deleted from the device's page; passwords, keys and
+    a device. Saved fixes can be renamed or deleted and notes deleted from the device's Knowledge tab; passwords, keys and
     addresses are never kept.

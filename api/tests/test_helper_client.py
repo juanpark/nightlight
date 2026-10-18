@@ -350,13 +350,34 @@ def test_look_into_needs_local_permission_and_reads_only(helper, monkeypatch):
     assert helper.look_into("grafana")[0] is False and calls == []  # not allowed: nothing runs
     helper.set_allowed("diagnose", "grafana", True)
     ok, summary, out = helper.look_into("grafana")
-    assert ok and "out of memory" in summary and "last log lines" not in out  # logs need their own permission
+    assert ok and "out of memory" in summary and "line" not in out.split("last log lines:")[1].split("(")[0]
+    assert "last log lines: not read" in out  # logs need their own permission, and the result says so
     helper.set_allowed("logs", "grafana", True)
     ok, summary, out = helper.look_into("grafana")
-    assert "last log lines" in out and "x1" not in out
+    assert "last log lines:\n" in out and "not read" not in out and "x1" not in out
     assert all(c[0] == "docker" and c[1] in ("inspect", "logs") for c in calls)  # read-only commands only
     job = {"id": "act_" + "b" * 26, "type": "diagnose", "params": {"target": "grafana; rm -rf /"}}
     assert helper.run_job(job)[0] is False
+
+
+def test_look_into_says_when_a_running_container_fails_its_health_check(helper, monkeypatch):
+    state = {"Status": "running", "ExitCode": 0, "StartedAt": "x", "FinishedAt": "y",
+             "Health": {"Status": "unhealthy", "FailingStreak": 4,
+                        "Log": [{"Output": "curl: (7) Failed to connect\npassword=hunter2"}]}}
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: json.dumps(state) + " 0\n")
+    monkeypatch.setattr(helper.shutil, "which", lambda n: "/bin/" + n)
+    monkeypatch.setattr(helper, "_run_both", lambda cmd, timeout=15: "")
+    helper.set_allowed("diagnose", "grafana", True)
+    ok, summary, out = helper.look_into("grafana")
+    assert ok and summary == "grafana is running, but failing its health check"
+    assert "exit code: 0 (is running, but failing its health check)" in out
+    assert "health check: unhealthy, failed 4 times in a row" in out
+    assert "Failed to connect" not in out  # what the check printed is log text: it needs the logs permission
+    helper.set_allowed("logs", "grafana", True)
+    out = helper.look_into("grafana")[2]
+    assert "last health check said: curl: (7) Failed to connect" in out and "hunter2" not in out
+    del state["Health"]
+    assert helper.look_into("grafana")[1] == "grafana is running"  # no health check: as before
 
 
 def test_a_logs_permission_never_starts_a_container(helper, monkeypatch):  # review 10 #1
@@ -622,7 +643,8 @@ def test_a_too_soon_report_waits_the_asked_gap_not_a_backoff(helper, monkeypatch
     monkeypatch.setattr(helper, "_wait_and_claim", waits.append)
     with pytest.raises(KeyboardInterrupt):
         helper.run(60)
-    assert sleeps == [21] and waits == [60]  # retried after the server's gap, then back to the normal minute
+    # Retried after the server's gap, with the work channel open meanwhile (never a blind sleep), then the minute.
+    assert sleeps == [] and waits == [21, 60]
 
 
 def test_after_running_a_job_the_helper_reports_at_once(helper, monkeypatch):
@@ -812,3 +834,33 @@ def test_the_app_can_raise_the_mac_folder_prompts_while_the_owner_is_there(helpe
     ok, words, _ = helper.run_job({"type": "mac_folders", "params": {}})
     assert ok and "click Allow" in words and helper._load()["macPrivateFolders"] is True
     assert order and all(seen is True for seen in order)  # recorded before any folder was opened
+
+
+def test_a_running_container_that_fails_its_health_check_is_restarted(helper, monkeypatch):
+    calls, health = [], iter(["unhealthy", "healthy"])
+
+    def fake_run(cmd, timeout=20):
+        calls.append(cmd)
+        if cmd[:2] == ["docker", "inspect"]:
+            return next(health) if "Health" in cmd[3] else "running"
+        return ""
+    monkeypatch.setattr(helper, "_run", fake_run)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    helper.set_allowed("restart_container", "photos", True)
+    start = {"id": "act_" + "a" * 26, "type": "restart_container", "params": {"container": "photos"}}
+    ok, summary, _ = helper.run_job(start, wait=0)  # a start was approved: a running container is left alone
+    assert ok and "already running" in summary and not any(c[:2] == ["docker", "restart"] for c in calls)
+    health = iter(["unhealthy", "healthy"])
+    ok, summary, st = helper.run_job({**start, "id": "act_" + "b" * 26, "params": {"container": "photos",
+                                                                                 "restart": True}}, wait=0)
+    assert ok and st == "running" and ["docker", "restart", "photos"] in calls and "healthy" in summary
+    assert ["docker", "start", "photos"] not in calls
+
+
+def test_an_approved_restart_of_a_container_that_has_since_stopped_reports_failure(helper, monkeypatch):
+    monkeypatch.setattr(helper, "_run", lambda cmd, timeout=20: "exited" if cmd[:2] == ["docker", "inspect"] else "")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/" + name)
+    helper.set_allowed("restart_container", "photos", True)
+    ok, summary, st = helper.run_job({"id": "act_" + "c" * 26, "type": "restart_container",
+                                      "params": {"container": "photos", "restart": True}}, wait=0)
+    assert not ok and st == "exited" and "stopped" in summary

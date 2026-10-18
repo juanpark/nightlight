@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { challengeFor, passkeyProblem, passkeysSupported, signWithPasskey, useAppHost } from "@/lib/passkey";
 import { useNow } from "@/lib/data";
 import type { Action, Device } from "@/lib/types";
-import { ArrowText, Caret, Declined, Done, NotDone, OutOfDate, type IconType } from "@/src/components/icons";
+import { ArrowText, Caret, Declined, Done, NotDone, OutOfDate, Passkey, Risky, type IconType } from "@/src/components/icons";
 
 const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky", read: "Read-only" } as const;
 const SIGNED = new Set(["expert_command", "expert_grant"]); // approved only with the owner's passkey
@@ -103,24 +103,35 @@ export default function ApprovalCard({ action, device, onFollowUp, fold }: {
   const payload = (action.params as { payload?: { command?: string; mode?: string; expires?: number; device?: string } }
     | undefined)?.payload;
   const until = payload?.expires ? new Date(payload.expires * 1000).toLocaleString() : "";
-  const command = payload?.command ? `${payload.command}   (valid until ${until})`
+  const command = payload?.command ? payload.command
     : payload?.mode ? `${payload.mode} commands until ${until}`
-    : (action.params as { command?: string } | undefined)?.command;
+    : action.command ?? (action.params as { command?: string } | undefined)?.command;
+  // on an expert card the command is the point; elsewhere the plan says it in words and the command is one tap away
+  const showCommand = SIGNED.has(action.type) || action.type === "expert_read";
   const signedCard = SIGNED.has(action.type);
   const settled = fold ? SETTLED[action.status] : undefined;
+  // how loud the card is: passkey and risky cards stand out, some-risk ones are amber, safe ones stay calm
+  const passkey = signedCard || action.type === "expert_read";
+  const level = passkey || action.riskClass === "destructive" ? "strong" : action.riskClass === "service" ? "some" : "calm";
   const head = (
     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <strong style={{ flex: 1 }}><ArrowText text={action.plan} /></strong>
+      {level === "strong" && (passkey
+        ? <Passkey className="card-icon" size={18} aria-label="Needs your passkey" />
+        : <Risky className="card-icon" size={18} aria-label="Risky" />)}
+      <strong className="card-title" style={{ flex: 1 }}><ArrowText text={action.plan} /></strong>
       <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
     </div>
   );
   const facts = (
       <dl>
-        {command && <><dt>Command</dt><dd><code className="perm-cmd">{command}</code></dd></>}
+        {command && (showCommand ? <><dt>Command</dt><dd><code className="perm-cmd">{command}</code>
+            {payload?.command && until && <span className="small muted">Valid until {until}</span>}</dd></>
+          : <><dt>Command</dt><dd><details><summary className="small">Show the exact command</summary>
+              <code className="perm-cmd">{command}</code></details></dd></>)}
         <dt>What happens</dt><dd><ArrowText text={action.dryRun} /></dd>
-        <dt>Touches</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (live device)" : " (sample)"}
-          {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit)" }}> (signed for a different device!)</strong> : null}</dd>
-        <dt>Undo</dt><dd><ArrowText text={action.rollback} /></dd>
+        <dt>Affects</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (your real device)" : " (sample, nothing real)"}
+          {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit-ink)" }}> (signed for a different device!)</strong> : null}</dd>
+        <dt>Can it be undone?</dt><dd><ArrowText text={action.rollback} /></dd>
         <dt>Status</dt><dd>{STATUS[action.status]}{action.decision?.by === "auto" ? " (handled on its own, as you allowed)" : ""}</dd>
         {action.result && <><dt>Result</dt><dd><ArrowText text={action.result.summary} /></dd></>}
       </dl>
@@ -139,7 +150,7 @@ export default function ApprovalCard({ action, device, onFollowUp, fold }: {
     );
   }
   return (
-    <div className="card">
+    <div className={`card level-${level}`} data-tour="card">
       {head}
       {facts}
       {action.status === "pending" && (
@@ -160,9 +171,9 @@ export default function ApprovalCard({ action, device, onFollowUp, fold }: {
             <a href={appHost.url}>{appHost.host}</a>. Open Nightlight there to approve this.</div>
         : !passkeysSupported() ? <div className="small muted">This browser can&apos;t use passkeys, so the button is off.
             Approve from a phone or computer that can (Safari, Chrome, Edge or Firefox, up to date).</div>
-        : prep && "problem" in prep ? <div className="small" style={{ color: "var(--crit)" }}>{prep.problem}</div>
+        : prep && "problem" in prep ? <div className="small" style={{ color: "var(--crit-ink)" }}>{prep.problem}</div>
         : null)}
-      {err && <div className="small" style={{ color: "var(--crit)" }}>{err}</div>}
+      {err && <div className="small" style={{ color: "var(--crit-ink)" }}>{err}</div>}
     </div>
   );
 }

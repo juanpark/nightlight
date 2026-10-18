@@ -8,7 +8,9 @@ import { Info, Grid as LayoutGrid, Chat as MessageCircle, Star } from "@/src/com
 import { ago, answering, type Need } from "@/lib/needsYou";
 import { APP_CAP, appOrder } from "@/lib/apps";
 import { useServices } from "@/lib/data";
-import { named } from "@/lib/follow";
+import { named, type StepState } from "@/lib/follow";
+
+const LIT_WORDS: Record<StepState, string> = { checking: "Checking…", found: "Found something", done: "Done" };
 import type { Device } from "@/lib/types";
 import NeedsMark from "../NeedsMark";
 import { appIcon, deviceIcon, roleOf } from "./kinds";
@@ -18,6 +20,7 @@ export type DeviceNodeData = {
   favorites?: boolean; // the Favorites filter is on: starred apps stand out
   focused?: boolean; // opened in place: every app as a chip
   lit?: "working" | "done"; litApps?: string[]; // the chat's answer is working on it / worked on it, and the apps it named
+  litState?: StepState; settle?: boolean; // how its steps are going; the answer's main device, just finished
   onOpen: (id: string) => void; onAsk: (q: string) => void;
   onFocus: (id: string) => void; onApp: (id: string, svcId: string) => void;
   onSize: (id: string, h: number) => void; // an opened card says how tall it grew, so its neighbours make room
@@ -92,8 +95,9 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   }
   const shown = focused ? appOrder(services, d.favoriteApps ?? []) : [];
   return (
-    <div ref={box} className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${focused ? "focused" : ""} ${data.lit ? `lit-${data.lit}` : ""}`}
+    <div ref={box} className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${focused ? "focused" : ""} ${data.lit ? `lit-${data.lit}` : ""} ${data.settle ? "settle" : ""}`}
       onDoubleClick={() => data.onOpen(d.id)}>
+      {data.litState && <span className={`dlit ${data.litState}`} role="status">{LIT_WORDS[data.litState]}</span>}
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
       {tools}
       <div className="dhead">
@@ -103,7 +107,8 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
         <NeedsMark needs={needs} />
       </div>
       {!compact && (silent
-        ? <div className="dsilent">Silent for {d.lastSeen ? ago(now - d.lastSeen.getTime()) : "a while"}</div>
+        ? <div className="dsilent">{d.starting ? "Starting…"
+            : `Silent for ${d.lastSeen ? ago(now - d.lastSeen.getTime()) : "a while"}`}</div>
         : <div className="dgauges">
             <Gauge label="Disk" value={d.vitals?.diskPct} />
             <Gauge label="Mem" value={d.vitals?.mem} />

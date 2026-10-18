@@ -3,7 +3,7 @@
 // of things, places (one per router) and tags. Groups combine; within a menu any ticked choice matches. A chosen place
 // can be renamed from its menu. Everything wraps onto a second line rather than scrolling out of sight.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Kinds, ListView as List, MapView as MapIcon, NeedsYou, Opens, Place as PlaceIcon, Star, Tags,
+import { Kinds, ListView as List, MapView as MapIcon, NeedsYou, Opens, Place as PlaceIcon, Star, StatusView, Tags,
   type IconType } from "@/src/components/icons";
 import { api } from "@/lib/api";
 import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, needsMe, NO_FILTER, starred, type Category, type Filter,
@@ -11,7 +11,7 @@ import { CATEGORIES, SAMPLE, UNKNOWN, categoryOf, filtering, needsMe, NO_FILTER,
 import type { Need } from "@/lib/needsYou";
 import type { Device, Watch } from "@/lib/types";
 
-export type View = "map" | "list";
+export type View = "map" | "list" | "board";
 
 const toggle = <T,>(xs: T[], x: T) => xs.includes(x) ? xs.filter((y) => y !== x) : [...xs, x];
 
@@ -73,6 +73,8 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
           <MapIcon size={15} /> Map</button>
         <button role="radio" aria-checked={view === "list"} className={view === "list" ? "on" : ""} onClick={() => onView("list")}>
           <List size={15} /> List</button>
+        <button role="radio" aria-checked={view === "board"} className={view === "board" ? "on" : ""} onClick={() => onView("board")}
+          title="Every check as a ✓ ! ✗ line, from what devices last reported"><StatusView size={15} /> Status</button>
       </div>}
 
       <div className="fgroup" role="group" aria-label="Show only">
@@ -115,7 +117,7 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
                   placeholder="e.g. Home, Office, Mum's" aria-label="Place name" />
                 <button className="primary small">Save</button>
                 <button type="button" className="small" onClick={() => { setNaming(null); setErr(""); }}>Cancel</button>
-                {err && <span className="small" style={{ color: "var(--crit)" }}>{err}</span>}
+                {err && <span className="small" style={{ color: "var(--crit-ink)" }}>{err}</span>}
               </form>)}
           </Menu>)}
         {tags.length > 0 && (

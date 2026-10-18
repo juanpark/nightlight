@@ -785,6 +785,14 @@
 }
 .fine { margin: 0; max-width: 30rem; color: var(--muted); text-wrap: balance; }
 
+/* The live demo machine, under the closing buttons (LiveStart.tsx) */
+.live { display: grid; gap: 12px; justify-items: center; margin-top: 18px; padding-top: 22px; max-width: 34rem;
+  border-top: 1px solid var(--line-strong); }
+.liveLabel { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.875rem; }
+.liveLabel select { min-height: 44px; border-radius: 999px; padding: 0 16px; background-color: var(--surface);
+  color: var(--text); border: 1px solid var(--line-strong); font: inherit; }
+.liveCount { margin: 0; color: var(--muted); font-size: 0.8125rem; text-wrap: balance; }
+
 .footer {
   position: relative;
   z-index: 1;

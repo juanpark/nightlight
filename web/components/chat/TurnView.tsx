@@ -2,23 +2,40 @@
 // One agent turn: a work log of what Nightlight checked (its running commentary, each step and what came back), then
 // its answer, then any approval cards. Quick answers keep the log folded; investigations show it open.
 import { useState, type JSX } from "react";
-import type { Action, Device, Status } from "@/lib/types";
+import { useNow } from "@/lib/data";
+import type { Action, Device, Metrics, Status } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
 import { Mascot, type Mood } from "@/src/components/mascot/Mascot";
 import { ArrowText, Caret, Done, NotDone, Working } from "@/src/components/icons";
 import type { AgentTurn, Block } from "./model";
+import Markdown from "./Markdown";
 
 type Step = Extract<Block, { kind: "step" }>;
-
-/** An answer as paragraphs: a blank line starts a new one, a single line break stays a line break. */
-const paragraphs = (text: string) =>
-  text.trim().split(/\n\s*\n/).map((p, i) => <p key={i}><ArrowText text={p.trim()} /></p>);
 
 const MASCOT = 30; // in a turn: small enough to sit on one line with the text
 
 const secs = (ms?: number) => ms == null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
 
-function StepRow({ s }: { s: Step }) {
+/** "gemini-3.8-flash" → "Gemini 3.8 Flash". */
+const modelName = (id: string) => id.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+const cents = (usd: number) => { const c = usd * 100; return c < 0.1 ? "under 0.1¢" : `${c.toFixed(c < 10 ? 1 : 0)}¢`; };
+
+/** The receipt for an answer: how long it took, which model wrote it and what it cost. */
+function receipt(ms?: number, m?: Metrics): string {
+  const slow = m?.slowCalls ? `${m.slowCalls} slow call${m.slowCalls === 1 ? "" : "s"} retried` : "";
+  return [ms ? secs(ms) : "", m?.model ? modelName(m.model) : "", m?.costUsd != null ? cents(m.costUsd) : "", slow]
+    .filter(Boolean).join(" · ");
+}
+
+const span = (s: number) => s >= 60 && s % 60 === 0 ? `${s / 60} min` : s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+
+/** "45 s of 4 min": how long this answer has been working, against the time the server gives it. */
+function Elapsed({ from, budget }: { from: number; budget: number }) {
+  const now = useNow(1000);
+  return <> · {span(Math.max(0, Math.min(budget, Math.round((now - from) / 1000))))} of {span(budget)}</>;
+}
+
+function StepRow({ s, show }: { s: Step; show?: boolean }) {
   const more = !!(s.command || s.details);
   const line = (
     <>
@@ -31,7 +48,7 @@ function StepRow({ s }: { s: Step }) {
   );
   if (!more) return <div className="wl-step">{line}</div>;
   return (
-    <details className="wl-step">
+    <details className="wl-step" open={show || undefined}>{/* an investigation shows its outputs */}
       <summary>{line}<Caret className="caret wl-more" size={11} aria-hidden /></summary>
       {s.command && <code className="wl-cmd">$ {s.command}</code>}
       {s.details && <pre className="wl-out">{s.details}</pre>}
@@ -39,24 +56,28 @@ function StepRow({ s }: { s: Step }) {
   );
 }
 
-function WorkLog({ blocks, busy, investigate, ms }: { blocks: Block[]; busy: boolean; investigate: boolean; ms?: number }) {
+function WorkLog({ blocks, busy, investigate, ms, metrics, from, budget }: {
+  blocks: Block[]; busy: boolean; investigate: boolean; ms?: number; metrics?: Metrics; from?: number; budget?: number;
+}) {
   const [open, setOpen] = useState(investigate);
   const steps = blocks.filter((b): b is Step => b.kind === "step");
-  const running = steps.find((s) => s.status === "running");
   const n = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
-  // Folded, the log still shows what is happening now and anything that went wrong: failures are never hidden.
-  const visible = open ? blocks : blocks.filter((b) => b.kind === "step" && (b === running || b.status === "failed"));
+  // Folded, the log still lists every step with what came back (its outputs stay one tap away); open, it adds the
+  // commentary said between steps.
+  const visible = open ? blocks : blocks.filter((b) => b.kind === "step");
+  const paid = receipt(ms, metrics);
   return (
     <div className={`worklog ${open ? "open" : ""}`}>
       <button className="wl-head" onClick={() => setOpen(!open)} aria-expanded={open}>
         <Caret className="caret wl-chev" size={11} aria-hidden />
-        {busy ? `Working… ${n}` : `What I checked · ${n}${ms ? ` · ${secs(ms)}` : ""}`}
+        {busy ? <>Working… {n}{from && budget ? <Elapsed from={from} budget={budget} /> : null}</>
+          : `What I checked · ${n}${paid ? ` · ${paid}` : ""}`}
       </button>
       {visible.length > 0 && (
         <div className="wl-body">
           {visible.map((b, i) => b.kind === "text"
-            ? <p key={i} className="wl-note"><ArrowText text={b.text.trim()} /></p>
-            : b.kind === "step" ? <StepRow key={i} s={b} /> : null)}
+            ? <div key={i} className="wl-note"><Markdown text={b.text.trim()} /></div>
+            : b.kind === "step" ? <StepRow key={i} s={b} show={investigate} /> : null)}
         </div>)}
     </div>
   );
@@ -75,17 +96,19 @@ function settled(turn: AgentTurn, actions: Action[]): Mood | null {
   return null;
 }
 
-export default function TurnView({ turn, actions, devices, onFollowUp, latest, health }: {
+export default function TurnView({ turn, actions, devices, onFollowUp, latest, health, onRetry }: {
   turn: AgentTurn; actions: Action[]; devices: Device[]; onFollowUp: (turnId: string) => void;
   latest?: boolean; health?: Status;
+  onRetry?: () => void; // asks the same question again, offered when the server says trying again may work
 }) {
   // The answer is the last thing said; words said before or between steps are commentary in a work log. Everything
   // keeps its order: a card appears where it was put up, between the steps around it.
+  const blocks = turn.blocks;
   let final = -1;
-  turn.blocks.forEach((b, i) => { if (b.kind === "text" && b.text.trim()) final = i; });
+  blocks.forEach((b, i) => { if (b.kind === "text" && b.text.trim()) final = i; });
   const parts: JSX.Element[] = [];
   let seg: Block[] = [];
-  const lastStep = turn.blocks.reduce((n, b, i) => b.kind === "step" ? i : n, -1);
+  const lastStep = blocks.reduce((n, b, i) => b.kind === "step" ? i : n, -1);
   const flush = (i: number) => {
     if (!seg.length) return;
     const blocks = seg;
@@ -93,12 +116,13 @@ export default function TurnView({ turn, actions, devices, onFollowUp, latest, h
     if (blocks.some((b) => b.kind === "step")) {
       const isLast = i > lastStep; // the segment holding the last step carries the turn's totals
       parts.push(<WorkLog key={`log${i}`} blocks={blocks} busy={turn.busy && isLast}
-        investigate={turn.mode === "investigate"} ms={isLast ? turn.ms : undefined} />);
+        investigate={turn.mode === "investigate"} ms={isLast ? turn.ms : undefined}
+        metrics={isLast ? turn.metrics : undefined} from={turn.startedAt} budget={turn.budget} />);
     } else {
-      blocks.forEach((b, j) => b.kind === "text" && parts.push(<p key={`n${i}.${j}`} className="wl-note"><ArrowText text={b.text.trim()} /></p>));
+      blocks.forEach((b, j) => b.kind === "text" && parts.push(<div key={`n${i}.${j}`} className="wl-note"><Markdown text={b.text.trim()} /></div>));
     }
   };
-  turn.blocks.forEach((b, i) => {
+  blocks.forEach((b, i) => {
     if (b.kind === "card") {
       flush(i);
       const a = actions.find((x) => x.id === b.actionId);
@@ -106,21 +130,25 @@ export default function TurnView({ turn, actions, devices, onFollowUp, latest, h
         onFollowUp={onFollowUp} />);
     } else if (i === final) {
       flush(i);
-      parts.push(<div key="answer" className="answer">{paragraphs((b as { text: string }).text)}</div>);
+      parts.push(<div key="answer" className="answer"><Markdown text={(b as { text: string }).text.trim()} /></div>);
     } else {
       seg.push(b);
     }
   });
-  flush(turn.blocks.length);
+  flush(blocks.length);
   const mood = latest && !turn.busy ? settled(turn, actions) : null;
   return (
     <div className={`turn agent ${turn.past ? "past" : ""}`}>
       {turn.mode === "investigate" && <span className="pill turn-mode">Investigated</span>}
       {parts}
+      {/* an answer with no steps still says what it took */}
+      {!turn.busy && lastStep < 0 && final >= 0 && receipt(turn.ms, turn.metrics) &&
+        <div className="wl-receipt small muted">Answered from what I know · {receipt(turn.ms, turn.metrics)}</div>}
       {turn.busy && (final < 0 && lastStep < 0
         ? <div className="turn-mascot thinking"><Mascot size={MASCOT} mood="thinking" health={health} /> Thinking…</div>
         : <div className="turn-mascot"><Mascot size={MASCOT} mood="working" health={health} label="Nightlight is working" /></div>)}
-      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}</div>}
+      {turn.error && <div className="turn-error small">{/[ .]/.test(turn.error) ? turn.error : `Problem: ${turn.error}`}
+        {turn.retryable && !turn.busy && onRetry && <>{" "}<button className="linkish small" onClick={onRetry}>Ask again</button></>}</div>}
       {mood && <div className="turn-mascot"><Mascot key={mood} size={MASCOT} mood={mood} health={health} /></div>}
     </div>
   );

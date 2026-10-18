@@ -8,6 +8,7 @@ import Lenis from "lenis";
 import { Logo } from "../../brand/Logo";
 import { ToLatest } from "../../icons";
 import { AuthButtons } from "../AuthButtons";
+import { LiveStart } from "../LiveStart";
 import { ApprovalCard, ExplainCard, NoticeCard, TrustCard, type ApprovalState, type TrustState } from "../StoryCards";
 import { display, sans } from "../fonts";
 import { revealLines, riseIn } from "../motion/reveal";
@@ -722,6 +723,7 @@ export function GlowLanding() {
           </h2>
           <p className={s.fine}>The demo opens a simulated sample home in one click. No account, nothing to install.</p>
           <AuthButtons styles={s} />
+          <LiveStart styles={s} />
         </section>
       </main>
 

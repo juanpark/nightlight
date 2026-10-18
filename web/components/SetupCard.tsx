@@ -53,8 +53,9 @@ export default function SetupCard({ device: d, actions, onGo }: { device: Device
     <div className="setup-card">
       <strong>{fresh ? `Your ${d.name} is connected. ` : ""}What may Nightlight do on {fresh ? "it" : `your ${d.name}`}?</strong>
       {strict
-        ? <p className="small">This device is set to strict: what Nightlight may do here is set on the device itself,
-            in its helper&apos;s settings. Nightlight will watch it and explain problems.</p>
+        ? <p className="small">This device was set up to be changed only on the device itself (its extra-cautious
+            mode): what Nightlight may do here is chosen there, in its helper&apos;s settings. Nightlight will watch
+            it and explain problems.</p>
         : <>
             <div className="setup-presets" role="radiogroup" aria-label="What may Nightlight do here?">
               {PRESETS.map((p) => (
@@ -66,7 +67,7 @@ export default function SetupCard({ device: d, actions, onGo }: { device: Device
             </div>
             <label className="setup-check small">
               <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
-              Install signed updates of the helper automatically</label>
+              Install Nightlight helper updates automatically (genuine versions only)</label>
             {canFolders && (
               <label className="setup-check small">
                 <input type="checkbox" checked={folders} onChange={(e) => setFolders(e.target.checked)} />
@@ -80,7 +81,7 @@ export default function SetupCard({ device: d, actions, onGo }: { device: Device
         <button className="primary" onClick={save} disabled={busy}>{strict ? "Got it" : "Done"}</button>
         {!strict && <span className="small muted">You can change this any time in Settings.</span>}
       </div>
-      {err && <p className="small" style={{ color: "var(--crit)" }}>{err}</p>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
     </div>
   );
 }

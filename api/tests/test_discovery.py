@@ -288,5 +288,6 @@ def test_a_thing_you_stop_watching_is_purged_like_any_removed_device(client, sta
     wid = client.post(f"/api/discoveries/{dev['deviceId']}/{ITEM['cid']}/add", json={"name": "HA"}).json()["deviceId"]
     assert client.post(f"/api/devices/{wid}/revoke", json={}).status_code == 200
     assert db.device(started, wid).get().to_dict()["purgeAt"]
-    archive.index().document(f"{started}__{wid}").update({"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})
+    for ref in (archive.index().document(f"{started}__{wid}"), db.device(started, wid)):
+        ref.update({"purgeAt": datetime.now(timezone.utc) - timedelta(minutes=1)})  # the device's own date decides
     assert archive.purge_due() >= 1 and not db.device(started, wid).get().exists

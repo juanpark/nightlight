@@ -15,9 +15,9 @@ def dev(uid):
     return db.device(uid, "game-1").get().to_dict()
 
 
-def propose(uid, action_type, turn="turn_g1"):
+def propose(uid, action_type, turn="turn_g1", **kw):
     return actions.propose(uid, session_id="sess_test", turn_id=turn, generation=generation(uid),
-                           action_type=action_type, device_id="game-1", params={})
+                           action_type=action_type, device_id="game-1", params={}, **kw)
 
 
 def test_seeded_game_server_shows_its_problems(started):
@@ -39,7 +39,7 @@ def test_backup_world_resolves_the_overdue_backup(started):
 def test_lag_then_restart_clears_memory(started):
     demo.inject(started, "server_lagging", "game-1")
     assert dev(started)["status"] == "crit"
-    a = propose(started, "restart_server", turn="turn_g2")
+    a = propose(started, "restart_server", turn="turn_g2", skip_safer=True)
     assert a["riskClass"] == "service" and "disconnected" in a["dryRun"]
     actions.decide(started, a["id"], "approve")
     d = dev(started)
@@ -57,7 +57,7 @@ def test_restart_can_never_run_on_its_own(client, started):
     r = client.put("/api/trust/restart_server", json={"level": "auto"})
     assert r.status_code == 200 and r.json()["level"] == "ask_new"  # clamped to the service-risk ceiling
     demo.inject(started, "server_lagging", "game-1")
-    a = propose(started, "restart_server", turn="turn_g3")
+    a = propose(started, "restart_server", turn="turn_g3", skip_safer=True)
     assert a["status"] == "pending"  # not allowlisted: always asks
 
 
@@ -101,7 +101,7 @@ def test_refresh_is_idempotent_and_drops_cleared_problems(started):  # M1
 def test_service_risk_jobs_get_no_promotion_offer(started):  # M2
     for i in range(3):
         demo.inject(started, "server_lagging", "game-1")
-        a = propose(started, "restart_server", turn=f"turn_r{i}")
+        a = propose(started, "restart_server", turn=f"turn_r{i}", skip_safer=True)
         assert actions.decide(started, a["id"], "approve")[0] == 202
     t = db.trust_doc(started, "sim", "restart_server").get().to_dict()
     assert len(t["successes"]) == 3 and not t.get("offer")

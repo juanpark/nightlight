@@ -43,7 +43,7 @@ export default function MacFolders({ device: d, actions }: { device: Device; act
         allow it on the Mac in System Settings<Caret className="crumb" size={10} aria-hidden /><span className="sr-only">, then </span>Privacy &amp;
         Security<Caret className="crumb" size={10} aria-hidden /><span className="sr-only">, then </span>Files and Folders.</span>}
       {job && !asking && job.result?.summary && <span className="muted"><ArrowText text={job.result.summary} /></span>}
-      {err && <span style={{ color: "var(--crit)" }}>{err}</span>}
+      {err && <span style={{ color: "var(--crit-ink)" }}>{err}</span>}
     </div>
   );
 }

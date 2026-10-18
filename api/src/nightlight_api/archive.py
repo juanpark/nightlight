@@ -1,6 +1,13 @@
 """Removing a real device: soft delete first. A removed device leaves the map and the agent's view at once; its
 history, notes, activity and the audit trail of what Nightlight did there stay archived for ARCHIVE_DAYS, then the
-sweep deletes them. "Forget for good" deletes them at once. Re-adding the same machine makes a new device."""
+sweep deletes them. "Forget for good" deletes them at once.
+
+Two ways a helper goes away, on purpose different:
+- Removed in the app (the remove card): the device is archived (off the map, purged after ARCHIVE_DAYS).
+- Uninstalled on the device itself (`helper uninstall`, /uninstall.sh, the Mac installer's uninstall): the token is
+  revoked but the device stays on the map as offline, history kept, as if switched off.
+Either way, installing the helper again on the same machine can continue the same device (and bring an archived
+one back) when the owner chooses "Continue its history" while approving it (real.pair_preview / pair_decide)."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -42,6 +49,8 @@ def archive(tx, uid: str, device_id: str, name: str, words: str, who: str) -> No
 
 def remove_now(uid: str, device_id: str, action_id: str | None = None) -> dict:
     """The device can't uninstall its helper (not reporting, or too old): cut its access and archive it now."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     query = real.tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id))
 
     @firestore.transactional
@@ -81,10 +90,15 @@ def left(tx, uid: str, device_id: str, dsnap, cleanup: str | None) -> None:
     for a in running:
         tx.update(a.reference, {"status": "done", "finishedAt": _now(), "followUp": "none",
                                 "result": {"ok": True, "summary": summary}})
-    if running or d.get("realm") == "real":
-        archive(tx, uid, device_id, name, (f"{name} was removed: " if running else f"{name} was uninstalled and ")
-                + ("the helper uninstalled itself." if running else f"left your map (archived for {ARCHIVE_DAYS} days).")
-                + files, "you" if running else "device")
+    if running:
+        archive(tx, uid, device_id, name, f"{name} was removed: the helper uninstalled itself.{files}", "you")
+    elif d.get("realm") == "real":  # uninstalled on the device itself (command line or the Mac installer's uninstall)
+        tx.update(dsnap.reference, {"status": "offline", "health": "unknown", "revoked": True, "uninstalled": True,
+                                    "uninstalledAt": _now()})
+        tx.delete(db.client().collection("realDevices").document(f"{uid}__{device_id}"))
+        real.event(tx, uid, device_id, "uninstalled", "info",
+                   f"The helper was uninstalled on {name}. It stays on your map as offline, with its history: "
+                   "install the helper again to continue it, or remove it.", "device")
 
 
 def request(uid: str, device_id: str) -> dict:
@@ -114,15 +128,75 @@ def after_approval(uid: str, action_id: str) -> None:
 
 def forget(uid: str, device_id: str) -> dict:
     """Delete an archived device and everything kept about it, now."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     d = db.device(uid, device_id).get().to_dict()
     if not d or not d.get("archived"):
         raise ApiError(409, "remove_first") if d else not_found()
-    purge(uid, device_id)
+    if not purge(uid, device_id):
+        raise ApiError(409, "remove_first")  # brought back meanwhile (a reinstall continued it)
     return {"ok": True, "deviceId": device_id}
 
 
-def purge(uid: str, device_id: str) -> None:
+def _claim(uid: str, device_id: str, due_only: bool) -> str | None:
+    """Mark the device as being deleted, in a transaction on the device itself, before anything is deleted: only an
+    archived device (and, for the sweep, one whose own purgeAt has passed: never a stale index entry's word). A
+    reinstall that continues a device refuses a claimed one, and a restore makes this refuse. The claim id, or None."""
+    from .ids import new_id
     dref = db.device(uid, device_id)
+    claim = new_id("purge")
+
+    @firestore.transactional
+    def run(tx):
+        snap = dref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or not d.get("archived") or (due_only and not (d.get("purgeAt") and d["purgeAt"] < _now())):
+            return None
+        tx.update(dref, {"purgeClaim": {"id": claim, "at": _now()}})
+        return claim
+
+    return db.run_transaction(run)
+
+
+def _delete_fenced(dref, claim: str, refs: list) -> bool:
+    """Delete refs only while the device is still archived and claimed by this purge, checked in the same
+    transaction. False (nothing deleted) once the claim is gone."""
+    @firestore.transactional
+    def run(tx):
+        snap = dref.get(transaction=tx)
+        d = snap.to_dict() if snap.exists else None
+        if not d or not d.get("archived") or (d.get("purgeClaim") or {}).get("id") != claim:
+            return False
+        for r in refs:
+            tx.delete(r)
+        return True
+
+    return db.run_transaction(run)
+
+
+def _drop_stale_entry(uid: str, device_id: str) -> None:
+    """Remove the archive entry only if the device is still gone or back in use, read in the same transaction: a removal
+    that slips in writes a fresh entry and archives the device again, and that new schedule must survive."""
+    dref, iref = db.device(uid, device_id), index().document(f"{uid}__{device_id}")
+
+    @firestore.transactional
+    def run(tx):
+        snap = dref.get(transaction=tx)
+        entry = iref.get(transaction=tx)
+        if entry.exists and (not snap.exists or not (snap.to_dict() or {}).get("archived")):
+            tx.delete(iref)
+
+    db.run_transaction(run)
+
+
+def purge(uid: str, device_id: str, due_only: bool = False) -> bool:
+    """Delete an archived device and everything kept about it: claimed first (see _claim), then deleted in fenced
+    batches, the device document last. False when it wasn't deleted (not archived, not due, or restored)."""
+    dref = db.device(uid, device_id)
+    claim = _claim(uid, device_id, due_only)
+    if not claim:
+        _drop_stale_entry(uid, device_id)
+        return False
     refs = [s.reference for sub in ("services", "history", "notes", "profile", "runbooks")
             for s in dref.collection(sub).stream()]
     refs += links.touching(uid, device_id)
@@ -131,12 +205,11 @@ def purge(uid: str, device_id: str) -> None:
     for coll in (db.events(uid), db.actions(uid)):
         refs += [s.reference for s in coll.where(filter=FieldFilter("deviceId", "==", device_id)).stream()]
     for i in range(0, len(refs), 400):
-        batch = db.client().batch()
-        for r in refs[i:i + 400]:
-            batch.delete(r)
-        batch.commit()
-    dref.delete()
-    index().document(f"{uid}__{device_id}").delete()
+        if not _delete_fenced(dref, claim, refs[i:i + 400]):
+            return False
+    if not _delete_fenced(dref, claim, [index().document(f"{uid}__{device_id}"), dref]):
+        return False
+    return True
 
 
 def purge_due(limit: int = 10) -> int:
@@ -144,8 +217,7 @@ def purge_due(limit: int = 10) -> int:
     n = 0
     for r in index().where(filter=FieldFilter("purgeAt", "<", _now())).limit(limit).stream():
         d = r.to_dict()
-        purge(d["uid"], d["deviceId"])
-        n += 1
+        n += purge(d["uid"], d["deviceId"], due_only=True)
     return n
 
 

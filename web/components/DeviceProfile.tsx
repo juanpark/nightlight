@@ -39,7 +39,7 @@ export default function DeviceProfile({ uid, deviceId }: { uid: string; deviceId
             <button onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </div>)}
-      {err && <div style={{ color: "var(--crit)" }}>{err}</div>}
+      {err && <div style={{ color: "var(--crit-ink)" }}>{err}</div>}
     </section>
   );
 }

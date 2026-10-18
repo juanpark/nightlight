@@ -12,6 +12,7 @@ export interface Finding {
   evidence?: string;
   svcId?: string;
   state?: "new" | "known" | "snoozed";
+  fix?: string; // a fix the page can offer itself: "discover" (Look nearby), "discover_on_device" (a line to run there)
 }
 
 export interface Service {
@@ -63,6 +64,7 @@ export interface Device {
   realm?: "sim" | "real";
   demoGeneration?: number;
   lastSeen?: Date | null;
+  starting?: boolean; // page only: a live demo machine that hasn't reported since this visit began
   permissionsAt?: Date | null; // when the owner last changed the switches
   revoked?: boolean;
   allowedJobs?: Record<string, string[]>;
@@ -116,8 +118,10 @@ export interface Action {
   result?: { ok: boolean; summary: string; playbook?: PlaybookResult };
   playbook?: string;
   params?: Record<string, unknown>;
+  command?: string; // the exact command it runs, when it runs one (shown folded; the plan says it in words)
   continuationTurnId?: string;
   createdAt?: Date | null;
+  decidedAt?: Date | null;
   finishedAt?: Date | null;
 }
 
@@ -209,17 +213,18 @@ export interface UserDoc {
   demo?: { state: "ready" | "resetting" };
   trustDefault?: Level;
   isDemo?: boolean;
+  settings?: { deviceNames?: boolean }; // deviceNames missing: on
 }
 
 export type StreamEvent =
-  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate" }
+  | { type: "turn_start"; turnId: string; replay?: boolean; mode?: "quick" | "investigate"; budgetSeconds?: number }
   | { type: "text"; delta: string }
-  | { type: "tool_call"; name: string; args?: Record<string, unknown> }
-  | { type: "tool_result"; name: string; summary?: string; details?: string | null; ok?: boolean; ms?: number | null }
+  | { type: "tool_call"; name: string; args?: Record<string, unknown>; callId?: string }
+  | { type: "tool_result"; name: string; callId?: string; summary?: string; details?: string | null; ok?: boolean; ms?: number | null }
   | { type: "approval_request"; actionId: string }
   | { type: "followup_pending"; turnId: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }
-  | { type: "done"; turnId: string; metrics?: Record<string, number> };
+  | { type: "done"; turnId: string; metrics?: Metrics };
 
 export interface FoundItem { cid: string; guess: string; vendor?: string | null; services: string[]; ports: number[];
   added?: boolean }
@@ -230,3 +235,7 @@ export interface FoundThing { guess: string; vendor?: string | null; name?: stri
   router?: boolean; privateAddress?: boolean }
 export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
   expiresAt?: Date | null }
+
+/** What one answer took: from the stream's `done`, and on stored messages once the server keeps them there. */
+export interface Metrics { latencyMs?: number; toolCalls?: number; modelCalls?: number; costUsd?: number; model?: string;
+  budgetSeconds?: number; slowCalls?: number }

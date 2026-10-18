@@ -13,7 +13,7 @@ import "@/app/map.css";
 import { api } from "@/lib/api";
 import type { Need } from "@/lib/needsYou";
 import type { Device, Link, LinkKind } from "@/lib/types";
-import { litApps, mainDevice, useFollowed } from "@/lib/follow";
+import { litApps, mainDevice, stepState, useFollowed } from "@/lib/follow";
 import AppSheet from "./AppSheet";
 import DeviceNode, { type DeviceNodeType } from "./DeviceNode";
 import LinkEdge, { type LinkEdgeType } from "./LinkEdge";
@@ -156,6 +156,19 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followed]);
   const sized = useCallback((id: string, h: number) => setFocusH((x) => (x === h ? x : h)), []);
+  // the context strip's "show me": center that device, on a phone too (the person just switched to the map for it)
+  const showN = useRef(0);
+  useEffect(() => {
+    const s = followed.show;
+    if (!s || s.n === showN.current || !devices.some((d) => d.id === s.id)) return;
+    showN.current = s.n;
+    setDimmed(0);
+    shown.current = null;
+    setFocusH(0);
+    setFocus({ id: s.id, by: "chat" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed.show]);
+  const working = !followed.done && followed.devices.length > 0 && followed.seq !== dimmed;
 
   // Devices from the database become nodes. A node being dragged keeps its place, and a dropped one stays where it
   // was dropped until the database has the new spot (or the save fails). base is where each one really is (what gets
@@ -182,6 +195,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         data: { device: d, uid, needs: marks?.get(d.id), now, onOpen: open, onAsk: ask, favorites,
           focused: d.id === focusId, onFocus: focusOn, onApp: app, onSize: sized,
           lit: lit(d.id), litApps: lit(d.id) ? litApps(followed, d.id) : undefined,
+          litState: lit(d.id) ? stepState(followed, d.id) : undefined,
+          settle: lit(d.id) === "done" && d.id === mainDevice(followed),
           by: d.watchedBy ? devices.find((x) => x.id === d.watchedBy)?.name : undefined },
       };
     }));
@@ -280,6 +295,33 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
+  // While an answer works, a device its latest step touches that is off the edge of the map eases just far enough
+  // into view (no centering on every step). Never while the person is moving the map, or just did; reduced motion jumps.
+  useEffect(() => {
+    const id = followed.last;
+    if (followed.done || !id || followed.seq === dimmed) return;
+    const raf = requestAnimationFrame(() => {
+      if (busyHands.current || Date.now() - lastHands.current < HANDS_OFF_MS) return;
+      const f = flow.current, el = box.current, p = spots.get(id);
+      if (!f || !el || !p) return;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return; // the map isn't on screen (a phone showing the chat)
+      // the part of the map actually visible: the pane it scrolls in, and the window, may cut it off
+      const pane = el.closest(".left")?.getBoundingClientRect();
+      const top = Math.max(0, pane?.top ?? 0, r.top) - r.top, bottom = Math.min(innerHeight, pane?.bottom ?? innerHeight, r.bottom) - r.top;
+      if (bottom - top < 120) return; // hardly any map on screen: leave it be
+      const { x, y, zoom } = f.getViewport();
+      const m = 16, sx = p.x * zoom + x, sy = p.y * zoom + y - 14 * zoom, w = NODE_W * zoom, h = (NODE_H + 14) * zoom;
+      const dx = sx < m ? m - sx : sx + w > r.width - m ? r.width - m - (sx + w) : 0;
+      const dy = sy < top + m ? top + m - sy : sy + h > bottom - m ? bottom - m - (sy + h) : 0;
+      if (!dx && !dy) return;
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      f.setViewport({ x: x + dx, y: y + dy, zoom }, { duration: still ? 0 : 450 });
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followed.last, followed.seq, followed.done]);
+
   // Zoomed in far enough, the card nearest the middle of the view opens; zoomed back out, a card opened that way closes.
   const box = useRef<HTMLDivElement>(null);
   function moved(v: { x: number; y: number; zoom: number }) {
@@ -311,7 +353,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
   }
 
   return (
-    <div className="homemap" aria-label="Map of your home" onKeyDown={(e) => {
+    <div className={`homemap ${working ? "following" : ""}`} aria-label="Map of your home" onKeyDown={(e) => {
       // Enter on a focused device opens it, as a click does (Tab moves between devices)
       const id = (e.target as HTMLElement).closest(".react-flow__node")?.getAttribute("data-id");
       if (e.key === "Enter" && id) open(id);

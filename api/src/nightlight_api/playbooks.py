@@ -11,7 +11,7 @@ from google.cloud import firestore
 
 from . import actions, real
 
-_UNIT_GB = {"k": 1 / 1024 ** 2, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
+_UNIT_GB = {"b": 1 / 1024 ** 3, "k": 1 / 1024 ** 2, "m": 1 / 1024, "g": 1.0, "t": 1024.0}
 
 
 @lru_cache(maxsize=1)
@@ -28,11 +28,12 @@ def library() -> dict[str, dict]:
 
 
 def _gb(text: str) -> float | None:
-    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmMgGtT])?i?B?\s*", text or "")
+    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmMgGtT])?i?(B)?\s*", text or "")
     if not m:
         return None
+    unit = m.group(2) or ("b" if m.group(3) else "g")  # "0B" is bytes; a bare number (journal "1.2G" style) is GB
     try:
-        return float(m.group(1)) * _UNIT_GB[(m.group(2) or "g").lower()]
+        return float(m.group(1)) * _UNIT_GB[unit.lower()]
     except ValueError:
         return None
 
@@ -55,21 +56,26 @@ def _fits(cause: dict, m: re.Match) -> bool:
 def evaluate(book: dict, output: str, device: dict) -> dict:
     """Which known causes the checks' output shows, in the playbook's order; at most one hit per cause."""
     allowed = set((device.get("allowedJobs") or {}).get("fix", []))
+    cleanup_on = bool(allowed) or bool((device.get("permissions") or {}).get("cleanup"))
     found = []
     for cause in book["causes"]:
         hit = next((m for m in cause["_re"].finditer(output or "") if _fits(cause, m)), None)
         if not hit:
             continue
-        words = {k: (v or "").strip()[:80] for k, v in hit.groupdict().items()}
+        words = {k: (v or "").strip()[:120] for k, v in hit.groupdict().items()}
         row = {"cause": cause["id"], "say": cause["say"].format(**words)}
         if cause.get("advice"):
             row["advice"] = cause["advice"].format(**words)
         if cause.get("fix"):
             row["fix"] = cause["fix"]
             row["fixAllowed"] = cause["fix"] in allowed
+            if cleanup_on and not row["fixAllowed"]:
+                row["fixUnavailable"] = True  # switched on, but the device doesn't offer it (why isn't known here)
         found.append(row)
-    return {"id": book["id"], "title": book["title"], "found": found,
-            "nothing": None if found else book.get("nothing")}
+    nothing = book.get("nothing")
+    if isinstance(nothing, dict):  # said differently per system: a Linux server has no Documents or Movies folder
+        nothing = nothing["mac" if "mac" in str(device.get("os") or "").lower() else "other"]
+    return {"id": book["id"], "title": book["title"], "found": found, "nothing": None if found else nothing}
 
 
 def offered(device: dict) -> list[dict]:
@@ -93,14 +99,38 @@ def start(uid: str, device_id: str, book_id: str, *, session_id: str, turn_id: s
                                       extra={"playbook": book_id}, mode=mode)
 
 
+SPACE = "disk_full"  # the playbook behind "where did my space go / clear the junk"
+
+
+def space_checks(device: dict) -> tuple[list[str], list[str]]:
+    """(checks of the space playbook this device offers, those it doesn't): a device runs what it can, and the
+    answer says what couldn't be looked at."""
+    offered = set((device.get("allowedJobs") or {}).get("inspect", []))
+    checks = library()[SPACE]["checks"]
+    return [c for c in checks if c in offered], [c for c in checks if c not in offered]
+
+
+def measure(output: str, what: list, device: dict) -> dict[str, float]:
+    """GB each clean-up would free, from the lines these checks printed (recipe -> GB). A missing line is unknown,
+    never zero: the helper leaves out both small places and places it couldn't measure (timeout, unreadable)."""
+    sizes: dict[str, float] = {}
+    for cause in library()[SPACE]["causes"]:
+        fix = cause.get("fix")
+        hit = cause["_re"].search(output or "") if fix and fix not in sizes else None
+        if hit and (gb := _gb(hit.groupdict().get("size") or "")) is not None:
+            sizes[fix] = round(gb, 2)
+    return sizes
+
+
 def summary(result: dict) -> str:
     """The playbook's findings in plain sentences (for the chat follow-up and the agent)."""
     pb = result or {}
-    lines = [f"Playbook \"{pb.get('title')}\":"]
+    lines = [f"Checkup \"{pb.get('title')}\":"]
     for f in pb.get("found") or []:
         tail = ""
         if f.get("fix"):
-            tail = (" I've put up a card to " + real.FIX[f["fix"]][0].lower() + "." if f.get("card")
+            tail = (" I've put up a card to " + (t := real.FIX[f["fix"]][0])[0].lower() + t[1:] + "." if f.get("card")
+                    else " A clean-up exists, but it isn't available on this device." if f.get("fixUnavailable")
                     else " A clean-up exists, but \"clean up space\" isn't switched on for this device."
                     if not f.get("fixAllowed") else " A clean-up exists, but no card could be made right now.")
         lines.append(f"- {f['say']}{tail}" + (f" {f['advice']}" if f.get("advice") else ""))

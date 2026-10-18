@@ -69,9 +69,11 @@ def test_every_model_call_is_counted_and_count_failure_blocks(client, started, m
     events(ask(client, sid))
     assert len(FakeLlm.counted) == len(FakeLlm.log) == 3
     FakeLlm.log.clear()
+    monkeypatch.setattr(agentlib, "COUNT_RETRY_SECONDS", 0)
     monkeypatch.setattr(agentlib, "COUNTER", lambda req: (_ for _ in ()).throw(RuntimeError("count down")))
     ev = events(ask(client, sid))
-    assert ev[-1]["code"] == "context_limit" and FakeLlm.log == []
+    # Still fails closed (nothing sent), but says what happened: the size couldn't be checked, not "too long".
+    assert ev[-1]["code"] == "size_check_failed" and ev[-1]["retryable"] is True and FakeLlm.log == []
 
 
 # ---------------------------------------------------------------- H3 accounting

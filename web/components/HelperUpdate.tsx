@@ -37,7 +37,7 @@ export default function HelperUpdate({ device, actions, origin, latest }: {
           ? <span className="muted">Updating on the device…</span>
           : job?.status === "failed" ? <><span>{job.result?.summary}</span><button onClick={go}>Try again</button></>
           : <button className="primary" onClick={go}>Update</button>}
-      {error && <span style={{ color: "var(--crit)" }}>{error}</span>}
+      {error && <span style={{ color: "var(--crit-ink)" }}>{error}</span>}
     </div>
   );
 }

@@ -202,6 +202,38 @@ HOME_PI = {
     ],
     # The story starts with the Pi's disk nearly full.
     "initial_incident": {"deviceId": "pi-1", "kind": "disk_full"},
+    # So the sample home looks lived in: notes, a runbook and a few past jobs, as if Nightlight had been minding it for
+    # a while. Only for reading: the jobs are already finished and are never delivered or run again.
+    "history": {
+        "notes": [
+            {"deviceId": "mac-1", "svcId": "immich", "daysAgo": 6, "by": "nightlight",
+             "text": "Immich's photo database (immich-db) restarts slowly after a power cut; Immich reports unhealthy "
+                     "until it reconnects."},
+            {"deviceId": "mac-1", "svcId": "immich", "daysAgo": 20, "by": "you",
+             "text": "Photos from the family phones upload here every night."},
+            {"deviceId": "pi-1", "svcId": "teslamate", "daysAgo": 14, "by": "nightlight",
+             "text": "TeslaMate's logs grow about 200 MB a week; cleaning up old log files every few weeks keeps the "
+                     "disk comfortable."},
+        ],
+        "runbooks": [
+            {"deviceId": "mac-1", "svcId": "immich", "daysAgo": 3, "uses": 1,
+             "title": "Restart Immich when it can't reach its database",
+             "when": "Immich reports unhealthy after a power cut or after immich-db restarted.",
+             "steps": [{"say": "Restart Immich so it reconnects to its database.",
+                        "job": {"type": "restart_app", "params": {}}}]},
+        ],
+        "jobs": [
+            {"deviceId": "mac-1", "svcId": "immich", "daysAgo": 3, "type": "restart_app", "ok": True, "by": "user",
+             "plan": "Restart immich on the Mac Mini so it reconnects to its database.",
+             "summary": "Restarted Immich; it reconnected to its database."},
+            {"deviceId": "pi-1", "svcId": "teslamate", "daysAgo": 10, "type": "clear_images", "ok": True,
+             "by": "user", "plan": "Remove unused Docker images on the Raspberry Pi.",
+             "summary": "Removed unused Docker images; 1.3 GB freed. (Updates have left 0.9 GB more since.)"},
+            {"deviceId": "pi-1", "svcId": "teslamate", "daysAgo": 14, "type": "rotate_logs", "ok": True,
+             "by": "user", "plan": "Clean up old log files on the Raspberry Pi.",
+             "summary": "Cleaned up old TeslaMate log files; 1.8 GB freed."},
+        ],
+    },
 }
 
 # A signed-in owner starts with only their own (real) devices; the sample home can be switched on and off.

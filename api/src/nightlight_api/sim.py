@@ -145,7 +145,7 @@ def _rotate_logs_card(d, svcs):
     after_dev = deepcopy(d)
     _consumer(after_dev, "logs")["sizeGb"] = 0.0
     return {"svcId": DISK_SERVICE.get(d["id"]),
-            "plan": f"Compress and remove log files older than 7 days on the {d['name']}.",
+            "plan": f"Compress and remove activity files (logs) older than 7 days on the {d['name']}.",
             "dryRun": f"Would free about {round(logs['sizeGb'], 1)} GB ({before}% → {disk_pct(after_dev)}% full). "
                       "No running service is stopped.",
             "rollback": "Removed logs are moved to an archive for 24 hours (simulated). "
@@ -171,7 +171,7 @@ def _clear_images_card(d, svcs):
     after_dev = deepcopy(d)
     _consumer(after_dev, "images")["sizeGb"] = 0.0
     return {"svcId": DISK_SERVICE.get(d["id"]),
-            "plan": f"Remove the Docker images no app uses on the {d['name']}.",
+            "plan": f"Remove leftover app downloads (Docker images) no app uses on the {d['name']}.",
             "dryRun": f"Would free about {round(images['sizeGb'], 1)} GB ({before}% → {disk_pct(after_dev)}% full). "
                       "Logs and running apps are not touched.",
             "rollback": "Nothing to undo: an app downloads its image again if it ever needs it."}
@@ -228,7 +228,9 @@ def _restart_card(d, svcs):
     return {"svcId": "minecraft",
             "plan": "Restart the Minecraft server to clear its memory.",
             "dryRun": f"About 1 minute offline; {online} player(s) online will be disconnected and can rejoin. "
-                      f"Memory should drop from {(d.get('vitals') or {}).get('mem')}% to about 45%.",
+                      f"Memory should drop from {(d.get('vitals') or {}).get('mem')}% to about 45%."
+                      + (f" The world hasn't been backed up in {game['lastBackupDaysAgo']} days: back it up first."
+                         if (game.get("lastBackupDaysAgo") or 0) > 7 else ""),
             "rollback": "Nothing to undo: the server comes back on its own with the same world."}
 
 
@@ -263,6 +265,36 @@ def _update_apply(d, svcs):
     d, svcs = refresh(d, svcs)
     return {"summary": f"Backed up the world and updated Minecraft {before} → {game['version']}.",
             "before": {"version": before}, "after": {"version": game["version"]}}, d, svcs
+
+
+def _update_app_target(d, svcs, params):
+    app = (params or {}).get("app")
+    s = svcs.get(app) if isinstance(app, str) else None
+    if not s or app == "minecraft":  # the game server has its own job (update_server: it backs the world up first)
+        raise ValueError("no_app")
+    if not s.get("updateAvailable") or not s.get("latestVersion") or s.get("latestVersion") == s.get("version"):
+        raise ValueError("no_update")  # only a known newer version: never "the latest" without a number
+    return app, s
+
+
+def _update_app_card(d, svcs, params):
+    app, s = _update_app_target(d, svcs, params)
+    return {"svcId": app,
+            "plan": f"Update {_app_name(s)} {s.get('version')} → {s.get('latestVersion')} on the {d['name']}.",
+            "dryRun": f"{_app_name(s)} restarts on the new version and is unavailable for about a minute. Its settings "
+                      "and data are kept.",
+            "rollback": f"Go back to {s.get('version')} (simulated)."}
+
+
+def _update_app_apply(d, svcs, params):
+    app, s = _update_app_target(d, svcs, params)
+    before, after = s.get("version"), s["latestVersion"]
+    s.update(version=after, updateAvailable=False)
+    if isinstance(s.get("image"), str) and s["image"].endswith(f":{before}"):
+        s["image"] = s["image"][: -len(before)] + after
+    d, svcs = refresh(d, svcs)
+    return {"summary": f"Updated {_app_name(s)} {before} → {after} on the {d['name']}.",
+            "before": {"version": before}, "after": {"version": after}}, d, svcs
 
 
 # riskClass sets the trust ceiling; `allowlisted` jobs may run on their own at "Ask me for new things" once approved.
@@ -301,10 +333,10 @@ def _restart_app_apply(d, svcs):
 
 
 ACTIONS = {
-    "rotate_logs": {"label": "Clean up old log files", "riskClass": "routine", "allowlisted": True,
+    "rotate_logs": {"label": "Clean up old activity files (logs)", "riskClass": "routine", "allowlisted": True,
                     "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _rotate_logs_card, "apply": _rotate_logs_apply,
                     "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
-    "clear_images": {"label": "Remove unused Docker images", "riskClass": "routine", "allowlisted": True,
+    "clear_images": {"label": "Remove leftover app downloads", "riskClass": "routine", "allowlisted": True,
                      "svc": lambda d: DISK_SERVICE.get(d["id"]), "card": _clear_images_card,
                      "apply": _clear_images_apply, "snapshot": lambda d, s: {"diskPct": disk_pct(d)}},
     "backup_world": {"label": "Back up the game world", "riskClass": "routine", "allowlisted": True,
@@ -319,7 +351,16 @@ ACTIONS = {
     "update_server": {"label": "Update the game server", "riskClass": "service", "allowlisted": False,
                       "svc": _game_svc, "card": _update_card, "apply": _update_apply,
                       "snapshot": lambda d, s: {"version": (_game(s) or {}).get("version")}},
+    # `params`: the job names its target ({"app": service id}); card, apply and snapshot receive the params too.
+    "update_app": {"label": "Update an app", "riskClass": "service", "allowlisted": False, "params": True,
+                   "svc": lambda d: None, "card": _update_app_card, "apply": _update_app_apply,
+                   "snapshot": lambda d, s, p: {"version": (s.get((p or {}).get("app") or "") or {}).get("version")}},
 }
+
+
+def _call(action_type: str, part: str, *args, params: dict | None = None):
+    fn = ACTIONS[action_type][part]
+    return fn(*args, params) if ACTIONS[action_type].get("params") else fn(*args)
 
 
 FIX_FOR = {"disk_over_90": ("rotate_logs", "clear_images"), "memory_high": "restart_server", "backup_overdue": "backup_world",
@@ -352,15 +393,15 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     """What the approval card shows: plan, dry run, blast radius, rollback, risk. ValueError if it doesn't apply."""
     if action_type not in ACTIONS:
         raise ValueError("unknown_action")
-    c = ACTIONS[action_type]["card"](deepcopy(device), deepcopy(services))
+    c = _call(action_type, "card", deepcopy(device), deepcopy(services), params=params)
     return {**c, "blastRadius": [device["id"]], "riskClass": ACTIONS[action_type]["riskClass"]}
 
 
-FAILS_BECAUSE = {"rotate_logs": "log folder was locked by another program",
+FAILS_BECAUSE = {"rotate_logs": "log folder was locked by another program (which one isn't known)",
                  "clear_images": "Docker was busy with another task",
                  "restart_app": "app didn't stop in time",
                  "backup_world": "game server didn't respond in time", "restart_server": "game server didn't respond in time",
-                 "update_server": "game server didn't respond in time"}
+                 "update_server": "game server didn't respond in time", "update_app": "app didn't stop in time"}
 
 
 def apply(device: dict, services: dict, action_type: str, params: dict) -> tuple[bool, dict, dict, dict]:
@@ -372,8 +413,50 @@ def apply(device: dict, services: dict, action_type: str, params: dict) -> tuple
     if fail is True or fail == action_type:  # True: an incident from before failures named their job
         d.pop("simFailNext")
         what = FAILS_BECAUSE.get(action_type, "job didn't finish in time")
-        snap = ACTIONS[action_type]["snapshot"](d, svcs)  # unchanged state, shown on the failed card
+        snap = _call(action_type, "snapshot", d, svcs, params=params)  # unchanged state, shown on the failed card
         return False, {"ok": False, "summary": f"The {d['name']}'s {what}, so nothing was changed.",
                        "before": snap, "after": dict(snap)}, d, svcs
-    result, d, svcs = ACTIONS[action_type]["apply"](d, svcs)
+    result, d, svcs = _call(action_type, "apply", d, svcs, params=params)
     return True, {"ok": True, **result}, d, svcs
+
+
+def same_problem(action_type: str) -> set[str]:
+    """The jobs that answer the same problem as this one (FIX_FOR read backwards): a card for any of them already
+    waiting on a device is the answer to asking for another, so two fixes for one problem never pile up."""
+    out = {action_type}
+    for jobs in FIX_FOR.values():
+        jobs = (jobs,) if isinstance(jobs, str) else jobs
+        if action_type in jobs:
+            out.update(jobs)
+    return out
+
+
+def safer_first(device: dict, services: dict, action_type: str) -> tuple[str, str] | None:
+    """(job, why) when a safer step should come before this job, else None: a game world not backed up for over a
+    week is backed up before the server restarts."""
+    if action_type == "restart_server":
+        days = (_game(services) or {}).get("lastBackupDaysAgo")
+        if days is not None and days > 7:
+            return "backup_world", f"the world hasn't been backed up in {days} days"
+    return None
+
+
+# What frees each kind of disk consumer; the others (a world, its backups) are the owner's data and never cleared.
+FREED_BY = {"logs": "rotate_logs", "images": "clear_images"}
+
+
+def space(device: dict, services: dict) -> dict:
+    """What takes the space on a sample device, biggest first, with the job that frees each one (when one applies)."""
+    used = []
+    for c in sorted(device.get("diskConsumers") or [], key=lambda c: -(c.get("sizeGb") or 0)):
+        row = {"what": c.get("what") or c["id"], "sizeGb": round(c.get("sizeGb") or 0, 1)}
+        job = FREED_BY.get(c["id"])
+        if job and c.get("sizeGb"):
+            try:
+                card(device, services, job, {})
+                row["freedBy"] = job
+            except ValueError:
+                pass
+        used.append(row)
+    return {"device": device["id"], "name": device.get("name"), "diskPct": disk_pct(device),
+            "diskGb": device.get("diskGb"), "usedBy": used}

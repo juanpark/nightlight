@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FirebaseError } from "firebase/app";
-import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signOut, type User } from "firebase/auth";
+import { GoogleAuthProvider, linkWithPopup, signInWithCredential, signInWithPopup, signOut, type AuthCredential, type User } from "firebase/auth";
 import { api } from "@/lib/api";
 import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
@@ -21,27 +21,41 @@ import Activity from "./Activity";
 import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
 import FirstRun from "./FirstRun";
+import AccountSettings from "./AccountSettings";
+import Tour from "./Tour";
+import { restartTour } from "@/lib/tour";
+import { leaveLive, useLive } from "@/lib/live";
 import "@/app/mobile.css";
 import "@/app/shell.css";
 import MemoryPanel from "./MemoryPanel";
 import { Activity as ActivityIcon, DemoTools as FlaskConical, Globe, House, SignOutIcon as LogOut, Menu,
   Chat as MessageCircle, Moon, Memory as NotebookPen, HideChat as PanelRightClose, Plus, FoundNearby as Radar,
-  Trust as ShieldCheck, Sun, Close as X, type IconType as LucideIcon } from "@/src/components/icons";
+  Settings as Gear, Trust as ShieldCheck, Sun, Close as X, type IconType as LucideIcon } from "@/src/components/icons";
 import { Logo } from "@/src/components/brand/Logo";
 import { Mascot } from "@/src/components/mascot/Mascot";
 import { MascotHead } from "@/src/components/mascot/MascotHead";
 import { display, sans } from "@/src/components/landing/fonts";
 
-type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found";
+type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
 
-export default function Home({ user }: { user: User }) {
-  const uid = user.uid;
+// account: on a live demo machine, the machine's account, whose data this visit (its own throwaway user) sees
+export default function Home({ user, account }: { user: User; account?: string }) {
+  const live = !!account;
+  const uid = account ?? user.uid; // the data (Firestore users/{uid}/…)
+  const visit = user.uid; // what this browser remembers (tours, dismissed hints)
   const me = useUserDoc(uid);
   const gen = me?.demoGeneration;
   const now = useNow();
   const rawDevices = useDevices(uid, gen);
   const links = useLinks(uid, gen);
-  const devices = useMemo(() => rawDevices.map((d) => presented(d, now)), [rawDevices, now]);
+  const machine = useLive();
+  // on a live machine, a report from before this visit is the clean copy's: the device is still starting
+  const since = live ? machine.leaseStart ?? Infinity : undefined;
+  const devices = useMemo(() => rawDevices.map((d) => {
+    const p = presented(d, now);
+    return since !== undefined && d.realm === "real" && !((d.lastSeen?.getTime() ?? 0) > since)
+      ? { ...p, status: "offline" as const, health: "unknown" as const, findings: [], starting: true } : p;
+  }), [rawDevices, now, since]);
   const actions = useActions(uid, gen);
   const events = useEvents(uid, gen);
   const trust = useTrust(uid, gen);
@@ -118,6 +132,9 @@ export default function Home({ user }: { user: User }) {
   // Save with Google: the demo's guest account takes on a Google login and keeps its home. Every outcome says what
   // happened in one plain line (closing the Google window is the person's choice, so that one stays quiet).
   const [saving, setSaving] = useState(false);
+  // a Google account that already has its own home can't take this one: say so and offer to sign in to it instead
+  const [linkTaken, setLinkTaken] = useState<AuthCredential | null | false>(false); // null: sign in afresh
+  const [linkExpired, setLinkExpired] = useState(false);
   const [notice, setNotice] = useState<string | null>(peekNotice);
   useEffect(() => leaveNotice(null), []); // shown once: read on the first render, cleared after it
   const [, redraw] = useState(0);
@@ -149,11 +166,9 @@ export default function Home({ user }: { user: User }) {
     } catch (e) {
       const code = e instanceof FirebaseError ? e.code : "";
       if (!latest() && code === "auth/cancelled-popup-request") return; // replaced by a newer try
-      const cred = code === "auth/credential-already-in-use" ? GoogleAuthProvider.credentialFromError(e as FirebaseError) : null;
-      if (cred) {
-        // That Google login already has a home of its own: open it (the app restarts for that account).
-        leaveNotice("This Google account already had a Nightlight home, so we opened it. The demo's sample home wasn't kept.");
-        await signInWithCredential(auth, cred).catch(() => { leaveNotice(null); setNotice("Couldn't open that account. Please try again."); });
+      if (code === "auth/credential-already-in-use" || code === "auth/email-already-in-use") {
+        setLinkExpired(false);
+        setLinkTaken(GoogleAuthProvider.credentialFromError(e as FirebaseError));
       } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request" || code === "auth/user-cancelled") {
         // closed on purpose: nothing to say
       } else if (code === "auth/popup-blocked") {
@@ -169,9 +184,22 @@ export default function Home({ user }: { user: User }) {
     }
   }
 
-  const item = (p: Panel, label: string, Icon: LucideIcon, count?: number) => (
+  // the visit stays until one of these succeeds (the app restarts for that account)
+  async function useTakenAccount() {
+    const { auth } = await firebase();
+    leaveNotice("This Google account already had a Nightlight home, so we opened it. This visit's practice changes weren't kept.");
+    if (linkTaken) {
+      // the credential from the failed link can expire: then ask for a fresh Google sign-in instead
+      await signInWithCredential(auth, linkTaken).catch(() => { leaveNotice(null); setLinkTaken(null); setLinkExpired(true); });
+    } else {
+      await signInWithPopup(auth, new GoogleAuthProvider()).catch(() => {
+        leaveNotice(null); setNotice("Couldn't open that account. Please try again."); });
+    }
+  }
+
+  const item = (p: Panel, label: string, Icon: LucideIcon, count?: number, tour?: string) => (
     <button className={`side-item ${panel === p ? "on" : ""}`} aria-current={panel === p ? "page" : undefined}
-      onClick={() => open(p)}>
+      onClick={() => open(p)} data-tour={tour}>
       <Icon size={18} aria-hidden /> <span>{label}</span>
       {!!count && <span className="side-count">{count}</span>}
     </button>
@@ -192,19 +220,20 @@ export default function Home({ user }: { user: User }) {
           ? <span className="side-sample" title="These devices are simulated, so you can try things safely">
               <span className="dot sample" aria-hidden /> Sample home, simulated</span>
           : <button className="side-sample as-button" disabled={switching || !me} onClick={toggleSample}
-              title="Simulated devices to try things safely">{sampleOn ? "Hide sample home" : "Show sample home"}</button>}
+              title="A safe pretend home to try fixes; your real devices aren't touched">{sampleOn ? "Hide practice home" : "Practice home"}</button>}
         <nav className="side-nav" aria-label="Main">
           {item("none", "Home", House, needs.length)}
           {item("activity", "Activity", ActivityIcon)}
-          {item("trust", "Trust", ShieldCheck)}
-          {item("memory", "Memory", NotebookPen)}
+          {item("trust", "Trust", ShieldCheck, undefined, "trust")}
+          {!live && item("memory", "Memory", NotebookPen)}
           <p className="side-label">Add to your home</p>
-          {item("add", "Add a device", Plus)}
+          {item("add", "Add a device", Plus, undefined, "add-device")}
           {item("watch", "Watch a website", Globe)}
-          {item("found", "Found nearby", Radar, addable(found.items).length)}
+          {item("found", "Found nearby", Radar, addable(found.items).length, "found-nearby")}
         </nav>
         <div className="side-foot">
           {item("demo", "Demo tools", FlaskConical)}
+          {item("settings", "Settings", Gear, undefined, "settings")}
           <button className="side-item" onClick={flipTheme} aria-label={`Switch to ${theme === "night" ? "day" : "night"} theme`}>
             {theme === "night" ? <Sun size={18} /> : <Moon size={18} />}
             <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
@@ -212,8 +241,8 @@ export default function Home({ user }: { user: User }) {
             {user.isAnonymous
               ? <button className="primary side-save" onClick={saveWithGoogle} disabled={saving}
                   title="Keep this home by linking a Google account">{saving ? "Opening Google…" : "Save with Google"}</button>
-              : <span className="small muted side-email">{user.email}</span>}
-            <button className="side-item" onClick={async () => signOut((await firebase()).auth)}>
+              : <span className="small muted side-email" title={user.email ?? undefined}>{user.email}</span>}
+            <button className="side-item" onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>
               <LogOut size={18} /> <span>Sign out</span></button>
           </div>
         </div>
@@ -224,9 +253,22 @@ export default function Home({ user }: { user: User }) {
           {notice && <div className="panel save-notice" role="status">
             <span>{notice}</span>
             <button className="linkish small" onClick={() => setNotice(null)}>Dismiss</button></div>}
+          {linkTaken !== false && (
+            <div className="panel" role="alert">
+              <p style={{ marginTop: 0 }}>That Google account already has its own Nightlight home, so this visit can&apos;t
+                be saved into it.</p>
+              <div className="actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="primary" onClick={useTakenAccount}>{linkExpired ? "Sign in with Google again"
+                  : "Sign in to that account instead"}</button>
+                <button onClick={() => setLinkTaken(false)}>Stay here</button>
+              </div>
+              {linkExpired && <p className="small" style={{ color: "var(--crit-ink)" }}>That sign-in expired. Sign in with
+                Google again.</p>}
+              <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
+            </div>)}
           {panel === "none" ? <>
-            <AwayBanner uid={uid} events={events} onSummarise={(q) => askChat(q)} />
-            <div className="panel needs needs-strip" data-state={needs.length ? "needs" : "ok"}>
+            <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
+            <div className="panel needs needs-strip" data-state={needs.length ? "needs" : "ok"} data-tour="needs">
               <span className="verdict-light" aria-hidden />
               <h1 className="verdict">{verdict(needs)}</h1>
               <span className="spacer" />
@@ -236,13 +278,13 @@ export default function Home({ user }: { user: User }) {
                     ? "Notifications are blocked for this site in your browser settings"
                     : "Show a notification when something goes wrong, while this tab is open"}>
                   {notify.on ? "Notifying you" : "Notify me"}</button>)}
-              <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Check-up now</button>
+              <button className="small" onClick={() => askChat("Is anything wrong at home?")}>Ask if anything&apos;s wrong</button>
               {needs.length > 0 && <div className="needs-body">
                 <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
                   onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />
               </div>}
             </div>
-            {me && <FirstRun uid={uid} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
+            {me && !live && <FirstRun uid={visit} anonymous={user.isAnonymous} devices={devices} discoveries={discoveries}
               expert={expert} onAdd={() => open("add")} onWatch={() => open("watch")} onSave={saveWithGoogle}
               onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
             <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
@@ -250,13 +292,15 @@ export default function Home({ user }: { user: User }) {
               onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
               settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
           </> : <div className="page">
-            {panel === "trust" && <TrustPanel trust={trust} />}
+            {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
             {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
             {panel === "demo" && <DemoTools devices={devices} />}
-            {panel === "memory" && <MemoryPanel />}
+            {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle}
+              onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
+            {panel === "memory" && !live && <MemoryPanel />}
             {panel === "watch" && <WatchPanel watches={watches} now={now} />}
             {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} />}
-            {panel === "add" && <AddDevice anonymous={user.isAnonymous} onSave={saveWithGoogle} devices={devices} />}
+            {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} onSave={saveWithGoogle} devices={devices} />}
           </div>}
         </section>
         {/* the device panel: from the left over the map's edge on a wide screen, a full-height sheet on a phone */}
@@ -280,7 +324,7 @@ export default function Home({ user }: { user: User }) {
               aria-label="Hide the chat"><PanelRightClose size={18} aria-hidden /></button>
           </div>
           <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me}
-            onBusy={setChatBusy} />
+            onBusy={setChatBusy} onShowMap={() => { setPanel("none"); setPane("home"); }} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
@@ -291,8 +335,12 @@ export default function Home({ user }: { user: User }) {
         <button className={pane === "chat" ? "on" : ""} aria-current={pane === "chat" ? "page" : undefined}
           onClick={() => setPane("chat")}><MessageCircle size={18} aria-hidden /> Chat</button>
       </nav>
+      <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)
+        && (!live || machine.machineReady)}
+        state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
+          realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
       {resetting && <div className="overlay"><div className="modal resetting" role="status">
-        <Mascot size={56} mood="thinking" /> <span>Resetting the demo…</span></div></div>}
+        <Mascot size={56} mood="thinking" /> <span>Resetting the sample home…</span></div></div>}
     </div>
   );
 }

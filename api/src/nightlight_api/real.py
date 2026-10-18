@@ -13,9 +13,25 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 import re
 
 from . import apps, db, links, release
-from .errors import ApiError, not_found
+from .errors import ApiError, Outcome, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub, scrub_value
+
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 2: "stopped with an error (exit code 2)",
+                137: "was force-stopped (exit code 137: killed, or out of memory)",
+                143: "was asked to stop (exit code 143)", 139: "crashed (exit code 139)",
+                126: "couldn't start its program (exit code 126)", 127: "couldn't find its program (exit code 127)"}
+
+
+def _stopped_words(status) -> str:
+    """Why a stopped container stopped, in plain words first, from Docker's status ("Exited (137) 5 minutes ago"):
+    the meaning is the fact to report, the number only backs it up."""
+    m = re.match(r"Exited \((-?\d+)\)", status or "")
+    if not m:
+        return "isn't running"
+    code = int(m.group(1))
+    return "isn't running: it " + EXIT_MEANING.get(code, f"exited with code {code}")
+
 
 CODE_TTL = timedelta(minutes=10)
 CODES_PER_HOUR = 10
@@ -30,23 +46,33 @@ CLAIM_MIN_SECONDS = 4
 # What a real device can be asked to do is declared in capabilities.py; the card builders for its jobs live here.
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
-FIX = {
+FIX = {  # recipe -> (title, what happens in plain words, undo, the exact command the helper runs or None)
     "empty_trash": ("Empty the Trash", "Deletes everything in the Trash", "Can't be undone: files in the Trash are "
-                    "deleted for good. Look in the Trash first if you're unsure."),
-    "brew_cleanup": ("Clear Homebrew's old downloads", "Runs \"brew cleanup -s\": removes old versions and cached "
-                     "downloads", "Nothing to undo: Homebrew downloads again what it needs."),
-    "npm_cache": ("Clear the npm cache", "Runs \"npm cache clean --force\"",
-                  "Nothing to undo: npm downloads packages again when needed."),
-    "xcode_build_data": ("Clear Xcode's build data", "Empties Xcode's DerivedData folder",
-                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower)."),
-    "docker_prune": ("Remove Docker's leftover images", "Runs \"docker image prune -f\": removes only untagged "
-                     "images (leftovers from updates and rebuilds) that no container uses", "Nothing to undo: "
-                     "images with a name and all containers are not touched."),
-    "apt_clean": ("Clear downloaded system updates", "Runs \"sudo apt-get clean\": removes downloaded package files",
-                  "Nothing to undo: installed software is not touched."),
-    "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "
-                       "200 MB of system logs", "Can't be undone: older log entries are deleted."),
+                    "deleted for good. Look in the Trash first if you're unsure.", None),
+    "brew_cleanup": ("Clear old downloads of developer tools (Homebrew)", "Removes old versions and saved downloads "
+                     "of Homebrew's tools", "Nothing to undo: Homebrew downloads again what it needs.",
+                     "brew cleanup -s"),
+    "npm_cache": ("Clear a programming tool's download cache (npm)", "Removes the packages npm saved for reuse",
+                  "Nothing to undo: npm downloads packages again when needed.", "npm cache clean --force"),
+    "xcode_build_data": ("Clear Xcode's temporary build files", "Empties Xcode's build folder (DerivedData)",
+                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower).", None),
+    "docker_prune": ("Remove leftover app downloads", "Removes app downloads (Docker images) that have no name "
+                     "and that no app uses: mostly old versions left over from updates, but also unnamed images "
+                     "someone built on this device", "Can't be undone for what it removes, but apps in use and "
+                     "named images are not touched; an unnamed image you built yourself would have to be built "
+                     "again.", "docker image prune -f"),
+    "apt_clean": ("Clear downloaded system updates", "Removes the saved installation downloads (package files), "
+                  "including ones that were downloaded but never installed",
+                  "Nothing to undo: installed software stays exactly as it is; anything still needed is downloaded "
+                  "again.", "sudo apt-get clean"),
+    "journal_vacuum": ("Shrink the system's event diary (log)", "Keeps only the newest 200 MB of the system's record "
+                       "of events", "Can't be undone: older entries are deleted.",
+                       "sudo journalctl --vacuum-size=200M"),
 }
+# The device's last measurement per clean-up (device field `spaceMeasured`, written when its disk checks come back and
+# when a clean-up ran): one that measured at most NOTHING_GB within MEASURED_FOR gets no card, it would free nothing.
+NOTHING_GB = 0.1
+MEASURED_FOR = timedelta(hours=3)
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -87,6 +113,8 @@ def tokens_ref():
 # ------------------------------------------------------------------ enrolment
 
 def create_code(uid: str) -> dict:
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     now = _now()
     hour = now.strftime("%Y%m%d%H")
@@ -175,7 +203,7 @@ def pairs_ref():
     return db.client().collection("pairRequests")
 
 
-def pair_start(name: str, os_name: str | None, ip: str) -> dict:
+def pair_start(name: str, os_name: str | None, ip: str, machine: str | None = None, via: str | None = None) -> dict:
     now = _now()
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     poll_secret = secrets.token_urlsafe(32)
@@ -190,6 +218,7 @@ def pair_start(name: str, os_name: str | None, ip: str) -> dict:
         tx.set(bucket, {"count": n + 1, "expiresAt": now + timedelta(hours=2)})
         tx.set(pairs_ref().document(_sha(code)), {"pollHash": _sha(poll_secret), "name": name, "os": os_name,
                                                    "status": "waiting", "uid": None, "expiresAt": now + PAIR_TTL,
+                                                   "machine": machine, "via": via,
                                                    "createdAt": firestore.SERVER_TIMESTAMP})
 
     db.run_transaction(run)
@@ -206,16 +235,90 @@ def _pair_doc(tx, code: str):
     return ref, data
 
 
+# ------------------------------------------------------------------ a reinstall continues the same device
+# The helper reports a fingerprint of its machine: SHA-256 of the machine's own hardware id (macOS IOPlatformUUID,
+# Linux /etc/machine-id), never the id itself. It can't be keyed with the account's netKey like the other
+# fingerprints, because an unpaired helper has no account yet; so the server keys it per account (HMAC with that
+# account's netKey) before keeping it on a device or comparing. Matches therefore never cross accounts, and nothing is
+# continued without the owner choosing "Continue its history" when approving.
+
+def keyed_machine(key: str | None, machine: str | None) -> str | None:
+    """The account-keyed form of a helper's machine fingerprint (20 hex characters), or None."""
+    if not key or not machine:
+        return None
+    import hmac
+    return hmac.new(bytes.fromhex(key), b"machine:" + machine.encode(), hashlib.sha256).hexdigest()[:20]
+
+
+def _machine_tag(tx, uid: str, machine: str | None) -> str | None:
+    """Read only: an account without a key yet has no device with a fingerprint either."""
+    if not machine:
+        return None
+    snap = links._net_ref(uid).get(transaction=tx)
+    return keyed_machine((snap.to_dict() or {}).get("key") if snap.exists else None, machine)
+
+
+def _may_continue(d: dict) -> bool:
+    """A helper device not reporting (offline, uninstalled, revoked) or archived, and not being deleted (a purge that
+    has claimed it always wins: see archive.purge)."""
+    return d.get("realm") == "real" and d.get("kind") != "watched" and not d.get("purgeClaim") \
+        and bool(d.get("archived") or view(d).get("stale"))
+
+
+def _continuable(snaps) -> tuple[str, dict] | None:
+    """Of this account's devices with the same machine fingerprint, the one a reinstall may continue: a helper device
+    that is offline, uninstalled or removed (archived, not yet deleted); the most recently seen. A device still
+    reporting is never offered (that would cut a working helper off)."""
+    out = []
+    for s in snaps:
+        d = s.to_dict() or {}
+        if _may_continue(d):
+            out.append((s.id, d))
+    if not out:
+        return None
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    return max(out, key=lambda x: x[1].get("lastSeen") or x[1].get("archivedAt") or epoch)
+
+
+def _same_machine(tx, uid: str, machine: str | None) -> tuple[str | None, tuple[str, dict] | None]:
+    tag = _machine_tag(tx, uid, machine)
+    if not tag:
+        return None, None
+    return tag, _continuable(db.devices(uid).where(filter=FieldFilter("machine", "==", tag)).get(transaction=tx))
+
+
+def _iso(t) -> str | None:
+    return t.isoformat().replace("+00:00", "Z") if isinstance(t, datetime) else None
+
+
 def pair_preview(uid: str, code: str) -> dict:
+    """What the owner sees before approving, with `continues` when this looks like one of their devices reinstalled
+    ({deviceId, name, lastSeen, removed}), else None."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     _count_check(uid)
     _, data = _pair_doc(None, code)
     if not data or data["status"] != "waiting":
         raise not_found()
-    return {"name": data["name"], "os": data.get("os"),
-            "expiresAt": data["expiresAt"].isoformat().replace("+00:00", "Z")}
+    out = {"name": data["name"], "os": data.get("os"),
+           "expiresAt": data["expiresAt"].isoformat().replace("+00:00", "Z"), "continues": None}
+    if data.get("machine"):
+        @firestore.transactional
+        def run(tx):
+            return _same_machine(tx, uid, data["machine"])[1]
+        found = db.run_transaction(run)
+        if found:
+            device_id, d = found
+            out["continues"] = {"deviceId": device_id, "name": d.get("name"), "lastSeen": _iso(d.get("lastSeen")),
+                                "removed": bool(d.get("archived"))}
+    return out
 
 
-def pair_decide(uid: str, code: str, approve: bool) -> dict:
+def pair_decide(uid: str, code: str, approve: bool, continue_device: bool = False) -> dict:
+    """The owner's tap. With continue_device, the approved helper takes over the device the preview offered: found
+    again here from the fingerprint the helper sent and this account's own devices, never an id from the browser."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     _count_check(uid)
 
     @firestore.transactional
@@ -225,11 +328,20 @@ def pair_decide(uid: str, code: str, approve: bool) -> dict:
             raise not_found()
         if data["status"] != "waiting":
             raise ApiError(409, "already_decided")
+        target = None
+        tag, found = _same_machine(tx, uid, data.get("machine")) if approve else (None, None)
+        if approve and continue_device:
+            if not found:
+                raise ApiError(409, "nothing_to_continue")
+            target = found[0]
+        # from here on only the account-keyed fingerprint is kept with the request
         tx.update(ref, {"status": "approved" if approve else "denied", "uid": uid if approve else None,
-                        "decidedAt": firestore.SERVER_TIMESTAMP})
+                        "continues": target, "machineTag": tag, "machine": firestore.DELETE_FIELD,
+                        "decidedAt": _now()})
+        return target
 
-    db.run_transaction(run)
-    return {"ok": True}
+    target = db.run_transaction(run)
+    return {"ok": True, "continues": target}
 
 
 def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
@@ -248,11 +360,65 @@ def pair_poll(code: str, poll_secret: str) -> tuple[int, dict]:
         if data["status"] == "waiting":
             tx.update(ref, {"lastPollAt": _now()})  # only the real device (right secret) gets here
             return 202, {"status": "waiting"}
+        kept = _continue_reads(tx, data) if data.get("continues") else None
+        if kept:
+            tx.update(ref, {"status": "consumed", "deviceId": data["continues"],
+                            "consumedAt": firestore.SERVER_TIMESTAMP})
+            _rebind(tx, data, token, *kept)
+            return 200, {"deviceId": data["continues"], "token": token, "continued": True}
         tx.update(ref, {"status": "consumed", "deviceId": device_id, "consumedAt": firestore.SERVER_TIMESTAMP})
         _create_device(tx, data["uid"], device_id, token, data["name"])
         return 200, {"deviceId": device_id, "token": token}
 
     return db.run_transaction(run)
+
+
+def _continue_reads(tx, data: dict):
+    """Everything the continuation needs, read: (device snapshot, its tokens), or None when the device can't be
+    continued any more: deleted or being deleted (a purge claimed it), its fingerprint changed, its own helper is
+    reporting again (its working token is never revoked), or another reinstall took it over after this approval.
+    Then the helper becomes a new device instead: nothing is ever merged without the owner's choice."""
+    uid, device_id = data["uid"], data["continues"]
+    dsnap = db.device(uid, device_id).get(transaction=tx)
+    d = dsnap.to_dict() if dsnap.exists else None
+    tag = data.get("machineTag")
+    tokens = [t for t in tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id)).get(transaction=tx)
+              if (t.to_dict() or {}).get("uid") == uid]
+    if not d or not tag or d.get("machine") != tag or not _may_continue(d):
+        return None
+    since, decided = d.get("helperSince"), data.get("decidedAt")
+    if isinstance(since, datetime) and isinstance(decided, datetime) and since > decided:
+        return None
+    return dsnap, tokens
+
+
+def _rebind(tx, data: dict, token: str, dsnap, old_tokens) -> None:
+    """The reinstalled helper takes over its device: the old tokens die; the document, with its history, notes, saved
+    fixes, jobs, events, place on the map and name, stays; a removed device comes back. Writes only."""
+    from . import archive
+    uid, device_id = data["uid"], data["continues"]
+    d = dsnap.to_dict() or {}
+    for t in old_tokens:
+        if not (t.to_dict() or {}).get("revoked"):
+            tx.update(t.reference, {"revoked": True, "revokedAt": firestore.SERVER_TIMESTAMP})
+    tx.set(tokens_ref().document(_sha(token)), {"uid": uid, "deviceId": device_id, "revoked": False,
+                                                "createdAt": firestore.SERVER_TIMESTAMP, "lastSeen": None})
+    tx.set(db.client().collection("realDevices").document(f"{uid}__{device_id}"), {"uid": uid, "deviceId": device_id})
+    tx.delete(archive.index().document(f"{uid}__{device_id}"))
+    tx.update(dsnap.reference, {
+        "archived": False, "archivedAt": firestore.DELETE_FIELD, "purgeAt": firestore.DELETE_FIELD,
+        "revoked": False, "uninstalled": False, "status": "offline", "health": "unknown", "registered": True,
+        "helperSince": _now(), "installedWith": data.get("via"),
+        # what the new install says about itself (version, managed from the app or not) comes with its first report
+        "helperVersion": None, "manage": None, "allowedJobs": {},
+        # The owner's app-side permissions ("permissions") are kept and reach the new helper with its first report.
+        # What it watched nearby is not: the old helper's local list of found things (their addresses, which never
+        # leave a device) went with it, so the watched things are looked up again (see _rewatch).
+        "rewatch": {"state": "new", "at": _now()}})
+    how = {"installer": "installer", "command_line": "command line"}.get(data.get("via"))
+    event(tx, uid, device_id, "reinstalled", "info",
+          f"Helper reinstalled{f' ({how})' if how else ''} on {d.get('name', 'a device')}; history kept."
+          + (" It is back on your map." if d.get("archived") else ""), who="you")
 
 
 # ------------------------------------------------------------------ discovery and devices watched by a helper
@@ -326,6 +492,8 @@ def set_device_names(uid: str, on: bool) -> dict:
     """The owner's switch for names of things nearby. Turning it off also removes every name already kept: from the
     lists of what was found, and from watched things (one still called by its announced name goes back to its
     guess). New lists keep no names from the moment the switch is saved."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     db.user(uid).set({"settings": {"deviceNames": on}}, merge=True)
     if on:
         return {"ok": True, "deviceNames": True}
@@ -370,7 +538,7 @@ def found_name(text: str | None) -> str | None:
     something the scrubber hid."""
     if not isinstance(text, str) or not text.strip() or not text.isprintable() or len(text) > 60:
         return None
-    if re.search(r"\[(ip|mac|email|hidden|user)\]|\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){2,}\b"
+    if re.search(r"\[(ip|mac|email|hidden|user)\]|(?<![0-9A-Za-z])[0-9A-Fa-f]{2}(?:[:_-][0-9A-Fa-f]{2}){2,}(?![0-9A-Za-z])"
                  r"|\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}", text) \
             or any(re.search(r"\d", run) for run in re.findall(r"[0-9A-Fa-f]{6,}", text)):
         return None
@@ -418,6 +586,32 @@ def _filled_in(d: dict, device_id: str, items: list[dict], taken: set) -> dict:
     return update
 
 
+def _rebound(watched, items: list[dict], device_id: str) -> dict:
+    """Things this helper watches that a new look found under another id (a reinstalled helper starts its local list
+    afresh, so it names them anew): {doc id: the new id, and a port to check that the look saw open}. Matched by
+    hardware or address fingerprint (_same_thing); each found item binds at most one watched thing."""
+    out, used = {}, {(w.to_dict() or {}).get("cid") for w in watched}
+    for w in watched:
+        d = w.to_dict() or {}
+        if d.get("revoked") or any(it.get("cid") == d.get("cid") for it in items):
+            continue
+        hw = (d.get("net") or {}).get("hw")
+        free = [i for i in items if i.get("cid") not in used]
+        # A known hardware fingerprint is the only evidence for it: its old address may belong to another machine now
+        # (left to the owner's ask when no item carries it). Without one, the address fingerprint stands in.
+        it = next((i for i in free if i.get("hw") == hw), None) if hw else \
+            next((i for i in free if _same_thing({**d, "cid": None}, i, device_id)), None)
+        if not it:
+            continue
+        ports = it.get("ports") or []
+        port = d.get("checkPort") if d.get("checkPort") in ports else next((p for p in WATCH_PORTS if p in ports), None)
+        if port is None:
+            continue  # nothing to check answers on it now
+        used.add(it["cid"])
+        out[w.id] = {"cid": it["cid"], "checkPort": port}
+    return out
+
+
 def save_discoveries(token: str, items: list[dict]) -> dict:
     """What a helper found nearby and its owner chose to send (no addresses). Replaces the previous list. Names are
     kept only while the account shows them."""
@@ -433,11 +627,17 @@ def save_discoveries(token: str, items: list[dict]) -> dict:
         kept = [{**it, "name": found_name(it.get("name")) if names else None,
                  "added": any(_same_thing(w, it, device_id) for w in mapped if not w.get("revoked"))} for it in items]
         taken = {(w.to_dict().get("net") or {}).get("hw") for w in on_map} - {None}
+        moved = _rebound(watched, kept, device_id)
+        rw = (dsnap.to_dict() or {}).get("rewatch")
+        if isinstance(rw, dict) and rw.get("state") != "unmatched" and \
+                any(w.to_dict().get("checkPort") and not w.to_dict().get("revoked") and w.id not in moved
+                    and not any(it.get("cid") == w.to_dict().get("cid") for it in kept) for w in watched):
+            tx.update(dsnap.reference, {"rewatch": {**rw, "state": "unmatched"}})  # the owner is asked about the rest
         tx.set(discoveries_ref(uid).document(device_id), {
             "items": kept, "by": device_id, "byName": name,
             "at": firestore.SERVER_TIMESTAMP, "expiresAt": _now() + DISCOVERY_TTL})
         for w in on_map:
-            update = _filled_in(w.to_dict(), device_id, kept, taken)
+            update = {**moved.get(w.id, {}), **_filled_in(w.to_dict(), device_id, kept, taken)}
             if update:
                 tx.update(w.reference, update)
         event(tx, uid, device_id, "found", "info", f"{name} found {len(items)} thing(s) nearby you can add.")
@@ -560,7 +760,8 @@ def found_view(uid: str) -> list[dict]:
     return sorted(out, key=lambda r: (not r.get("router"), not (r["seenBy"] and r["seenBy"][0]["canWatch"])))
 
 
-DISCOVER_FROM = "0.9.21"  # helpers that can look nearby when the app asks
+DISCOVER_FROM = "0.9.21"
+UNHEALTHY_RESTART_FROM = "0.9.27"  # helpers that restart a running container that fails its health check  # helpers that can look nearby when the app asks
 
 
 def request_discover(uid: str, device_id: str) -> dict:
@@ -694,8 +895,9 @@ def add_found(uid: str, helper_id: str, cid: str, name: str | None) -> dict:
 
 
 def leave(token: str, cleanup: str | None = None) -> dict:
-    """The helper revokes its own token (it uninstalled itself, from the app or by hand): the device is archived and
-    a removal the owner asked for is closed, in one transaction."""
+    """The helper revokes its own token (it uninstalled itself, from the app or by hand), in one transaction. A
+    removal the owner asked for in the app is closed and the device archived; an uninstall done on the device leaves
+    it on the map as offline, history kept (archive.left)."""
     from . import archive
     tref = tokens_ref().document(_sha(token))
 
@@ -718,6 +920,8 @@ def leave(token: str, cleanup: str | None = None) -> dict:
 
 def remove_watched(uid: str, device_id: str) -> dict:
     """Take a device watched by a helper off the map: its helper stops checking it, and its place is freed."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     ref = db.device(uid, device_id)
 
     @firestore.transactional
@@ -744,6 +948,8 @@ def remove_watched(uid: str, device_id: str) -> dict:
 
 def revoke(uid: str, device_id: str) -> dict:
     """Revoke the device's token(s) and mark it offline, together, in one transaction."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     query = tokens_ref().where(filter=FieldFilter("deviceId", "==", device_id))
 
     @firestore.transactional
@@ -834,9 +1040,14 @@ def checks(facts: dict) -> list[dict]:
                     "message": f"{_friendly(unit)} has stopped working.", "evidence": f"system service {unit}: failed",
                     "svcId": _doc_id(unit)})
     for c in facts.get("containers") or []:
+        if c.get("state") == "running" and "(unhealthy)" in (c.get("status") or ""):
+            out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_unhealthy", "severity": "warn",
+                        "message": f"{c['name']} is running but failing its own health check.",
+                        "evidence": f"container status: {c.get('status')}", "svcId": _doc_id(c["name"])})
         if c.get("state") not in ("running", None):
             out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_down", "severity": "warn",
-                        "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
+                        "message": f"{c['name']} {_stopped_words(c.get('status'))}.",
+                        "evidence": f"container state: {c.get('state')}",
                         "svcId": _doc_id(c["name"])})
     agents = facts.get("failedAgents") or []
     if agents:
@@ -883,10 +1094,11 @@ def _unit_card(device: dict, services: dict, params: dict) -> dict:
     if not svc or svc.get("kind") != "system" or svc.get("unit") != unit or not svc.get("failed"):
         raise ValueError("not_failed")  # only the exact service the device reports as failed
     friendly = _friendly(unit)
-    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} ({unit}) on the {device['name']}.",
-            "dryRun": f"The helper on the device runs \"sudo systemctl restart {unit}\" and checks it is still running "
-                      f"a few seconds later. Nothing else is touched.",
+    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} on the {device['name']}: it stopped working.",
+            "dryRun": f"Nightlight's helper starts {friendly} (a background service, {unit}) again and checks it is "
+                      "still running a few seconds later. Nothing else is touched.",
             "rollback": "Nothing to undo: if it fails again, it simply stays stopped and you'll see why.",
+            "command": f"sudo systemctl restart {unit}",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -895,10 +1107,17 @@ def _fix_card(device: dict, params: dict) -> dict:
         raise ValueError("bad_target")
     if params["recipe"] not in (device.get("allowedJobs") or {}).get("fix", []):
         raise ValueError("not_allowed_on_device")
-    title, what, undo = FIX[params["recipe"]]
+    measured = ((device.get("spaceMeasured") or {}).get(params["recipe"]) or {})
+    at = measured.get("at")
+    age = (_now() - at) if isinstance(at, datetime) else timedelta(0)  # not a datetime yet: written just now
+    if measured.get("gb") is not None and measured["gb"] <= NOTHING_GB and age < MEASURED_FOR:
+        raise Outcome("nothing_to_free", recipe=params["recipe"], measuredGb=measured["gb"],
+                      minutesAgo=int(age.total_seconds() // 60))
+    title, what, undo, command = FIX[params["recipe"]]
     return {"svcId": None, "plan": f"{title} on the {device['name']}.",
-            "dryRun": f"{what}. The helper reports how much space it freed. Nothing else is touched.",
-            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service"}
+            "dryRun": f"{what}. Nightlight's helper reports how much space it freed. Nothing else is touched.",
+            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service",
+            **({"command": command} if command else {})}
 
 
 def _remove_card(device: dict, params: dict) -> dict:
@@ -913,7 +1132,7 @@ def _remove_card(device: dict, params: dict) -> dict:
                        "It isn't reporting (or its helper is too old to uninstall itself), so its access is cut now "
                        "and it leaves your map; to delete the helper's files, run the uninstall line on it."),
             "rollback": f"Its history, notes and activity are kept for {ARCHIVE_DAYS} days, then deleted. To bring it "
-                        "back, add it again (it becomes a new device).",
+                        "back, install the helper on it again and choose \"Continue its history\" when approving.",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -926,7 +1145,8 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
         return _fix_card(device, params)
     if action_type == "restart_service":
         return _unit_card(device, services, params)
-    if action_type != "restart_container" or set(params) != {"container"}:
+    if action_type != "restart_container" or set(params) - {"restart"} != {"container"} \
+            or params.get("restart", True) is not True:
         raise ValueError("not_applicable")
     name = params["container"]
     if not isinstance(name, str) or not CONTAINER_NAME.fullmatch(name):
@@ -936,12 +1156,28 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     svc = services.get(_doc_id(name))
     if not svc or svc.get("kind") != "container":
         raise ValueError("no_such_container")
+    unhealthy = "(unhealthy)" in (svc.get("detail") or "")
+    if params.get("restart") and not unhealthy:
+        raise ValueError("not_unhealthy")
     if svc.get("status") == "ok":
         raise ValueError("already_running")
-    return {"svcId": _doc_id(name), "plan": f"Start the stopped {name} container again on the {device['name']}.",
-            "dryRun": f"The helper on the device runs \"docker start {name}\" and checks it is still running a few "
-                      f"seconds later. Nothing else is touched.",
-            "rollback": f"Stop {name} again (from the app or with \"docker stop {name}\").",
+    if unhealthy and not params.get("restart"):
+        raise ValueError("needs_restart")  # a start card would do nothing for a running container
+    if unhealthy:  # running but failing its health check: the restart the card names is the job's own parameter
+        if release.newer(UNHEALTHY_RESTART_FROM, device.get("helperVersion")):
+            raise ValueError("helper_too_old")
+        return {"svcId": _doc_id(name), "plan": f"Restart {name} on the {device['name']}: it is on but not "
+                                                f"responding properly (its own health check fails).",
+                "dryRun": f"Nightlight's helper restarts {name} and checks it is healthy a few seconds later. {name} "
+                          f"is unavailable for a moment. Nothing else is touched.",
+                "rollback": "Nothing to undo: it starts again with the same settings and data.",
+                "command": f"docker restart {name}",
+                "blastRadius": [device["id"]], "riskClass": "service"}
+    return {"svcId": _doc_id(name), "plan": f"Start {name} again on the {device['name']}: it has stopped.",
+            "dryRun": f"Nightlight's helper starts {name} (an app packaged with Docker) and checks it is still "
+                      f"running a few seconds later. Nothing else is touched.",
+            "rollback": f"You can stop {name} again on the device (\"docker stop {name}\").",
+            "command": f"docker start {name}",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -966,13 +1202,15 @@ def back_words(last_seen, uptime_sec) -> dict:
 
 def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
     tref = tokens_ref().document(_sha(token))
+    machine = facts.get("machine")  # a fingerprint (validated hex), kept as sent
     facts, _ = scrub_value(facts)
     findings = checks(facts)
     services = {}
     for c in facts.get("containers") or []:
         image = c.get("image") or ""
         services[_doc_id(c["name"])] = {"name": c["name"], "category": "containers", "kind": "container",
-                               "status": "ok" if c.get("state") == "running" else "warn",
+                               "status": "ok" if c.get("state") == "running"
+                               and "(unhealthy)" not in (c.get("status") or "") else "warn",
                                "version": image.rsplit(":", 1)[1] if ":" in image else None,
                                "detail": c.get("status"), "findings": [],
                                **({"about": a} if (a := apps.about(image, c["name"])) else {})}
@@ -989,7 +1227,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         if not t or t.get("revoked"):
             raise ApiError(401, "invalid_token")
         last = t.get("lastSeen")
-        if last and (_now() - last).total_seconds() < HEARTBEAT_MIN_SECONDS:
+        # The minimum gap bounds a misbehaving client, never a helper's normal cadence: the report a helper sends
+        # right after finishing a job (so the change shows at once) is let through once per job result.
+        if last and (_now() - last).total_seconds() < HEARTBEAT_MIN_SECONDS and not t.get("reportDue"):
             raise ApiError(429, "too_frequent", retryAfter=HEARTBEAT_MIN_SECONDS)
         uid, device_id = t["uid"], t["deviceId"]
         dref = db.device(uid, device_id)
@@ -1008,7 +1248,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         net_key, lines_due = links.net_state(tx, uid, net_changed)  # the last read (it may write)
         trend, to_full = disk_forecast(device.get("diskTrend"), facts.get("diskPct"), _now())
         escalate_disk(findings, facts.get("diskPct"), to_full)
-        marked, states = apply_issue_states(findings, device.get("issueStates") or {})
+        rewatch, ask_look, asked = _rewatch(device, watched, facts)
+        look[0] = ask_look
+        marked, states = apply_issue_states(findings + asked, device.get("issueStates") or {})
         status = health_of(marked)
         previous = real_status(device)
         if previous != status:
@@ -1034,10 +1276,15 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
             restarted[0] = gap["restarted"] is True
             event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again: "
                   + gap["words"])
-        tx.update(tref, {"lastSeen": _now()})
+        tx.update(tref, {"lastSeen": _now(), "reportDue": False})
         extra["diskTrend"] = trend
         if net_changed:
             extra["net"] = net
+        if rewatch is not None:
+            extra["rewatch"] = rewatch
+        mtag = keyed_machine(net_key, machine)
+        if mtag and mtag != device.get("machine"):
+            extra["machine"] = mtag  # lets a later reinstall on this machine continue this device
         tx.update(dref, {**extra,
             "os": facts.get("os"), "arch": facts.get("arch"), "status": status, "health": "verified",
             "vitals": {"cpu": facts.get("cpuPct"), "mem": facts.get("memPct"), "diskPct": facts.get("diskPct"),
@@ -1080,18 +1327,57 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         about = {"deviceName": device.get("name"), "ownerHint": user.get("ownerHint"),
                  "permissions": device.get("permissions") or DEFAULT_PERMISSIONS,
                  "deviceNames": names_on(user)}  # whether the helper sends names of things nearby
-        jobs = _hand_over(tx, approved, user) if take_jobs else []
+        jobs = _hand_over(tx, approved, user, uid, device_id) if take_jobs else []
         return uid, device_id, jobs, _poll_every(user), watch_list, {**about, "netKey": net_key}, lines_due
 
-    restarted = [False]
+    restarted, look = [False], [False]
     uid, device_id, jobs, poll, watch_list, about, lines_due = db.run_transaction(run)
     if restarted[0]:
         post_mortem(token, device_id, facts)
+    if look[0]:  # a reinstalled app-managed device looks nearby once, so it finds what it watched again
+        try:
+            request_discover(uid, device_id)
+        except (ValueError, ApiError):
+            pass  # the owner gets the ask instead, once the grace runs out
     if lines_due:
         links.infer_quietly(uid)  # fingerprints changed (or an earlier attempt failed): lines may have too
     offer = release.latest()
     return {"ok": True, "deviceId": device_id, "findings": len(findings), "jobs": jobs, "pollEverySec": poll,
             "watch": watch_list, **about, **({"latestHelper": offer["version"]} if offer else {})}
+
+
+REWATCH_GRACE = timedelta(minutes=15)  # a look asked for after a reinstall that hasn't brought them back by then
+
+
+def _rewatch(device: dict, watched, facts: dict) -> tuple:
+    """After a reinstall continued this device, the things it watched keep it as their watcher, but the new helper
+    can check them only once it has found them nearby again. An app-managed helper is asked to look once (its
+    results are matched to the watched things in save_discoveries); a strict one, or a look that didn't find them,
+    puts an ask in front of the owner on this device. Returns (new value of the device's `rewatch`: DELETE_FIELD, a
+    dict, or None for unchanged; whether to ask for a look; findings to add). Pure: the caller writes."""
+    rw = device.get("rewatch")
+    if not isinstance(rw, dict):
+        return None, False, []
+    reported = {r.get("cid") for r in facts.get("watchResults") or []}
+    missing = [w.to_dict() for w in watched if (w.to_dict() or {}).get("checkPort")
+               and (w.to_dict() or {}).get("cid") not in reported]
+    if not missing:
+        return firestore.DELETE_FIELD, False, []  # every watched thing is checked again (or there is none)
+    app = facts.get("manage") == "app" and not release.newer(DISCOVER_FROM, facts.get("helperVersion"))
+    if app and rw.get("state") == "new":
+        return {"state": "asked", "at": _now()}, True, []
+    at = rw.get("at")
+    if app and rw.get("state") == "asked" and isinstance(at, datetime) and _now() - at < REWATCH_GRACE:
+        return None, False, []  # the look is under way
+    names = [m.get("name") or "a watched device" for m in missing]
+    said = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    how = ("Tap Look nearby on this device while they are switched on: it finds them again and checks them as "
+           "before." if app else "Run `nightlight discover` on this device and pick them: it then checks them as "
+           "before.")
+    return None, False, [{"id": "f_rewatch", "check": "reinstalled_watch", "severity": "warn",
+                          "message": f"Reinstalled: re-allow watching {said}? {how}",
+                          "evidence": "the helper was reinstalled; its list of things found nearby starts empty",
+                          "fix": "discover" if app else "discover_on_device"}]
 
 
 def post_mortem(token: str, device_id: str, facts: dict) -> None:
@@ -1165,6 +1451,8 @@ def device_setup(uid: str, device_id: str, preset: str, auto_update: bool, mac_f
     what the device reported), automatic updates, and on a Mac the private folders (macOS asks right away, while the
     person is at the Mac). Runs once: a repeated or concurrent request gets the first one's result and never undoes
     what the owner changed in Settings since. Settings changes it later."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     from . import actions, release
     ref = db.device(uid, device_id)
 
@@ -1273,6 +1561,8 @@ def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = N
                     setup_attempt: str | None = None) -> dict:
     """Only for a device whose owner chose "let the app manage it" on the device, and only for things that device
     reported. The helper applies them on its next report (and still checks each action itself)."""
+    from . import live
+    live.forbid_pool(uid)  # never on a live demo machine's account
     ref = db.device(uid, device_id)
 
     @firestore.transactional
@@ -1287,41 +1577,55 @@ def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = N
             st = d.get("setup") or {}
             if st.get("attempt") != setup_attempt or st.get("state") != "applying" or st.get("permsApplied"):
                 raise ApiError(409, "setup_superseded")
-        services = {s.id: s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)}
-        containers = {s.get("name") for s in services.values() if s.get("kind") == "container"}
-        units = {s.get("unit") for s in services.values() if s.get("kind") == "system" and s.get("unit")}
-        if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
-                or not set(perms["logs"]) <= containers | units:
-            raise ApiError(422, "unknown_target")  # only things this device reported
-        before = d.get("permissions") or DEFAULT_PERMISSIONS
-        clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
-                 "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
-                 **{k: sorted(set(perms[k])) for k in
-                                                         ("logs", "restart_container", "restart_service")}}
-        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
-        words = []
-        if clean["diagnose"] != before.get("diagnose"):
-            words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
-        if clean["updates"] != (before.get("updates") is not False):
-            words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
-        if clean["autoUpdate"] != bool(before.get("autoUpdate")):
-            words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
-        if clean["cleanup"] != bool(before.get("cleanup")):
-            words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
-        for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
-                          ("restart_service", "restart the service")):
-            added = sorted(set(clean[key]) - set(before.get(key, [])))
-            removed = sorted(set(before.get(key, [])) - set(clean[key]))
-            if added:
-                words.append(f"may {what} {', '.join(added)}")
-            if removed:
-                words.append(f"may no longer {what} {', '.join(removed)}")
-        if words:
-            event(tx, uid, device_id, "permissions", "info",
-                  f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+        services = [s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)]
+        clean = permission_writes(tx, uid, device_id, d, services, perms, also)
         return {"ok": True, "permissions": clean}
 
     return db.run_transaction(run)
+
+
+def log_targets(services) -> set:
+    """What this device reported that log reading can be allowed for: its containers and system services."""
+    return {s.get("name") for s in services if s.get("kind") == "container"} | \
+        {s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")}
+
+
+def permission_writes(tx, uid: str, device_id: str, d: dict, services, perms: dict,
+                      also: dict | None = None) -> dict:
+    """Validate and write a device's new permissions with their Activity line (writes only: the caller has read the
+    device `d` and its `services` in this transaction). Returns the clean permissions."""
+    ref = db.device(uid, device_id)
+    containers = {s.get("name") for s in services if s.get("kind") == "container"}
+    units = {s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")}
+    if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
+            or not set(perms["logs"]) <= containers | units:
+        raise ApiError(422, "unknown_target")  # only things this device reported
+    before = d.get("permissions") or DEFAULT_PERMISSIONS
+    clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
+             "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
+             **{k: sorted(set(perms[k])) for k in ("logs", "restart_container", "restart_service")}}
+    tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
+    words = []
+    if clean["diagnose"] != before.get("diagnose"):
+        words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
+    if clean["updates"] != (before.get("updates") is not False):
+        words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
+    if clean["autoUpdate"] != bool(before.get("autoUpdate")):
+        words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
+    if clean["cleanup"] != bool(before.get("cleanup")):
+        words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
+    for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
+                      ("restart_service", "restart the service")):
+        added = sorted(set(clean[key]) - set(before.get(key, [])))
+        removed = sorted(set(before.get(key, [])) - set(clean[key]))
+        if added:
+            words.append(f"may {what} {', '.join(added)}")
+        if removed:
+            words.append(f"may no longer {what} {', '.join(removed)}")
+    if words:
+        event(tx, uid, device_id, "permissions", "info",
+              f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+    return clean
 
 
 def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days: int | None) -> dict:
@@ -1355,8 +1659,9 @@ def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days:
     return db.run_transaction(run)
 
 
-def _hand_over(tx, approved, user: dict) -> list[dict]:
+def _hand_over(tx, approved, user: dict, uid: str, device_id: str) -> list[dict]:
     """Approved jobs are handed over once (at most once: a job claimed here is never handed out again)."""
+    from . import capabilities
     ready = user.get("demo", {}).get("state") == "ready"
     jobs = []
     for a in approved:
@@ -1364,7 +1669,15 @@ def _hand_over(tx, approved, user: dict) -> list[dict]:
             continue  # a reset is withdrawing it (or has): never hand it out
         tx.update(a.reference, {"status": "running", "claimedAt": firestore.SERVER_TIMESTAMP})
         jobs.append({"id": a.id, "type": a.get("type"), "params": a.get("params")})
+    if any(not getattr(capabilities.get(j["type"]), "reads", False) for j in jobs):
+        mark_changed(tx, uid, device_id)
     return jobs
+
+
+def mark_changed(tx, uid: str, device_id: str) -> None:
+    """The device may change from now on (a changing job was handed over, or one reported, whatever its outcome):
+    readings taken before this are no longer reused (actions._same_read). Writes only."""
+    tx.set(db.device(uid, device_id), {"changedAt": firestore.SERVER_TIMESTAMP}, merge=True)
 
 
 def _poll_every(user: dict) -> int:
@@ -1391,7 +1704,7 @@ def claim(token: str, rate_limited: bool = True) -> dict:
             filter=FieldFilter("status", "==", "approved")).get(transaction=tx)
         user = db.user(uid).get(transaction=tx).to_dict() or {}
         tx.update(tref, {"lastClaimAt": _now()})
-        return _hand_over(tx, approved, user), _poll_every(user)
+        return _hand_over(tx, approved, user, uid, device_id), _poll_every(user)
 
     jobs, poll = db.run_transaction(run)
     return {"ok": True, "jobs": jobs, "pollEverySec": poll}

@@ -35,7 +35,7 @@ def _row(a: dict, services: dict, output_chars: int) -> dict:
     r = a.get("result") or {}
     p = a.get("params") or {}
     pb = r.get("playbook")
-    row = {"at": a.get("finishedAt"), "kind": "playbook" if a.get("playbook") else a.get("type"),
+    row = {"at": a.get("finishedAt") or a.get("decidedAt") or a.get("createdAt"), "kind": "playbook" if a.get("playbook") else a.get("type"),
            "title": f"Checkup: {pb.get('title')}" if pb else a.get("plan"),
            "ok": a.get("status") == "done",
            "summary": scrub(playbooks.summary(pb) if pb else str(r.get("summary") or ""))[0][:600],

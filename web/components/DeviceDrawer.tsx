@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Star, Close as X } from "@/src/components/icons";
 import { api } from "@/lib/api";
+import { Copy } from "./AddDevice";
 import { useServicesState } from "@/lib/data";
 import { useFavorites } from "@/lib/favorites";
 import { newer, statusSentence, type Go, type Need } from "@/lib/needsYou";
@@ -74,6 +75,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
   hidden?: boolean; // on a phone, the chat is showing instead
 }) {
   const { rows: services, loaded } = useServicesState(uid, device.id);
+  const failing = device.findings?.find((f) => f.check === "background_items_failing");
+  const failingItems = failing ? failing.evidence || failing.message : "";
   const fav = useFavorites(uid, device);
   const real = device.realm === "real";
   const watched = device.kind === "watched";
@@ -174,7 +177,8 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           ? <p className="small muted">{loaded ? "That app isn't on this device any more." : "Loading…"}</p>
           : <section className="drawer-section">
               {loaded && services.length === 0 && <p className="muted small">{real ? "Nothing running that Nightlight "
-                + "recognises yet. It lists Docker containers and failed system services." : "Nothing listed."}</p>}
+                + "recognises yet. It lists apps that run in the background (a media server, say) and built-in services "
+                + "that have stopped working." : "Nothing listed."}</p>}
               {services.length > 0 && <p className="small muted" style={{ marginTop: 0 }}>Tap one to see how it is and
                 what Nightlight knows about it.</p>}
               <AppGrid apps={appOrder(services, fav.apps)} fav={fav} onApp={openApp} />
@@ -190,14 +194,23 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           <h4>Details</h4>
           <div className="details small">
             <div><span className="muted">System</span>{device.os ?? "–"}</div>
-            <div><span className="muted">Chip</span>{device.arch ?? "–"}</div>
             <div><span className="muted">Running for</span>{uptime(device.vitals?.uptime)}</div>
-            <div><span className="muted">Containers</span>{device.containerCount != null
-              ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
-            <div><span className="muted">System updates</span>{device.updatesPending ?? "–"}</div>
-            <div><span className="muted">Helper</span>{device.helperVersion ? `v${device.helperVersion}` : "–"}
+            {/* Docker containers only; the Mac's own background items (launchd) that keep failing are a finding */}
+            <div><span className="muted">Apps in containers</span>{device.containerCount
+              ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : device.containerCount === 0 ? "none" : "–"}</div>
+            {failingItems && <div><span className="muted">Background items failing</span>{failingItems}</div>}
+            <div><span className="muted">Updates waiting</span>{device.updatesPending ?? "–"}</div>
+            <div><span className="muted">Nightlight helper</span>{device.helperVersion ? `version ${device.helperVersion}` : "–"}
               {device.helperVersion && <span className="muted small"> · {updateMode(device)}</span>}</div>
           </div>
+          <details className="small">
+            <summary className="muted">Technical details</summary>
+            <div className="details small">
+              <div><span className="muted">Processor type</span>{device.arch ?? "–"}</div>
+              <div><span className="muted">Docker containers</span>{device.containerCount != null
+                ? `${device.containersRunning ?? 0} of ${device.containerCount} running` : "–"}</div>
+            </div>
+          </details>
           {device.purpose && <p className="muted small">{device.purpose}</p>}
         </section>}
       </>}
@@ -218,7 +231,7 @@ export default function DeviceDrawer({ uid, generation, device, actions, devices
           <HelperUpdate device={device} actions={actions} latest={release?.version}
             origin={typeof window === "undefined" ? "" : window.location.origin} />
           {!(release && device.helperVersion && release.version !== device.helperVersion) &&
-            <p className="muted small">Up to date (v{device.helperVersion ?? "?"}) · {updateMode(device)}.</p>}
+            <p className="muted small">Up to date (version {device.helperVersion ?? "?"}) · {updateMode(device)}.</p>}
         </section>
         <ExpertSessions uid={uid} device={device} open={needs.some((n) => n.kind === "expertHalf")} />
         <RemoveDevice device={device} onRemoved={onClose} />
@@ -276,7 +289,7 @@ function Head({ device, fav, onClose }: { device: Device; fav?: Favorites; onClo
       <span style={{ flex: 1 }} />
       {fav && <StarButton on={fav.favorite} label={`${device.name} as a favorite`} onClick={fav.toggleDevice} />}
       <button className="drawer-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
-      {fav?.err && <p className="small" style={{ color: "var(--crit)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
+      {fav?.err && <p className="small" style={{ color: "var(--crit-ink)", flexBasis: "100%", margin: 0 }}>{fav.err}</p>}
     </div>
   );
 }
@@ -295,6 +308,21 @@ function IssueActions({ device, finding: f }: { device: Device; finding: Finding
     : <button className="linkish small issue-actions" onClick={() => mark("new")}>Needs a look again</button>;
 }
 
+/** The fix a finding names, when the page can offer it: a reinstalled helper looks nearby again, or the line for it. */
+function FindingFix({ device, fix }: { device: Device; fix: string }) {
+  const [note, setNote] = useState("");
+  if (fix === "discover_on_device") return <Copy text="nightlight discover" />;
+  if (fix !== "discover") return null;
+  return (
+    <div className="small">
+      <button className="small" disabled={!!note} onClick={() => api("POST", `/api/devices/${device.id}/discover`, {})
+        .then(() => setNote("Looking. Keep them switched on; they are checked again within a minute or two."),
+          () => setNote("Couldn't ask the device to look. Try again in a moment."))}>Look nearby</button>
+      {note && <span className="muted"> {note}</span>}
+    </div>
+  );
+}
+
 function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) => boolean; onAsk: (q: string) => void }) {
   const [showKnown, setShowKnown] = useState(false);
   const all = device.findings ?? [];
@@ -311,6 +339,7 @@ function Problems({ device, skip, onAsk }: { device: Device; skip: (f: Finding) 
         {state === "new" && <button className="linkish small issue-actions"
           onClick={() => onAsk(`What should I do about this on my ${device.name}: ${f.message}`)}>What should I do?</button>}
         <IssueActions device={device} finding={f} />
+        {state === "new" && f.fix && <FindingFix device={device} fix={f.fix} />}
       </div>
     );
   };
