@@ -44,8 +44,12 @@ export const TOURS: Record<TourId, TourStep[]> = {
 };
 
 const key = (uid: string, t: TourId) => `nl_tour_${t}_${uid}`;
-export function seen(uid: string, t: TourId): boolean { try { return localStorage.getItem(key(uid, t)) === "1"; } catch { return false; } }
-export function markSeen(uid: string, t: TourId) { try { localStorage.setItem(key(uid, t), "1"); } catch { /* this visit only */ } }
+export function seen(uid: string, t: TourId): boolean { return seenAt(uid, t) > 0; }
+/** When a tour was seen (ms; older browsers stored "1", which reads as long ago), or 0. */
+export function seenAt(uid: string, t: TourId): number {
+  try { const v = localStorage.getItem(key(uid, t)); return v ? Number(v) || 1 : 0; } catch { return 0; }
+}
+export function markSeen(uid: string, t: TourId) { try { localStorage.setItem(key(uid, t), String(Date.now())); } catch { /* this visit only */ } }
 function forget(uid: string) { for (const t of Object.keys(TOURS) as TourId[]) { try { localStorage.removeItem(key(uid, t)); } catch { /* fine */ } } }
 
 /** Settings' "Show the tour again": forgets what was seen and starts the first tour now. */
