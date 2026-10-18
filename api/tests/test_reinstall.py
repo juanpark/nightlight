@@ -380,3 +380,108 @@ def test_a_new_device_is_unaffected(client, started):
     assert "rewatch" not in d and not any(f["id"] == "f_rewatch" for f in d["findings"])
     assert all(db.device(started, w).get().to_dict()["watchedBy"] == old["deviceId"] for w in watched)
     assert "rewatch" not in db.device(started, old["deviceId"]).get().to_dict()
+
+
+def _aged(uid, watched):
+    """The watched things haven't been checked for a while (the reinstalled helper can't check them yet)."""
+    for w in watched:
+        db.device(uid, w).update({"lastSeen": datetime.now(timezone.utc) - timedelta(hours=1)})
+
+
+def _mini(client, facts=None):
+    """Another of the owner's helpers on the same network (the Mac mini)."""
+    mini = enrolled(client, "Mac mini")
+    assert beat(client, mini["token"], facts or {**APP, "machine": OTHER_MAC}).status_code == 200
+    return mini
+
+
+def _events(uid, device_id):
+    return [e.to_dict()["message"] for e in db.events(uid).get() if e.to_dict().get("deviceId") == device_id]
+
+
+def _look(client, dev, items):
+    assert client.post("/helper/discoveries", json={"items": items},
+                       headers={"X-Device-Token": dev["token"]}).status_code == 200
+
+
+def test_a_watch_its_watcher_cannot_check_moves_to_a_device_that_can(client, started):  # production 10/18
+    old, watched = watching_then_quiet(client, started)
+    mini = _mini(client)
+    new = continued(client, old)
+    beat(client, new["token"], APP)
+    _aged(started, watched)
+    _look(client, mini, [{**PRINTER, "cid": "9a9a9a9a9a91", "ports": [80, 631]}])
+    # the MacBook's last look is still the old helper's (it saw 631 then): nothing moves yet
+    assert db.device(started, watched[1]).get().to_dict()["watchedBy"] == old["deviceId"]
+    # the reinstalled MacBook sees the printer, but no port it could check on it
+    _look(client, new, [{**ROUTER, "cid": "9b9b9b9b9b91", "ports": [80]}, {**PRINTER, "cid": "9b9b9b9b9b92", "ports": []}])
+    p = db.device(started, watched[1]).get().to_dict()
+    assert (p["watchedBy"], p["cid"], p["checkPort"]) == (mini["deviceId"], "9a9a9a9a9a91", 631)
+    assert p["purpose"] == "A printer. Watched by Mac mini."
+    assert "Printer is now watched from Mac mini: MacBook Pro couldn't reach it." in _events(started, watched[1])
+    r = db.device(started, watched[0]).get().to_dict()
+    assert (r["watchedBy"], r["cid"]) == (old["deviceId"], "9b9b9b9b9b91")  # the router stays where it is checked
+    look = real.discoveries_ref(started).document(mini["deviceId"]).get().to_dict()["items"]
+    assert look[0]["added"] is True  # on the map: not offered in Found nearby
+    _again(mini["token"])
+    body = beat(client, mini["token"], {**APP, "machine": OTHER_MAC}).json()
+    assert body["watch"] == [{"cid": "9a9a9a9a9a91", "port": 631}]  # the Mac mini starts checking at once
+    _again(mini["token"])
+    beat(client, mini["token"], {**APP, "machine": OTHER_MAC,
+                                 "watchResults": [{"cid": "9a9a9a9a9a91", "up": True, "ms": 4}]})
+    p = db.device(started, watched[1]).get().to_dict()
+    assert p["status"] == "ok" and p["lastAnswerAt"] > datetime.now(timezone.utc) - timedelta(minutes=1)
+    _again(new["token"])
+    beat(client, new["token"], {**APP, "watchResults": [{"cid": "9b9b9b9b9b91", "up": True, "ms": 2}]})
+    d = db.device(started, old["deviceId"]).get().to_dict()
+    assert "rewatch" not in d and not any(f["id"] == "f_rewatch" for f in d["findings"])
+
+
+def test_the_ask_to_rewatch_goes_when_its_last_unchecked_thing_moves(client, started):
+    old, watched = watching_then_quiet(client, started)
+    mini = _mini(client)
+    new = continued(client, old)
+    strict = {**APP, "manage": "strict"}
+    beat(client, new["token"], strict)
+    _look(client, new, [{**ROUTER, "cid": "8c8c8c8c8c81"}])  # it finds the router again, not the printer
+    _again(new["token"])
+    beat(client, new["token"], {**strict, "watchResults": [{"cid": "8c8c8c8c8c81", "up": True, "ms": 2}]})
+    assert any(f["id"] == "f_rewatch" for f in db.device(started, old["deviceId"]).get().to_dict()["findings"])
+    _aged(started, watched[1:])
+    _look(client, mini, [{**PRINTER, "cid": "8d8d8d8d8d81"}])
+    assert db.device(started, watched[1]).get().to_dict()["watchedBy"] == mini["deviceId"]
+    d = db.device(started, old["deviceId"]).get().to_dict()
+    assert "rewatch" not in d and not any(f["id"] == "f_rewatch" for f in d["findings"])
+
+
+def test_a_watcher_that_can_still_check_keeps_its_watch(client, started):
+    old, watched = watching_then_quiet(client, started)
+    mini = _mini(client)
+    new = continued(client, old)
+    beat(client, new["token"], APP)
+    _aged(started, watched)
+    _look(client, mini, [{**PRINTER, "cid": "7e7e7e7e7e71"}])
+    _look(client, new, [{**ROUTER, "cid": "7f7f7f7f7f71"}, {**PRINTER, "cid": "7f7f7f7f7f72"}])
+    for w, cid in zip(watched, ("7f7f7f7f7f71", "7f7f7f7f7f72")):
+        d = db.device(started, w).get().to_dict()
+        assert (d["watchedBy"], d["cid"]) == (old["deviceId"], cid)
+    assert not any("is now watched from" in m for m in _events(started, watched[1]))
+
+
+def test_a_watch_nobody_else_can_check_stays_and_the_ask_stays(client, started):
+    old, watched = watching_then_quiet(client, started)
+    mini = _mini(client)
+    older = _mini(client, FACTS)  # an older helper (neither app-managed nor strict) sees it: never handed to it
+    new = continued(client, old)
+    strict = {**APP, "manage": "strict"}
+    beat(client, new["token"], strict)
+    _aged(started, watched)
+    _look(client, mini, [{**PRINTER, "cid": "6a6a6a6a6a61", "ports": []}])
+    _look(client, older, [{**PRINTER, "cid": "6b6b6b6b6b61"}])
+    _look(client, new, [{**ROUTER, "cid": "6c6c6c6c6c61"}])
+    p = db.device(started, watched[1]).get().to_dict()
+    assert (p["watchedBy"], p["cid"]) == (old["deviceId"], PRINTER["cid"])
+    _again(new["token"])
+    beat(client, new["token"], {**strict, "watchResults": [{"cid": "6c6c6c6c6c61", "up": True, "ms": 2}]})
+    ask = next(f for f in db.device(started, old["deviceId"]).get().to_dict()["findings"] if f["id"] == "f_rewatch")
+    assert "re-allow watching Printer?" in ask["message"]
