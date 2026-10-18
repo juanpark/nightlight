@@ -1091,12 +1091,13 @@ def _container_ids():
 # systemd's own system and user slices. Anything else is said as unknown, never guessed.
 # Matched on whole path components, so a host service named like a runtime ("docker-cleanup.service") stays a host
 # service.
-_CONTAINER_SCOPE = re.compile(r"(docker|libpod|cri-containerd|crio)-[0-9a-f]{12,64}(\.scope)?|kubepods([-.].*)?|"
-                              r"lxc\.payload\..+")
+_CONTAINER_SCOPE = re.compile(r"(docker|libpod|cri-containerd|crio)-[0-9a-f]{12,64}(\.scope)?|"
+                              r"kubepods(-[A-Za-z0-9_-]+)?\.slice|kubepods|lxc\.payload\.[^/]+")
+_UNIT = re.compile(r".+\.(service|socket|mount|timer|target|path|swap|device|automount)")  # a systemd unit: never one
 
 
 def _in_container(path):
-    parts = [p for p in path.split("/") if p]
+    parts = [p for p in path.split("/") if p and not _UNIT.fullmatch(p)]
     return any(_CONTAINER_SCOPE.fullmatch(p) for p in parts) or any(
         a in ("docker", "lxc") and (b and (a == "lxc" or _CONTAINER_ID.fullmatch(b)))
         for a, b in zip(parts, parts[1:]))

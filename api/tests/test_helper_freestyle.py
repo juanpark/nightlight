@@ -82,6 +82,11 @@ def test_where_a_program_runs_is_only_said_for_layouts_it_knows(helper):
     assert w("0::/system.slice/containerd.service\n") == ("host", None)
     assert w("0::/machine.slice-monitor/x\n") == ("unknown", None)
     assert w(f"4:memory:/docker/{cid}\n") == ("container", cid)
+    assert w("0::/system.slice/kubepods-watch.service\n") == ("host", None)  # a unit is never a container
+    assert w("0::/system.slice/lxc.payload.monitor.service\n") == ("host", None)
+    assert w("4:cpu:/kubepods/burstable/pod1234/abc\n")[0] == "container"  # cgroup v1 layout
+    assert w("0::/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod1.slice/x.scope\n")[0] == \
+        "container"
 
 
 def test_a_program_that_restarted_between_looks_is_not_blamed(helper, monkeypatch):
