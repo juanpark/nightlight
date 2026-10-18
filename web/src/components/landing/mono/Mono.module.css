@@ -372,12 +372,27 @@
 /* over a control the light grows a little and glows warmer; it never fills or recolours the control */
 .page[data-cursor-over="control"] .cursorDot { scale: 1.45; box-shadow: 0 0 0 1px #b38600, 0 0 18px 6px rgb(253 216 58 / .6); }
 .page[data-cursor-down] .cursorDot { scale: .7; }
-/* the big light: a soft star-yellow pool trailing the dot, under the content so cards and controls stay true */
-.cursorHalo { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; border-radius: 50%; opacity: 0;
-  width: 560px; height: 560px; will-change: transform;
-  background: radial-gradient(closest-side, rgb(253 216 58 / .34), rgb(253 216 58 / .12) 55%, transparent);
-  transition: opacity .5s; }
+/* the big light: a soft star pool under the content, falling off on an eased curve so it has no edge. It shows on the
+   ground here and continues inside each frame (below), so cards and controls are never tinted */
+.cursorHalo { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; opacity: 0;
+  width: 640px; height: 640px; will-change: transform; background: var(--light-pool);
+  transition: opacity .6s; }
+.page { --light-pool: radial-gradient(closest-side, rgb(253 216 58 / .26), rgb(253 216 58 / .17) 22%,
+  rgb(253 216 58 / .08) 48%, rgb(253 216 58 / .025) 74%, transparent); }
 .page[data-cursor-over="page"] .cursorHalo, .page[data-cursor-over="control"] .cursorHalo { opacity: 1; }
+/* inside a frame the same light falls on the dot grid: a warm wash plus the nearby dots turning gold */
+.page[data-cursor] .frame { isolation: isolate; }
+.page[data-cursor] .frame::before, .page[data-cursor] .frame::after { content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .6s; }
+.page[data-cursor] .frame::before { background: var(--light-pool) no-repeat
+  calc(var(--lx, -999px) - 320px) calc(var(--ly, -999px) - 320px) / 640px 640px; }
+.page[data-cursor] .frame::after {
+  background: radial-gradient(circle at 1px 1px, #b38600 1px, transparent 1.4px) 8px 8px / 18px 18px;
+  -webkit-mask: radial-gradient(240px circle at var(--lx, -999px) var(--ly, -999px), #000, rgb(0 0 0 / .4) 40%, transparent);
+  mask: radial-gradient(240px circle at var(--lx, -999px) var(--ly, -999px), #000, rgb(0 0 0 / .4) 40%, transparent); }
+.page[data-cursor-over="page"] .frame::before, .page[data-cursor-over="page"] .frame::after,
+.page[data-cursor-over="control"] .frame::before, .page[data-cursor-over="control"] .frame::after { opacity: 1; }
+
 /* the system pointer hides while ours is on; text fields keep their caret */
 .page[data-cursor], .page[data-cursor] * { cursor: none !important; }
 .page[data-cursor] :is(input, textarea, [contenteditable="true"]) { cursor: text !important; }
