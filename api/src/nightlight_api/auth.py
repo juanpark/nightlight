@@ -84,6 +84,11 @@ def owner_uid(request: Request) -> str:
     return claims["uid"]
 
 
+def anonymous(request: Request) -> bool:
+    """Whether this is a one-click (anonymous) account: such a request never reaches real devices."""
+    return (_claims(request).get("firebase") or {}).get("sign_in_provider") == "anonymous"
+
+
 def mask_email(email: str | None) -> str | None:
     """'juanpark@gmail.com' -> 'ju***@gmail.com': enough for the owner to recognise, not enough to read off."""
     if not email or "@" not in email:

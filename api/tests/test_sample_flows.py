@@ -80,3 +80,19 @@ def test_live_machine_cant_reset_or_inject_from_the_sample_panel(client, started
     assert client.post("/api/demo/reset", json={}).status_code == 403
     assert client.post("/api/demo/inject", json={"kind": "disk_full", "deviceId": "pi-1"}).status_code == 403
     assert client.post("/api/demo/add_device", json={"os": "linux"}).status_code == 403
+
+
+def test_anonymous_look_never_schedules_real_devices(client, started, monkeypatch):
+    from nightlight_api import real
+    from nightlight_api.auth import anonymous
+    from nightlight_api.main import app
+    monkeypatch.setattr(real, "discover_everywhere", lambda *a, **k: pytest.fail("real scheduler reached"))
+    app.dependency_overrides[anonymous] = lambda: True
+    body = client.post("/api/discover", json={}).json()
+    assert body["simulated"] and body["asked"][0]["deviceId"] == "pi-1"
+
+
+def test_live_machine_cant_rebuild_through_start_or_template(client, started, monkeypatch):
+    monkeypatch.setattr(settings, "live_pool", [f"live-1={started}"])
+    assert client.post("/api/demo/template", json={"template": "home-pi"}).status_code == 403
+    assert client.post("/api/demo/start", json={"template": "home-pi"}).status_code == 403

@@ -153,7 +153,8 @@ def discover(uid: str) -> dict | None:
                      "demoGeneration": user["demoGeneration"], "at": firestore.SERVER_TIMESTAMP,
                      "expiresAt": _now() + TTL})
         _event(tx, uid, user["demoGeneration"], FINDER, "found",
-               f"{FINDER_NAME} found {len(items)} thing(s) nearby you can add (simulated).")
+               f"{FINDER_NAME} found {len(items)} {'thing' if len(items) == 1 else 'things'} nearby you can add "
+               "(simulated).")
         return {"deviceId": FINDER, "name": FINDER_NAME, "simulated": True}
 
     return db.run_transaction(run)

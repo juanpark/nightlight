@@ -12,7 +12,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from . import __build__, __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sample, sim, trust as trustlib, turns, watch
-from .auth import current_uid, live_lease, owner_uid
+from .auth import anonymous, current_uid, live_lease, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
 from .ids import new_id
@@ -140,11 +140,13 @@ def version():
 
 @app.post("/api/demo/start")
 def demo_start(body: StartBody, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)  # every rebuild entry point: a live machine's account has its own reset
     return demo.start(uid, body.template)
 
 
 @app.post("/api/demo/template")
 def demo_template(body: StartBody, uid: str = Depends(current_uid)):
+    live.forbid_pool(uid)
     return demo.switch(uid, body.template)
 
 
@@ -943,12 +945,13 @@ class DiscoverBody(Strict):
 
 
 @app.post("/api/discover", status_code=202)
-def discover_everywhere(body: DiscoverBody, uid: str = Depends(current_uid)):
+def discover_everywhere(body: DiscoverBody, uid: str = Depends(current_uid), anon: bool = Depends(anonymous)):
     """Look nearby on every network the owner has a device on: one device per router, or every device that can
     (`everyDevice`: more complete, since each sees mostly what it talked to lately). The tap is the approval.
     When none of your own devices could look and the sample home is showing, its Raspberry Pi "looks" instead
-    (simulated, labelled so; sample.py): a one-click (anonymous) account has no real devices, so it always gets that."""
-    out = real.discover_everywhere(uid, body.everyDevice)
+    (simulated, labelled so; sample.py). A one-click (anonymous) request only ever takes the simulated path: real
+    devices are scheduled for signed-in owners only."""
+    out = {"asked": [], "skipped": []} if anon else real.discover_everywhere(uid, body.everyDevice)
     looked = None if out["asked"] else sample.discover(uid)
     if looked:
         out["asked"].insert(0, looked)
