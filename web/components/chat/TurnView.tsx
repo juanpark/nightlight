@@ -4,7 +4,7 @@
 import { useState, type JSX } from "react";
 import type { Action, Device, Metrics } from "@/lib/types";
 import ApprovalCard from "../ApprovalCard";
-import { withLead, type AgentTurn, type Block } from "./model";
+import type { AgentTurn, Block } from "./model";
 
 type Step = Extract<Block, { kind: "step" }>;
 
@@ -49,7 +49,7 @@ function WorkLog({ blocks, busy, investigate, ms, metrics }: {
   const n = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
   // Folded, the log still lists every step with what came back (its outputs stay one tap away); open, it adds the
   // commentary said between steps.
-  const visible = open ? blocks : blocks.filter((b) => (b.kind === "lead" && busy) || b.kind === "step");
+  const visible = open ? blocks : blocks.filter((b) => b.kind === "step");
   const paid = receipt(ms, metrics);
   return (
     <div className={`worklog ${open ? "open" : ""}`}>
@@ -61,7 +61,6 @@ function WorkLog({ blocks, busy, investigate, ms, metrics }: {
         <div className="wl-body">
           {visible.map((b, i) => b.kind === "text"
             ? <p key={i} className="wl-note">{b.text.trim()}</p>
-            : b.kind === "lead" ? <div key={i} className="wl-step wl-lead">{b.text}</div>
             : b.kind === "step" ? <StepRow key={i} s={b} show={investigate} /> : null)}
         </div>)}
     </div>
@@ -73,7 +72,7 @@ export default function TurnView({ turn, actions, devices, onFollowUp }: {
 }) {
   // The answer is the last thing said; words said before or between steps are commentary in a work log. Everything
   // keeps its order: a card appears where it was put up, between the steps around it.
-  const blocks = withLead(turn.blocks);
+  const blocks = turn.blocks;
   let final = -1;
   blocks.forEach((b, i) => { if (b.kind === "text" && b.text.trim()) final = i; });
   const parts: JSX.Element[] = [];
