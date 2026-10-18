@@ -115,6 +115,41 @@ flowchart LR
     H -.->|"fixed jobs, local allow-list"| S
 ```
 
+### Demo machines for judges
+
+Each judge who picks the live demo gets their own real Linux VM with real apps in containers, started on demand and
+restored from a clean disk copy after every visit, so nothing one judge does reaches the next. Each visit signs in as
+its own throwaway identity that the server maps to the machine; idle visits end after 15 minutes, every visit after 60,
+and a five-minute sweep stops any machine without a visit. Measured: ready in about a minute; "Start fresh" in about
+two. The picture: [`docs/architecture/live_demo.png`](docs/architecture/live_demo.png).
+
+```mermaid
+%% Demo machine pool (source: api/src/nightlight_api/live.py, scripts/live_pool/).
+flowchart LR
+    V["Visitor's browser"]
+    subgraph gcp["Google Cloud"]
+        A["Cloud Run: API<br/>lease, release, sweep"]
+        FS[("Firestore<br/>slot leases (transaction)<br/>idle 15 min, hard cap 60 min")]
+        AUTH["Firebase Authentication<br/>a throwaway identity per visit"]
+        SCH["Cloud Scheduler<br/>sweep every 5 min"]
+        IAP["IAP-only SSH<br/>(operators; no other inbound)"]
+        subgraph pool["Compute Engine pool: 5 x e2-small, stopped when idle"]
+            VM["nl-live-1 .. nl-live-5<br/>small home server, Docker apps,<br/>signed helper paired to its own pool account"]
+            G[("Golden snapshot per VM")]
+        end
+    end
+    V -->|"1. ask for a machine"| A
+    A -->|"2. lease a free slot"| FS
+    A -->|"3. start on demand"| VM
+    A -->|"4. custom token for this visit<br/>(mapped to the machine, lease id as a claim)"| V
+    V -.->|"5. sign in; refused once the visit ends"| AUTH
+    VM -->|"helper reports outward like any device"| A
+    A -->|"release: wipe app data,<br/>restore boot disk, stop"| G
+    G -.->|"restore"| VM
+    SCH -->|"expired leases, stop orphan VMs"| A
+    IAP -.-> VM
+```
+
 How the pieces talk:
 
 - **Browser to API.** Every `/api/*` call carries a Firebase ID token. The user id comes only from that verified
