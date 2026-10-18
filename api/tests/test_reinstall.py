@@ -331,6 +331,43 @@ def test_a_look_that_misses_one_asks_about_that_one(client, started):
     assert "re-allow watching Printer?" in ask["message"] and "Look nearby" in ask["message"]
 
 
+def test_a_moved_printer_is_rebound_by_its_hardware_never_by_its_old_address(client, started):  # Codex rewatch #1
+    old, watched = watching_then_quiet(client, started)
+    new = continued(client, old)
+    beat(client, new["token"], APP)
+    h = {"X-Device-Token": new["token"]}
+    squatter = {"cid": "eeeeeeeeeee1", "guess": "Printer", "vendor": None, "services": ["printer"], "ports": [631],
+                "tag": PRINTER["tag"]}  # another machine at the printer's old address, no hardware fingerprint
+    moved = {**PRINTER, "cid": "eeeeeeeeeee2", "tag": "5" * 20}  # the printer itself, at a new address
+    router = {**ROUTER, "cid": "eeeeeeeeeee3"}
+    assert client.post("/helper/discoveries", json={"items": [squatter, router, moved]}, headers=h).status_code == 200
+    assert db.device(started, watched[1]).get().to_dict()["cid"] == "eeeeeeeeeee2"
+    # the printer switched off: the squatter at its old address is never taken for it
+    assert client.post("/helper/discoveries", json={"items": [{**squatter, "cid": "fffffffffff1"}, router]},
+                       headers=h).status_code == 200
+    assert db.device(started, watched[1]).get().to_dict()["cid"] == "eeeeeeeeeee2"
+    _again(new["token"])
+    beat(client, new["token"], {**APP, "watchResults": [{"cid": "eeeeeeeeeee3", "up": True, "ms": 2},
+                                                       {"cid": "eeeeeeeeeee2", "up": True, "ms": 3}]})
+    assert "rewatch" not in db.device(started, old["deviceId"]).get().to_dict()
+
+
+def test_a_known_hardware_thing_is_not_rebound_on_address_alone(client, started):  # Codex rewatch #1
+    old, watched = watching_then_quiet(client, started)
+    new = continued(client, old)
+    beat(client, new["token"], APP)
+    h = {"X-Device-Token": new["token"]}
+    squatter = {"cid": "abababababa1", "guess": "Printer", "vendor": None, "services": ["printer"], "ports": [631],
+                "tag": PRINTER["tag"]}
+    assert client.post("/helper/discoveries", json={"items": [squatter, {**ROUTER, "cid": "abababababa2"}]},
+                       headers=h).status_code == 200
+    assert db.device(started, watched[1]).get().to_dict()["cid"] == PRINTER["cid"]  # left alone
+    _again(new["token"])
+    beat(client, new["token"], {**APP, "watchResults": [{"cid": "abababababa2", "up": True, "ms": 2}]})
+    ask = next(f for f in db.device(started, old["deviceId"]).get().to_dict()["findings"] if f["id"] == "f_rewatch")
+    assert "re-allow watching Printer?" in ask["message"]
+
+
 def test_a_new_device_is_unaffected(client, started):
     old, watched = watching_then_quiet(client, started)
     p = pair(client)

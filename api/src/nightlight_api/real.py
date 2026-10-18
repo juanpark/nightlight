@@ -595,8 +595,12 @@ def _rebound(watched, items: list[dict], device_id: str) -> dict:
         d = w.to_dict() or {}
         if d.get("revoked") or any(it.get("cid") == d.get("cid") for it in items):
             continue
-        it = next((i for i in items if i.get("cid") not in used and _same_thing({**d, "cid": None}, i, device_id)),
-                  None)
+        hw = (d.get("net") or {}).get("hw")
+        free = [i for i in items if i.get("cid") not in used]
+        # A known hardware fingerprint is the only evidence for it: its old address may belong to another machine now
+        # (left to the owner's ask when no item carries it). Without one, the address fingerprint stands in.
+        it = next((i for i in free if i.get("hw") == hw), None) if hw else \
+            next((i for i in free if _same_thing({**d, "cid": None}, i, device_id)), None)
         if not it:
             continue
         ports = it.get("ports") or []
