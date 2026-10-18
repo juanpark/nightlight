@@ -724,6 +724,9 @@ def found_view(uid: str) -> list[dict]:
                                         "seenBy": []})
             row["name"] = row["name"] or it.get("name")
             row["vendor"] = row["vendor"] or it.get("vendor")
+            if it.get("simulated"):  # the sample home's look (sample.py): always labelled
+                row["simulated"] = True
+                row["router"] = row.get("router") or bool(it.get("router"))
             if not row["model"] and it.get("model"):
                 row["maker"], row["model"] = it.get("maker") or row["maker"], it["model"]  # maker and model together
             row["maker"] = row["maker"] or it.get("maker")
@@ -748,7 +751,7 @@ def found_view(uid: str) -> list[dict]:
             row["privateAddress"] = True
             if row["guess"] in (PRIVATE_MAC, "Unknown device", None):
                 row["guess"] = "Phone or laptop"
-        if row.get("tag") and row["tag"] in routers:
+        if (row.get("tag") and row["tag"] in routers) or row.get("router"):
             row["guess"], row["router"] = "Your router (internet connection)", True
         row["seenBy"] = [f for f in row["seenBy"] if f["deviceId"] in helpers]  # a forgotten device saw nothing
         for f in row["seenBy"]:
