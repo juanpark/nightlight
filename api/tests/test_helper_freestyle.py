@@ -76,6 +76,12 @@ def test_where_a_program_runs_is_only_said_for_layouts_it_knows(helper):
     assert w("0::/lxc/101\n")[0] == "container" and w("0::/lxc.payload.web/init.scope\n")[0] == "container"
     assert w("0::/machine.slice/machine-web.scope\n") == ("machine", None)
     assert w("0::/something/else\n") == ("unknown", None) and w("") == ("unknown", None)
+    # whole components only: host services named like a runtime stay host services
+    assert w("0::/system.slice/docker-cleanup.service\n") == ("host", None)
+    assert w("0::/system.slice/machine.slice-monitor.service\n") == ("host", None)
+    assert w("0::/system.slice/containerd.service\n") == ("host", None)
+    assert w("0::/machine.slice-monitor/x\n") == ("unknown", None)
+    assert w(f"4:memory:/docker/{cid}\n") == ("container", cid)
 
 
 def test_a_program_that_restarted_between_looks_is_not_blamed(helper, monkeypatch):

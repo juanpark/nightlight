@@ -52,6 +52,18 @@ def test_many_findings_keep_a_structured_envelope_with_a_count():
     assert "50 problem(s)" in turns._commentary("get_device", out)[0]
 
 
+def test_big_permissions_are_bounded_with_counts_and_the_readings_survive():
+    d = _device(notes=0)
+    d["findings"] = [{"id": f"f{i}", "severity": "warn", "message": f"container-{i} isn't running"} for i in range(50)]
+    d["allowedJobs"] = {job: [f"some-long-container-name-{i:02d}" for i in range(20)]
+                        for job in ("restart_container", "diagnose", "logs", "inspect")}
+    out = agentlib._bounded(d, _ctx(), shrink=("profile", "notebook", "runbooks"), readings=("findings", "services"))
+    assert len(json.dumps(out).encode()) <= settings.tool_result_bytes and "truncated" not in out
+    assert out["vitals"] == {"diskPct": 17.0, "mem": 36.2} and out["findings"]
+    assert out["allowedJobsOmitted"]["diagnose"] == {"notShown": 17, "total": 20}
+    assert len(out["allowedJobs"]["diagnose"]) == 3
+
+
 def test_a_small_result_is_untouched():
     small = {"status": "done", "vitals": {"mem": 1}}
     assert agentlib._bounded(small, _ctx(), shrink=("notebook",)) == small
