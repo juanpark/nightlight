@@ -273,8 +273,9 @@ export default function Home({ user, account }: { user: User; account?: string }
           tabIndex={stripSeen ? -1 : undefined} aria-hidden={stripSeen ? true : undefined}>
           <span className="verdict-light" aria-hidden />{needs.length ? `${needs.length} need you` : "All good"}</button>
         <span className="spacer" />
-        <button className="top-add primary" onClick={() => open("add")} data-tour="add-device" aria-current={panel === "add" ? "page" : undefined}>
-          <Plus size={18} aria-hidden /><span>Add a device</span></button>
+        <button className="top-add primary" onClick={() => open("add")} data-tour="add-device" aria-current={panel === "add" ? "page" : undefined}
+          aria-label="Add a device" title="Add a device">
+          <Plus size={18} aria-hidden /><span className="top-add-word">Add a device</span></button>
         <div className="more">
           <button ref={moreBtn} className="top-more" aria-haspopup="menu" aria-expanded={menu} aria-controls="more-menu"
             onClick={() => setMenu(!menu)} data-tour="more" aria-label="More" title="More">
@@ -290,7 +291,6 @@ export default function Home({ user, account }: { user: User; account?: string }
               {item("trust", "Trust", ShieldCheck, undefined, "trust")}
               {!live && item("memory", "Memory", NotebookPen)}
               <p className="more-label">Add to your home</p>
-              <span className="more-phone">{item("add", "Add a device", Plus)}</span>
               {!user.isAnonymous && <span className="more-phone">
                 <button role="menuitem" className="more-item" disabled={switching || !me} onClick={() => { setMenu(false); toggleSample(); }}>
                   <House size={18} aria-hidden /><span>{sampleOn ? "Hide practice home" : "Practice home"}</span></button></span>}

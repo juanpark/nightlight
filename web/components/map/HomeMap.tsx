@@ -106,6 +106,8 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
     return () => m.removeEventListener("change", on);
   }, []);
   const still = touch && !live;
+  const [mac, setMac] = useState(false); // the zoom key in the hint: ⌘ on a Mac, Ctrl elsewhere
+  useEffect(() => setMac(/Mac|iPhone|iPad/.test(navigator.platform)), []);
   const phone = useRef(false);
   useEffect(() => {
     const m = window.matchMedia("(max-width: 700px)");
@@ -388,7 +390,10 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
         snapToGrid snapGrid={[GRID, GRID]} minZoom={0.2} maxZoom={2}
         panOnDrag={!still} nodesDraggable={!still} nodesConnectable={!still}
         edgesFocusable={false} /* Tab goes device to device; a line is chosen by clicking it */
-        panOnScroll zoomOnScroll={false} zoomOnPinch={!still} zoomOnDoubleClick={false}
+        /* scrolling over the map scrolls the page, as anywhere else; drag moves the map, and it zooms with a pinch,
+           ⌘/Ctrl + scroll, or the buttons */
+        panOnScroll={false} zoomOnScroll={false} preventScrolling={false} zoomActivationKeyCode={["Meta", "Control"]}
+        zoomOnPinch={!still} zoomOnDoubleClick={false}
         fitView fitViewOptions={FIT}>
         {/* dot paper: one quiet dot per snap square (the colour is a theme token) */}
         <Background id="dots" variant={BackgroundVariant.Dots} gap={GRID} size={1.4} color="var(--map-dot)" />
@@ -419,7 +424,7 @@ export default function HomeMap({ uid, devices, links, marks, selected, onSelect
             </svg>{LINK[k].verb}</span>))}
         <span className="hm-hint">{touch
           ? "Tap a device to open it · Move the map to pan, pinch and link devices"
-          : "Drag from a dot on a device to another to link them · pinch or use the buttons to zoom"}</span>
+          : `Drag to move the map · pinch or ${mac ? "⌘" : "Ctrl"} + scroll to zoom · drag from a dot on a device to another to link them`}</span>
       </div>
     </div>
   );

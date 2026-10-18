@@ -24,7 +24,24 @@ export function useSmoothScroll() {
     const tick = (t: number) => l.raf(t * 1000);
     gsap.ticker.add(tick);
     gsap.ticker.lagSmoothing(0);
+    // html and body are fixed at 100% height, so Lenis never sees the page grow (fonts arriving, the live-machine box
+    // appearing, a list opening) and would stop short of the footer. Watch the page's own content and re-measure.
+    let frame = 0;
+    const remeasure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        l.resize();
+        ScrollTrigger.refresh();
+      });
+    };
+    const ro = new ResizeObserver(remeasure);
+    // a wrapper with display: contents (AppGate's) has no box to watch, so watch what is inside it
+    const watch = (el: Element) =>
+      getComputedStyle(el).display === "contents" ? Array.from(el.children).forEach(watch) : ro.observe(el);
+    Array.from(document.body.children).forEach(watch);
     return () => {
+      ro.disconnect();
+      cancelAnimationFrame(frame);
       gsap.ticker.remove(tick);
       l.destroy();
       if (lenis === l) lenis = null;

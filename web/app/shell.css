@@ -160,7 +160,8 @@
   .main { grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .main > .left, .main > .right { grid-column: 1; grid-row: 1; }
   .shell > .top { gap: 8px; min-height: 56px; padding: 6px 10px 6px 16px; background: var(--panel); }
-  .top-add, .sample-long, .top-more-word, .sample-pill.practice { display: none; }
+  .sample-long, .top-more-word, .sample-pill.practice { display: none; }
+  .top-add { min-height: 44px; }
   .top-more { min-height: 44px; min-width: 44px; justify-content: center; padding: 0; }
   .top-verdict { min-height: 44px; }
   .more-phone { display: contents; }
@@ -217,12 +218,12 @@
   transition: box-shadow .2s cubic-bezier(.22, 1, .36, 1), translate .2s cubic-bezier(.22, 1, .36, 1), border-color .2s; }
 [data-theme="day"] .dnode.warn { border-color: var(--warn-fill); }
 [data-theme="day"] .dnode.crit { border-color: var(--crit-fill); }
-[data-theme="day"] .dnode.crit:not(.sel):not(.focused) { box-shadow: var(--shadow); }
+[data-theme="day"] .dnode.crit:not(.sel):not(.focused):not(.lit-working):not(.lit-done) { box-shadow: var(--shadow); }
 /* a small lift under the pointer: the card rises, its controls don't change */
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  [data-theme="day"] .dnode:not(.sel):not(.focused):hover { translate: 0 -2px; box-shadow: var(--lift); border-color: var(--line-strong); }
-  [data-theme="day"] .dnode.crit:not(.sel):not(.focused):hover { border-color: var(--crit-fill); }
-  [data-theme="day"] .dnode.warn:not(.sel):not(.focused):hover { border-color: var(--warn-fill); }
+  [data-theme="day"] .dnode:not(.sel):not(.focused):not(.lit-working):not(.lit-done):hover { translate: 0 -2px; box-shadow: var(--lift); border-color: var(--line-strong); }
+  [data-theme="day"] .dnode.crit:not(.sel):not(.focused):not(.lit-working):not(.lit-done):hover { border-color: var(--crit-fill); }
+  [data-theme="day"] .dnode.warn:not(.sel):not(.focused):not(.lit-working):not(.lit-done):hover { border-color: var(--warn-fill); }
 }
 [data-theme="day"] .dchip.crit { border-color: var(--line-strong); }
 
@@ -234,7 +235,12 @@
 @media (prefers-reduced-motion: reduce) { .ask-check.busy::before { animation: none; } }
 /* the chat is in view and answering: the button only says so (disabled reads as quiet, not broken) */
 .ask-check.busy:disabled { opacity: 1; color: var(--muted); cursor: default; }
-/* the device you picked: a soft blue ring, the one blue in the day theme, kept for "this is the one you chose" so it
-   never reads as a status (those are red, amber and green, each with a word) */
-[data-theme="day"] .dnode { --sel-ring: #5b8fd9; }
-[data-theme="day"] .dnode.sel { background: color-mix(in oklab, #5b8fd9 5%, var(--panel)); }
+
+/* Add a device is always in the header, the one yellow button. A narrow phone keeps its plus as a 44px square (its
+   name stays with screen readers and on hover); the word comes back as soon as there is room for it. */
+@media (max-width: 560px) {
+  .top-add { min-width: 44px; padding: 0; justify-content: center; }
+  .top-add-word { display: none; }
+  /* the Home tab's badge below already says how many need you, so the header keeps its room for Add and More */
+  .top-verdict[data-shown] { display: none; }
+}

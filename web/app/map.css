@@ -63,14 +63,22 @@
 .dnode.offline { opacity: .8; }
 /* Selected: the status border stays (it is the device's status); a light ring sits just outside it with a hairline
    gap of the paper between, the card lifts a touch, and the ring settles in from a wider, fainter halo. */
-.dnode { --sel-ring: color-mix(in oklab, var(--ink) 72%, transparent); }
-.dnode.sel { background: color-mix(in oklab, var(--ink) 4%, var(--panel));
-  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), var(--lift);
-  animation: sel-in .28s cubic-bezier(.22, 1, .36, 1); }
-@keyframes sel-in {
-  from { box-shadow: 0 0 0 3px var(--bg), 0 0 0 12px color-mix(in oklab, var(--ink) 0%, transparent), var(--shadow); }
+/* "This is the one": the card you picked, and the one the chat is checking, wear a ring in the device's own status
+   colour, with a gap of paper between, and it breathes slowly so the eye finds it again. No new colour: the ring says
+   which device, its colour still says how it is. Reduced motion: the same ring, still. */
+.dnode { --sel-ring: var(--ok-fill); }
+.dnode.warn { --sel-ring: var(--warn-fill); }
+.dnode.crit { --sel-ring: var(--crit-fill); }
+.dnode.offline { --sel-ring: var(--offline-fill); }
+.dnode.sel, .dnode.lit-working, .dnode.lit-done {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), var(--lift); }
+.dnode.sel { background: color-mix(in oklab, var(--sel-ring) 5%, var(--panel)); }
+.dnode.sel, .dnode.lit-working { animation: ring-breathe 2.4s ease-in-out infinite; }
+@keyframes ring-breathe {
+  50% { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring),
+    0 0 0 11px color-mix(in srgb, var(--sel-ring) 18%, transparent), var(--lift); }
 }
-@media (prefers-reduced-motion: reduce) { .dnode.sel { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .dnode.sel, .dnode.lit-working { animation: none; } }
 .dnode.compact { width: 200px; align-items: center; padding: 14px 10px; }
 .dnode.compact .dhead { flex-direction: column; gap: 6px; }
 .dnode.compact .dname { font-size: 26px; text-align: center; }
@@ -186,13 +194,7 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 
 /* The map follows the chat: a soft breathing ring on the devices the answer is working on, a steady one when it is
    done, and a few pulses on the apps it named. Reduced motion: the rings and highlights stay, nothing moves. */
-.dnode.lit-working { animation: lit-ring 1.6s ease-in-out infinite; }
-.dnode.lit-done { box-shadow: 0 0 0 3px var(--glow-ink), var(--shadow); }
 .dchip.lit-app { border-color: var(--glow); box-shadow: 0 0 0 2px var(--glow); animation: lit-chip 1.1s ease-in-out 5; }
-@keyframes lit-ring {
-  0%, 100% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 6px color-mix(in srgb, var(--glow) 30%, transparent), var(--shadow); }
-  50% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 14px color-mix(in srgb, var(--glow) 45%, transparent), var(--shadow); }
-}
 @keyframes lit-chip {
   0%, 100% { box-shadow: 0 0 0 2px var(--glow); }
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--glow) 40%, transparent); }
@@ -207,11 +209,10 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 .homemap.following .dnode:not(.lit-working):not(.lit-done) { opacity: .6; filter: saturate(.6); transition: opacity .3s; }
 .dnode.settle { animation: lit-settle .7s ease-out 2; }
 @keyframes lit-settle {
-  0% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 0 color-mix(in srgb, var(--glow) 60%, transparent), var(--shadow); }
-  100% { box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 18px transparent, var(--shadow); }
+  0% { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), 0 0 0 5px color-mix(in srgb, var(--sel-ring) 50%, transparent), var(--lift); }
+  100% { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--sel-ring), 0 0 0 20px transparent, var(--lift); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px var(--glow-ink), 0 0 0 6px color-mix(in srgb, var(--glow) 35%, transparent), var(--shadow); }
   .dnode.settle { animation: none; }
   .dchip.lit-app { animation: none; }
 }
@@ -275,7 +276,8 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
    across it, and a few words ("Checking…"). It is an indicator, never on a control being pressed, and it stops when
    the answer does. Reduced motion: a still tint and the words. */
 .dnode.lit-working, .dlist-row.working, .needs-item.working, .card.working { position: relative; isolation: isolate; }
-.dnode.lit-working::after, .dlist-row.working::after, .needs-item.working::after, .card.working::after {
+.dnode.lit-working::after { content: none; }
+.dlist-row.working::after, .needs-item.working::after, .card.working::after {
   content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
   background: linear-gradient(105deg, transparent 35%, rgb(var(--glow-rgb) / .16) 50%, transparent 65%) no-repeat;
   background-size: 260% 100%; animation: working-sweep 2.2s cubic-bezier(.45, 0, .2, 1) infinite; }
@@ -296,3 +298,14 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
 /* A filter menu near the right edge of the home column opens leftwards (HomeBar decides on open), so it never runs
    under the chat beside it; the column scrolls, so anything past its edge would be cut off. */
 .homebar .fmenu-panel.to-left { left: auto; right: 0; }
+
+/* The filters in one line on a phone: the long label gets its short name (the full one stays its accessible name),
+   the pills a little tighter, still 44px tall. A very narrow screen may still wrap them. */
+.fp-short { display: none; }
+@media (max-width: 560px) {
+  .fp-long { display: none; }
+  .fp-short { display: inline; }
+  .homebar { column-gap: 8px; }
+  .homebar .fgroup { gap: 8px; }
+  .homebar .fpill, .homebar .fmenu > button { padding-inline: 12px; }
+}

@@ -1,12 +1,12 @@
 import { AppGate } from "@/src/components/landing/AppGate";
-import { HomeLanding } from "@/src/components/landing/home/HomeLanding";
+import { MonoLanding } from "@/src/components/landing/mono/MonoLanding";
 
-// "/" is the landing page and sign-in in one: an editorial page about one sample home,
+// "/" is the landing page and sign-in in one: the product shown at work on one sample home,
 // replaced by the app once someone is signed in.
 export default function Page() {
   return (
     <AppGate>
-      <HomeLanding />
+      <MonoLanding />
     </AppGate>
   );
 }

@@ -84,9 +84,9 @@ export default function HomeBar({ devices, watches, places, filter, onFilter, vi
 
       <span className="hb-gap" aria-hidden />
       <div className="fgroup" role="group" aria-label="Show only">
-        <button className={`fpill ${filter.needsMe ? "on" : ""}`} aria-pressed={filter.needsMe}
+        <button className={`fpill ${filter.needsMe ? "on" : ""}`} aria-pressed={filter.needsMe} aria-label="Only what needs me"
           onClick={() => onFilter({ ...filter, needsMe: !filter.needsMe })}>
-          <NeedsYou size={15} aria-hidden /> Only what needs me</button>
+          <NeedsYou size={15} aria-hidden /> <span className="fp-long">Only what needs me</span><span className="fp-short">Needs me</span></button>
         {(filter.favorites || devices.some(starred)) && (
           <button className={`fpill ${filter.favorites ? "on" : ""}`} aria-pressed={filter.favorites}
             onClick={() => onFilter({ ...filter, favorites: !filter.favorites })}>

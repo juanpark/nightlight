@@ -146,9 +146,14 @@
 .ctx-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ctx-state { color: var(--muted); white-space: nowrap; }
 .ctx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--glow); flex: none; }
-.ctx-chip.checking { border-color: var(--glow-ink); }
-.ctx-chip.checking .ctx-dot { animation: ctx-pulse 1.2s ease-in-out infinite; }
+.ctx-chip { --sel-ring: var(--ok-fill); }
+.ctx-chip.warn { --sel-ring: var(--warn-fill); } .ctx-chip.crit { --sel-ring: var(--crit-fill); }
+.ctx-chip.offline { --sel-ring: var(--offline-fill); }
+/* checking: the chip wears the same ring as the device's card on the map (its status colour), breathing in step */
+.ctx-chip.checking { border-color: var(--sel-ring); animation: chip-breathe 2.4s ease-in-out infinite; }
+.ctx-chip.checking .ctx-dot { background: var(--sel-ring); animation: ctx-pulse 1.2s ease-in-out infinite; }
+@keyframes chip-breathe { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--sel-ring) 18%, transparent); } }
 .ctx-chip.found .ctx-dot { background: var(--warn-fill); } .ctx-chip.found .ctx-state { color: var(--warn-ink); }
 .ctx-chip.done .ctx-dot { background: var(--ok-fill); } .ctx-chip.done .ctx-state { color: var(--ok-ink); }
 @keyframes ctx-pulse { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .ctx-chip.checking .ctx-dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ctx-chip.checking, .ctx-chip.checking .ctx-dot { animation: none; } }
