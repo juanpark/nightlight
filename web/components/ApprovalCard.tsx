@@ -150,7 +150,8 @@ export default function ApprovalCard({ action, device, onFollowUp, fold }: {
     );
   }
   return (
-    <div className={`card level-${level}`} data-tour="card">
+    <div className={`card level-${level} ${action.status === "running" || action.status === "approved" ? "working" : ""}`}
+      data-tour="card">
       {head}
       {facts}
       {action.status === "pending" && (

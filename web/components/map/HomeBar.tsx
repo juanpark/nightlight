@@ -24,6 +24,7 @@ function Menu({ icon: Icon, label, active, name, children }: {
   icon: IconType; label: string; active: boolean; name: string; children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [toLeft, setToLeft] = useState(false); // opens leftwards when there is no room on the right of the home column
   const box = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -38,10 +39,15 @@ function Menu({ icon: Icon, label, active, name, children }: {
   return (
     <div className="fmenu" ref={box} onBlur={(e) => { if (!box.current?.contains(e.relatedTarget as Node)) setOpen(false); }}>
       <button ref={button} className={`fpill ${active ? "on" : ""}`} aria-expanded={open} aria-haspopup="true"
-        onClick={() => setOpen(!open)}>
+        onClick={() => {
+          const b = button.current?.getBoundingClientRect();
+          const edge = button.current?.closest(".left")?.getBoundingClientRect().right ?? window.innerWidth;
+          if (b) setToLeft(b.left + 240 > edge); // the panel is at least 220px wide
+          setOpen(!open);
+        }}>
         <Icon size={15} aria-hidden /> {label} <Opens className="fmenu-caret" size={11} aria-hidden />
       </button>
-      {open && <div className="fmenu-panel" role="group" aria-label={name}>{children}</div>}
+      {open && <div className={`fmenu-panel ${toLeft ? "to-left" : ""}`} role="group" aria-label={name}>{children}</div>}
     </div>
   );
 }

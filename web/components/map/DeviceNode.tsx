@@ -79,7 +79,9 @@ function DeviceNode({ data, selected }: NodeProps<DeviceNodeType>) {
   return (
     <div ref={box} className={`dnode ${d.status} ${sample ? "sample" : ""} ${selected ? "sel" : ""} ${compact ? "compact" : ""} ${focused ? "focused" : ""} ${data.lit ? `lit-${data.lit}` : ""} ${data.settle ? "settle" : ""}`}
       onDoubleClick={() => data.onOpen(d.id)}>
-      {data.litState && <span className={`dlit ${data.litState}`} role="status">{LIT_WORDS[data.litState]}</span>}
+      {data.litState && <span className={`dlit ${data.litState}`} role="status">
+        {/* a step here finished but the answer is still going: "Checked", and "Done" only once it is over */}
+        {data.litState === "done" && data.lit === "working" ? "Checked" : LIT_WORDS[data.litState]}</span>}
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="dhandle" />)}
       {tools}
       <div className="dhead">

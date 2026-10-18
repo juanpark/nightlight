@@ -5,6 +5,7 @@ import type { Need } from "@/lib/needsYou";
 import NeedsMark from "./NeedsMark";
 import StatusWord, { deviceLine, deviceTone } from "./StatusWord";
 import type { Device } from "@/lib/types";
+import { useWorkingOn } from "@/lib/follow";
 
 const KIND: Record<string, string> = {
   pi: "Raspberry Pi", mac: "Mac", nas: "Storage", gameserver: "Game server", camera: "Cameras", router: "Network",
@@ -16,6 +17,7 @@ export default function Board({ devices, selected, onSelect, settingUp = false, 
   devices: Device[]; selected: string | null; onSelect: (id: string) => void; settingUp?: boolean;
   marks?: Map<string, Need[]>;
 }) {
+  const working = useWorkingOn();
   if (devices.length === 0) {
     return <div className="dlist-empty muted">{settingUp ? "Setting up your sample home…"
       : <>No devices yet. Use <strong>Add a device</strong> to put your first one on the map, or switch on the sample
@@ -41,13 +43,15 @@ export default function Board({ devices, selected, onSelect, settingUp = false, 
               const real = d.realm === "real";
               return (
                 <li key={d.id}>
-                  <button className={`dlist-row ${d.status} ${selected === d.id ? "sel" : ""}`} onClick={() => onSelect(d.id)}
+                  <button className={`dlist-row ${d.status} ${selected === d.id ? "sel" : ""} ${working(d.id) ? "working" : ""}`}
+                    onClick={() => onSelect(d.id)}
                     aria-current={selected === d.id ? "true" : undefined}>
                     <span className="dlist-name">{d.name}
                       <span className={`pill ${real ? "live" : "sample"}`}
                         title={real ? "A real device, reporting through the Nightlight helper" : "A simulated sample device"}>
                         {real ? "Live" : "Simulated"}</span>
-                      <NeedsMark needs={marks?.get(d.id)} /></span>
+                      <NeedsMark needs={marks?.get(d.id)} />
+                      {working(d.id) && <span className="working-tag" role="status">Checking…</span>}</span>
                     <StatusWord tone={deviceTone(d)} />
                     <span className="dlist-line">{deviceLine(d, now)}</span>
                   </button>

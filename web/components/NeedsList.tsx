@@ -9,6 +9,7 @@ import ApprovalCard from "./ApprovalCard";
 import { Copy } from "./AddDevice";
 import { ArrowText, Caret } from "@/src/components/icons";
 import StatusWord, { needTone } from "./StatusWord";
+import { useWorkingOn } from "@/lib/follow";
 
 export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, max = 3, showDevice = false, plain = false,
   fold = false, extra }: {
@@ -20,6 +21,7 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
   const [open, setOpen] = useState<string | null>(null);
   const [unfolded, setUnfolded] = useUnfolded();
   const [, dismiss] = useDismissed();
+  const working = useWorkingOn();
   if (!needs.length) return null;
   const folding = fold && needs.length > 1;
   const shown = folding || all ? needs : needs.slice(0, max);
@@ -33,12 +35,13 @@ export default function NeedsList({ needs, actions, devices, onGo, onFollowUp, m
     // the strip says it plainly; the exact figures ("/ at 94% of 6.4 GB") stay in the device panel
     const detail = n.detail && !(plain && (n.kind === "critical" || n.kind === "approve")) ? n.detail : null;
     return (
-    <div key={n.id} className="needs-item">
+    <div key={n.id} className={`needs-item ${working(n.deviceId) ? "working" : ""}`}>
       <div className="needs-row">
         <StatusWord tone={tone} word={word} className="needs-status" />
         <span className="needs-text">
           {device && n.deviceId && <button className="needs-device" onClick={() => onGo({ to: "drawer", deviceId: n.deviceId! })}
             aria-label={`Open ${device}`}>{device}</button>}
+          {working(n.deviceId) && <span className="working-tag" role="status">Nightlight is checking…</span>}
           <span className="needs-title"><ArrowText text={n.title} /></span>
           {detail && <span className="needs-detail"><ArrowText text={detail} /></span>}
         </span>
