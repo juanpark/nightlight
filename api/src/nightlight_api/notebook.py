@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from google.cloud import firestore
 
-from . import db, real
+from . import clock, db, real
 from .errors import invalid, not_found
 from .ids import new_id
 from .redact import scrub
@@ -120,11 +120,11 @@ def age(at, now: datetime | None = None) -> str | None:
 def written(at, now: datetime | None = None) -> str | None:
     """A note's or profile's date for the agent: when, how long ago, and that it is history, not a reading."""
     ago = age(at, now)
-    return f"{at:%Y-%m-%d %H:%M} UTC ({ago}; may be out of date)" if ago else None
+    return f"{clock.fmt(at)} ({ago}; may be out of date)" if ago else None
 
 
 def _short(x: dict) -> dict:
-    return {"text": x["text"], "by": x.get("by"), "on": x["at"].date().isoformat() if hasattr(x.get("at"), "date")
+    return {"text": x["text"], "by": x.get("by"), "on": clock.day(x["at"]) if isinstance(x.get("at"), datetime)
             else None, "written": written(x.get("at"))}
 
 

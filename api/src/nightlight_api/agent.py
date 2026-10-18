@@ -24,7 +24,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import ToolContext
 from google.genai import types
 
-from . import actions, db, guide, knowledge, memory, notebook, playbooks, quota, real, runbooks, sim
+from . import actions, clock, db, guide, knowledge, memory, notebook, playbooks, quota, real, runbooks, sim
 from .config import settings
 from .errors import ApiError, Outcome
 from .fence import turn_fence
@@ -114,6 +114,7 @@ class TurnContext:
     watch_call: Callable[[bool], None] = lambda active: None
     retry_from: int | None = None  # modelCalls when the answer-only retry began (turns.SHORTER): one call, no tools
     command_call: int = -1  # the model call whose response ran a run_command (one per response)
+    zone: str | None = None  # the owner's IANA time zone: every time the agent reads is written in it (clock.py)
 
     @property
     def mode(self) -> str:
@@ -173,7 +174,7 @@ def _bounded(value: dict, ctx: TurnContext, shrink: tuple = (), readings: tuple 
     enough, the lists named in `readings` (current readings) are compacted to their key fields, then cut from the
     end with an explicit count of what was left out. Only a result still too big after all that becomes one cut
     string, made from the trimmed result."""
-    clean, n = scrub_value(value)
+    clean, n = scrub_value(clock.localize(value, ctx.zone))  # every time in the owner's zone, labelled
     ctx.redacted += n
     limit = settings.tool_result_bytes
     if _size(clean) <= limit:
@@ -259,7 +260,7 @@ def _device_summary(d: dict) -> dict:
     return {"id": d["id"], "name": name, "purpose": d.get("purpose"), "status": d.get("status"),
             "health": d.get("health"), "diskPct": (d.get("vitals") or {}).get("diskPct"),
             "topProblem": top and top.get("message"),
-            "real": d.get("realm") == "real", "lastReport": str(d.get("lastSeen")) if d.get("realm") == "real" else None,
+            "real": d.get("realm") == "real", "lastReport": clock.localize(d.get("lastSeen")) if d.get("realm") == "real" else None,
             "stale": d.get("stale", False), "staleReason": d.get("staleReason"),
             "allowedJobs": d.get("allowedJobs") or {}, "tags": d.get("tags") or [],
             "known": len(d.get("findings") or []) - len(open_),
@@ -284,7 +285,7 @@ def _silence(d: dict, s: dict, everyone: list[dict]) -> str:
                                   f"memory {v['mem']:.0f}%" if isinstance(v.get("mem"), (int, float)) else "") if x)
     likely = ("; its disk was nearly full when it went silent: a full disk can freeze or crash a computer, so that is "
               "the most likely cause" if isinstance(v.get("diskPct"), (int, float)) and v["diskPct"] >= 95 else "")
-    return (f"; silent for {gone} (last report {last.strftime('%Y-%m-%d %H:%M')} UTC)"
+    return (f"; silent for {gone} (last report {clock.fmt(last)})"
             + (f"; last known: {known}" if known else "") + likely
             + f"; {where} still reporting: {', '.join(up) or 'none'}" + (f"; also silent: {', '.join(down)}" if down else ""))
 
@@ -1045,7 +1046,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                                  service=service or None, output_chars=400)
         except ApiError as e:
             return {"status": "error", "reason": "no such device" if e.code == "not_found" else e.code}
-        return _bounded({"jobs": [dict(r, at=str(r.get("at"))[:16]) for r in rows]}, ctx)
+        return _bounded({"jobs": rows}, ctx)  # each "at" is written in the owner's zone by _bounded
 
     async def read_device_log(device_id: str, tool_context: ToolContext, service: str = "", limit: int = 10) -> dict:
         return await asyncio.to_thread(_read_device_log_sync, device_id, tool_context, service, limit)
@@ -1574,18 +1575,24 @@ def make_callbacks(ctx: TurnContext):
         ctx.metrics["toolCalls"] += 1
         return None
 
-    return before_model, after_model, before_tool
+    def after_tool(tool, args, tool_context, tool_response):
+        # Every time a tool hands back (a datetime, or an exact timestamp string) reaches the model in the owner's
+        # zone with its abbreviation, whichever tool it came from; stored timestamps stay UTC.
+        return clock.localize(tool_response, ctx.zone) if isinstance(tool_response, dict) else None
+
+    return before_model, after_model, before_tool, after_tool
 
 
 def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
     """The question agent gets the fleet summary and the tools; the follow-up after an approval gets neither: the
     server already knows the result, so one short model call narrates it."""
     ctx.narrating = continuation
-    before_model, after_model, before_tool = make_callbacks(ctx)
+    before_model, after_model, before_tool, after_tool = make_callbacks(ctx)
     if continuation:
-        instruction = CONTINUATION
+        instruction = CONTINUATION + "\n\n" + clock.line(ctx.zone)
     else:
         instruction = INSTRUCTION + (MEMORY_RULES if memory.on_for(getattr(ctx, "uid", None)) else "") + (DEEP if ctx.deep else "")
+        instruction += "\n\n" + clock.line(ctx.zone)
         instruction += "\n\nTheir home right now:\n" + (ctx.fleet or "- no devices")
         if ctx.memories:
             instruction += ("\n\nWhat you remember about this person (preferences and context; live device facts "
@@ -1607,4 +1614,5 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
         before_model_callback=before_model,
         after_model_callback=after_model,
         before_tool_callback=before_tool,
+        after_tool_callback=after_tool,
     )

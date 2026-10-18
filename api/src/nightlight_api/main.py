@@ -23,7 +23,7 @@ app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.add_middleware(db.FenceMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.web_origins, allow_methods=["GET", "POST", "PUT", "DELETE"],
-                   allow_headers=["Authorization", "Content-Type"], max_age=600)
+                   allow_headers=["Authorization", "Content-Type", "X-Time-Zone"], max_age=600)
 
 
 class Strict(BaseModel):
@@ -551,6 +551,13 @@ def _client_ip(request: Request) -> str:
     return quota.ip_hash(ip)
 
 
+def _zone(request: Request, uid: str, anon: bool) -> str | None:
+    """The turn's time zone: the account's, or the browser's X-Time-Zone (kept on a signed-in owner's account when
+    it has none of its own; a one-click account or a live demo machine uses it for this request only)."""
+    keep = not anon and not live.pool_slot(uid)
+    return real.turn_zone(uid, request.headers.get("x-time-zone"), keep)
+
+
 def _session_id_ok(session_id: str) -> None:
     if not re.fullmatch(r"sess_[0-9A-Z]{26}", session_id):
         raise not_found()
@@ -563,16 +570,18 @@ def chat_session(body: Empty, uid: str = Depends(current_uid)):
 
 
 @app.post("/api/chat/sessions/{session_id}/messages")
-def chat_message(session_id: str, body: MessageBody, request: Request, uid: str = Depends(current_uid)):
+def chat_message(session_id: str, body: MessageBody, request: Request, uid: str = Depends(current_uid),
+                 anon: bool = Depends(anonymous)):
     _session_id_ok(session_id)
     turn_id = turns.accept_message(uid, session_id, body.text, body.clientRequestId, body.mode)
     claimed = turns.claim(uid, turn_id)
-    return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+    return StreamingResponse(turns.stream(uid, claimed, _client_ip(request), zone=_zone(request, uid, anon)),
+                             media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @app.post("/api/turns/{turn_id}/stream")
-def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(current_uid)):
+def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(current_uid),
+                anon: bool = Depends(anonymous)):
     if not re.fullmatch(r"(turn_[0-9a-f-]{36}|cont_act_[0-9a-f]{26})", turn_id):
         raise not_found()
     try:
@@ -584,8 +593,8 @@ def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(
                 or not actions.expire_unreported(uid, turn_id.removeprefix("cont_")):
             raise
         claimed = turns.claim(uid, turn_id)
-    return StreamingResponse(turns.stream(uid, claimed, _client_ip(request)), media_type="text/event-stream",
-                             headers=SSE_HEADERS)
+    return StreamingResponse(turns.stream(uid, claimed, _client_ip(request), zone=_zone(request, uid, anon)),
+                             media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 # ------------------------------------------------------------------ memory (what Nightlight remembers)
@@ -667,7 +676,14 @@ class AddFoundBody(Strict):
 
 
 class SettingsBody(Strict):
-    deviceNames: StrictBool
+    deviceNames: StrictBool | None = None
+    timeZone: str | None = Field(default=None, min_length=1, max_length=64)  # IANA name, "Asia/Seoul"
+
+    @model_validator(mode="after")
+    def something(self):
+        if self.deviceNames is None and self.timeZone is None:
+            raise ValueError("nothing to change")
+        return self
 
 
 class HeartbeatBody(Strict):
@@ -1044,8 +1060,21 @@ def add_found(helper_id: str, cid: str, body: AddFoundBody, uid: str = Depends(c
 @app.post("/api/settings")
 def account_settings(body: SettingsBody, uid: str = Depends(owner_uid)):
     """The owner's account switches. `deviceNames: false` stops keeping the names things nearby announce and removes
-    the ones already kept."""
-    return real.set_device_names(uid, body.deviceNames)
+    the ones already kept. `timeZone` (an IANA name) is the zone every time is shown in; set here it is explicit and
+    the browser's own zone (the X-Time-Zone header on chat requests) never replaces it."""
+    out = {"ok": True}
+    if body.timeZone is not None:
+        out.update(real.set_time_zone(uid, body.timeZone))
+    if body.deviceNames is not None:
+        out.update(real.set_device_names(uid, body.deviceNames))
+    return out
+
+
+@app.get("/api/settings")
+def get_account_settings(uid: str = Depends(current_uid)):
+    """The account's switches: deviceNames, and timeZone (None until set or learned from the browser) with
+    timeZoneAuto (true when it was learned from the browser, so a later browser zone may still replace it)."""
+    return real.account_settings(uid)
 
 
 @app.post("/helper/jobs/claim")

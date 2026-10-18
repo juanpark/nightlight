@@ -20,7 +20,7 @@ from google.adk.sessions import InMemorySessionService
 from google.cloud import firestore
 from google.genai import types
 
-from . import agent as agentlib, db, memory, quota
+from . import agent as agentlib, clock, db, memory, quota
 from .config import settings
 from .errors import ApiError, conflict, not_found
 from .fence import turn_fence
@@ -315,7 +315,7 @@ async def _recall(uid: str, ep: int) -> list[str]:
         return []
 
 
-async def stream(uid: str, c: Claim, ip: str, model=None):
+async def stream(uid: str, c: Claim, ip: str, model=None, zone: str | None = None):
     """Async generator of SSE strings for a claimed turn. Always ends with `done` or `error`.
 
     The agent runs as a producer task; this loop forwards its events, sends a `: ping` comment every 15 s of
@@ -342,8 +342,12 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
         yield sse({"type": "error", "code": err.get("code"), "message": err.get("message"), "retryable": False})
         return
 
+    # The owner's time zone (main._zone): every time the agent reads or the steps show is written in it. Set before
+    # any task or thread starts, so the fleet summary, tools and step lines all inherit it.
+    clock.ZONE.set(clock.valid(zone))
     ctx = agentlib.TurnContext(uid=uid, session_id=c.session_id, turn_id=c.turn_id, attempt=c.attempt,
-                               generation=c.generation, ip=ip, deep=c.turn.get("mode") == "investigate")
+                               generation=c.generation, ip=ip, deep=c.turn.get("mode") == "investigate",
+                               zone=clock.valid(zone))
     queue: asyncio.Queue = asyncio.Queue()
     lost = asyncio.Event()
     # Text is released only when a model call has finished, so it is always scrubbed as a whole: a secret can't

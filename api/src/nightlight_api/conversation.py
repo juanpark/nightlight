@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from google.cloud import firestore
 
-from . import db, real
+from . import clock, db, real
 from .ids import continuation_turn_id, new_id
 
 NARRATE = "narrate"  # tell what happened in one or two sentences; propose nothing new
@@ -120,4 +120,4 @@ def to_activity(tx, uid: str, a: dict, device: dict) -> None:
                f"{name}: {pb.get('title')}. {text}"[:300], who="nightlight")
     now = datetime.now(timezone.utc)
     tx.set(db.notes(uid, a["deviceId"]).document(new_id("note")),
-           {"text": f"{now:%Y-%m-%d} {pb.get('title')}: {text}"[:300], "by": "nightlight", "at": now})
+           {"text": f"{clock.day(now, real.stored_zone(uid))} {pb.get('title')}: {text}"[:300], "by": "nightlight", "at": now})
