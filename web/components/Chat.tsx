@@ -160,6 +160,8 @@ const Chat = forwardRef<ChatHandle, {
       let ok = false, failed = false; // how the answer ended (the sample home's tour ticks only a good one)
       const onEvent = (e: StreamEvent) => {
         if (e.type === "error") failed = true;
+        // the answer is over at its done event (the connection can stay open a little longer)
+        if (e.type === "done") followEnd(followed, !failed);
         if (e.type === "tool_call") followStep(followed, e.args, e.name, e.callId);
         else if (e.type === "tool_result") followResult(followed, e.name, e.callId, e.ok !== false, e.summary);
         else if (e.type === "approval_request") followCard(followed);
