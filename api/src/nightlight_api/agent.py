@@ -157,27 +157,41 @@ def _shrink(value):
     return None
 
 
-def _bounded(value: dict, ctx: TurnContext, shrink: tuple = ()) -> dict:
+READING_KEYS = ("id", "name", "status", "severity", "message", "version", "updateAvailable")
+
+
+def _bounded(value: dict, ctx: TurnContext, shrink: tuple = (), readings: tuple = ()) -> dict:
     """Scrub a tool result and keep its final serialised form within tool_result_bytes. The parts named in `shrink`
-    (least important first) are cut down, then left out (the result says which), so it keeps its shape and its
-    current readings; only a result still too big after that becomes one cut string (no keys left to read)."""
+    (written history, least important first) are cut down, then left out, and the result says so. If that is not
+    enough, the lists named in `readings` (current readings) are compacted to their key fields, then cut from the
+    end with an explicit count of what was left out. Only a result still too big after all that becomes one cut
+    string, made from the trimmed result."""
     clean, n = scrub_value(value)
     ctx.redacted += n
     limit = settings.tool_result_bytes
     if _size(clean) <= limit:
         return clean
-    if shrink and isinstance(clean, dict):
-        out = dict(clean, shortened=f"to fit, these were cut down or left out: {', '.join(shrink)}")
-        for key in shrink:
-            while key in out and _size(out) > limit:
-                smaller = _shrink(out[key])
-                if smaller is None:
-                    del out[key]
-                else:
-                    out[key] = smaller
-        if _size(out) <= limit:
-            return out
-    return _bounded_string(clean, limit)
+    if not (shrink or readings) or not isinstance(clean, dict):
+        return _bounded_string(clean, limit)
+    out = dict(clean, shortened=f"to fit, these were cut down or left out: {', '.join(shrink)}")
+    for key in shrink:
+        while key in out and _size(out) > limit:
+            smaller = _shrink(out[key])
+            if smaller is None:
+                del out[key]
+            else:
+                out[key] = smaller
+    lists = [k for k in readings if isinstance(out.get(k), list)]
+    if _size(out) > limit:  # every reading list compacted first, then cut from the end
+        for key in lists:
+            out[key] = [{k: r[k] for k in READING_KEYS if k in r} if isinstance(r, dict) else r for r in out[key]]
+    for key in reversed(lists):  # the last-named list gives way first
+        rows, total = out[key], len(out[key])
+        while rows and _size(out) > limit:
+            rows = rows[:-1]
+            out[key] = rows
+            out[f"{key}Omitted"] = {"notShown": total - len(rows), "total": total}  # to fit the result
+    return out if _size(out) <= limit else _bounded_string(out, limit)
 
 
 def _bounded_string(clean: dict, limit: int) -> dict:
@@ -370,7 +384,8 @@ def make_tools(ctx: TurnContext, read_only: bool):
             ctx.fixes = [(f["tool"], device_id, f["plan"]) for f in out["fixes_you_can_propose"]] + ctx.fixes
         # Over the bound, written history gives way first and today's readings last (round 4: the whole result
         # became one cut string, so the model re-read the device with other tools).
-        return _bounded(out, ctx, shrink=("profile", "notebook", "runbooks", "diskConsumers", "services"))
+        return _bounded(out, ctx, shrink=("profile", "notebook", "runbooks", "diskConsumers"),
+                        readings=("findings", "services"))
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
         """List the fifteen most recent things that happened on the person's devices and watched addresses."""
@@ -1300,20 +1315,28 @@ async def busy_retry(make, ctx: "TurnContext | None"):
                 yield response
             return
         except Exception as e:
-            used = ctx.metrics.get("busyRetries", 0) if ctx else BUSY_RETRIES
-            if started or not model_busy(e) or used >= BUSY_RETRIES:
+            if started or not model_busy(e) or ctx is None:
+                raise  # a call cut off after it began keeps its reservation: its usage is unknown
+            # A refusal before any response is confirmed unbilled: its reservation is released whatever comes next
+            # (the last refusal and the answer-only retry's too); the attempt stays counted.
+            ctx.watch_call(False)  # from here we wait on our own backoff, not on a silent call
+            if ctx.reservations:
+                await asyncio.to_thread(quota.reconcile, ctx.reservations.pop(), 0.0)
+            used = ctx.metrics.get("busyRetries", 0)
+            if used >= BUSY_RETRIES:
                 raise
             delay = BUSY_DELAYS[min(used, len(BUSY_DELAYS) - 1)] * random.uniform(0.5, 1.5)
             over_calls = ctx.metrics["modelCalls"] > ctx.retry_from if ctx.retry_from is not None \
                 else ctx.metrics["modelCalls"] >= ctx.max_calls
             if over_calls or time.monotonic() + delay - ctx.started > ctx.turn_seconds:
                 raise
-            ctx.watch_call(False)  # waiting on our own backoff, not on a silent call
-            if ctx.reservations:
-                await asyncio.to_thread(quota.reconcile, ctx.reservations.pop(), 0.0)
             await asyncio.sleep(delay)
             ctx.metrics["busyRetries"] = used + 1
             await reserve_call(ctx)
+            if ctx.out_of_time():  # the reservation itself took the rest of the budget: no call starts after it
+                await asyncio.to_thread(quota.reconcile, ctx.reservations.pop(), 0.0)
+                ctx.metrics["modelCalls"] -= 1  # reserved but never sent
+                raise
             ctx.watch_call(True)
 
 

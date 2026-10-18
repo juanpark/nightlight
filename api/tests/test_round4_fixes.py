@@ -40,6 +40,18 @@ def test_an_oversized_device_read_keeps_its_shape_and_its_readings():
     assert line.startswith("disk 17.0%, memory 36%, 1 problem(s)")
 
 
+def test_many_findings_keep_a_structured_envelope_with_a_count():
+    d = _device(notes=0)
+    d["findings"] = [{"id": f"f_ctr_{i}", "check": "container_down", "severity": "warn", "svcId": f"c{i}",
+                      "message": f"container-{i} isn't running: it exited with code 1", "evidence": "x" * 40}
+                     for i in range(50)]
+    out = agentlib._bounded(d, _ctx(), shrink=("profile", "notebook", "runbooks"), readings=("findings", "services"))
+    assert len(json.dumps(out).encode()) <= settings.tool_result_bytes and "truncated" not in out
+    assert out["vitals"] == {"diskPct": 17.0, "mem": 36.2} and out["findings"][0]["message"].startswith("container-0")
+    assert out["findingsOmitted"]["total"] == 50 and out["findingsOmitted"]["notShown"] == 50 - len(out["findings"])
+    assert "50 problem(s)" in turns._commentary("get_device", out)[0]
+
+
 def test_a_small_result_is_untouched():
     small = {"status": "done", "vitals": {"mem": 1}}
     assert agentlib._bounded(small, _ctx(), shrink=("notebook",)) == small
@@ -82,6 +94,58 @@ def retrying(monkeypatch):
     monkeypatch.setattr(agentlib, "build", lambda ctx, continuation, model=None:
                         REAL_BUILD(ctx, continuation=continuation, model=BusyRetryFake()))
     yield
+
+
+def _refusals(monkeypatch, ctx, n_busy, reserve_seconds=0.0):
+    """Drive busy_retry directly: n_busy refusals, then an answer. Returns (attempts, released, raised)."""
+    import asyncio
+    import time as _time
+    from nightlight_api import agent
+    released, attempts = [], []
+    monkeypatch.setattr(agent, "BUSY_DELAYS", (0.0, 0.0))
+    monkeypatch.setattr(agent.quota, "reconcile", lambda reserved, actual: released.append((reserved, actual)))
+
+    def reserve(*a, **k):
+        _time.sleep(reserve_seconds)
+        return 1.0
+    monkeypatch.setattr(agent.quota, "reserve", reserve)
+    monkeypatch.setattr(agent, "turn_fence", lambda *a: None)
+
+    async def call():
+        attempts.append(1)
+        if len(attempts) <= n_busy:
+            raise _busy()
+        yield "ok"
+
+    async def run():
+        ctx.reservations.append(1.0)  # the first call's reservation, as before_model makes it
+        ctx.metrics["modelCalls"] += 1
+        return [r async for r in agent.busy_retry(call, ctx)]
+    try:
+        asyncio.run(run())
+        return attempts, released, None
+    except Exception as e:
+        return attempts, released, e
+
+
+def test_every_refusal_releases_its_reservation_even_the_last(monkeypatch):
+    ctx = _ctx()
+    attempts, released, raised = _refusals(monkeypatch, ctx, n_busy=5)
+    assert raised is not None and len(attempts) == 1 + agentlib.BUSY_RETRIES
+    assert released == [(1.0, 0.0)] * len(attempts) and ctx.reservations == []  # nothing unbillable kept
+    assert ctx.metrics["modelCalls"] == len(attempts)  # each attempt counted
+    ctx = _ctx()
+    ctx.retry_from = 0  # the answer-only retry: no new try, but its refusal is released too
+    attempts, released, raised = _refusals(monkeypatch, ctx, n_busy=1)
+    assert raised is not None and len(attempts) == 1 and released == [(1.0, 0.0)] and ctx.reservations == []
+
+
+def test_no_retry_starts_after_the_budget_even_if_reserving_was_slow(monkeypatch):
+    ctx = _ctx()
+    monkeypatch.setattr(type(ctx), "turn_seconds", property(lambda self: 0.05))
+    attempts, released, raised = _refusals(monkeypatch, ctx, n_busy=1, reserve_seconds=0.08)
+    assert raised is not None and len(attempts) == 1  # reserved, then past the budget: never sent
+    assert ctx.reservations == [] and ctx.metrics["modelCalls"] == 1
 
 
 def _quick(client):

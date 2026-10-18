@@ -64,6 +64,20 @@ def test_each_program_says_whether_it_is_inside_an_app_or_on_the_computer(helper
     assert "thumbnailer (on the computer itself, not inside any app) keeps a processor core busy" in got
 
 
+def test_where_a_program_runs_is_only_said_for_layouts_it_knows(helper):
+    cid = "ef" * 32
+    w = helper._cgroup_where
+    assert w("0::/system.slice/ssh.service\n") == ("host", None)
+    assert w("0::/\n") == ("host", None) and w("0::/init.scope\n") == ("host", None)
+    assert w("12:cpu,cpuacct:/user.slice/user-1000.slice/session-3.scope\n1:name=systemd:/user.slice\n")[0] == "host"
+    assert w(f"0::/system.slice/docker-{cid}.scope\n") == ("container", cid)
+    assert w(f"0::/user.slice/user-1000.slice/user@1000.service/user.slice/libpod-{cid}.scope\n") == ("container", cid)
+    assert w("0::/kubepods.slice/kubepods-burstable.slice/cri-containerd-abc.scope\n") == ("container", None)
+    assert w("0::/lxc/101\n")[0] == "container" and w("0::/lxc.payload.web/init.scope\n")[0] == "container"
+    assert w("0::/machine.slice/machine-web.scope\n") == ("machine", None)
+    assert w("0::/something/else\n") == ("unknown", None) and w("") == ("unknown", None)
+
+
 def test_a_program_that_restarted_between_looks_is_not_blamed(helper, monkeypatch):
     tables = iter([{"7": ("old", 10_000, 1)}, {"7": ("new", 10_050, 1)}])  # the pid was reused
     monkeypatch.setattr(helper, "_proc_table", lambda: next(tables))

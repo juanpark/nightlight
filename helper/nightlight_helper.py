@@ -1085,23 +1085,45 @@ def _container_ids():
     return out
 
 
+# Control-group paths, as /proc/<pid>/cgroup shows them. A container: Docker ("docker-<id>.scope", "/docker/<id>"),
+# Podman ("libpod-<id>"), containerd and Kubernetes ("cri-containerd-", "/containerd/", "kubepods"), LXC ("/lxc/",
+# "lxc.payload"); systemd-machined guests and containers ("machine.slice"). The computer itself: the root, init, and
+# systemd's own system and user slices. Anything else is said as unknown, never guessed.
+_IN_CONTAINER = re.compile(r"docker[-/]|libpod-|cri-containerd|/containerd/|kubepods|/lxc[/.]|lxc\.payload")
+_HOST_PATH = re.compile(r"/|/init\.scope|/system\.slice(/[^/]+\.(service|scope|mount|socket))?|/user\.slice(/.*)?")
+UNKNOWN_WHERE = "couldn't tell whether it runs inside an app"
+
+
+def _cgroup_where(text):
+    """("container", id or None) | ("machine", None) | ("host", None) | ("unknown", None) for one cgroup file."""
+    paths = [ln.split(":", 2)[2].strip() for ln in text.splitlines() if ln.count(":") >= 2]
+    if any(_IN_CONTAINER.search(p) for p in paths):
+        m = _CONTAINER_ID.search(text)
+        return "container", m.group(0) if m else None
+    if any("machine.slice" in p for p in paths):
+        return "machine", None
+    if paths and all(_HOST_PATH.fullmatch(p) for p in paths):
+        return "host", None
+    return "unknown", None
+
+
 def _where_each(pids):
-    """Linux: {pid: where it runs}: inside a container (and which app's) or on the computer itself, from its control
-    group (/proc/<pid>/cgroup names the container's id); None when that can't be read. A program on the computer
-    itself is never part of an app, whatever its name suggests."""
+    """Linux: {pid: where it runs}: inside a container (and which app's), on the computer itself, or unknown, from
+    its control group; None when that can't be read. A program on the computer itself is never part of an app,
+    whatever its name suggests."""
     found = {}
     for pid in pids:
         try:
             with open(f"{_PROC}/{pid}/cgroup") as f:
-                m = _CONTAINER_ID.search(f.read(4096))
+                found[pid] = _cgroup_where(f.read(4096))
         except (OSError, ValueError):
             found[pid] = None
-            continue
-        found[pid] = m.group(0) if m else ""
-    names = _container_ids() if any(found.values()) else {}  # Docker is asked only when something is in one
-    return {pid: None if cid is None else "on the computer itself, not inside any app" if not cid
-            else f"inside app {names[cid]}" if cid in names else "inside a container"
-            for pid, cid in found.items()}
+    # Docker is asked for names only when a program is in a container with an id
+    names = _container_ids() if any(w and w[1] for w in found.values()) else {}
+    words = {"host": "on the computer itself, not inside any app", "unknown": UNKNOWN_WHERE,
+             "machine": "inside a virtual machine or system container"}
+    return {pid: None if w is None else f"inside app {names[w[1]]}" if w[0] == "container" and w[1] in names
+            else "inside a container" if w[0] == "container" else words[w[0]] for pid, w in found.items()}
 
 
 def _inspect_updates():

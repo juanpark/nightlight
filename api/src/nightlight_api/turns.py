@@ -681,7 +681,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         notes = len(book.get("device") or []) + sum(len(n) for n in (book.get("services") or {}).values())
         bits = [f"disk {v.get('diskPct')}%" if v.get("diskPct") is not None else None,
                 f"memory {round(v['mem'])}%" if v.get("mem") is not None else None,
-                f"{len(resp.get('findings') or [])} problem(s)",
+                f"{(resp.get('findingsOmitted') or {}).get('total') or len(resp.get('findings') or [])} problem(s)",
                 f"{notes} note(s) in its notebook" if notes else None,
                 f"{len(resp['runbooks'])} runbook(s)" if resp.get("runbooks") else None]
         return ", ".join(b for b in bits if b), None
