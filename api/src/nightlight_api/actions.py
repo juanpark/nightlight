@@ -238,6 +238,60 @@ def _create_sim(tx, uid: str, user: dict, device: dict, services: list[dict], ac
 
 # ------------------------------------------------------------------ real devices: one pipeline for every capability
 
+REUSE_READ = timedelta(minutes=5)  # a device read finished this recently (or still running) answers the same ask
+CHAIN_LIMIT = 1  # an event turn at this chain depth or deeper starts no new device reads (it narrates instead)
+
+
+def _age(at) -> float | None:
+    return (datetime.now(timezone.utc) - at).total_seconds() if isinstance(at, datetime) else None
+
+
+def _chat_turn(tx, uid: str, session_id: str | None, turn_id: str) -> dict | None:
+    """The chat turn asking (its doc), or None when the ask doesn't come from a chat turn (the app, Nightlight)."""
+    if not session_id:
+        return None
+    snap = db.turns(uid, session_id).document(turn_id).get(transaction=tx)
+    return snap.to_dict() if snap.exists else None
+
+
+def _same_read(tx, uid: str, device_id: str, name: str, params: dict, generation, session_id: str,
+               playbook: str | None) -> dict | None:
+    """The same device read in this chat that is still running or finished within REUSE_READ, unless a change on
+    the device finished after it started (then the old reading may be out of date). Production 2026-10-18: each
+    Investigate follow-up re-ran the same disk checkup, the device took longer than the in-turn wait, and the new
+    job's own follow-up asked again: five turns repeating one summary."""
+    q = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("type", "==", name))
+    hits = []
+    for snap in q.get(transaction=tx):
+        a = dict(snap.to_dict(), id=snap.id)
+        if (a.get("demoGeneration") != generation or a.get("sessionId") != session_id
+                or (a.get("params") or {}) != (params or {})):
+            continue
+        if playbook and a.get("playbook") != playbook:  # a checkup needs its own analysis; a plain look reuses any
+            continue
+        started = _age(a.get("createdAt"))
+        if a.get("status") in ("approved", "running"):
+            if started is not None and started < READ_REPORT_TIMEOUT.total_seconds():
+                hits.append((started, a))
+        elif a.get("status") == "done":
+            ended = _age(a.get("finishedAt"))
+            if ended is not None and ended < REUSE_READ.total_seconds():
+                hits.append((started if started is not None else ended, a))
+    if not hits:
+        return None
+    started, a = min(hits, key=lambda h: h[0])
+    changes = db.actions(uid).where(filter=FieldFilter("deviceId", "==", device_id)).where(
+        filter=FieldFilter("status", "==", "done"))
+    for snap in changes.get(transaction=tx):
+        c = snap.to_dict()
+        cap = capabilities.get(c.get("type"))
+        ended = _age(c.get("finishedAt"))
+        if cap and not cap.reads and ended is not None and ended < started:
+            return None  # something changed on the device since: measure again
+    return dict(a, reused=True, ageSeconds=int(started))
+
+
 def request(uid: str, name: str, device_id: str, params: dict, *, session_id: str | None, turn_id: str,
             generation: int | None = None, fence=None, origin: str = "chat", mode: str = "quick",
             extra: dict | None = None, once: bool = False) -> dict:
@@ -275,6 +329,19 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         if real.view(device).get("stale") and not cap.while_silent:
             raise ValueError("device_not_reporting")
         fields, clean = cap.build(capabilities.Ctx(uid, device, _by_id(services), params))
+        chain = {}
+        if cap.reads and cap.approval == "device" and origin == "chat" and (turn := _chat_turn(tx, uid, session_id,
+                                                                                               turn_id)):
+            # Reads are de-duplicated per chat, and a chain of automatic follow-ups is bounded: a job started in an
+            # event turn makes the next follow-up one step deeper, and at CHAIN_LIMIT it may only narrate.
+            same = _same_read(tx, uid, device_id, name, clean, gen, session_id, (extra or {}).get("playbook"))
+            if same:
+                return same
+            event = turn.get("kind") == "event"
+            depth = int(turn.get("chainDepth") or 0) if event else 0
+            if event and depth >= CHAIN_LIMIT:
+                raise ValueError("chain_limit")
+            chain = {"chainDepth": depth + 1 if event else 0, "causedByTurn": turn_id}
         approved = cap.approval == "device" or (origin == "app" and cap.approval == "card")
         if not approved and (twin := _waiting_card(tx, uid, device_id, name, clean, gen)):
             return twin
@@ -282,7 +349,7 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         a = {"id": aid, "proposalKey": key, "type": name, "deviceId": device_id, "params": clean, **fields,
              "status": "approved" if approved else "pending", "realm": "real", "demoGeneration": gen,
              "deviceVersion": device.get("version"), "trustLevelAtProposal": "ask", "resolvedBy": "real_device",
-             "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now(), **(extra or {})}
+             "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now(), **chain, **(extra or {})}
         if approved:
             a["decision"] = {"by": "owner_allowed_on_device" if cap.approval == "device" else "user",
                              "decision": "approve"}
@@ -290,6 +357,8 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         return dict(a, lastAttempt=last) if last else a
 
     a = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+    if a.get("reused"):
+        return a
     if a.get("status") == "approved" and cap.after_approval:
         cap.after_approval(uid, a)
     return db.action(uid, a["id"]).get().to_dict() | {"id": a["id"]} if cap.after_approval else a
