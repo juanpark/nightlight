@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.32"
+VERSION = "0.9.34"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -290,7 +290,34 @@ def facts():
     net = _net()
     if net:
         out["net"] = net
+    machine = _hourly("machine", machine_fingerprint, every=86400)
+    if machine:
+        out["machine"] = machine
     return out
+
+
+def machine_fingerprint():
+    """A fingerprint of this machine that survives reinstalling the helper, so a reinstall can continue the same
+    device on the map (the owner chooses, when approving it): SHA-256 of the machine's own id (macOS IOPlatformUUID,
+    Linux /etc/machine-id), never the id itself. The server keys it per account before keeping it. None if unknown."""
+    import hashlib
+    ident = None
+    if sys.platform == "darwin":
+        m = re.search(r'"IOPlatformUUID" = "([0-9A-Fa-f-]{36})"', _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]))
+        ident = m.group(1) if m else None
+    else:
+        for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            try:
+                with open(path) as f:
+                    v = f.read().strip()
+                if re.fullmatch(r"[0-9a-f]{32}", v):
+                    ident = v
+                    break
+            except OSError:
+                pass
+    if not ident:
+        return None
+    return hashlib.sha256(b"nightlight-machine:" + ident.lower().encode()).hexdigest()[:32]
 
 
 def _mac_folders_state():
@@ -2008,14 +2035,22 @@ def run_readonly(params):
     cfg = _load()
     grant, signed, command = params.get("grant"), params.get("signed"), params.get("command")
     if not isinstance(grant, dict) or grant.get("mode") != "read-only":
+        _audit(f"Read-only command refused: there's no read-only investigation grant; asked: {_audit_cmd(command)}")
         return False, "Not run: there's no read-only investigation grant.", None
     why = expert_check(grant, signed, cfg, reusable=True)
     if why:
+        _audit(f"Read-only command refused: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run: {why}.", None
+    nonce = str(grant.get("nonce"))
+    if nonce not in _AUDITED_GRANTS:  # the grant line once per grant, then one line per command run under it
+        _AUDITED_GRANTS.add(nonce)
+        _audit(f"Investigation grant verified: {_audit_signer(cfg, grant)}; read-only until {_audit_time(grant)}")
     argv, why = readonly_command(command)
     if why:
+        _audit(f"Read-only command refused on this device: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run on this device: {why}.", None
-    return _execute(command, argv=argv)
+    _audit(f"Read-only command (grant {nonce[:6]}): running: {_audit_cmd(command)}")
+    return _execute(command, argv=argv, label="Read-only command")
 
 
 def run_expert(params):
@@ -2024,6 +2059,8 @@ def run_expert(params):
     payload, signed = params.get("payload"), params.get("signed")
     why = expert_check(payload, signed, cfg)
     if why:
+        _audit(f"Expert command refused: {why}; asked: "
+               f"{_audit_cmd(payload.get('command') if isinstance(payload, dict) else None)}")
         return False, f"Not run: {why}.", None
     taken = []
 
@@ -2039,11 +2076,145 @@ def run_expert(params):
         taken.append(True)
     _update_config(consume)
     if not taken:
+        _audit(f"Expert command refused: this signed command was already used; asked: {_audit_cmd(payload['command'])}")
         return False, "Not run: this signed command was already used.", None
-    return _execute(payload["command"], shell=True)
+    _audit(f"Expert command verified: {_audit_signer(cfg, payload)}, expires {_audit_time(payload)}; "
+           f"running: {_audit_cmd(payload['command'])}")
+    return _execute(payload["command"], shell=True, label="Expert command")
 
 
-def _execute(command, shell=False, argv=None):
+# The local audit trail: what ran here and on whose signature, readable at the device without trusting the cloud
+# (`nightlight audit`). One short line per step, in the helper's log and in an owner-only file in the app folder that
+# is kept under AUDIT_MAX bytes. Never the output, a token or the signature itself; the command is scrubbed.
+AUDIT_FILE = "expert-transcript.log"
+AUDIT_MAX = 256 * 1024
+_AUDITED_GRANTS = set()
+
+
+# Control characters (C0, C1, Unicode line/paragraph separators and direction overrides) could forge or hide entries.
+_AUDIT_CONTROLS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+# The value after a secret-bearing option or assignment, whole even when quoted with spaces or escaped quotes.
+_AUDIT_QUOTED_SECRET = re.compile(
+    r"((?:^|[\s'\"])(?:-{1,2}" + _SECRET_WORD + r"(?:\s*=\s*|\s+)|" + _SECRET_WORD + r"\s*[=:]\s*))"
+    r"('(?:[^']|'\\'')*'?|\"(?:\\.|[^\"\\])*\"?|\S+)", re.I)
+
+
+def _audit_clean(text, limit):
+    """One safe line: control characters gone, secret values hidden (whole quoted values too), then cut to limit."""
+    text = _CONTROLS.sub(" ", text)  # whole ANSI sequences first, so no "[2J" tail is left behind
+    text = " ".join(_AUDIT_CONTROLS.sub(" ", text).split())
+    text = scrub(_AUDIT_QUOTED_SECRET.sub(lambda m: m.group(1) + "[hidden]", text))[0]
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+_AUDIT_SECRET_NAME = re.compile(_SECRET_WORD, re.I)
+_AUDIT_SECRET_START = re.compile(r"(?:^|\s)(?:-{1,2}" + _SECRET_WORD + r"|" + _SECRET_WORD + r"\s*=)", re.I)
+
+
+def _audit_redact(command):
+    """Hide the whole value of a secret-bearing option (`--password VALUE`, `--token=VALUE`, `PASSWORD=VALUE`), as
+    the shell would split it. If it can't be split (an unterminated quote), everything after the first such option."""
+    import shlex
+    punct = set("();<>|&")
+    try:  # `;`, `&&`, `|`, `(`, `)` become tokens of their own, so `true;API_KEY=...` is seen as an assignment
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        m = _AUDIT_SECRET_START.search(command)
+        return command[:m.end()] + " [hidden]" if m else command
+    out, hide_next, changed = [], False, False
+    for t in tokens:
+        if set(t) <= punct:
+            out.append(t)
+            hide_next = False
+            continue
+        if hide_next:
+            out.append("__HIDDEN__")
+            hide_next, changed = False, True
+            continue
+        name, eq, _ = t.lstrip("-").partition("=")
+        if name and _AUDIT_SECRET_NAME.fullmatch(name) and (t.startswith("-") or eq):
+            if eq:
+                out.append(t.split("=", 1)[0] + "=__HIDDEN__")
+                changed = True
+                continue
+            hide_next = True
+        out.append(t)
+    if not changed:
+        return command  # shown exactly as signed
+    return " ".join(t if set(t) <= punct else shlex.quote(t) for t in out).replace("__HIDDEN__", "[hidden]")
+
+
+def _audit_cmd(command):
+    if not isinstance(command, str):
+        return "(none)"
+    return _audit_clean(_audit_redact(command).replace(_HOME, "~"), 300)
+
+
+def _audit_time(payload):
+    try:
+        return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(int(payload.get("expires"))))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"
+
+
+def _audit_signer(cfg, payload):
+    pinned = cfg.get("expert") or {}
+    fp = pinned.get("fingerprint") or key_fingerprint(pinned.get("pem", "")) or "?"
+    return (f"signed by the owner's passkey (key {str(fp)[:9]}), for this device, "
+            f"nonce {str(payload.get('nonce'))[:6]}")
+
+
+def _audit(line):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {_audit_clean(line, 900)}"  # the complete entry, for both sinks
+    print(line, flush=True)
+    try:
+        _audit_append(line)
+    except (OSError, SystemExit):  # the helper log above still has it; never stop the helper over this file
+        pass
+
+
+def _audit_append(line):
+    """Append to the owner-only audit file (folder 0700, file 0600, never through a link), kept within AUDIT_MAX."""
+    d = _own_dir(APP_DIR)
+    os.chmod(d, 0o700)
+    path = os.path.join(d, AUDIT_FILE)
+    data = (line + "\n").encode()
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+b") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError("not a regular file of this user")
+        os.fchmod(fd, 0o600)
+        if st.st_size + len(data) <= AUDIT_MAX:
+            f.write(data)
+            return
+        keep = max(AUDIT_MAX // 2 - len(data), 0)  # the newest half, with room for this entry
+        f.seek(max(st.st_size - keep, 0))
+        tail = f.read(keep)
+        if st.st_size > keep:
+            tail = tail.split(b"\n", 1)[-1]  # start at a whole line
+    tfd, tmp = tempfile.mkstemp(dir=d, prefix=".audit-")  # created 0600
+    with os.fdopen(tfd, "wb") as t:
+        t.write(tail + data)
+    os.replace(tmp, path)
+
+
+def audit_show(n=20):
+    """At the device: the last n expert entries (verified, refused, ran, finished)."""
+    try:
+        with open(os.path.join(_own_dir(APP_DIR), AUDIT_FILE), errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    if not lines:
+        print("No expert commands have been verified or refused on this device.")
+    for line in lines[-max(int(n), 1):]:
+        print(line)
+
+
+def _execute(command, shell=False, argv=None, label="Command"):
     """Run it (a shell only for a command the owner signed by itself; read-only ones run without a shell), keep a
     transcript on the device, and return the scrubbed output."""
     import shlex
@@ -2057,11 +2228,7 @@ def _execute(command, shell=False, argv=None):
         out, code = "(stopped after 60 seconds)", None
     except OSError as e:
         out, code = f"couldn't run it ({type(e).__name__})", None
-    try:  # a transcript stays on the device (owner-only folder)
-        with open(os.path.join(_own_dir(APP_DIR), "expert-transcript.log"), "a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} exit={code} $ {command}\n")
-    except OSError:
-        pass
+    _audit(f"{label} finished: exit code {code}" if code is not None else f"{label} finished: didn't finish ({out})")
     text, hidden = scrub(out.replace(_HOME, "~"))
     tail = _tail(text, lines=80, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
     return code == 0, f"Ran it (exit code {code})." if code is not None else "It didn't finish.", tail
@@ -2565,7 +2732,11 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
             _notify(text)
         sys.exit("  " + text)
 
-    status, body = _post(api + "/helper/pair/start", {"name": (name or default_name())[:40], "os": _os_name()})
+    start = {"name": (name or default_name())[:40], "os": _os_name(), "via": "installer" if browser else "command_line"}
+    machine = machine_fingerprint()
+    if machine:
+        start["machine"] = machine  # lets the owner continue this machine's device if it was on the map before
+    status, body = _post(api + "/helper/pair/start", start)
     if status != 201:
         give_up(f"Couldn't start pairing ({status or 'network error'}): {body.get('code') or body.get('error')}")
     code, interval = body["code"], max(int(body.get("interval", 3)), 2)
@@ -2586,7 +2757,8 @@ def pair(api, web=None, name=None, browser=False, then_install=False):
         st, res = _post(api + "/helper/pair/poll", {"code": code, "pollSecret": body["pollSecret"]})
         if st == 200 and res.get("token"):
             _save_config({"api": api, "token": res["token"], "deviceId": res["deviceId"]})
-            print("  Approved. This device is now on your Nightlight map.")
+            print("  Approved. This device continues where it left off on your Nightlight map, history kept."
+                  if res.get("continued") else "  Approved. This device is now on your Nightlight map.")
             if then_install:
                 try:
                     install(manage="app")
@@ -3781,6 +3953,7 @@ def main():
     except (AttributeError, ValueError):
         pass
     p = argparse.ArgumentParser(description="Nightlight helper")
+    p.add_argument("--version", action="version", version=f"Nightlight helper {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("enrol")
     e.add_argument("api")
@@ -3800,6 +3973,8 @@ def main():
     sub.add_parser("version")
     ex = sub.add_parser("expert", help="switch expert sessions on (pin your passkey) or off, at this device")
     ex.add_argument("--off", action="store_true")
+    au = sub.add_parser("audit", help="show the last expert commands verified, refused and run on this device")
+    au.add_argument("-n", type=int, default=20)
     sub.add_parser("rollback", help="go back to the version before the last update")
     sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
@@ -3827,6 +4002,8 @@ def main():
         print(VERSION)
     elif a.cmd == "expert":
         expert_setup(a.off)
+    elif a.cmd == "audit":
+        audit_show(a.n)
     elif a.cmd == "rollback":
         rollback()
     elif a.cmd == "settings":

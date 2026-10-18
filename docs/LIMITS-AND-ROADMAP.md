@@ -128,12 +128,31 @@ judging model itself hitting Google's rate limit, because we ran both evaluation
   without them, so on most Linux devices they are not offered.
 - Linux (systemd) and macOS (launchd) only. Windows PCs, phones, routers, printers and cameras can only be watched.
 
+**Advice about personal cache folders (found on our own Mac mini, Sunday)**
+
+- The disk checkup measures correctly, but its advice to "look inside ~/.cache and remove folders for tools you no
+  longer use" assumes the owner can tell which folders are in use. On the team's Mac mini, two of those folders were
+  being used by running programs at that moment (a coding tool's runtime and a local database emulator), and a blanket
+  delete of ~/.npm would have broken a running browser-automation tool. Nightlight's own clean-up jobs were safe (its
+  npm job uses `npm cache clean`, not a folder delete), but the free-text advice was not careful enough for a
+  non-technical owner. Way forward: the checkup marks which cache folders a running program has open (macOS and Linux
+  can report this) and never suggests deleting those; ~/.gradle/caches becomes a fixed clean-up job with its own
+  safe recipe.
+
 **Trying it yourself**
 
-- Linux and Mac: a one-line install today. The Mac installer package and its build pipeline exist
-  (`scripts/build_mac_pkg.sh`), but shipping a signed, notarized package waits on Developer ID certificates; until then
-  macOS needs an "Open Anyway" step, and we do not recommend it to anyone who would not do that knowingly. Windows is
-  unsupported.
+- Linux and Mac: a one-line install, or on a Mac the installer package (no Terminal), offered under Add a device
+  behind a plain warning that it isn't signed yet. Tested Sunday on a 2015 Intel MacBook Pro on macOS 10.15: the first
+  build refused to install (its floor was macOS 11 although the bundled Intel Python needs only 10.15); fixed the same
+  hour. The package supports macOS 10.15+ on Intel and Apple silicon. Signing and notarization wait on Developer ID
+  certificates; until then macOS needs a right-click > Open (or "Open Anyway") step. Windows is unsupported.
+- Switching how a device is installed keeps its history: on that Sunday test the command-line helper was uninstalled
+  (the device stayed on the map, offline, history kept), the installer was run, and the approval page offered
+  "This looks like your MacBook… Continue its history?". One device came back online with its notes, saved fixes,
+  jobs and place on the map; Activity recorded "Helper reinstalled (installer); history kept". The match uses a
+  hardware fingerprint hashed on the device and keyed per account on the server, is offered only at the owner's
+  approval tap, never for a device that is still reporting, and never across accounts. Typed-code pairing (no
+  approval tap) still always adds a new device.
 - If a visitor's Google account already owns a Nightlight account, linking the anonymous demo visit to it fails
   silently; sign in first.
 - Live demo machines for judges: a pool of 5 real VMs, one per judge, kept stopped until asked for. Measured Sunday:
@@ -146,12 +165,15 @@ judging model itself hitting Google's rate limit, because we ran both evaluation
 **Security and data** (details in `docs/SECURITY.md`): scrubbing of names, addresses and secrets is pattern-based and
 best effort; the design relies first on not collecting them. Device tokens are revocable but do not expire or rotate.
 `curl | sh` trusts the HTTPS origin. There is no account deletion yet; removed devices are kept 30 days unless you choose
-"forget for good". Browser notifications work only while the tab is open.
+"forget for good". Browser notifications work only while the tab is open. The expert-sessions passkey cannot be removed
+or replaced from the app yet (one per account; `nightlight expert --off` at each device is the switch today), and
+ordinary approval cards have no second factor: a signed-in session can tap Approve (`docs/SECURITY-MODEL.md`).
 
 ## The way forward
 
 | Next | Why |
 |---|---|
+| A Mac menu-bar app for the helper: status at a glance, its version, Open Nightlight, pause, uninstall | today the helper is an invisible background service; owners asked where to see it and its version (`nightlight --version` and the app's Settings show it now) |
 | Structured findings with evidence citations: each finding cites the step id it came from; the UI shows the evidence beside each claim | closes the last gap between words and tools (limit 1 above) |
 | `check_speed` and `alternatives` tools; `needs_measurement` on clean-ups | "slow" and "safer option" become measured answers, and a clean-up is never offered on nothing |
 | Per-call timeout and a visible time budget in both modes | an honest "Nightlight is slow right now" instead of a thinner answer |

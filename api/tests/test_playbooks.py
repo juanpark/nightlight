@@ -328,3 +328,15 @@ def test_a_failed_clean_up_says_why_in_plain_words(helper, monkeypatch):
     ok, summary, _ = helper.run_fix("journal_vacuum")
     assert not ok and summary.startswith(
         "Couldn't run that clean-up on this device: it needs administrator rights the helper doesn't have.")
+
+
+def test_a_program_on_the_computer_itself_is_never_advised_as_an_app_restart():
+    # The data, not a prompt rule, says it isn't part of any app (even one with a similar name).
+    book = playbooks.library()["slow"]
+    out = ("Top programs:\n41.0% mem, 0.3% cpu, photo-indexer (on the computer itself, not inside any app)\n"
+           "20.0% mem, 0.1% cpu, postgres (inside app notes-db)")
+    found = playbooks.evaluate(book, out, {})["found"]
+    host = next(f for f in found if "photo-indexer" in f["say"])
+    assert "not inside any of your apps" in host["say"] and "Restarting an app won't" in host.get("advice", host["say"])
+    assert not any("photo-indexer" in f["say"] and "restart it" in (f.get("advice") or "") for f in found)
+    assert any("postgres" in f["say"] for f in found)  # programs inside apps keep the ordinary advice

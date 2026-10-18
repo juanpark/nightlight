@@ -302,3 +302,110 @@ def test_an_expired_passkey_card_turns_stale_and_unlock_time_reads_plainly(clien
     assert r.status_code == 409 and r.json()["code"] == "expired"
     a = db.action(uid, g2["id"]).get().to_dict()
     assert a["status"] == "stale" and "Ask again" in a["result"]["summary"]
+
+
+def test_the_device_keeps_its_own_audit_trail(helper, capsys):  # the owner audits at the device, not via the cloud
+    pk = Passkey()
+    _pinned(helper, pk)
+    payload, signed = _signed_command(pk, command="uname -a")
+    assert helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})[0]
+    helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})  # reused
+    p2, s2 = _signed_command(pk, device="dev_other")
+    helper.run_job({"type": "expert_command", "params": {"payload": p2, "signed": s2}})
+    grant = {"device": "dev_x", "mode": "read-only", "expires": int(time.time()) + 600, "nonce": "grant42"}
+    gs = pk.sign(expert.challenge_for(grant))
+    for cmd in ("uname", "uptime", "kill 1"):
+        helper.run_job({"type": "expert_read", "params": {"grant": grant, "signed": gs, "command": cmd}})
+    log = capsys.readouterr().out
+    assert "Expert command verified: signed by the owner's passkey (key x), for this device, nonce " \
+           f"{payload['nonce'][:6]}, expires " in log and "; running: uname -a" in log
+    assert "Expert command finished: exit code 0" in log
+    assert "Expert command refused: this signed command was already used; asked: uname -a" in log
+    assert "Expert command refused: the command was signed for another device" in log
+    assert log.count("Investigation grant verified") == 1 and "nonce grant4" in log and "read-only until " in log
+    assert "Read-only command (grant grant4): running: uptime" in log
+    assert "Read-only command refused on this device" in log
+    for secret in (signed["signature"], signed["authenticatorData"], "t" * 43):
+        assert secret not in log
+    assert "Linux" not in log and "Darwin" not in log  # never the output
+    helper.audit_show(3)
+    shown = capsys.readouterr().out.splitlines()
+    assert len(shown) == 3 and "Read-only command refused on this device" in shown[-1]
+
+
+def test_audit_lines_stay_one_line_and_scrubbed_and_the_file_bounded(helper, monkeypatch):
+    assert "\n" not in helper._audit_cmd("echo a\nforged line")
+    assert "hunter2" not in helper._audit_cmd("mysql --password=hunter2")
+    monkeypatch.setattr(helper, "AUDIT_MAX", 1000)
+    for i in range(100):
+        helper._audit(f"line {i} " + "word " * 8)
+    path = Path(helper.APP_DIR) / helper.AUDIT_FILE
+    assert path.stat().st_size < 1200 and path.read_text().splitlines()[-1].endswith("line 99 " + "word " * 7 + "word")
+
+
+def test_audit_sanitises_the_complete_entry_including_refusal_reasons(helper, capsys):  # codex audit P2 #1
+    pk = Passkey()
+    _pinned(helper, pk)
+    grant = {"device": "dev_x", "mode": "read-only", "expires": int(time.time()) + 600, "nonce": "g9"}
+    gs = pk.sign(expert.challenge_for(grant))
+    token = "ghp_" + "A" * 36
+    for cmd in (f"uname --x={token}", "uname --y=\x1b[2Jz", "una me"):
+        helper.run_job({"type": "expert_read", "params": {"grant": grant, "signed": gs, "command": cmd}})
+    helper._audit("forged \u009b2J  2026-01-01 Expert command verified")
+    out = capsys.readouterr().out
+    file = (Path(helper.APP_DIR) / helper.AUDIT_FILE).read_text()
+    for sink in (out, file):
+        assert token not in sink
+        assert not any(c in sink for c in "\x1b\x9b  ")
+        assert sink.count("\n") == len(sink.splitlines())  # each entry one line
+    assert "passkey (key x)" in out  # the word "passkey" is not taken for a secret option
+
+
+def test_audit_hides_whole_quoted_secret_values(helper):  # codex audit P2 #2
+    for cmd in ("mysql --password 'two words' -h db", 'curl --token "a \\" b c" x', "PASSWORD='it'\\''s me' run"):
+        text = helper._audit_cmd(cmd)
+        assert "[hidden]" in text and not any(w in text for w in ("words", " b c", "s me")), text
+    # codex recheck: split as the shell splits, so adjacent quoted/unquoted parts can't leak a piece
+    cases = {"mysql --password \"two \"'secret words' -h db": "mysql --password [hidden] -h db",
+             "mysql --password=two\\ secret\\ words -h db": "mysql --password=[hidden] -h db",
+             "env API_KEY=ab\"cd ef\"gh run": "env API_KEY=[hidden] run",
+             "mysql -h db --password 'never closed words": "mysql -h db --password [hidden]",
+             "rm -rf ~/.gradle/caches": "rm -rf ~/.gradle/caches",
+             # codex recheck 2: shell punctuation is its own token
+             "true;API_KEY=ab\"cd ef\"gh run": "true ; API_KEY=[hidden] run",
+             "cd /x && mysql --password 'a b' -e q": "cd /x && mysql --password [hidden] -e q",
+             "echo hi|TOKEN='a b' run": "echo hi | TOKEN=[hidden] run",
+             "(SECRET='a b' run)": "( SECRET=[hidden] run )"}
+    for cmd, want in cases.items():
+        assert helper._audit_cmd(cmd) == want, (cmd, helper._audit_cmd(cmd))
+
+
+def test_audit_file_is_owner_only_and_never_through_a_link(helper, tmp_path):  # codex audit P2 #3
+    import os
+    app = Path(helper.APP_DIR)
+    app.mkdir(mode=0o755)
+    os.chmod(app, 0o755)
+    path = app / helper.AUDIT_FILE
+    path.write_text("old\n")
+    os.chmod(path, 0o644)
+    helper._audit("one")
+    assert app.stat().st_mode & 0o777 == 0o700 and path.stat().st_mode & 0o777 == 0o600
+    path.unlink()
+    target = tmp_path / "elsewhere"
+    target.write_text("")
+    path.symlink_to(target)
+    helper._audit("two")  # still printed, never written through the link
+    assert target.read_text() == ""
+
+
+def test_audit_file_never_exceeds_the_cap(helper, monkeypatch):  # codex audit P3
+    monkeypatch.setattr(helper, "AUDIT_MAX", 1000)
+    path = Path(helper.APP_DIR) / helper.AUDIT_FILE
+    helper._audit("start")
+    path.write_bytes(b"y" * 30 + b"\n" + b"z" * (1000 - 31))  # exactly at the cap
+    helper._audit("next")
+    data = path.read_bytes()
+    assert len(data) <= 1000 and data.endswith(b"next\n")
+    for i in range(200):
+        helper._audit(f"line {i}")
+        assert path.stat().st_size <= 1000

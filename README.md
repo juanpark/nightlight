@@ -1,5 +1,10 @@
 # Nightlight
 
+![Live app version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnightlight-api-1032111130355.asia-northeast3.run.app%2Fapi%2Fversion&query=%24.app&label=app&color=2d3a5e) ![Live build](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnightlight-api-1032111130355.asia-northeast3.run.app%2Fapi%2Fversion&query=%24.build&label=build&color=596071) ![Helper served](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnightlight-api-1032111130355.asia-northeast3.run.app%2Fapi%2Fversion&query=%24.helper&label=helper&color=b8720a)
+
+*Read live from the deployed API (`/api/version`); the app's version is the repo's `VERSION` file and the build is the
+git commit it was deployed from. On a device: `nightlight --version`.*
+
 Nightlight is a house-sitter for the computers you run at home or in a small office, for people with no IT person.
 It shows every device and what runs on it on one map. It watches them, explains problems in plain words, and fixes
 them only with your permission, earning more freedom one kind of job at a time.
@@ -9,7 +14,10 @@ them only with your permission, earning more freedom one kind of job at a time.
 Built for the Google Cloud AI Builder Cup 2026 (theme: Future of Work & Enterprise Productivity) by team **8yte**.
 Everything here was written during the hackathon window.
 
+**Trying it for the first time (judges start here):** [`docs/JUDGE-WALKTHROUGH.md`](docs/JUDGE-WALKTHROUGH.md).
 **What we tested, what is wrong, and what comes next:** [`docs/LIMITS-AND-ROADMAP.md`](docs/LIMITS-AND-ROADMAP.md).
+**How a cloud command center can be trusted with your machines:** [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);
+**passkeys for owners, step by step:** [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
 
 ## Try it in 30 seconds
 
@@ -54,7 +62,10 @@ trust settings say; only signed helper updates may install on their own, and onl
 | Favorites | star a device or any of its apps; up to three starred apps show on the device's card; a Favorites chip narrows the map |
 | Device drawer | a panel from the left with one job per tab (Overview, Apps, Knowledge, Settings); the map stays usable beside it |
 | The map follows the chat | devices the agent's steps work on glow while it works; when it is done the main one opens with the apps it named pulsing; it never moves the view while you are touching the map, and with reduced motion the view moves without animation |
-| Chat | streamed answers with the agent's steps shown; it first says what it will look at; Quick, or Investigate (the "Investigate deeply" toggle); a Stop button that keeps what was already done; cards inline; history kept 30 days; replies in the language you write in |
+| Chat | streamed answers with the agent's steps shown live (each step's result, and under each answer a receipt: steps, seconds, model, cost); Quick, or Investigate (the "Investigate deeply" toggle) with a visible time budget; a Stop button that keeps what was already done; cards inline; answers render bold, lists and code safely; replies in the language you write in |
+| Conversations on every device | your chats belong to your account, not to a browser: sign in on another computer, tablet or phone and it opens the conversation you used most recently, and Conversations lists the rest (first question and when) with New chat; history kept 30 days |
+| Status board | a model-free board like an admin's status script: every device's checks as ✓ / ! / ✗ with a summary ("39 checks: 35 ok, 3 warnings, 1 critical"), unknown shown as unknown, copyable as text |
+| First-run tour | a short walkthrough of each part of the screen on the first visit, replayable from Settings |
 | Honest agent | says plainly what Nightlight can't do (Windows, jobs it has no tool for), never hands out commands to type, and when you ask for something safer offers only alternatives it really has |
 | Checkups (playbooks) | known problems (disk filling up, slow, no internet, updates, after a restart) written once as data; checks run, causes are matched in code, safe clean-ups come up as cards, with no AI call |
 | Investigate | a toggle under the chat: a stronger model (medium thinking, up to 24 steps) works like an administrator and reports what it checked, found and recommends |
@@ -115,6 +126,41 @@ flowchart LR
     H -.->|"fixed jobs, local allow-list"| S
 ```
 
+### Demo machines for judges
+
+Each judge who picks the live demo gets their own real Linux VM with real apps in containers, started on demand and
+restored from a clean disk copy after every visit, so nothing one judge does reaches the next. Each visit signs in as
+its own throwaway identity that the server maps to the machine; idle visits end after 15 minutes, every visit after 60,
+and a five-minute sweep stops any machine without a visit. Measured: ready in about a minute; "Start fresh" in about
+two. The picture: [`docs/architecture/live_demo.png`](docs/architecture/live_demo.png).
+
+```mermaid
+%% Demo machine pool (source: api/src/nightlight_api/live.py, scripts/live_pool/).
+flowchart LR
+    V["Visitor's browser"]
+    subgraph gcp["Google Cloud"]
+        A["Cloud Run: API<br/>lease, release, sweep"]
+        FS[("Firestore<br/>slot leases (transaction)<br/>idle 15 min, hard cap 60 min")]
+        AUTH["Firebase Authentication<br/>a throwaway identity per visit"]
+        SCH["Cloud Scheduler<br/>sweep every 5 min"]
+        IAP["IAP-only SSH<br/>(operators; no other inbound)"]
+        subgraph pool["Compute Engine pool: 5 x e2-small, stopped when idle"]
+            VM["nl-live-1 .. nl-live-5<br/>small home server, Docker apps,<br/>signed helper paired to its own pool account"]
+            G[("Golden snapshot per VM")]
+        end
+    end
+    V -->|"1. ask for a machine"| A
+    A -->|"2. lease a free slot"| FS
+    A -->|"3. start on demand"| VM
+    A -->|"4. custom token for this visit<br/>(mapped to the machine, lease id as a claim)"| V
+    V -.->|"5. sign in; refused once the visit ends"| AUTH
+    VM -->|"helper reports outward like any device"| A
+    A -->|"release: wipe app data,<br/>restore boot disk, stop"| G
+    G -.->|"restore"| VM
+    SCH -->|"expired leases, stop orphan VMs"| A
+    IAP -.-> VM
+```
+
 How the pieces talk:
 
 - **Browser to API.** Every `/api/*` call carries a Firebase ID token. The user id comes only from that verified
@@ -146,6 +192,7 @@ How the pieces talk:
 | **Cloud Scheduler** | `POST /internal/sweep` every 5 minutes with a Google-signed token (audience and invoker checked) | silent devices and watched websites are noticed with nobody watching |
 | **Firestore** | devices, services, history (expires on its own), approval cards, trust, chats, activity, quotas | transactions make approvals and job hand-over exactly-once; listeners give the browser live data |
 | **Firebase Authentication** | Google sign-in, and anonymous sign-in for the one-click demo | judges never create an account; real devices are always tied to a Google account |
+| **No stored secrets (keyless)** | the API reaches Firestore, Gemini and Memory Bank as its own Cloud Run service account; there are no API keys, so nothing goes in Secret Manager. The helper's release-signing key stays offline on the team's machine | a cloud compromise can't leak a key or sign a helper update |
 | **Firebase emulator** | the whole API test suite runs against the Firestore emulator | no cloud access needed to test |
 
 No server-side API keys: the API reaches Firestore, Gemini and Memory Bank through its Cloud Run service account. The only key in the browser is the Firebase web config, which is public by design.
@@ -155,8 +202,10 @@ No server-side API keys: the API reaches Firestore, Gemini and Memory Bank throu
 The hard problem in Nightlight is **safety against power and convenience**. The benchmark we hold ourselves to is a
 person running an AI agent in a terminal with their own SSH keys: it can fix anything, and it is only as safe as the
 person watching. Nightlight has to come close to that for people who have never opened a terminal, while staying safe
-even if Nightlight's own cloud is breached. The full reasoning is in [`docs/DESIGN-trust.md`](docs/DESIGN-trust.md);
-the code-level details are in [`docs/SECURITY.md`](docs/SECURITY.md).
+even if Nightlight's own cloud is breached. The threat model (a stolen login, a breached cloud, prompt injection, a
+lost phone, a demo visitor) and the layer that answers each is [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md);
+the full reasoning is in [`docs/DESIGN-trust.md`](docs/DESIGN-trust.md); the code-level details are in
+[`docs/SECURITY.md`](docs/SECURITY.md); the owner's guide to passkeys is [`docs/PASSKEYS.md`](docs/PASSKEYS.md).
 
 | Layer | What it means |
 |---|---|
@@ -230,6 +279,14 @@ for connections, so the firewall never asks. The package is built, signed and no
 sha256 digests). Its shared files stay in `/Library/Application Support/Nightlight` after an uninstall; the uninstall
 prints the one administrator command that removes them.
 
+**Reinstalling keeps a device's history.** Uninstalling on the device (`nightlight uninstall`) leaves it on your map as
+offline, with everything Nightlight knows about it. Install again (the command line or the Mac installer) and the
+approval page asks *"This looks like your MacBook, last seen 10 minutes ago. Continue its history?"*: the same device
+comes back with its notes, saved fixes, past jobs and place on the map. The match is a hardware fingerprint hashed on
+the device and keyed per account on the server; it is only offered at your approval tap, never for a device that is
+still reporting, and never across accounts. Removing a device in the app is different: it archives it (and a reinstall
+before it's purged can still bring it back).
+
 When a device first connects, a one-time setup card asks what Nightlight may do there: Just watch, Watch and fix
 safe things (recommended), or Custom. On a device managed from the app, both presets include reading the recent log
 lines of the apps it has then, scrubbed on the device; you can switch that off per app.
@@ -254,7 +311,10 @@ It changes nothing by default. What it can do, and only after you allow it:
 | `update` (or the "updates" switch) | install a signed, newer helper after your tap (or automatically if you say so) |
 | `nightlight expert` at the device | pin your passkey so expert sessions can run commands you sign |
 
-Removing a device is a card too: the helper uninstalls itself and the device leaves the map.
+Removing a device is a card too: the helper uninstalls itself and the device leaves the map (archived for 30 days).
+Uninstalling the helper on the device itself keeps the device on the map as offline, with its history. Installing the
+helper again on the same machine (say, moving from the command line to the Mac installer) offers to continue that
+device, history and all; the owner chooses when approving.
 
 ## Honest limits
 
@@ -345,10 +405,11 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `helper/nightlight_helper.py`, `.sig` | the device helper and its release signature |
 | `web/` | Next.js app: `components/` (`map/`, Chat, ApprovalCard, DeviceDrawer, AppDetail, FoundNearby, TrustPanel, ExpertSessions, ...), `lib/` (Firebase, API, listeners, passkeys), `app/install.sh` and `app/uninstall.sh` routes |
 | `docs/API.md` | the contract between web, helper and API |
-| `docs/SECURITY.md`, `docs/DESIGN-trust.md` | the security model; safety vs power, and why |
+| `docs/SECURITY-MODEL.md`, `docs/SECURITY.md`, `docs/DESIGN-trust.md`, `docs/PASSKEYS.md` | threat model and layers; code-level details; safety vs power, and why; passkeys for owners |
 | `docs/adr/` | decisions: capability registry, conversation events, held job channel |
 | `docs/BENCHMARKS.md`, `scripts/bench.py` | measured latency and cost |
 | `docs/COSTS.md` | what we spent on Google Cloud and Gemini, the guards that cap it, and why |
+| `docs/JUDGE-WALKTHROUGH.md` | the first-visit walkthrough (live machine, simulated home, your own device): the source of truth for docs, deck and video |
 | `docs/LIMITS-AND-ROADMAP.md` | how we tested, known limits and their root causes, what comes next |
 | `docs/architecture/` | the architecture diagram as code |
 | `contracts/mocks/` | sample data for every state of the demo story |

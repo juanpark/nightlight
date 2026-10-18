@@ -36,7 +36,7 @@ with Diagram("", filename=str(OUT), outformat="png", show=False, direction="LR",
         visitor = User("Browser")
 
     with Cluster("Google Cloud", graph_attr={**CLUSTER, "bgcolor": "#eef4ff"}):
-        auth = Authentication("Firebase Authentication\npool account login")
+        auth = Authentication("Firebase Authentication\na throwaway identity per visit")
         api = Run("API (Cloud Run)\nlease, release, sweep")
         db = Firestore("Firestore\nslot leases (transaction)\nidle 15 min, hard cap 60 min")
         sweep = Scheduler("Cloud Scheduler\nsweep every 5 min")
@@ -45,10 +45,10 @@ with Diagram("", filename=str(OUT), outformat="png", show=False, direction="LR",
             golden = PersistentDisk("Golden snapshot\nper VM\n(nl-live-N-golden)")
         iap = IAP("IAP-only SSH\n(operators; no other\ninbound)")
 
-    visitor >> E(label="1. ask for a machine;\n4. get a custom token\n(lease id as a claim)") >> api
+    visitor >> E(label="1. ask for a machine;\n4. get a custom token for this visit\n(mapped to the machine)") >> api
     api >> E(label="2. lease a free slot") >> db
     api >> E(label="3. start on demand") >> vms
-    visitor >> E(label="5. sign in with it; the login\nends when the lease ends", style="dashed") >> auth
+    visitor >> E(label="5. sign in with it;\nrefused once the visit ends", style="dashed") >> auth
     vms >> E(label="helper reports outward\nlike any device", constraint="false") >> api
     api >> E(label="release: wipe app data,\nrestore boot disk, stop", color=RESET, fontcolor=RESET) >> golden
     golden >> E(label="restore", color=RESET, fontcolor=RESET, style="dashed") >> vms

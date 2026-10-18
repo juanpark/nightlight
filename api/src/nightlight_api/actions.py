@@ -4,6 +4,7 @@
 update, continuation turn and the stored response commit together or not at all.
 """
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from google.cloud import firestore
@@ -12,7 +13,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from . import capabilities, conversation, db, real, sim, trust as trustlib
 from .redact import scrub
 from .errors import ApiError, conflict, not_found
-from .ids import action_id as make_action_id, continuation_turn_id, proposal_key
+from .ids import action_id as make_action_id, canonical_params, continuation_turn_id, proposal_key
 
 MAX_ATTEMPTS = 25  # concurrent decides on one action retry until they see the winner's result
 
@@ -238,6 +239,70 @@ def _create_sim(tx, uid: str, user: dict, device: dict, services: list[dict], ac
 
 # ------------------------------------------------------------------ real devices: one pipeline for every capability
 
+REUSE_READ = timedelta(minutes=5)  # a device read finished this recently (or still running) answers the same ask
+CHAIN_LIMIT = 1  # an event turn at this chain depth or deeper starts no new device reads (it narrates instead)
+
+
+def _age(at) -> float | None:
+    return (datetime.now(timezone.utc) - at).total_seconds() if isinstance(at, datetime) else None
+
+
+def _chat_turn(tx, uid: str, session_id: str | None, turn_id: str) -> dict | None:
+    """The chat turn asking (its doc), or None when the ask doesn't come from a chat turn (the app, Nightlight)."""
+    if not session_id:
+        return None
+    snap = db.turns(uid, session_id).document(turn_id).get(transaction=tx)
+    return snap.to_dict() if snap.exists else None
+
+
+def _read_key(device_id: str, name: str, params: dict) -> str:
+    """A fixed-length map key for a read's identity: Firestore field names are capped at 1,500 bytes, and a signed
+    expert read's parameters can be longer (Codex read-chain rev2). A playbook id may follow as "|<playbook>"."""
+    ident = f"{device_id}|{name}|{canonical_params(params)}"
+    return "r" + hashlib.sha256(ident.encode()).hexdigest()[:40]
+
+
+RECENT_READS_KEEP = 20  # entries in a chat's recentReads map (pruned by age too)
+
+
+def _same_read(tx, recent: dict, key: str, device: dict, generation, playbook: str | None) -> dict | None:
+    """The same device read in this chat that is still running or finished within REUSE_READ, and that started after
+    the device's last possible change (devices/{id}.changedAt, set when a changing job is handed over and when it
+    reports, whatever the outcome). Constant cost: the chat's small recentReads map, then one action doc. Production
+    2026-10-18: each Investigate follow-up re-ran the same disk checkup, the device took longer than the in-turn
+    wait, and the new job's own follow-up asked again: five turns repeating one summary."""
+    entries = [e for k, e in recent.items() if k == key or k.startswith(key + "|")]
+    entries = [e for e in entries if not playbook or e.get("playbook") == playbook]
+    if not entries:
+        return None
+    entry = max(entries, key=lambda e: e.get("startedAt") or datetime.min.replace(tzinfo=timezone.utc))
+    snap = db.action(device["uid"], entry["actionId"]).get(transaction=tx)
+    a = dict(snap.to_dict(), id=snap.id) if snap.exists else None
+    if not a or a.get("demoGeneration") != generation:
+        return None
+    started = _age(a.get("createdAt"))
+    changed = device.get("changedAt")
+    if started is None or (isinstance(changed, datetime) and changed >= a["createdAt"]):
+        return None  # something may have changed on the device since: measure again
+    if a.get("status") in ("approved", "running"):
+        ok = started < READ_REPORT_TIMEOUT.total_seconds()
+    else:
+        ended = _age(a.get("finishedAt"))
+        ok = a.get("status") == "done" and ended is not None and ended < REUSE_READ.total_seconds()
+    return dict(a, reused=True, ageSeconds=int(started)) if ok else None
+
+
+def _remember_read(recent: dict, key: str, action_id_: str, playbook: str | None) -> dict:
+    """The chat's recentReads map with this read added, pruned by age and size (written by the caller)."""
+    now = datetime.now(timezone.utc)
+    keep = REUSE_READ + READ_REPORT_TIMEOUT
+    fresh = {k: e for k, e in recent.items()
+             if isinstance(e.get("startedAt"), datetime) and now - e["startedAt"] < keep}
+    fresh[key + (f"|{playbook}" if playbook else "")] = {"actionId": action_id_, "startedAt": now,
+                                                          **({"playbook": playbook} if playbook else {})}
+    newest = sorted(fresh.items(), key=lambda kv: kv[1]["startedAt"], reverse=True)[:RECENT_READS_KEEP]
+    return dict(newest)
+
 def request(uid: str, name: str, device_id: str, params: dict, *, session_id: str | None, turn_id: str,
             generation: int | None = None, fence=None, origin: str = "chat", mode: str = "quick",
             extra: dict | None = None, once: bool = False) -> dict:
@@ -245,6 +310,9 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
     (`origin="app"`) has approved a one-tap capability already. Everything else comes from the registry: a read the
     device allows runs without a card, other jobs wait for a tap, signed ones for the owner's passkey.
     ValueError(code) when the capability doesn't apply to this device."""
+    from . import live
+    if name in live.POOL_FORBIDDEN_ACTIONS and live.pool_slot(uid):
+        raise ValueError("not_on_demo_machine")  # chat, playbooks and app routes alike: never a card for it
     cap = capabilities.get(name)
     if not cap:
         raise ApiError(422, "unknown_action")
@@ -272,6 +340,23 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         if real.view(device).get("stale") and not cap.while_silent:
             raise ValueError("device_not_reporting")
         fields, clean = cap.build(capabilities.Ctx(uid, device, _by_id(services), params))
+        chain, remember = {}, None
+        if cap.reads and cap.approval == "device" and origin == "chat" and (turn := _chat_turn(tx, uid, session_id,
+                                                                                               turn_id)):
+            # Reads are de-duplicated per chat, and a chain of automatic follow-ups is bounded: a job started in an
+            # event turn makes the next follow-up one step deeper, and at CHAIN_LIMIT it may only narrate.
+            playbook = (extra or {}).get("playbook")
+            recent = (db.session(uid, session_id).get(transaction=tx).to_dict() or {}).get("recentReads") or {}
+            rkey = _read_key(device_id, name, clean)
+            same = _same_read(tx, recent, rkey, dict(device, uid=uid), gen, playbook)
+            if same:
+                return same
+            event = turn.get("kind") == "event"
+            depth = int(turn.get("chainDepth") or 0) if event else 0
+            if event and depth >= CHAIN_LIMIT:
+                raise ValueError("chain_limit")
+            chain = {"chainDepth": depth + 1 if event else 0, "causedByTurn": turn_id}
+            remember = _remember_read(recent, rkey, aid, playbook)
         approved = cap.approval == "device" or (origin == "app" and cap.approval == "card")
         if not approved and (twin := _waiting_card(tx, uid, device_id, name, clean, gen)):
             return twin
@@ -279,14 +364,18 @@ def request(uid: str, name: str, device_id: str, params: dict, *, session_id: st
         a = {"id": aid, "proposalKey": key, "type": name, "deviceId": device_id, "params": clean, **fields,
              "status": "approved" if approved else "pending", "realm": "real", "demoGeneration": gen,
              "deviceVersion": device.get("version"), "trustLevelAtProposal": "ask", "resolvedBy": "real_device",
-             "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now(), **(extra or {})}
+             "sessionId": session_id, "turnId": turn_id, "mode": mode, "createdAt": _now(), **chain, **(extra or {})}
         if approved:
             a["decision"] = {"by": "owner_allowed_on_device" if cap.approval == "device" else "user",
                              "decision": "approve"}
         tx.set(db.action(uid, aid), {k: v for k, v in a.items() if k != "id"})
+        if remember is not None:
+            tx.set(db.session(uid, session_id), {"recentReads": remember}, merge=["recentReads"])
         return dict(a, lastAttempt=last) if last else a
 
     a = db.run_transaction(run, max_attempts=MAX_ATTEMPTS)
+    if a.get("reused"):
+        return a
     if a.get("status") == "approved" and cap.after_approval:
         cap.after_approval(uid, a)
     return db.action(uid, a["id"]).get().to_dict() | {"id": a["id"]} if cap.after_approval else a
@@ -301,6 +390,9 @@ def decide(uid: str, action_id_: str, decision: str, note: str | None = None) ->
         if not action_snap.exists:
             raise not_found()
         action = dict(action_snap.to_dict(), id=action_id_)
+        from . import live
+        if decision == "approve" and action.get("type") in live.POOL_FORBIDDEN_ACTIONS and live.pool_slot(uid):
+            raise ApiError(403, "live_demo_machine")  # a card made before this rule (or any other way) can't run
         user_snap, device_snap, services, trust_ref, trust_snap = _read_context(
             tx, uid, action["deviceId"], action["type"])
         user = user_snap.to_dict() if user_snap.exists else None
@@ -513,6 +605,8 @@ def job_result(token: str, action_id_: str, ok: bool, summary: str, state: str |
         for ref, doc, merge in writes:
             tx.set(ref, doc, merge=merge)
         _deliver_outcome(tx, uid, a, device, cap, current)
+        if not cap.reads and dsnap.exists and a["type"] != "remove_device":  # done, failed or partly done alike
+            real.mark_changed(tx, uid, device_id)
         # The helper reports right after a job, so the change shows at once; that one report may come sooner than
         # the heartbeat's minimum gap (real.heartbeat). Before this, it got a 429 and slept ~20 s with its work
         # channel closed, so the next job in the same chat waited past the in-turn wait.
@@ -565,6 +659,8 @@ def expire_unreported(uid: str, action_id_: str) -> bool:
         a["result"] = {"ok": False, "summary": NO_REPORT, "noReport": True}
         current = user.get("demo", {}).get("state") == "ready" and a.get("demoGeneration") == user.get("demoGeneration")
         _deliver_outcome(tx, uid, a, device, cap, current)
+        if not cap.reads and device.get("realm") == "real" and a["type"] != "remove_device":
+            real.mark_changed(tx, uid, a["deviceId"])
         return True
 
     return db.run_transaction(run, max_attempts=MAX_ATTEMPTS)

@@ -1,10 +1,10 @@
-%% Demo machine pool (source: api/src/nightlight_api/live.py, scripts/live_pool/). Not in the README yet.
+%% Demo machine pool (source: api/src/nightlight_api/live.py, scripts/live_pool/).
 flowchart LR
     V["Visitor's browser"]
     subgraph gcp["Google Cloud"]
         A["Cloud Run: API<br/>lease, release, sweep"]
         FS[("Firestore<br/>slot leases (transaction)<br/>idle 15 min, hard cap 60 min")]
-        AUTH["Firebase Authentication<br/>pool account login"]
+        AUTH["Firebase Authentication<br/>a throwaway identity per visit"]
         SCH["Cloud Scheduler<br/>sweep every 5 min"]
         IAP["IAP-only SSH<br/>(operators; no other inbound)"]
         subgraph pool["Compute Engine pool: 5 x e2-small, stopped when idle"]
@@ -15,8 +15,8 @@ flowchart LR
     V -->|"1. ask for a machine"| A
     A -->|"2. lease a free slot"| FS
     A -->|"3. start on demand"| VM
-    A -->|"4. custom token (lease id as a claim)"| V
-    V -.->|"5. sign in; the login ends with the lease"| AUTH
+    A -->|"4. custom token for this visit<br/>(mapped to the machine, lease id as a claim)"| V
+    V -.->|"5. sign in; refused once the visit ends"| AUTH
     VM -->|"helper reports outward like any device"| A
     A -->|"release: wipe app data,<br/>restore boot disk, stop"| G
     G -.->|"restore"| VM

@@ -84,10 +84,16 @@ def post(tx, uid: str, a: dict, event: str, device_name: str, mode: str | None =
     """Post an event to the chat that asked (writes only: call after all reads)."""
     turn_id = continuation_turn_id(a["id"])
     mode = mode or a.get("mode") or "quick"
+    from . import capabilities
+    cap = capabilities.get(a["type"])
+    # A read started by an automatic follow-up carries its depth into the next one (actions.CHAIN_LIMIT bounds it);
+    # anything a person approved starts a fresh chain.
+    chain = {"chainDepth": int(a.get("chainDepth") or 0) if cap and cap.reads else 0,
+             **({"causedByTurn": a["turnId"]} if a.get("turnId") else {})}
     tx.set(db.turns(uid, a["sessionId"]).document(turn_id), {
         "kind": "event", "event": event, "status": "queued", "attempt": 0, "demoGeneration": a["demoGeneration"],
         "actionId": a["id"], "mode": mode, "policy": policy(event, mode),
-        "input": render(event, a, device_name, service, offer), "createdAt": firestore.SERVER_TIMESTAMP})
+        "input": render(event, a, device_name, service, offer), "createdAt": firestore.SERVER_TIMESTAMP, **chain})
     # Lets POST /api/turns/{turnId}/stream find the session that owns this event turn.
     tx.set(db.user(uid).collection("turnIndex").document(turn_id),
            {"sessionId": a["sessionId"], "demoGeneration": a["demoGeneration"]})

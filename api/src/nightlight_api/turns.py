@@ -116,7 +116,7 @@ def create_session(uid: str) -> dict:
     @firestore.transactional
     def run(tx):
         user = _ready_user(tx, uid)
-        tx.set(db.session(uid, session_id), {"createdAt": firestore.SERVER_TIMESTAMP, "title": "New chat",
+        tx.set(db.session(uid, session_id), {"createdAt": firestore.SERVER_TIMESTAMP, "updatedAt": firestore.SERVER_TIMESTAMP, "title": "New chat",
                                              "nextSeq": 1, "activeTurn": None, "lastTurnId": None,
                                              "demoGeneration": user["demoGeneration"]})
 
@@ -161,7 +161,8 @@ def accept_message(uid: str, session_id: str, text: str, client_request_id: str,
                        "input": clean, "createdAt": firestore.SERVER_TIMESTAMP})
         tx.set(turn_index(uid, turn_id), {"sessionId": session_id, "demoGeneration": user["demoGeneration"]})
         title = clean[:40] + ("…" if len(clean) > 40 else "") if seq == 1 else session.get("title")
-        tx.update(db.session(uid, session_id), {"nextSeq": seq + 1, "lastTurnId": turn_id, "title": title})
+        tx.update(db.session(uid, session_id), {"nextSeq": seq + 1, "lastTurnId": turn_id, "title": title,
+                                                "updatedAt": firestore.SERVER_TIMESTAMP})  # most recently used chat
         tx.update(db.user(uid), {"lastChatAt": firestore.SERVER_TIMESTAMP})  # helpers check for work faster now
         tx.set(q_ref, {"count": count})
 
@@ -247,7 +248,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
         t_ref = db.turns(uid, c.session_id).document(c.turn_id)
         update = {"status": "failed" if error else "done", "metrics": metrics, "leaseUntil": None,
                   "finishedAt": firestore.SERVER_TIMESTAMP}
-        session_update = {"activeTurn": None, "lastTurnId": c.turn_id}
+        session_update = {"activeTurn": None, "lastTurnId": c.turn_id, "updatedAt": firestore.SERVER_TIMESTAMP}
         if text is not None:
             seq = session["nextSeq"]
             tx.set(db.messages(uid, c.session_id).document(msg_id), {
@@ -300,7 +301,7 @@ def sse(event: dict) -> str:
 
 async def _recall(uid: str, ep: int) -> list[str]:
     """Facts remembered about this person that relate to their message; [] if memory is off, slow or failing."""
-    if not memory.enabled():
+    if not memory.on_for(uid):
         return []
     try:
         if (facts := memory.cached(uid, ep)) is not None:
@@ -357,7 +358,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             if not continuation:
                 # One memory lookup per turn, in parallel with the fleet summary; both go into the instruction and
                 # so through the same exact token bound as everything else.
-                if memory.enabled():
+                if memory.on_for(uid):
                     try:
                         ctx.memory_epoch = await asyncio.to_thread(memory.epoch, uid)
                     except Exception:  # memory never breaks a turn

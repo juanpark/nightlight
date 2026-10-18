@@ -11,8 +11,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from . import __version__, actions, archive, db, expert, demo, knowledge, links, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
-from .auth import current_uid, owner_uid
+from . import __build__, __version__, actions, archive, db, expert, demo, knowledge, links, live, memory, notebook, playbooks, quota, release, real, runbooks, sim, trust as trustlib, turns, watch
+from .auth import current_uid, live_lease, owner_uid
 from .config import settings
 from .errors import ApiError, api_error_handler, conflict, invalid, not_found, validation_error_handler
 from .ids import new_id
@@ -21,6 +21,7 @@ from .redact import scrub, scrub_value
 app = FastAPI(title="Nightlight API", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_middleware(db.FenceMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.web_origins, allow_methods=["GET", "POST", "PUT", "DELETE"],
                    allow_headers=["Authorization", "Content-Type"], max_age=600)
 
@@ -127,7 +128,14 @@ class PromotionBody(Strict):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": __version__}
+    return {"ok": True, "version": __version__, "build": __build__}
+
+
+@app.get("/api/version")
+def version():
+    """The app's version and build, and the helper version this API serves to devices (public)."""
+    offer = release.latest()
+    return {"app": __version__, "build": __build__, "helper": (offer or {}).get("version")}
 
 
 @app.post("/api/demo/start")
@@ -360,7 +368,57 @@ def internal_sweep(request: Request):
         raise ApiError(401, "invalid_token") from None
     if claims.get("email") != settings.sweep_invoker or not claims.get("email_verified"):
         raise ApiError(403, "forbidden")
-    return watch.sweep()
+    out = watch.sweep()
+    try:
+        out["live"] = live.sweep()
+    except Exception as e:  # the live pool never breaks the device sweep
+        import logging
+        logging.getLogger(__name__).warning("live sweep failed: %s", type(e).__name__)
+    return out
+
+
+# ------------------------------------------------------------------ live demo machines (live.py)
+
+class LiveBody(Strict):
+    scenario: Literal[live.SCENARIOS] = "none"
+
+
+@app.get("/api/demo/live/status")
+def live_status():
+    """Public: how many live demo machines exist, are in use and are running, for the line on the demo page."""
+    return live.status()
+
+
+@app.post("/api/demo/live")
+def live_start(body: LiveBody, request: Request, uid: str = Depends(current_uid)):
+    """Lease a live demo machine for this visitor (the same one again if they already hold one) and start it."""
+    return live.lease(uid, _client_ip(request), body.scenario)
+
+
+@app.get("/api/demo/live/me")
+def live_me(lease: tuple[str, str] = Depends(live_lease)):
+    return live.mine(*lease)
+
+
+@app.post("/api/demo/live/heartbeat")
+def live_heartbeat(body: Empty, lease: tuple[str, str] = Depends(live_lease)):
+    return live.heartbeat(*lease)
+
+
+@app.post("/api/demo/live/scenario")
+def live_scenario(body: LiveBody, lease: tuple[str, str] = Depends(live_lease)):
+    return live.set_scenario(*lease, body.scenario)
+
+
+@app.post("/api/demo/live/reset")
+def live_reset(body: LiveBody, lease: tuple[str, str] = Depends(live_lease)):
+    """Start fresh on the visitor's own machine (one at a time; progress shows in GET /api/demo/live/me)."""
+    return live.reset_mine(*lease, body.scenario)
+
+
+@app.post("/api/demo/live/end")
+def live_end(body: Empty, lease: tuple[str, str] = Depends(live_lease)):
+    return live.end(*lease)
 
 
 @app.post("/api/demo/reset")
@@ -503,11 +561,15 @@ def turn_stream(turn_id: str, body: Empty, request: Request, uid: str = Depends(
 
 @app.get("/api/me/memories")
 def my_memories(uid: str = Depends(current_uid)):
+    if live.pool_slot(uid):  # a live demo machine's account keeps no memories
+        return {"enabled": False, "memories": [], "reason": "memory_off_on_demo_machine"}
     return {"enabled": memory.enabled(), "memories": memory.list_all(uid)}
 
 
 @app.delete("/api/me/memories")
 def forget_my_memories(uid: str = Depends(current_uid)):
+    if live.pool_slot(uid):
+        raise ApiError(403, "memory_off_on_demo_machine")
     return {"ok": memory.forget_all(uid) if memory.enabled() else True}
 
 
@@ -532,6 +594,7 @@ class WatchResult(Strict):
 
 
 TAG = r"^[0-9a-f]{20}$"
+MACHINE = r"^[0-9a-f]{32}$"  # SHA-256 (first 32 hex) of the machine's own hardware id; never the id itself
 
 
 class Peer(Strict):
@@ -598,6 +661,7 @@ class HeartbeatBody(Strict):
     failedAgents: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20)
     safety: dict[Literal["passwordlessSudo", "sshPasswordLogin"], bool | None] = Field(default_factory=dict)
     net: Net | None = None  # for lines on the map; helpers before 0.9.20 send none
+    machine: str | None = Field(default=None, pattern=MACHINE)  # lets a reinstall continue this device (0.9.33+)
 
     @model_validator(mode="after")
     def short_units(self):
@@ -650,6 +714,8 @@ def revoke_device(device_id: str, body: Empty, uid: str = Depends(current_uid)):
 class PairStartBody(Strict):
     name: str = Field(min_length=1, max_length=40)
     os: str | None = Field(default=None, max_length=80)
+    machine: str | None = Field(default=None, pattern=MACHINE)  # to offer "continue its history" (0.9.33+)
+    via: Literal["installer", "command_line"] | None = None
 
 
 class PairPollBody(Strict):
@@ -659,6 +725,8 @@ class PairPollBody(Strict):
 
 class PairDecideBody(Strict):
     approve: bool
+    # Continue the device the preview offered (`continues`); the server finds it again itself, never by an id from here
+    continueDevice: bool = False
 
 
 def _pair_code(code: str) -> str:
@@ -669,7 +737,8 @@ def _pair_code(code: str) -> str:
 
 @app.post("/helper/pair/start", status_code=201)
 def helper_pair_start(body: PairStartBody, request: Request):
-    return real.pair_start(scrub(body.name)[0], scrub(body.os)[0] if body.os else None, _client_ip(request))
+    return real.pair_start(scrub(body.name)[0], scrub(body.os)[0] if body.os else None, _client_ip(request),
+                           machine=body.machine, via=body.via)
 
 
 @app.post("/helper/pair/poll")
@@ -686,7 +755,7 @@ def pair_preview(code: str, uid: str = Depends(owner_uid)):
 @app.post("/api/devices/pair/{code}")
 def pair_decide(code: str, body: PairDecideBody, request: Request, uid: str = Depends(owner_uid)):
     _remember_owner_hint(request, uid)
-    return real.pair_decide(uid, _pair_code(code), body.approve)
+    return real.pair_decide(uid, _pair_code(code), body.approve, body.continueDevice)
 
 
 class LeaveBody(Strict):
