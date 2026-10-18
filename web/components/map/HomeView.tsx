@@ -2,7 +2,7 @@
 // The home as a map (pan, zoom, lines between devices) or as a plain list of tiles, narrowed by the bar above it;
 // Map or List is remembered here. Watched websites follow below with the filters that apply to them.
 import { useFollowed } from "@/lib/follow";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePlaces } from "@/lib/data";
 import { applyFilter, applyToWatches, filtering, NO_FILTER, placesOf, type Filter } from "@/lib/homeFilter";
 import type { Need } from "@/lib/needsYou";
@@ -23,14 +23,22 @@ export default function HomeView({ uid, devices, watches, links, marks, selected
   useEffect(() => { try { const v = localStorage.getItem("nl_view"); if (v === "list" || v === "board") setView(v); } catch { /* default */ } }, []);
   // the chat's context strip asked to see a device: the map shows it
   const show = useFollowed().show;
-  useEffect(() => { if (show) setView("map"); }, [show]);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!show) return;
+    setView("map");
+    // after the pane switch has painted: bring the map itself on screen (on a phone it sits below the Needs list)
+    const t = setTimeout(() => box.current?.querySelector(".homemap")?.scrollIntoView({ block: "center",
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 80);
+    return () => clearTimeout(t);
+  }, [show]);
   const pick = (v: View) => { setView(v); try { localStorage.setItem("nl_view", v); } catch { /* this visit */ } };
   const names = usePlaces(uid);
   const places = useMemo(() => placesOf(devices, names), [devices, names]);
   const shown = useMemo(() => applyFilter(filter, devices, marks), [filter, devices, marks]);
   const shownWatches = useMemo(() => applyToWatches(filter, watches), [filter, watches]);
   return (
-    <div className="homeview" data-tour="map">
+    <div className="homeview" data-tour="map" ref={box}>
       {(devices.length > 0 || watches.length > 0 || filtering(filter)) && <HomeBar devices={devices} watches={watches}
         places={places} filter={filter} onFilter={setFilter} view={view} onView={pick} />}
       {devices.length > 0 && shown.length === 0
