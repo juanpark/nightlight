@@ -105,7 +105,8 @@ class TurnContext:
     redacted: int = 0
     deep: bool = False  # Investigate mode: stronger model, more thinking, many more steps
     spoke: bool = False  # a finished model response had words for the person (for the first-words deadline)
-    retrying: bool = False  # the last answer was empty or cut off: one more call, which may not call tools
+    retry_from: int | None = None  # modelCalls when the answer-only retry began (turns.SHORTER): one call, no tools
+    command_call: int = -1  # the model call whose response ran a run_command (one per response)
 
     @property
     def mode(self) -> str:
@@ -151,7 +152,9 @@ def _device_summary(d: dict) -> dict:
             "real": d.get("realm") == "real", "lastReport": str(d.get("lastSeen")) if d.get("realm") == "real" else None,
             "stale": d.get("stale", False), "staleReason": d.get("staleReason"),
             "allowedJobs": d.get("allowedJobs") or {}, "tags": d.get("tags") or [],
-            "known": len(d.get("findings") or []) - len(open_)}
+            "known": len(d.get("findings") or []) - len(open_),
+            "knownProblems": [f.get("message") for f in d.get("findings") or []
+                              if f.get("state", "new") != "new" and f.get("message")]}
 
 
 def _silence(d: dict, s: dict, everyone: list[dict]) -> str:
@@ -222,8 +225,13 @@ def fleet_summary(uid: str, generation: int) -> str:
                 + ("" if gap.get("restarted") is None else
                    "; after its last silence it " + ("had restarted" if gap["restarted"] else "came back without "
                                                      "restarting")))
+        books = runbooks.titles(uid, snap_id, generation)
         extra = (f" Tags: {', '.join(s['tags'])}." if s["tags"] else "") + \
-            (f" {s['known']} known problem(s) the owner is leaving for now." if s["known"] else "")
+            (f" Known problems the owner has chosen to leave alone for now (not new): "
+             f"{'; '.join(s['knownProblems'][:5]) or s['known']}." if s["known"] else "") + \
+            (f" Saved fixes that worked here before (runbooks): "
+             + "; ".join(b["title"] + (f" (when {b['when']})" if b.get("when") else "") for b in books[:5]) + "."
+             if books else "")
         made = f" ({_made(d)})" if d.get("kind") == "watched" and _made(d) else ""  # "Printer (Brother HL-L2350DW)"
         if d.get("kind") == "watched" and d.get("seenName"):
             made += f", announces itself as {_quoted(d['seenName'])}"
@@ -1090,9 +1098,12 @@ def make_callbacks(ctx: TurnContext):
     fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
 
     async def before_model(callback_context, llm_request):
-        if ctx.metrics["modelCalls"] >= ctx.max_calls + (1 if ctx.retrying else 0):
+        if ctx.retry_from is not None:  # the answer-only retry: exactly one more call, whatever the budget
+            if ctx.metrics["modelCalls"] > ctx.retry_from:
+                raise ApiError(429, "too_many_steps")
+        elif ctx.metrics["modelCalls"] >= ctx.max_calls:
             raise ApiError(429, "too_many_steps")
-        if ctx.retrying:  # asked again for an answer (turns.SHORTER): words only, no new checks
+        if ctx.retry_from is not None:  # asked again for an answer (turns.SHORTER): words only, no new checks
             llm_request.config.tool_config = types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.NONE))
         for content in llm_request.contents:  # defence in depth: nothing unscrubbed reaches the model
@@ -1132,8 +1143,15 @@ def make_callbacks(ctx: TurnContext):
 
     def before_tool(tool, args, tool_context):
         # Admission happens before the tool runs, so a batch of parallel calls can't exceed the limit.
+        if ctx.retry_from is not None:  # an answer-only retry never runs a tool (turns treats it as no answer)
+            return {"error": "no more checks in this answer"}
         if ctx.metrics["toolCalls"] >= ctx.max_tools:
             return {"error": "tool limit reached for this answer; reply with what you have"}
+        if tool.name == "run_command":  # one command at a time: read its result before choosing the next
+            if ctx.command_call == ctx.metrics["modelCalls"]:
+                return {"status": "error", "reason": "one command at a time: this one was not run; read the first "
+                        "command's result, then choose the next"}
+            ctx.command_call = ctx.metrics["modelCalls"]
         if ctx.deep and time.monotonic() - ctx.started > settings.deep_turn_seconds:
             return {"error": "time is up for this investigation; reply with what you found and what to check next"}
         ctx.metrics["toolCalls"] += 1

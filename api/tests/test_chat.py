@@ -531,3 +531,66 @@ def test_a_long_app_list_says_it_is_partial(client, started):  # Codex final pol
     text = agentlib.fleet_summary(started, generation(started))
     mac = next(line for line in text.splitlines() if line.startswith("- mac-1 "))
     assert "and more (get_device lists them all)" in mac  # the sample Mac Mini runs 14 apps
+
+
+def test_the_answer_only_retry_never_runs_a_tool(client, started):  # Codex charter #1
+    calls = []
+
+    async def behave(llm_request, stream):
+        calls.append(1)
+        if len(calls) == 1:
+            yield _final("")
+        else:  # ignores the NONE tool mode and asks for a card anyway
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(
+                function_call=types.FunctionCall(name="rotate_logs", args={"device_id": "pi-1"}))]),
+                partial=False, turn_complete=True)
+    FakeLlm.behavior = behave
+    ev = events(ask(client, new_session(client), "How is the Pi?"))
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    assert text == turns.NO_ANSWER and len(calls) == 2 and ev[-1]["type"] == "done"
+    assert not any(e["type"] in ("tool_call", "approval_request") for e in ev)
+    assert not [a for a in db.actions(started).get() if a.to_dict().get("status") == "pending"]
+
+
+def test_cut_off_words_beside_a_tool_call_are_never_shown(client, started):  # Codex charter #2
+    calls = []
+
+    async def behave(llm_request, stream):
+        calls.append(1)
+        if len(calls) == 1:
+            yield LlmResponse(content=types.Content(role="model", parts=[
+                types.Part(text="The cause is definitely the disk and you must"),
+                types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "pi-1"}))]),
+                partial=False, turn_complete=True, finish_reason=types.FinishReason.MAX_TOKENS)
+        else:
+            yield _final("The Pi's disk is 94% full.")
+    FakeLlm.behavior = behave
+    sid = new_session(client)
+    ev = events(ask(client, sid, "How is the Pi?"))
+    text = "".join(e.get("delta", "") for e in ev if e["type"] == "text")
+    stored = next(m.to_dict()["text"] for m in db.messages(started, sid).get() if m.to_dict()["role"] == "assistant")
+    assert text == stored == "The Pi's disk is 94% full." and len(calls) == 2
+    assert [e["name"] for e in ev if e["type"] == "tool_call"] == ["get_device"]
+    assert any(e["type"] == "tool_result" for e in ev)
+
+
+def test_one_command_per_response_and_no_tools_while_retrying():  # Codex charter coverage
+    class T:
+        def __init__(self, name):
+            self.name = name
+    ctx = agentlib.TurnContext("u", "s", "t", 1, 1, "ip", deep=True)
+    _bm, _am, before_tool = agentlib.make_callbacks(ctx)
+    assert before_tool(T("run_command"), {}, None) is None
+    assert "one command at a time" in before_tool(T("run_command"), {}, None)["reason"]
+    assert before_tool(T("get_device"), {}, None) is None  # other reads in the same response are fine
+    ctx.metrics["modelCalls"] += 1
+    assert before_tool(T("run_command"), {}, None) is None  # the next response may run the next command
+    ctx.retry_from = ctx.metrics["modelCalls"]
+    assert before_tool(T("get_device"), {}, None) == {"error": "no more checks in this answer"}
+
+
+def test_the_home_summary_names_saved_fixes(client, started):  # Codex charter coverage
+    from conftest import generation
+    text = agentlib.fleet_summary(started, generation(started))
+    mac = next(line for line in text.splitlines() if line.startswith("- mac-1 "))
+    assert "Saved fixes that worked here before (runbooks): " in mac

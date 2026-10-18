@@ -36,7 +36,7 @@ def test_known_problem_stops_lighting_orange_until_it_gets_worse(client, started
     beat(client, dev["token"], {**ONE_PROBLEM, "diskPct": 95.0})  # a new, worse problem still lights up
     assert _dev(started, dev)["status"] == "crit"
     summary = agentlib.fleet_summary(started, generation(started))
-    assert "1 known problem" in summary
+    assert "Known problems the owner has chosen to leave alone for now (not new): " in summary
 
 
 def test_snooze_runs_out(client, started):

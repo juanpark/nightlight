@@ -42,6 +42,17 @@ SHORTER = {"empty": "[Nightlight] Your last reply had no words for the person. A
 NO_ANSWER = "I couldn't put an answer together this time. Please ask again."
 
 
+def _without_text(ev):
+    """A copy of a cut-off response without its visible words (function calls and thoughts kept), or None when
+    nothing else is left."""
+    parts = [p for p in (ev.content.parts if ev.content else None) or [] if not (p.text and not p.thought)]
+    if not any(p.function_call for p in parts):
+        return None
+    out = ev.model_copy(deep=True)
+    out.content.parts = parts
+    return out
+
+
 def unanswered(ev) -> str | None:
     """Why the final model response of a run is not an answer ("empty" or "cut"), or None when it is one."""
     if ev is None:
@@ -351,21 +362,33 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
             message = types.Content(role="user", parts=[types.Part(text=prompt)])
             for attempt in range(2):
                 last = None  # the run's final model response: is it an answer?
-                async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                                 run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                                      max_llm_calls=ctx.max_calls)):
-                    if not ev.partial and not ev.get_function_responses():
-                        last = ev
-                        if unanswered(ev) == "cut":
-                            continue  # a cut-off answer is not shown; it is asked for again below
-                    await queue.put(("event", ev))
+                run = runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                       run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                            max_llm_calls=ctx.max_calls))
+                try:
+                    async for ev in run:
+                        if not ev.partial and not ev.get_function_responses():
+                            last = ev
+                            calls = any(p.function_call for p in (ev.content.parts if ev.content else None) or [])
+                            if attempt == 1 and calls:
+                                # The answer-only retry asked for a tool: not an answer. ADK runs a call only
+                                # after yielding it, so stopping here means nothing runs (before_tool refuses too).
+                                last = None
+                                break
+                            if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+                                ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
+                                if ev is None:
+                                    continue
+                        await queue.put(("event", ev))
+                finally:
+                    await run.aclose()
                 why = unanswered(last)
                 if why is None:
                     break
                 if attempt == 1:
                     await queue.put(("no_answer", None))
                     break
-                ctx.retrying = True  # one more counted call, with no new checks
+                ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
                 message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides

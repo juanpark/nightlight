@@ -129,5 +129,3 @@ def test_a_silent_investigation_is_told_to_answer_now(client, started, monkeypat
     FakeLlm.behavior = speaks_then_checks
     events(dig(client, new_session(client)))
     assert seen == [True, False]  # once the person has words, the next call isn't hurried
-
-
