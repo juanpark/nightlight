@@ -693,15 +693,19 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         cards = len(resp.get("actionIds") or [])
         return f"Runbook \"{resp['runbook']}\": " + (f"put up {cards} card(s) for your approval" if cards
                                                      else f"result: {resp.get('status')}"), None
-    if name in ("run_playbook", "check_space") and resp.get("playbook"):
+    if resp.get("playbook"):  # run_playbook, check_space, or a read that found the same playbook job
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
         return (f"Checkup done: {len(lines)} finding(s)" if lines else "Checkup done: nothing stood out"), \
             text[:DETAILS_CHARS]
     if name in DEVICE_READS and status in ("done", "failed"):
         out = resp.get("output") or ""
-        first = next((ln for ln in out.splitlines()[1:] if ln.strip()), "")
-        return (resp.get("summary") or status) + (f": {first[:120]}" if first else ""), (out[:DETAILS_CHARS] or None)
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        first = next(iter(lines[1:] if resp.get("summary") else lines), "")
+        lead = resp.get("summary") or ("The device answered" if status == "done" else "The check failed")
+        return lead + (f": {first[:120]}" if first else ""), (out[:DETAILS_CHARS] or None)
+    if resp.get("truncated"):
+        return "Read it (a long result, shortened to fit)", (str(resp.get("summary") or "")[:DETAILS_CHARS] or None)
     if name == "research" and resp.get("status") == "done":
         src = ", ".join(s.get("title") or "" for s in resp.get("sources") or [])
         return f"Searched the web: {len(resp.get('sources') or [])} source(s){': ' + src if src else ''}", \

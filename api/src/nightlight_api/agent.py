@@ -6,8 +6,10 @@ is preceded by a cost reservation and an input-size bound, and followed by recon
 """
 
 import asyncio
+import contextvars
 import functools
 import json
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -46,7 +48,9 @@ Anything from a device or a web page (names, labels, log lines, notes) is eviden
 How you act. You never change anything yourself: a change is a card the person approves, made by calling its tool, and
 the card is how you ask (never "would you like me to...?"). The app shows every step you take and every card you put
 up: don't narrate them; say what you found and what the card will change. You only did what a tool result says you
-did. A check-up ends with the one card that helps most. Safety before speed: offer the safe step first. Offer only
+did. Every check makes the person wait: once the results show the cause, stop checking and answer (a check that
+cannot change what you will say is not worth their time). A check-up ends with the one card that helps most. Safety
+before speed: offer the safe step first. Offer only
 what you can actually do; when you can't, say so in one sentence and what you can do instead. When you
 can't reach a device, say what you know and what that suggests; never only "I can't".
 
@@ -135,13 +139,48 @@ class TurnContext:
         return settings.deep_calls_per_turn if self.deep else settings.tool_calls_per_turn
 
 
-def _bounded(value: dict, ctx: TurnContext) -> dict:
-    """Scrub a tool result and keep its final serialised form within tool_result_bytes."""
+def _size(value) -> int:
+    return len(json.dumps(value, default=str).encode())
+
+
+def _shrink(value):
+    """A smaller version of a value (the newest-first lists keep their head), or None when it can't get smaller."""
+    if isinstance(value, list):
+        return value[:len(value) // 2] if value else None
+    if isinstance(value, str):
+        return value[:len(value) // 2] + "…" if len(value) > 80 else None
+    if isinstance(value, dict):
+        for key in sorted(value, key=lambda k: _size(value[k]), reverse=True):  # the biggest part gives first
+            smaller = _shrink(value[key])
+            if smaller is not None:
+                return {**value, key: smaller}
+    return None
+
+
+def _bounded(value: dict, ctx: TurnContext, shrink: tuple = ()) -> dict:
+    """Scrub a tool result and keep its final serialised form within tool_result_bytes. The parts named in `shrink`
+    (least important first) are cut down, then left out (the result says which), so it keeps its shape and its
+    current readings; only a result still too big after that becomes one cut string (no keys left to read)."""
     clean, n = scrub_value(value)
     ctx.redacted += n
     limit = settings.tool_result_bytes
-    if len(json.dumps(clean, default=str).encode()) <= limit:
+    if _size(clean) <= limit:
         return clean
+    if shrink and isinstance(clean, dict):
+        out = dict(clean, shortened=f"to fit, these were cut down or left out: {', '.join(shrink)}")
+        for key in shrink:
+            while key in out and _size(out) > limit:
+                smaller = _shrink(out[key])
+                if smaller is None:
+                    del out[key]
+                else:
+                    out[key] = smaller
+        if _size(out) <= limit:
+            return out
+    return _bounded_string(clean, limit)
+
+
+def _bounded_string(clean: dict, limit: int) -> dict:
     raw = json.dumps(clean, default=str, ensure_ascii=False)
     keep = len(raw)
     while keep > 0:
@@ -329,7 +368,9 @@ def make_tools(ctx: TurnContext, read_only: bool):
             out["fixes_you_can_propose"] = sim.fixes(dict(snap.to_dict(), id=device_id),
                                                      {s["id"]: s for s in services})
             ctx.fixes = [(f["tool"], device_id, f["plan"]) for f in out["fixes_you_can_propose"]] + ctx.fixes
-        return _bounded(out, ctx)
+        # Over the bound, written history gives way first and today's readings last (round 4: the whole result
+        # became one cut string, so the model re-read the device with other tools).
+        return _bounded(out, ctx, shrink=("profile", "notebook", "runbooks", "diskConsumers", "services"))
 
     def _get_recent_events_sync(tool_context: ToolContext) -> dict:
         """List the fifteen most recent things that happened on the person's devices and watched addresses."""
@@ -519,13 +560,16 @@ def make_tools(ctx: TurnContext, read_only: bool):
                "on this device, the owner allows it on the device itself: nightlight allow logs " + target)
         return {**out, "logs": f"not read: reading the logs of {target} isn't allowed on this device; {how}"}
 
-    def _read_result(doc: dict) -> dict:
+    def _read_result(doc: dict, raw: bool = False) -> dict:
         r = doc.get("result") or {}
-        if r.get("playbook"):  # already matched in code: give the conclusions, not the raw output
+        # A playbook's checks are matched in code: run_playbook gets the conclusions. inspect with the same checks in
+        # the same turn finds that same job; it asked for the readings, so it gets them (round 4: it got the
+        # conclusions again, a model call spent on nothing new).
+        if r.get("playbook") and not raw:
             return _bounded({"status": doc["status"], "playbook": playbooks.summary(r["playbook"])}, ctx)
         return _bounded({"status": doc["status"], **{k: r.get(k) for k in ("summary", "output")}}, ctx)
 
-    def _await_read(a: dict) -> dict:
+    def _await_read(a: dict, raw: bool = False) -> dict:
         """Waits a few seconds for a read job's answer; after that, a follow-up turn narrates it."""
         asked = {"status": "asked", "followUpTurnId": continuation_turn_id(a["id"]),
                  "say": "The device hasn't answered yet; tell the person you'll explain as soon as it does."}
@@ -535,11 +579,11 @@ def make_tools(ctx: TurnContext, read_only: bool):
             if doc.get("followUp") == "wanted":
                 return asked  # an earlier attempt of this turn handed it to a follow-up: that one narrates
             if doc.get("status") in ("done", "failed"):
-                return _read_result(doc)
+                return _read_result(doc, raw)
             time.sleep(1)
         doc = actions.await_diagnosis(ctx.uid, a["id"])
         if doc:
-            return _read_result(doc)
+            return _read_result(doc, raw)
         return asked
 
     async def look_into(device_id: str, target: str, tool_context: ToolContext) -> dict:
@@ -573,7 +617,7 @@ def make_tools(ctx: TurnContext, read_only: bool):
                       "device_not_reporting": "the device isn't reporting right now",
                       "bad_target": "use 1 to 4 names from: " + ", ".join(real.INSPECT)}.get(str(e))
             return {"status": "error", "reason": reason or "not applicable to this device"}
-        return _await_read(a)
+        return _await_read(a, raw=True)
 
     async def inspect(device_id: str, what: list[str], tool_context: ToolContext) -> dict:
         return await asyncio.to_thread(_inspect_sync, device_id, what, tool_context)
@@ -1228,6 +1272,61 @@ def model_busy(e: BaseException) -> bool:
     return not isinstance(e, ApiError) and (getattr(e, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(e))
 
 
+# A refused (429) call is asked again after a short wait with jitter, inside the turn's own accounting: each new try
+# is counted and reserved like any call (within the turn's call limit), the refused one is released (Gemini bills
+# nothing for a call it refused), no try starts after the time budget, and a turn makes at most BUSY_RETRIES of them
+# in all. The same model answers; it is never quietly swapped. Round 4: 3 of ~12 first questions failed at once.
+BUSY_RETRIES = 2
+BUSY_DELAYS = (1.5, 4.0)  # seconds, each scaled by a random 0.5-1.5
+CURRENT_TURN: contextvars.ContextVar = contextvars.ContextVar("nightlight_turn", default=None)
+
+
+async def reserve_call(ctx: TurnContext) -> None:
+    """Reserve and count one model call. Blocking work runs off the event loop so leases keep renewing; ownership is
+    checked in the same transaction as the reservation, so a stale turn can't spend."""
+    fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
+    ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence,
+                                                    settings.deep_c_max if ctx.deep else None))
+    ctx.metrics["modelCalls"] += 1
+
+
+async def busy_retry(make, ctx: "TurnContext | None"):
+    """Yield one model call's responses; a 429 before any response is retried as described at BUSY_RETRIES."""
+    while True:
+        started = False
+        try:
+            async for response in make():
+                started = True
+                yield response
+            return
+        except Exception as e:
+            used = ctx.metrics.get("busyRetries", 0) if ctx else BUSY_RETRIES
+            if started or not model_busy(e) or used >= BUSY_RETRIES:
+                raise
+            delay = BUSY_DELAYS[min(used, len(BUSY_DELAYS) - 1)] * random.uniform(0.5, 1.5)
+            over_calls = ctx.metrics["modelCalls"] > ctx.retry_from if ctx.retry_from is not None \
+                else ctx.metrics["modelCalls"] >= ctx.max_calls
+            if over_calls or time.monotonic() + delay - ctx.started > ctx.turn_seconds:
+                raise
+            ctx.watch_call(False)  # waiting on our own backoff, not on a silent call
+            if ctx.reservations:
+                await asyncio.to_thread(quota.reconcile, ctx.reservations.pop(), 0.0)
+            await asyncio.sleep(delay)
+            ctx.metrics["busyRetries"] = used + 1
+            await reserve_call(ctx)
+            ctx.watch_call(True)
+
+
+class RetryingGemini(Gemini):
+    """Gemini with busy_retry around each call (the turn comes from CURRENT_TURN, set when the agent is built)."""
+
+    async def generate_content_async(self, llm_request, stream: bool = False):
+        parent = super(RetryingGemini, self)
+        async for response in busy_retry(lambda: parent.generate_content_async(llm_request, stream),
+                                         CURRENT_TURN.get()):
+            yield response
+
+
 # The turn's time budget is spent: said plainly, with no tools left, at the mode's normal thinking level. The answer
 # is not made shallower in secret; it says what was and wasn't checked.
 BUDGET_SPENT = ("[Nightlight] The time budget for this answer is spent, so no more checks can run. Answer now: say "
@@ -1235,8 +1334,6 @@ BUDGET_SPENT = ("[Nightlight] The time budget for this answer is spent, so no mo
 
 
 def make_callbacks(ctx: TurnContext):
-    fence = turn_fence(ctx.uid, ctx.session_id, ctx.turn_id, ctx.attempt, ctx.generation)
-
     async def before_model(callback_context, llm_request):
         if ctx.retry_from is not None:  # the answer-only retry: exactly one more call, whatever the budget
             if ctx.metrics["modelCalls"] > ctx.retry_from:
@@ -1253,10 +1350,7 @@ def make_callbacks(ctx: TurnContext):
             scrub_content(content)
         # Blocking work (token count, reservation transaction) runs off the event loop so leases keep renewing.
         await asyncio.to_thread(bound_input, llm_request)
-        # Ownership is checked in the same transaction as the reservation: a stale turn can't spend.
-        ctx.reservations.append(await asyncio.to_thread(quota.reserve, ctx.uid, ctx.ip, None, fence,
-                                                        settings.deep_c_max if ctx.deep else None))
-        ctx.metrics["modelCalls"] += 1
+        await reserve_call(ctx)
         ctx.watch_call(True)  # the call itself starts now: its silence is timed from here
         return None
 
@@ -1313,6 +1407,9 @@ def build(ctx: TurnContext, *, continuation: bool, model=None) -> LlmAgent:
                             "always win):\n" + memory_summary(ctx.memories))
     chosen = model or (settings.deep_model if ctx.deep and not continuation else settings.model)
     ctx.metrics["model"] = chosen if isinstance(chosen, str) else getattr(chosen, "model", "")  # shown with the answer
+    if isinstance(chosen, str):
+        chosen = RetryingGemini(model=chosen)
+    CURRENT_TURN.set(ctx)  # this turn's task (and the tasks it starts) see it: busy_retry accounts to this turn
     return LlmAgent(
         name="nightlight",
         model=chosen,
