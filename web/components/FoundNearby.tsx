@@ -16,8 +16,9 @@ type Asked = { base: Record<string, number>; asked: { deviceId: string; name: st
 
 /** "Look for devices nearby": the server asks one device per network (the tap is the approval); results arrive in
  * the list. Devices that couldn't look say why, with the way round it. */
-function LookNearby({ devices, discoveries, onGo, again }: {
+function LookNearby({ devices, discoveries, onGo, again, sample }: {
   devices: Device[]; discoveries: Discovery[]; onGo: (g: Go) => void; again: boolean;
+  sample: boolean; // the sample home is showing: its Raspberry Pi looks (simulated)
 }) {
   const [run, setRun] = useState<Asked | null>(null);
   const [busy, setBusy] = useState(false);
@@ -34,10 +35,12 @@ function LookNearby({ devices, discoveries, onGo, again }: {
       const r = await api<Omit<Asked, "base">>("POST", "/api/discover", everyDevice ? { everyDevice: true } : {});
       setRun({ base, ...r });
     } catch (e) {
-      setErr(e instanceof ApiError && e.status === 429 ? "That's a lot of looking. Please wait a little." : "Couldn't ask your devices to look.");
+      setErr(e instanceof ApiError && e.status === 429 ? "That's a lot of looking. Please wait a little."
+        : e instanceof ApiError && e.code === "no_sample_home" ? "Turn on the sample home first; its devices can look."
+        : "Couldn't ask your devices to look.");
     } finally { setBusy(false); }
   }
-  if (!own.length) return <p className="small muted">Add one of your own devices first; it can then look for others nearby.</p>;
+  if (!own.length && !sample) return <p className="small muted">Add one of your own devices first; it can then look for others nearby.</p>;
   const looking = run?.asked.filter((a) => !looked(a.deviceId)) ?? [];
   return (
     <div className="look-nearby">
@@ -75,8 +78,8 @@ function LookNearby({ devices, discoveries, onGo, again }: {
 /** Things your devices found on their networks (no addresses), once per thing however many devices saw it. Add =
  * put it on the map, watched by a helper that saw it (it checks the thing still answers); the server lists a finder
  * that can watch it first. */
-export default function FoundNearby({ found: { items, refresh }, discoveries, devices, onGo }: {
-  found: Found; discoveries: Discovery[]; devices: Device[]; onGo: (g: Go) => void;
+export default function FoundNearby({ found: { items, refresh }, discoveries, devices, onGo, sample = false }: {
+  found: Found; discoveries: Discovery[]; devices: Device[]; onGo: (g: Go) => void; sample?: boolean;
 }) {
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
@@ -97,6 +100,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
         : e instanceof ApiError && e.code === "your_own_device"
           ? `That's your ${typeof e.body.name === "string" ? e.body.name : "own device"}, already on your map.`
         : e instanceof ApiError && e.code === "watch_capacity" ? "That device already watches as many things as it can (10)."
+        : e instanceof ApiError && e.code === "no_sample_home" ? "Turn on the sample home first."
         : "Couldn't add it.");
     }
   }
@@ -113,6 +117,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
   const unwatchable = rest.filter((t) => t.seenBy[0]?.canWatch === false);
   const what = (t: FoundThing) => <>
     <strong>{t.name ?? t.guess}</strong>
+    {t.simulated && <span className="pill" style={{ marginLeft: 6 }}>simulated</span>}
     {t.name && <span className="muted"> · {t.guess}</span>}
     {t.privateAddress && t.services.length > 0 ? <span className="muted small"> · uses a private Wi-Fi address</span>
       : madeBy(t) && <span className="muted"> · {madeBy(t)}</span>}
@@ -161,7 +166,7 @@ export default function FoundNearby({ found: { items, refresh }, discoveries, de
         </div>
       )}
       {msg && <p className="small" style={{ color: "var(--crit-ink)" }}>{msg}</p>}
-      {items && <LookNearby devices={devices} discoveries={discoveries} onGo={onGo} again={found.length > 0} />}
+      {items && <LookNearby devices={devices} discoveries={discoveries} onGo={onGo} again={found.length > 0} sample={sample} />}
     </div>
   );
 }

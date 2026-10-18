@@ -167,6 +167,56 @@ function Uninstall({ origin }: { origin: string }) {
   );
 }
 
+type Sim = { code: string; name: string; os: string; transcript: string[] };
+
+/** The sample home's pretend install: the lines a real install prints, played one by one, then the same approval a
+ * real device asks for. Nothing is installed anywhere; the new device is a sample one. */
+function TrySimulated() {
+  const [sim, setSim] = useState<Sim | null>(null);
+  const [lines, setLines] = useState(0);
+  const [done, setDone] = useState<PairResult | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!sim || lines >= sim.transcript.length) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const t = setTimeout(() => setLines(still ? sim.transcript.length : lines + 1), still ? 0 : 250);
+    return () => clearTimeout(t);
+  }, [sim, lines]);
+  async function start(os: Os) {
+    setErr(""); setBusy(true); setDone(null);
+    try {
+      setSim(await api<Sim>("POST", "/api/demo/add_device", { os })); setLines(0);
+    } catch (e) {
+      setErr(e instanceof ApiError && e.code === "already_added" ? "You already added one; it is on your map."
+        : e instanceof ApiError && e.code === "no_sample_home" ? "This works with the sample home showing."
+        : e instanceof ApiError && e.code === "live_demo_machine" ? "Not on a live machine: devices can't be added to it."
+        : "Couldn't start the simulation. Please try again.");
+    } finally { setBusy(false); }
+  }
+  const played = !!sim && lines >= sim.transcript.length;
+  return (
+    <div className="try-sim">
+      <p className="small"><strong>Try adding one (simulated)</strong>: see what an install looks like, then approve it
+        as you would a real device.</p>
+      {!sim && (
+        <div className="setup-pick" role="group" aria-label="Which kind of device?">
+          <button disabled={busy} onClick={() => start("linux")}><Cpu size={22} strokeWidth={1.6} /> Linux or Raspberry Pi</button>
+          <button disabled={busy} onClick={() => start("mac")}><Laptop size={22} strokeWidth={1.6} /> A Mac</button>
+        </div>)}
+      {sim && <>
+        <p className="small muted">Simulation: on a real computer you&apos;d paste one line in Terminal.</p>
+        <pre className="sim-term" aria-live="polite">{sim.transcript.slice(0, lines).join("\n")}</pre>
+        {played && !done && <PairApprove base="/api/demo/pair" initialCode={sim.code} onDone={setDone} />}
+        {done && (done.approved
+          ? <p className="live-status ok"><span className="dot ok" /> Added: {done.name} is on your map (a sample device).</p>
+          : <p className="small">Okay, it was turned away. Nothing was added.</p>)}
+      </>}
+      {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
+    </div>
+  );
+}
+
 const Term = ({ text }: { text: string }) => <span className="art-term"><i /><i /><i /><b>{text}</b></span>;
 
 export default function AddDevice({ anonymous, live = false, onSave, devices }: {
@@ -196,10 +246,13 @@ export default function AddDevice({ anonymous, live = false, onSave, devices }: 
   if (anonymous) {
     return (
       <div className="panel">
-        <h3>Try it on your own computer</h3>
-        <p>Your laptop or Raspberry Pi on your own map in about two minutes. Real devices belong to an account, so
-          first sign in with Google; this sample home stays.</p>
-        <button className="primary" onClick={onSave}>Sign in with Google</button>
+        <h3>Add a device</h3>
+        <TrySimulated />
+        <div className="try-real">
+          <p className="small"><strong>Do it for real:</strong> your laptop or Raspberry Pi on your own map in about two
+            minutes. Real devices belong to an account, so first sign in with Google; this sample home stays.</p>
+          <button className="primary" onClick={onSave}>Sign in with Google</button>
+        </div>
         <Reassure />
       </div>
     );

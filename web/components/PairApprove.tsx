@@ -27,8 +27,9 @@ function message(e: unknown) {
   return "Something went wrong. Please try again.";
 }
 
-export default function PairApprove({ initialCode = "", onApprove, onDone }: {
+export default function PairApprove({ initialCode = "", onApprove, onDone, base = "/api/devices/pair" }: {
   initialCode?: string;
+  base?: string; // the sample home's simulated install approves at /api/demo/pair
   /** Called just before the approval is sent (Add a device uses it to remember which devices already exist). */
   onApprove?: () => void;
   onDone: (r: PairResult) => void;
@@ -44,7 +45,7 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
   async function look(c = code) {
     setBusy(true); setErr(""); setPreview(null);
     try {
-      setPreview({ code: c, p: await api<Preview>("GET", `/api/devices/pair/${encodeURIComponent(c)}`) });
+      setPreview({ code: c, p: await api<Preview>("GET", `${base}/${encodeURIComponent(c)}`) });
       setKeep(true);
     } catch (e) {
       setErr(message(e));
@@ -58,7 +59,7 @@ export default function PairApprove({ initialCode = "", onApprove, onDone }: {
     setBusy(true); setErr("");
     if (approve) onApprove?.();
     try {
-      const path = `/api/devices/pair/${encodeURIComponent(preview.code)}`;
+      const path = `${base}/${encodeURIComponent(preview.code)}`;
       // continueDevice only when there is something to continue (an API without it refuses unknown fields)
       let continued: string | undefined;
       if (approve && preview.p.continues) {

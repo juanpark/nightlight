@@ -237,3 +237,8 @@ a.button.primary { background: var(--accent); color: var(--bg); border-color: tr
 /* Start screen: your own computers first, highlighted; the live machine's waiting clock */
 .start-own { border: 2px solid var(--glow); background: color-mix(in srgb, var(--glow) 12%, var(--panel)); }
 .live-elapsed { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 4px 0; }
+
+/* Add a device on the sample home: the simulated install's terminal, and the real path beside it */
+.sim-term { background: #11151f; color: #e6e9f0; font-size: 12px; line-height: 1.5; padding: 10px 12px; border-radius: 10px;
+  min-height: 3em; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.try-real { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }

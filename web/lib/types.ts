@@ -232,7 +232,7 @@ export interface FoundItem { cid: string; guess: string; vendor?: string | null;
 export interface FoundThing { guess: string; vendor?: string | null; name?: string | null; maker?: string | null;
   model?: string | null; services: string[]; ports: number[];
   tag?: string | null; seenBy: { deviceId: string; name: string; cid: string; canWatch?: boolean }[];
-  router?: boolean; privateAddress?: boolean }
+  router?: boolean; privateAddress?: boolean; simulated?: boolean } // simulated: found by the sample home
 export interface Discovery { id: string; by: string; byName: string; items: FoundItem[]; at?: Date | null;
   expiresAt?: Date | null }
 
