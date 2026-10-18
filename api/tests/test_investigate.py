@@ -10,7 +10,7 @@ from nightlight_api.config import settings
 from fake_llm import FakeLlm
 from test_chat import events, fake_model, new_session  # noqa: F401 - fake_model is an autouse fixture
 
-FLEET = "- pi-1 (Raspberry Pi, simulated): x\n- nas-1 (NAS, simulated): y\n- game-1 (Game server, simulated): z"
+FLEET = "- pi-1 (Raspberry Pi): x\n- nas-1 (NAS): y\n- game-1 (Game server): z"
 
 
 def dig(client, sid, text="Why is my NAS slow?"):
@@ -44,39 +44,32 @@ LEAK = ("Checking `nas-1` with get_device first, then `game-1`.\n\n"
         "too. I'd check the restore next and")
 
 
-def test_leaked_notes_become_a_plain_answer():
-    out = _tidied(LEAK)  # the note to itself goes; the rest is kept, with names for ids and a whole last sentence
-    assert out == ("Checking NAS with get device first, then Game server.\n\nYour NAS is fine: its disk is 40% full "
-                   "and the nightly backup ran. The Game server's backups go there too.")
-    # ids become names and tool names plain words, even without self-talk
-    assert _tidied("I read `nas-1` with get_device: the NAS is fine.") == \
-        "I read NAS with get device: the NAS is fine."
-
-
-def test_a_clean_answer_is_never_touched():
+def test_ids_become_names_and_nothing_else_changes():
+    # The one rewrite left is a lookup on a known table: ids → names, fixed tool names → plain words.
+    assert _tidied("I read `nas-1` with get_device: the NAS is fine.") == "I read NAS with get device: the NAS is fine."
     for text in ("Wait about ten minutes, then check the Raspberry Pi again.",
                  "The NAS is fine. Its log is in /var/log/nas-1/rotate_logs today.",
-                 "Your Pi is fine"):  # no sentence end, but not cut off by the token limit either
+                 "Your Pi is fine",
+                 "Let me think. If someone asks about backups, the NAS keeps them."):  # meaning is never guessed at
         assert _tidied(text) == text
-    # a reply with a tool call is left alone: the guard only rewrites final answers
+    # cut off by the token limit: not trimmed here (turns asks for a shorter answer instead)
+    assert _tidied("The NAS is fine. I'd check the", types.FinishReason.MAX_TOKENS) == "The NAS is fine. I'd check the"
+    # a reply with a tool call is left alone
     r = LlmResponse(content=types.Content(role="model", parts=[
-        types.Part(text="Wait! Checking `nas-1`."),
+        types.Part(text="Checking `nas-1`."),
         types.Part(function_call=types.FunctionCall(name="get_device", args={"device_id": "nas-1"}))]))
     agentlib._tidy_thinking(agentlib.TurnContext("u", "s", "t", 1, 1, "ip", fleet=FLEET), r)
-    assert r.content.parts[0].text == "Wait! Checking `nas-1`."
-    # cut off by the token limit: the unfinished sentence goes
-    assert _tidied("The NAS is fine. I'd check the", types.FinishReason.MAX_TOKENS) == "The NAS is fine."
+    assert r.content.parts[0].text == "Checking `nas-1`."
 
 
-def test_a_leak_in_an_investigate_turn_reaches_the_person_as_a_plain_answer(client, started):
+def test_an_investigate_answer_reaches_the_person_with_names_for_ids(client, started):
     async def behave(llm_request, stream):
         yield _answer(LEAK)
     FakeLlm.behavior = behave
     ev = events(dig(client, new_session(client)))
     text = said(ev)
-    assert ev[-1]["type"] == "done" and text.endswith("The Game server's backups go there too.")
-    assert "NAS)" not in text and "is connected through" not in text  # link lines are not names
-    assert "`" not in text and "nas-1" not in text and "Wait!" not in text and text.endswith("too.")
+    assert ev[-1]["type"] == "done" and "nas-1" not in text and "`" not in text
+    assert "Wait! If someone asks about the backups" in text  # its words are its own: nothing is deleted
 
 
 def _busy():
@@ -136,12 +129,3 @@ def test_a_silent_investigation_is_told_to_answer_now(client, started, monkeypat
     FakeLlm.behavior = speaks_then_checks
     events(dig(client, new_session(client)))
     assert seen == [True, False]  # once the person has words, the next call isn't hurried
-
-
-def test_an_answer_that_is_all_notes_to_itself_is_not_shown(client, started):  # Codex investigate rev2 #1
-    assert _tidied("Let me think. I should check the backup logs before answering.") == ""
-    async def behave(llm_request, stream):
-        yield _answer("Let me think. I should check the backup logs first.")
-    FakeLlm.behavior = behave
-    ev = events(dig(client, new_session(client)))
-    assert ev[-1]["type"] == "done" and "Let me think" not in said(ev) and said(ev) == agentlib.FALLBACK

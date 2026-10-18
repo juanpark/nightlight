@@ -64,6 +64,9 @@ what_the_helper_does:
     never commands, and the device checks every job against what its owner allowed. Approval cards protect against
     mistakes; the real limit is what the device itself allows, which a hacked account or server can't widen beyond
     what the device's owner delegated.
+    The helper runs on Macs and Linux machines (a Raspberry Pi, a Linux server or NAS). Windows isn't supported yet;
+    Nightlight can still watch whether a Windows PC answers on the network (Found nearby), and phones, routers,
+    printers and cameras can only be watched that way too.
 
 ssh_and_remote_access:
   title: Remote access (SSH, screen sharing)
@@ -140,7 +143,9 @@ approvals_and_trust:
   text: |
     Restarts, clean-ups and removals on a real device come as a card (what it will do, what it touches, whether it
     can be undone) and run only after you approve. Helper updates run when you tap Update, or by themselves if you
-    allowed that. On the sample home, kinds of jobs you approve often can be allowed to run on their own.
+    allowed that. On the sample home, after you approve the same safe kind of job a few times, Nightlight offers to
+    do that kind on its own and tell you afterwards; the Trust panel shows each kind's step and can move it back.
+    Jobs that can't be undone always ask.
 
 sample_home:
   title: The sample home

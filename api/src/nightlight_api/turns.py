@@ -27,13 +27,43 @@ from .ids import new_id
 from .redact import scrub, scrub_value
 
 APP = "nightlight"
-ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server", "restart_container",
+ACTION_TOOLS = {"rotate_logs", "clear_images", "backup_world", "restart_server", "restart_app", "update_server",
+                "update_app", "restart_container",
                 "restart_service",
                 "clean_up", "remove_device", "start_investigation", "propose_command", "update_helper", "use_runbook"}
 
 
-# Last resort only: agent.after_model already removes a card claim no card backs before it is shown.
-NO_CARD = "(Correction: no card was put up in this answer. Ask me again and I'll put it up.)"
+# Check-and-return for the one answer failure the harness can see without guessing at meaning: a final answer with no
+# words, or one the output limit cut off. The model is asked once more (a counted model call, no new checks); if that
+# fails too, the turn says so plainly.
+SHORTER = {"empty": "[Nightlight] Your last reply had no words for the person. Answer them now, briefly, from what "
+                    "you already found.",
+           "cut": "[Nightlight] Your last reply was cut off by the length limit. Answer again in fewer words, from "
+                  "what you already found."}
+NO_ANSWER = "I couldn't put an answer together this time. Please ask again."
+
+
+def _without_text(ev):
+    """A copy of a cut-off response without its visible words (function calls and thoughts kept), or None when
+    nothing else is left."""
+    parts = [p for p in (ev.content.parts if ev.content else None) or [] if not (p.text and not p.thought)]
+    if not any(p.function_call for p in parts):
+        return None
+    out = ev.model_copy(deep=True)
+    out.content.parts = parts
+    return out
+
+
+def unanswered(ev) -> str | None:
+    """Why the final model response of a run is not an answer ("empty" or "cut"), or None when it is one."""
+    if ev is None:
+        return "empty"
+    parts = (ev.content.parts if ev.content else None) or []
+    if any(p.function_call for p in parts):
+        return None
+    if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+        return "cut"
+    return None if any(p.text and p.text.strip() and not p.thought for p in parts) else "empty"
 
 
 def _utcnow() -> datetime:
@@ -214,6 +244,7 @@ def finish(uid: str, c: Claim, *, text: str | None, metrics: dict, tool_calls: l
                 "role": "assistant", "text": text, "seq": seq, "turnId": c.turn_id, "attempt": c.attempt,
                 "toolCalls": [_stored_step(t, error) for t in tool_calls],
                 "actionIds": action_ids, "demoGeneration": c.generation, "mode": c.turn.get("mode", "quick"),
+                "metrics": metrics,  # the receipt under the answer (steps, time, model, cost) survives a reload
                 **({"error": error} if error else {}),
                 "createdAt": firestore.SERVER_TIMESTAMP, "expiresAt": _keep_until()})
             update["finalMessageId"] = msg_id
@@ -303,6 +334,7 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
     # leak through a partly-seen value. `shown` is exactly what the browser has; it is what we store and replay.
     raw, shown, tool_calls, first_text_ms = "", "", [], None
     finishing = False  # set once a terminal write has started; a stop after that changes nothing
+    no_answer = False  # the model was asked twice and gave no answer
     last_sent = time.monotonic()
 
     async def produce():
@@ -329,10 +361,36 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     author="user" if content.role == "user" else agent.name, content=content))
             prompt = c.turn["input"] if kind == "user" else f"[Event: {c.turn.get('event', 'update')}] {c.turn['input']}"
             message = types.Content(role="user", parts=[types.Part(text=prompt)])
-            async for ev in runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
-                                             run_config=RunConfig(streaming_mode=StreamingMode.SSE,
-                                                                  max_llm_calls=ctx.max_calls)):
-                await queue.put(("event", ev))
+            for attempt in range(2):
+                last = None  # the run's final model response: is it an answer?
+                run = runner.run_async(user_id=uid, session_id=adk_session.id, new_message=message,
+                                       run_config=RunConfig(streaming_mode=StreamingMode.SSE,
+                                                            max_llm_calls=ctx.max_calls))
+                try:
+                    async for ev in run:
+                        if not ev.partial and not ev.get_function_responses():
+                            last = ev
+                            calls = any(p.function_call for p in (ev.content.parts if ev.content else None) or [])
+                            if attempt == 1 and calls:
+                                # The answer-only retry asked for a tool: not an answer. ADK runs a call only
+                                # after yielding it, so stopping here means nothing runs (before_tool refuses too).
+                                last = None
+                                break
+                            if ev.finish_reason == types.FinishReason.MAX_TOKENS:
+                                ev = _without_text(ev)  # cut-off words are never shown; its tool calls still run
+                                if ev is None:
+                                    continue
+                        await queue.put(("event", ev))
+                finally:
+                    await run.aclose()
+                why = unanswered(last)
+                if why is None:
+                    break
+                if attempt == 1:
+                    await queue.put(("no_answer", None))
+                    break
+                ctx.retry_from = ctx.metrics["modelCalls"]  # exactly one more counted call, with no tools
+                message = types.Content(role="user", parts=[types.Part(text=SHORTER[why])])
             await queue.put(("end", None))
         except BaseException as e:  # noqa: B036 - forwarded to the consumer, which decides
             await queue.put(("error", e))
@@ -369,6 +427,9 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                 raise item
             if kind == "end":
                 break
+            if kind == "no_answer":
+                no_answer = True
+                continue
             ev = item
             parts = (ev.content.parts if ev.content else None) or []
             if not ev.partial:
@@ -411,7 +472,8 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     yield out({"type": "tool_result", "name": part.function_response.name, "summary": line,
                                **({"callId": rid} if rid else {}),
                                "details": details, "ok": ok, "ms": ms, "redacted": ctx.redacted})
-                    if part.function_response.name in ACTION_TOOLS and resp.get("status") == "pending":
+                    if part.function_response.name in ACTION_TOOLS and (resp.get("status") == "pending"
+                                                                        or resp.get("awaitingTap")):
                         ids = resp.get("actionIds") or [resp.get("actionId")]  # a runbook can put up several
                         if step is not None:
                             step["actionId"] = ids[0]  # the card sits right after its step
@@ -422,16 +484,12 @@ async def stream(uid: str, c: Claim, ip: str, model=None):
                     if part.function_response.name in DEVICE_READS and resp.get("status") == "asked":
                         # The device answers later; the browser opens this follow-up turn once it exists.
                         yield out({"type": "followup_pending", "turnId": resp.get("followUpTurnId")})
-        if not ctx.actions and agentlib.claims_a_card(shown):
-            # A claim still got through (it shouldn't: after_model removes them), and no card was made in this
-            # answer: never leave that claim standing.
-            piece = "\n\n" + NO_CARD
-            shown += piece
-            yield out({"type": "text", "delta": piece})
-        if not shown.strip():
-            shown = agentlib.FALLBACK  # nothing substantive was said (and nothing was shown yet)
+        if no_answer or not shown.strip():
+            # Asked twice and still no answer: say so plainly, after whatever was already shown.
+            piece = ("\n\n" if shown.strip() else "") + NO_ANSWER
+            shown = (shown if shown.strip() else "") + piece
             first_text_ms = first_text_ms or int((time.monotonic() - t0) * 1000)
-            yield out({"type": "text", "delta": shown})
+            yield out({"type": "text", "delta": piece})
         text = shown  # exactly what the browser received; stored and replayed as-is
         metrics = {**ctx.metrics, "latencyMs": int((time.monotonic() - t0) * 1000),
                    "firstTextMs": first_text_ms, "costUsd": round(ctx.metrics["costUsd"], 6)}
@@ -486,7 +544,7 @@ def _keep_until():
     return datetime.now(timezone.utc) + timedelta(days=CHAT_KEEP_DAYS)
 
 
-DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command"}  # the device answers; slow ones finish in a follow-up
+DEVICE_READS = {"look_into", "inspect", "run_playbook", "run_command", "check_space"}  # the device answers; slow ones finish in a follow-up
 DETAILS_CHARS = 2000
 
 
@@ -498,6 +556,13 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         return f"Couldn't: {reason}", None
     if status == "asked":
         return "Asked the device; it hasn't answered yet (I'll report back here when it does)", None
+    if status in ("waiting", "safer_first"):
+        plan = (resp.get("proposed") or {}).get("plan") or ""
+        return ("A card for this was already waiting: " if status == "waiting" else "The safer step first: ") + plan, None
+    if name == "check_space" and status == "done" and "devices" in resp:
+        rows = [f"{d.get('name')}: " + ", ".join(f"{u['what']} {u['sizeGb']} GB" for u in d.get("usedBy") or [])
+                for d in resp["devices"] if d.get("usedBy")]
+        return f"Measured the space on {len(rows)} device(s)", "\n".join(rows) or None
     if "devices" in resp:
         bad = [d.get("name") for d in resp["devices"] if d.get("status") not in ("ok", None)]
         return f"{len(resp['devices'])} devices" + (f"; needs a look: {', '.join(bad[:4])}" if bad else "; all fine"), None
@@ -521,7 +586,7 @@ def _commentary(name: str, resp: dict) -> tuple[str, str | None]:
         cards = len(resp.get("actionIds") or [])
         return f"Runbook \"{resp['runbook']}\": " + (f"put up {cards} card(s) for your approval" if cards
                                                      else f"result: {resp.get('status')}"), None
-    if name == "run_playbook" and resp.get("playbook"):
+    if name in ("run_playbook", "check_space") and resp.get("playbook"):
         text = str(resp["playbook"])
         lines = [ln[2:] for ln in text.splitlines() if ln.startswith("- ")]
         return (f"Checkup done: {len(lines)} finding(s)" if lines else "Checkup done: nothing stood out"), \

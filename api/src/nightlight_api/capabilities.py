@@ -146,12 +146,31 @@ def _finish_removal(uid: str, a: dict) -> None:
 
 def _playbook_result(tx, uid: str, a: dict, device: dict, current: bool) -> list:
     """A playbook's checks came back: match causes in code; for the chat that asked, a card per allowed clean-up."""
-    from . import playbooks
-    book = playbooks.library().get(a.get("playbook"))
-    if not book or not a["result"]["ok"]:
+    from . import db, playbooks
+    from google.cloud import firestore
+    if not a["result"]["ok"]:
         return []
+    # Whatever the checks measured about the clean-ups is kept on the device, so a later card is never put up for one
+    # that would free nothing (real._fix_card).
+    sizes = playbooks.measure(a["result"].get("output") or "", a["params"].get("what"), device)
+    measured = {r: {"gb": gb, "at": firestore.SERVER_TIMESTAMP} for r, gb in sizes.items()}
+    writes = [(db.device(uid, device["id"]), {"spaceMeasured": measured}, True)] if measured else []
+    device = {**device, "spaceMeasured": {**(device.get("spaceMeasured") or {}), **measured}}
+    book = playbooks.library().get(a.get("playbook"))
+    if not book:
+        return writes
     a["result"]["playbook"] = playbooks.evaluate(book, a["result"].get("output") or "", device)
-    return playbooks.cards_for_findings(tx, uid, a, device) if current else []
+    return (playbooks.cards_for_findings(tx, uid, a, device) if current else []) + writes
+
+
+def _space_freed(tx, uid: str, a: dict, device: dict, current: bool) -> list:
+    """A clean-up ran: what it cleared now measures nothing, until the device's checks say otherwise."""
+    from . import db
+    from google.cloud import firestore
+    if not a["result"]["ok"]:
+        return []
+    return [(db.device(uid, device["id"]),
+             {"spaceMeasured": {a["params"]["recipe"]: {"gb": 0.0, "at": firestore.SERVER_TIMESTAMP}}}, True)]
 
 
 def _store_grant(tx, uid: str, a: dict) -> list:
@@ -182,7 +201,7 @@ REGISTRY: dict[str, Capability] = {c.name: c for c in (
                reports_state=True, on_result=_service_recovered),
     Capability("restart_service", "Restart a stopped system service", "card", _restart_service,
                reports_state=True, on_result=_service_recovered),
-    Capability("fix", "Clean up space", "card", _fix),
+    Capability("fix", "Clean up space", "card", _fix, on_result=_space_freed),
     Capability("update_helper", "Update the helper", "card", _update, on_result=_helper_updated),
     Capability("remove_device", "Remove a device", "card", _remove, while_silent=True,
                after_approval=_finish_removal),

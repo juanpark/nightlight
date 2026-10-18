@@ -29,7 +29,7 @@ update) and reset the sample home. Signing in with Google lets you add your own 
 |---|---|---|
 | **Watches** | Each device shows a health light and one plain sentence ("The Minecraft world hasn't been backed up in 9 days"). A sweep every 5 minutes marks devices that stopped reporting and checks watched websites. | `api/.../sim.py`, `real.py`, `watch.py`, `main.py` (`/internal/sweep`) |
 | **Explains in plain words** | A Gemini agent reads devices with tools and answers without jargon. Before answering "why is it full / slow / offline?" on a real device, it runs fixed read-only checks and answers with names and sizes. | `agent.py`, `playbooks.yaml`, helper `inspect` |
-| **Asks before fixing** | Every change is an approval card: the plan, a dry run, what it touches, how to undo it, a risk badge. One tap approves or declines. If an answer says "I've put a card up" and none was made, the server makes the card it described (sample home, one clear match) or adds a visible correction. | `actions.py`, `capabilities.py`, `agent.py`, `turns.py`, `web/components/ApprovalCard.tsx` |
+| **Asks before fixing** | Every change is an approval card: the plan, a dry run, what it touches, how to undo it, a risk badge. One tap approves or declines. A card exists only when the model called the tool that makes it; the chat shows each card and each step from server events, never from the model's words, and the server never edits an answer to match them. | `actions.py`, `capabilities.py`, `agent.py`, `turns.py`, `web/components/ApprovalCard.tsx` |
 | **Earns trust per kind of job** | After three approved successes of the same kind of job, Nightlight may offer to handle that job on its own. Risky jobs have a ceiling (restarting a game server always asks). A failure moves trust back down a step. Jobs on real devices always wait for a tap. | `trust.py`, `web/components/TrustPanel.tsx` |
 
 Trust levels, in the words the app uses:
@@ -316,7 +316,7 @@ service-account files are gitignored; a scan (`.gitleaks.toml`) gates every depl
 | `api/src/nightlight_api/real.py` | real devices: joining, heartbeats, setup, found things, job hand-over |
 | `api/src/nightlight_api/links.py` | lines between devices, drawn or worked out from keyed fingerprints |
 | `api/src/nightlight_api/apps.py` | what an app is: a fixed catalog of home apps, each with one plain line |
-| `api/src/nightlight_api/turns.py` | a chat turn: streaming, events, the correction when a claimed card wasn't made |
+| `api/src/nightlight_api/turns.py` | a chat turn: streaming, events, one retry when an answer comes back empty or cut off, then an honest "couldn't answer" |
 | `api/src/nightlight_api/expert.py` | passkey registration and signing for expert sessions |
 | `api/src/nightlight_api/playbooks.py`, `playbooks.yaml` | known problems as data |
 | `api/src/nightlight_api/research.py` | Google Search grounded research |
