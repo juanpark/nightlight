@@ -9,7 +9,7 @@
 #   causes: tried in order; `match` runs per line, `size` (if captured) must reach `min_gb`
 #     say: plain words, {size} and other named groups are filled in
 #     fix: a helper clean-up (optional); advice: what the person can do themselves (optional)
-#   nothing: said when no cause matched
+#   nothing: said when no cause matched; or {mac: ..., other: ...} when it depends on the device's system
 
 - id: disk_full
   title: Disk filling up
@@ -22,10 +22,23 @@
       min_gb: 5
       say: "{name} is the biggest folder found ({size})."
       advice: Open it and sort by size; move or delete what you no longer need (Nightlight doesn't delete your own files).
+    # Linux: the main disk's biggest folder wherever it is (/srv, /opt, /home...), from one bounded `du -x` pass per
+    # top folder; the system's own folders (/usr, /boot...) are never named here.
+    - id: big_disk_folder
+      match: '^Biggest folder on the main disk: (?P<name>.+?): (?P<size>[\d.]+ [MG]B)$'
+      min_gb: 2
+      say: "{name} is the biggest folder on the main disk ({size})."
+      advice: Move what you no longer need there to another disk, or delete it (Nightlight doesn't delete your own
+        files).
+    - id: unmeasured
+      match: '^Not found in the measured folders: about (?P<size>[\d.]+ [MG]B) of the (?P<used>[\d.]+ [MG]B) in use \((?P<where>.+)\)$'
+      min_gb: 1
+      say: About {size} of the {used} in use isn't in any folder the helper could measure ({where}).
+      advice: A program that still holds a deleted file open keeps its space until that program restarts.
     - id: gradle
       match: '^(?:Biggest folder: )?~/\.gradle: (?P<size>[\d.]+ [MG]B)$'
       min_gb: 2
-      say: Gradle (Android/Java builds) keeps {size} of downloaded libraries and build caches.
+      say: A developer build tool (Gradle, for Android/Java) keeps {size} of downloads and temporary build files.
       advice: Delete ~/.gradle/caches when no build is running; Gradle downloads what it needs again.
     - id: simulators
       match: '^(?:Biggest folder: )?~/Library/Developer: (?P<size>[\d.]+ [MG]B)$'
@@ -35,7 +48,7 @@
     - id: user_cache
       match: '^(?:Biggest folder: )?~/\.cache: (?P<size>[\d.]+ [MG]B)$'
       min_gb: 2
-      say: Programs' caches in ~/.cache take {size}; they are rebuilt when needed.
+      say: Programs' temporary files (in ~/.cache) take {size}; they are rebuilt when needed.
       advice: Look inside ~/.cache and delete the folders of tools you no longer use.
     - id: trash
       match: '^Trash: (?P<size>[\d.]+ [MG]B)'
@@ -50,18 +63,19 @@
     - id: brew
       match: '^Homebrew cache: (?P<size>[\d.]+ [MG]B)'
       min_gb: 0.5
-      say: Homebrew keeps {size} of old downloads.
+      say: A developer tool installer (Homebrew) keeps {size} of old downloads.
       fix: brew_cleanup
     - id: npm
       match: '^npm cache: (?P<size>[\d.]+ [MG]B)'
       min_gb: 0.5
-      say: The npm cache takes {size}.
+      say: A programming tool's download cache (npm) takes {size}.
       fix: npm_cache
     - id: docker_images
-      match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[MG]B)'
+      match: '^Images\s+\d+\s+\d+\s+[\d.]+\s*[kMG]?B\s+(?P<size>[\d.]+\s*[kMG]?B)'
       min_gb: 0.3
-      say: Docker images take up to {size} that no container uses. The clean-up removes only untagged leftovers; check
-        the rest with "docker image ls" before removing anything you built yourself.
+      say: App downloads (Docker images) that no app uses take up to {size}. The clean-up removes the unused ones
+        that have no name, mostly old versions left over from updates, but also unnamed images built on this device;
+        named images stay. If you build images yourself, check them with "docker image ls" first.
       fix: docker_prune
     - id: apt
       match: '^Package cache \(apt\): (?P<size>[\d.]+ [MG]B)'
@@ -72,7 +86,7 @@
     - id: journal
       match: '^System journal: (?P<size>[\d.]+\s*[MG])'
       min_gb: 0.5
-      say: The system log takes {size}.
+      say: The system's event diary (its log) takes {size}.
       advice: Or run "sudo journalctl --vacuum-size=200M" yourself in a terminal on the device.
       fix: journal_vacuum
     # One log (a file or a folder under /var/log, never the journal: it has its own line) that grew big. No card:
@@ -80,9 +94,10 @@
     - id: big_log
       match: '^Big log: (?P<path>/var/log/(?P<app>[^/.:]+)[^:]*): (?P<size>[\d.]+ [MG]B)$'
       min_gb: 1
-      say: One log takes {size} on its own, {path}. Going by its name, "{app}" writes it.
+      say: One app's activity file (log) takes {size} on its own, {path}. Going by its name, "{app}" writes it.
       advice: Have "{app}" keep less (most programs have a log level or log rotation setting; a debug log can usually
-        be switched off). In Investigate mode, Nightlight can write the exact command to shrink it for you to sign.
+        be switched off). If deeper checks with a passkey are set up for this device, Investigate deeply can propose the
+        exact command to shrink it, for you to approve.
     - id: app_caches
       match: '^App caches: (?P<size>[\d.]+ [MG]B)'
       min_gb: 2
@@ -97,7 +112,10 @@
       match: '^Not checked \(macOS privacy\)'
       say: Downloads, Desktop, Documents, Movies and the Trash weren't checked, because macOS asks the person at the Mac first.
       advice: To include them, run "nightlight settings" once at the Mac and click Allow when macOS asks.
-  nothing: None of the usual places is large. The space is probably in your own files (Documents, Movies, Photos).
+  nothing:
+    mac: None of the usual places is large. The space is probably in your own files (Documents, Movies, Photos).
+    other: None of the places measured is large, so the space is outside them (in a folder the helper can't read, or
+      on another disk).
 
 - id: slow
   title: Running slowly
@@ -115,7 +133,11 @@
       min_value: {cpu: 80}
       say: "{name} keeps a processor core busy ({cpu}% CPU)."
       advice: If {name} isn't doing something you asked for, quit or restart it.
-  nothing: No single program stands out right now; it may have been a short burst.
+    - id: overloaded
+      match: '^Processor overloaded: over the last minute (?P<load>[\d.]+) programs on average wanted the processor at once, with (?P<cores>\d+) cores?'
+      say: The processor is overloaded. Over the last minute, {load} programs on average wanted it at once, and it has
+        {cores} core(s), so programs wait their turn.
+  nothing: No single program stands out in this sample, and the processor isn't overloaded.
 
 - id: no_internet
   title: Internet problems
@@ -145,11 +167,11 @@
       advice: Install them from System Settings > General > Software Update when a restart suits you.
     - id: apt
       match: '^(?P<count>[1-9]\d*) package updates waiting'
-      say: "{count} package updates are waiting."
+      say: "{count} software updates (packages) are waiting."
       advice: Run "sudo apt update && sudo apt upgrade" when nothing important is running.
     - id: brew
       match: '^Homebrew outdated \((?P<count>[1-9]\d*)\)'
-      say: "{count} Homebrew packages have newer versions."
+      say: "{count} developer tools installed with Homebrew have newer versions."
       advice: Run "brew upgrade" when you have a few minutes.
   nothing: Nothing is waiting to be installed.
 

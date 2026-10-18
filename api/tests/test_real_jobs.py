@@ -23,11 +23,28 @@ def _action(uid, aid):
     return db.action(uid, aid).get().to_dict()
 
 
+def test_the_report_right_after_a_job_is_never_throttled(client, started):
+    """A helper reports at once after finishing a job (round-4 VM: that report got 429 and the helper slept ~20 s with
+    its work channel closed, so the chat's next check waited past the in-turn wait). One early report per job result
+    goes through; another early one is still limited."""
+    dev = enrolled(client)
+    beat(client, dev["token"], ALLOW)
+    a = _propose(started, dev["deviceId"])
+    client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
+    r = client.post("/helper/jobs/wait?hold=1", json={}, headers={"X-Device-Token": dev["token"]})
+    assert [j["id"] for j in r.json()["jobs"]] == [a["id"]]
+    assert beat(client, dev["token"], ALLOW).status_code == 429  # no job finished yet: the gap still holds
+    client.post(f"/helper/jobs/{a['id']}/result", json={"ok": True, "summary": "ok", "state": "running"},
+                headers={"X-Device-Token": dev["token"]})
+    assert beat(client, dev["token"], ALLOW).status_code == 200  # the report after the job
+    assert beat(client, dev["token"], ALLOW).status_code == 429  # once per job result
+
+
 def test_approved_job_is_delivered_once_and_reported_by_its_device(client, started):
     dev = enrolled(client)
     assert beat(client, dev["token"], ALLOW).json()["jobs"] == []
     a = _propose(started, dev["deviceId"])
-    assert a["status"] == "pending" and a["realm"] == "real" and "docker start pi-grafana-1" in a["dryRun"]
+    assert a["status"] == "pending" and a["realm"] == "real" and a["command"] == "docker start pi-grafana-1"
     _again(dev["token"])
     assert beat(client, dev["token"], ALLOW).json()["jobs"] == []  # not approved yet: nothing handed over
     r = client.post(f"/api/actions/{a['id']}/decide", json={"decision": "approve"})
@@ -45,7 +62,7 @@ def test_approved_job_is_delivered_once_and_reported_by_its_device(client, start
     done = _action(started, a["id"])
     assert done["result"]["ok"] is True and done["continuationTurnId"]
     turn = db.turns(started, "sess_test").document(done["continuationTurnId"]).get().to_dict()
-    assert turn["status"] == "queued" and "Restart a stopped container" in turn["input"]
+    assert turn["status"] == "queued" and "Restart an app (Docker)" in turn["input"]
     assert db.services(started, dev["deviceId"]).document("pi-grafana-1").get().to_dict()["status"] == "ok"
     again = client.post(f"/helper/jobs/{a['id']}/result", json={"ok": False, "summary": "x"},
                         headers={"X-Device-Token": dev["token"]})
@@ -202,7 +219,7 @@ def test_restart_a_failed_service_only_when_allowed(client, started):  # slice 1
     beat(client, dev["token"], facts)
     a = actions.propose(started, session_id="sess_test", turn_id="t_svc", generation=generation(started),
                         action_type="restart_service", device_id=dev["deviceId"], params={"unit": "pihole-FTL.service"})
-    assert a["status"] == "pending" and "sudo systemctl restart pihole-FTL.service" in a["dryRun"]
+    assert a["status"] == "pending" and a["command"] == "sudo systemctl restart pihole-FTL.service"
     with pytest.raises(ValueError, match="not_allowed_on_device"):
         actions.propose(started, session_id="sess_test", turn_id="t_svc2", generation=generation(started),
                         action_type="restart_service", device_id=dev["deviceId"], params={"unit": "ssh.service"})
@@ -327,7 +344,7 @@ def test_a_running_but_unhealthy_container_is_flagged_and_can_be_restarted(clien
     with pytest.raises(ValueError, match="needs_restart"):  # a start card can't be made for it
         _propose(started, dev["deviceId"], "photos", turn="turn_start")
     card = actions.propose(started, turn_id="turn_sick", **restart)
-    assert card["status"] == "pending" and "docker restart photos" in card["dryRun"]
+    assert card["status"] == "pending" and card["command"] == "docker restart photos" and "docker" not in card["dryRun"]
     with pytest.raises(ValueError, match="not_unhealthy"):  # and a restart only for an unhealthy one
         actions.propose(started, turn_id="t_r", **{**restart, "params": {"container": "web", "restart": True}})
 

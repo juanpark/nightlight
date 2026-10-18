@@ -13,9 +13,25 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 import re
 
 from . import apps, db, links, release
-from .errors import ApiError, not_found
+from .errors import ApiError, Outcome, not_found
 from .ids import action_id as make_action_id, new_id, proposal_key
 from .redact import scrub, scrub_value
+
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 2: "stopped with an error (exit code 2)",
+                137: "was force-stopped (exit code 137: killed, or out of memory)",
+                143: "was asked to stop (exit code 143)", 139: "crashed (exit code 139)",
+                126: "couldn't start its program (exit code 126)", 127: "couldn't find its program (exit code 127)"}
+
+
+def _stopped_words(status) -> str:
+    """Why a stopped container stopped, in plain words first, from Docker's status ("Exited (137) 5 minutes ago"):
+    the meaning is the fact to report, the number only backs it up."""
+    m = re.match(r"Exited \((-?\d+)\)", status or "")
+    if not m:
+        return "isn't running"
+    code = int(m.group(1))
+    return "isn't running: it " + EXIT_MEANING.get(code, f"exited with code {code}")
+
 
 CODE_TTL = timedelta(minutes=10)
 CODES_PER_HOUR = 10
@@ -30,23 +46,33 @@ CLAIM_MIN_SECONDS = 4
 # What a real device can be asked to do is declared in capabilities.py; the card builders for its jobs live here.
 # The helper's fixed clean-ups (job `fix`, params {"recipe": name}). Each removes only things that come back on their
 # own, except the Trash (what the owner already threw away). Words for the approval card.
-FIX = {
+FIX = {  # recipe -> (title, what happens in plain words, undo, the exact command the helper runs or None)
     "empty_trash": ("Empty the Trash", "Deletes everything in the Trash", "Can't be undone: files in the Trash are "
-                    "deleted for good. Look in the Trash first if you're unsure."),
-    "brew_cleanup": ("Clear Homebrew's old downloads", "Runs \"brew cleanup -s\": removes old versions and cached "
-                     "downloads", "Nothing to undo: Homebrew downloads again what it needs."),
-    "npm_cache": ("Clear the npm cache", "Runs \"npm cache clean --force\"",
-                  "Nothing to undo: npm downloads packages again when needed."),
-    "xcode_build_data": ("Clear Xcode's build data", "Empties Xcode's DerivedData folder",
-                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower)."),
-    "docker_prune": ("Remove Docker's leftover images", "Runs \"docker image prune -f\": removes only untagged "
-                     "images (leftovers from updates and rebuilds) that no container uses", "Nothing to undo: "
-                     "images with a name and all containers are not touched."),
-    "apt_clean": ("Clear downloaded system updates", "Runs \"sudo apt-get clean\": removes downloaded package files",
-                  "Nothing to undo: installed software is not touched."),
-    "journal_vacuum": ("Shrink the system log", "Runs \"sudo journalctl --vacuum-size=200M\": keeps the newest "
-                       "200 MB of system logs", "Can't be undone: older log entries are deleted."),
+                    "deleted for good. Look in the Trash first if you're unsure.", None),
+    "brew_cleanup": ("Clear old downloads of developer tools (Homebrew)", "Removes old versions and saved downloads "
+                     "of Homebrew's tools", "Nothing to undo: Homebrew downloads again what it needs.",
+                     "brew cleanup -s"),
+    "npm_cache": ("Clear a programming tool's download cache (npm)", "Removes the packages npm saved for reuse",
+                  "Nothing to undo: npm downloads packages again when needed.", "npm cache clean --force"),
+    "xcode_build_data": ("Clear Xcode's temporary build files", "Empties Xcode's build folder (DerivedData)",
+                         "Nothing to undo: Xcode rebuilds it on the next build (the first build is slower).", None),
+    "docker_prune": ("Remove leftover app downloads", "Removes app downloads (Docker images) that have no name "
+                     "and that no app uses: mostly old versions left over from updates, but also unnamed images "
+                     "someone built on this device", "Can't be undone for what it removes, but apps in use and "
+                     "named images are not touched; an unnamed image you built yourself would have to be built "
+                     "again.", "docker image prune -f"),
+    "apt_clean": ("Clear downloaded system updates", "Removes the saved installation downloads (package files), "
+                  "including ones that were downloaded but never installed",
+                  "Nothing to undo: installed software stays exactly as it is; anything still needed is downloaded "
+                  "again.", "sudo apt-get clean"),
+    "journal_vacuum": ("Shrink the system's event diary (log)", "Keeps only the newest 200 MB of the system's record "
+                       "of events", "Can't be undone: older entries are deleted.",
+                       "sudo journalctl --vacuum-size=200M"),
 }
+# The device's last measurement per clean-up (device field `spaceMeasured`, written when its disk checks come back and
+# when a clean-up ran): one that measured at most NOTHING_GB within MEASURED_FOR gets no card, it would free nothing.
+NOTHING_GB = 0.1
+MEASURED_FOR = timedelta(hours=3)
 # Read-only and owner-allowed per target on the device: no approval card. `logs` additionally lets the helper send the
 # last log lines (scrubbed on the device); without it only structured status leaves the device.
 ALLOW_KEYS = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -841,7 +867,8 @@ def checks(facts: dict) -> list[dict]:
                         "evidence": f"container status: {c.get('status')}", "svcId": _doc_id(c["name"])})
         if c.get("state") not in ("running", None):
             out.append({"id": _finding_id("f_ctr_", c["name"]), "check": "container_down", "severity": "warn",
-                        "message": f"{c['name']} isn't running.", "evidence": f"container state: {c.get('state')}",
+                        "message": f"{c['name']} {_stopped_words(c.get('status'))}.",
+                        "evidence": f"container state: {c.get('state')}",
                         "svcId": _doc_id(c["name"])})
     agents = facts.get("failedAgents") or []
     if agents:
@@ -888,10 +915,11 @@ def _unit_card(device: dict, services: dict, params: dict) -> dict:
     if not svc or svc.get("kind") != "system" or svc.get("unit") != unit or not svc.get("failed"):
         raise ValueError("not_failed")  # only the exact service the device reports as failed
     friendly = _friendly(unit)
-    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} ({unit}) on the {device['name']}.",
-            "dryRun": f"The helper on the device runs \"sudo systemctl restart {unit}\" and checks it is still running "
-                      f"a few seconds later. Nothing else is touched.",
+    return {"svcId": _doc_id(unit), "plan": f"Restart {friendly} on the {device['name']}: it stopped working.",
+            "dryRun": f"Nightlight's helper starts {friendly} (a background service, {unit}) again and checks it is "
+                      "still running a few seconds later. Nothing else is touched.",
             "rollback": "Nothing to undo: if it fails again, it simply stays stopped and you'll see why.",
+            "command": f"sudo systemctl restart {unit}",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -900,10 +928,17 @@ def _fix_card(device: dict, params: dict) -> dict:
         raise ValueError("bad_target")
     if params["recipe"] not in (device.get("allowedJobs") or {}).get("fix", []):
         raise ValueError("not_allowed_on_device")
-    title, what, undo = FIX[params["recipe"]]
+    measured = ((device.get("spaceMeasured") or {}).get(params["recipe"]) or {})
+    at = measured.get("at")
+    age = (_now() - at) if isinstance(at, datetime) else timedelta(0)  # not a datetime yet: written just now
+    if measured.get("gb") is not None and measured["gb"] <= NOTHING_GB and age < MEASURED_FOR:
+        raise Outcome("nothing_to_free", recipe=params["recipe"], measuredGb=measured["gb"],
+                      minutesAgo=int(age.total_seconds() // 60))
+    title, what, undo, command = FIX[params["recipe"]]
     return {"svcId": None, "plan": f"{title} on the {device['name']}.",
-            "dryRun": f"{what}. The helper reports how much space it freed. Nothing else is touched.",
-            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service"}
+            "dryRun": f"{what}. Nightlight's helper reports how much space it freed. Nothing else is touched.",
+            "rollback": undo, "blastRadius": [device["id"]], "riskClass": "service",
+            **({"command": command} if command else {})}
 
 
 def _remove_card(device: dict, params: dict) -> dict:
@@ -952,16 +987,18 @@ def card(device: dict, services: dict, action_type: str, params: dict) -> dict:
     if unhealthy:  # running but failing its health check: the restart the card names is the job's own parameter
         if release.newer(UNHEALTHY_RESTART_FROM, device.get("helperVersion")):
             raise ValueError("helper_too_old")
-        return {"svcId": _doc_id(name), "plan": f"Restart the {name} container on the {device['name']}: it is "
-                                                f"running but failing its own health check.",
-                "dryRun": f"The helper on the device runs \"docker restart {name}\" and checks its health a few "
-                          f"seconds later. {name} is unavailable for a moment. Nothing else is touched.",
+        return {"svcId": _doc_id(name), "plan": f"Restart {name} on the {device['name']}: it is on but not "
+                                                f"responding properly (its own health check fails).",
+                "dryRun": f"Nightlight's helper restarts {name} and checks it is healthy a few seconds later. {name} "
+                          f"is unavailable for a moment. Nothing else is touched.",
                 "rollback": "Nothing to undo: it starts again with the same settings and data.",
+                "command": f"docker restart {name}",
                 "blastRadius": [device["id"]], "riskClass": "service"}
-    return {"svcId": _doc_id(name), "plan": f"Start the stopped {name} container again on the {device['name']}.",
-            "dryRun": f"The helper on the device runs \"docker start {name}\" and checks it is still running a few "
-                      f"seconds later. Nothing else is touched.",
-            "rollback": f"Stop {name} again (from the app or with \"docker stop {name}\").",
+    return {"svcId": _doc_id(name), "plan": f"Start {name} again on the {device['name']}: it has stopped.",
+            "dryRun": f"Nightlight's helper starts {name} (an app packaged with Docker) and checks it is still "
+                      f"running a few seconds later. Nothing else is touched.",
+            "rollback": f"You can stop {name} again on the device (\"docker stop {name}\").",
+            "command": f"docker start {name}",
             "blastRadius": [device["id"]], "riskClass": "service"}
 
 
@@ -1010,7 +1047,9 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
         if not t or t.get("revoked"):
             raise ApiError(401, "invalid_token")
         last = t.get("lastSeen")
-        if last and (_now() - last).total_seconds() < HEARTBEAT_MIN_SECONDS:
+        # The minimum gap bounds a misbehaving client, never a helper's normal cadence: the report a helper sends
+        # right after finishing a job (so the change shows at once) is let through once per job result.
+        if last and (_now() - last).total_seconds() < HEARTBEAT_MIN_SECONDS and not t.get("reportDue"):
             raise ApiError(429, "too_frequent", retryAfter=HEARTBEAT_MIN_SECONDS)
         uid, device_id = t["uid"], t["deviceId"]
         dref = db.device(uid, device_id)
@@ -1055,7 +1094,7 @@ def heartbeat(token: str, facts: dict, take_jobs: bool = True) -> dict:
             restarted[0] = gap["restarted"] is True
             event(tx, uid, device_id, "back", "info", f"{device.get('name', 'A device')} is reporting again: "
                   + gap["words"])
-        tx.update(tref, {"lastSeen": _now()})
+        tx.update(tref, {"lastSeen": _now(), "reportDue": False})
         extra["diskTrend"] = trend
         if net_changed:
             extra["net"] = net
@@ -1308,41 +1347,55 @@ def set_permissions(uid: str, device_id: str, perms: dict, also: dict | None = N
             st = d.get("setup") or {}
             if st.get("attempt") != setup_attempt or st.get("state") != "applying" or st.get("permsApplied"):
                 raise ApiError(409, "setup_superseded")
-        services = {s.id: s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)}
-        containers = {s.get("name") for s in services.values() if s.get("kind") == "container"}
-        units = {s.get("unit") for s in services.values() if s.get("kind") == "system" and s.get("unit")}
-        if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
-                or not set(perms["logs"]) <= containers | units:
-            raise ApiError(422, "unknown_target")  # only things this device reported
-        before = d.get("permissions") or DEFAULT_PERMISSIONS
-        clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
-                 "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
-                 **{k: sorted(set(perms[k])) for k in
-                                                         ("logs", "restart_container", "restart_service")}}
-        tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
-        words = []
-        if clean["diagnose"] != before.get("diagnose"):
-            words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
-        if clean["updates"] != (before.get("updates") is not False):
-            words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
-        if clean["autoUpdate"] != bool(before.get("autoUpdate")):
-            words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
-        if clean["cleanup"] != bool(before.get("cleanup")):
-            words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
-        for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
-                          ("restart_service", "restart the service")):
-            added = sorted(set(clean[key]) - set(before.get(key, [])))
-            removed = sorted(set(before.get(key, [])) - set(clean[key]))
-            if added:
-                words.append(f"may {what} {', '.join(added)}")
-            if removed:
-                words.append(f"may no longer {what} {', '.join(removed)}")
-        if words:
-            event(tx, uid, device_id, "permissions", "info",
-                  f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+        services = [s.to_dict() for s in db.services(uid, device_id).get(transaction=tx)]
+        clean = permission_writes(tx, uid, device_id, d, services, perms, also)
         return {"ok": True, "permissions": clean}
 
     return db.run_transaction(run)
+
+
+def log_targets(services) -> set:
+    """What this device reported that log reading can be allowed for: its containers and system services."""
+    return {s.get("name") for s in services if s.get("kind") == "container"} | \
+        {s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")}
+
+
+def permission_writes(tx, uid: str, device_id: str, d: dict, services, perms: dict,
+                      also: dict | None = None) -> dict:
+    """Validate and write a device's new permissions with their Activity line (writes only: the caller has read the
+    device `d` and its `services` in this transaction). Returns the clean permissions."""
+    ref = db.device(uid, device_id)
+    containers = {s.get("name") for s in services if s.get("kind") == "container"}
+    units = {s.get("unit") for s in services if s.get("kind") == "system" and s.get("unit")}
+    if not set(perms["restart_container"]) <= containers or not set(perms["restart_service"]) <= units \
+            or not set(perms["logs"]) <= containers | units:
+        raise ApiError(422, "unknown_target")  # only things this device reported
+    before = d.get("permissions") or DEFAULT_PERMISSIONS
+    clean = {"diagnose": bool(perms["diagnose"]), "cleanup": bool(perms.get("cleanup")),
+             "updates": perms.get("updates") is not False, "autoUpdate": bool(perms.get("autoUpdate")),
+             **{k: sorted(set(perms[k])) for k in ("logs", "restart_container", "restart_service")}}
+    tx.update(ref, {"permissions": clean, "permissionsAt": firestore.SERVER_TIMESTAMP, **(also or {})})
+    words = []
+    if clean["diagnose"] != before.get("diagnose"):
+        words.append(("may now check" if clean["diagnose"] else "no longer checks") + " why things stop")
+    if clean["updates"] != (before.get("updates") is not False):
+        words.append("updates from the app are now " + ("allowed" if clean["updates"] else "off"))
+    if clean["autoUpdate"] != bool(before.get("autoUpdate")):
+        words.append("signed updates now install " + ("automatically" if clean["autoUpdate"] else "only when you ask"))
+    if clean["cleanup"] != bool(before.get("cleanup")):
+        words.append(("may now" if clean["cleanup"] else "may no longer") + " clean up space after you approve")
+    for key, what in (("logs", "read log lines of"), ("restart_container", "restart"),
+                      ("restart_service", "restart the service")):
+        added = sorted(set(clean[key]) - set(before.get(key, [])))
+        removed = sorted(set(before.get(key, [])) - set(clean[key]))
+        if added:
+            words.append(f"may {what} {', '.join(added)}")
+        if removed:
+            words.append(f"may no longer {what} {', '.join(removed)}")
+    if words:
+        event(tx, uid, device_id, "permissions", "info",
+              f"You changed what Nightlight may do on {d.get('name', 'a device')}: {'; '.join(words)}.", who="you")
+    return clean
 
 
 def set_issue_state(uid: str, device_id: str, finding_id: str, state: str, days: int | None) -> dict:

@@ -350,10 +350,11 @@ def test_look_into_needs_local_permission_and_reads_only(helper, monkeypatch):
     assert helper.look_into("grafana")[0] is False and calls == []  # not allowed: nothing runs
     helper.set_allowed("diagnose", "grafana", True)
     ok, summary, out = helper.look_into("grafana")
-    assert ok and "out of memory" in summary and "last log lines" not in out  # logs need their own permission
+    assert ok and "out of memory" in summary and "line" not in out.split("last log lines:")[1].split("(")[0]
+    assert "last log lines: not read" in out  # logs need their own permission, and the result says so
     helper.set_allowed("logs", "grafana", True)
     ok, summary, out = helper.look_into("grafana")
-    assert "last log lines" in out and "x1" not in out
+    assert "last log lines:\n" in out and "not read" not in out and "x1" not in out
     assert all(c[0] == "docker" and c[1] in ("inspect", "logs") for c in calls)  # read-only commands only
     job = {"id": "act_" + "b" * 26, "type": "diagnose", "params": {"target": "grafana; rm -rf /"}}
     assert helper.run_job(job)[0] is False
@@ -642,7 +643,8 @@ def test_a_too_soon_report_waits_the_asked_gap_not_a_backoff(helper, monkeypatch
     monkeypatch.setattr(helper, "_wait_and_claim", waits.append)
     with pytest.raises(KeyboardInterrupt):
         helper.run(60)
-    assert sleeps == [21] and waits == [60]  # retried after the server's gap, then back to the normal minute
+    # Retried after the server's gap, with the work channel open meanwhile (never a blind sleep), then the minute.
+    assert sleeps == [] and waits == [21, 60]
 
 
 def test_after_running_a_job_the_helper_reports_at_once(helper, monkeypatch):
