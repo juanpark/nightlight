@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.29"
+VERSION = "0.9.30"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -106,6 +106,9 @@ def _cpu_mem_uptime():
         cpu = min(round(load / (os.cpu_count() or 1) * 100, 1), 100.0)
     except (OSError, AttributeError):
         pass
+    busy = _cpu_busy(0.5)  # Linux: how busy the processor really is, not the load average dressed up as a percent
+    if busy is not None:
+        cpu = busy
     if sys.platform == "darwin":
         mem, up = _mac_mem_uptime()
         return cpu, mem, up
@@ -121,6 +124,33 @@ def _cpu_mem_uptime():
     except (OSError, KeyError, ValueError):
         pass
     return cpu, mem, up
+
+
+_PROC = "/proc"
+
+
+def _cpu_times():
+    """(idle ticks, all ticks) of the whole processor from /proc/stat, or None (not Linux)."""
+    try:
+        with open(f"{_PROC}/stat") as f:
+            fields = [int(x) for x in f.readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    if len(fields) < 4:
+        return None
+    return fields[3] + (fields[4] if len(fields) > 4 else 0), sum(fields[:8])
+
+
+def _cpu_busy(seconds):
+    """Percent of all cores busy over the next `seconds` (two /proc/stat reads), or None."""
+    a = _cpu_times()
+    if a is None or seconds <= 0:
+        return None
+    time.sleep(seconds)
+    b = _cpu_times()
+    if b is None or b[1] <= a[1]:
+        return None
+    return round(min(100.0, max(0.0, 100 * (1 - (b[0] - a[0]) / (b[1] - a[1])))), 1)
 
 
 def _mac_mem_uptime():
@@ -465,9 +495,10 @@ def _run_both(cmd, timeout=15, cap=256 * 1024):
     return b"".join(chunks)[:cap].decode("utf-8", "replace")
 
 
-EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was stopped forcibly (often out of memory, "
-                "or someone stopped it)", 143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
+EXIT_MEANING = {0: "finished normally", 1: "stopped with an error", 137: "was force-stopped (killed, or out of memory)",
+                143: "was asked to stop", 139: "crashed", 126: "couldn't start its program",
                 127: "couldn't find its program"}
+OOM_MEANING = "was force-stopped because it ran out of memory"
 HEALTH_MEANING = {"unhealthy": "is running, but failing its health check", "starting": "is running, but its health "
                   "check hasn't passed yet", "healthy": "is running and passing its health check"}
 
@@ -482,6 +513,8 @@ def _look_container(name, logs):
     code = st.get("ExitCode")
     status = st.get("Status", "unknown")
     meaning = EXIT_MEANING.get(code, f"exited with code {code}") if status != "running" else "is running"
+    if status != "running" and st.get("OOMKilled"):
+        meaning = OOM_MEANING  # Docker saw the memory limit hit: say it plainly, not "killed, or out of memory"
     health = st.get("Health") if isinstance(st.get("Health"), dict) else {}
     if status == "running" and health.get("Status") in HEALTH_MEANING:
         meaning = HEALTH_MEANING[health["Status"]]
@@ -495,10 +528,17 @@ def _look_container(name, logs):
             lines.append(f"last health check said: {_one_line(str(last['Output']).strip(), 200)}")
     if st.get("Error"):
         lines.append(f"error: {st['Error'][:200]}")
-    summary = f"{name} {meaning}" + (", out of memory" if st.get("OOMKilled") else "")
+    summary = f"{name} {meaning}"
     if logs:
         lines += ["last log lines:", _tail(scrub(_run_both(["docker", "logs", "--tail", "30", "--timestamps", name]))[0])]
+    else:
+        lines.append(LOGS_NOT_ALLOWED)
     return summary, "\n".join(lines)
+
+
+# Said when the owner hasn't allowed reading this target's logs: what was not read, and which permission would allow it
+LOGS_NOT_ALLOWED = "last log lines: not read (reading this one's logs isn't allowed on this device: the \"read logs\" " \
+    "permission for it would allow it)"
 
 
 def _look_unit(name, logs):
@@ -509,11 +549,31 @@ def _look_unit(name, logs):
     if not info.get("ActiveState"):
         return None
     summary = f"{unit} is {info.get('ActiveState')} ({info.get('Result', '')}, exit status {info.get('ExecMainStatus')})"
+    why = _unit_meaning(info)
+    if why:
+        summary += f": it {why}"
     lines = [f"{k}: {v}" for k, v in info.items()]
     if logs:
         lines += ["last log lines:", _tail(scrub(_run_both(["journalctl", "-u", unit, "-n", "30", "--no-pager",
                                                             "-o", "short-iso"]))[0])]
+    else:
+        lines.append(LOGS_NOT_ALLOWED)
     return summary, "\n".join(lines)
+
+
+def _unit_meaning(info):
+    """What a stopped service's result and exit status mean, in words ("" when it is running or nothing is known)."""
+    if info.get("ActiveState") == "active":
+        return ""
+    result, code = info.get("Result", ""), info.get("ExecMainStatus", "")
+    if result == "oom-kill":
+        return OOM_MEANING
+    if result == "signal" and code == "9" or code == "137":
+        return EXIT_MEANING[137]
+    try:
+        return EXIT_MEANING.get(int(code), "") if result not in ("", "success") else ""
+    except ValueError:
+        return ""
 
 
 def look_into(target):
@@ -730,6 +790,79 @@ def _logs():
     return total, journal, big
 
 
+_ROOT = "/"
+_ROOT_SKIP = {"proc", "sys", "dev", "run", "tmp"}  # not on the disk (or measured on its own: Temporary files)
+_SYSTEM_TOP = {"usr", "boot", "etc", "bin", "sbin", "lib", "lib32", "lib64", "libx32"}  # the system itself: listed,
+# never named as "the biggest folder" to move or delete things from
+ROOT_MIN_MB = 50  # a main-disk folder smaller than this is not listed
+ROOT_DEPTH = 2  # how deep under each top folder sizes are taken (one `du` pass per top folder)
+
+
+def _du_tree(path, depth=ROOT_DEPTH):
+    """{"." or "./a" or "./a/b": MB} for a pinned folder and the folders up to `depth` levels inside it, in one
+    `du -x` pass that never follows links or leaves the folder's own disk; None when it can't be measured in time."""
+    if _guarded(path) or _left(25) < 1:
+        return None
+    fd = _pin(path)
+    if fd is None:
+        return None
+    try:
+        out = subprocess.run(["du", "-k", "-x", "-d", str(depth), "."], capture_output=True, text=True,
+                             timeout=_left(25), check=False, pass_fds=(fd,), preexec_fn=lambda: os.fchdir(fd)).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        os.close(fd)
+    sizes = {}
+    for line in out.splitlines():
+        kb, _, rel = line.partition("\t")
+        if kb.isdigit() and (rel == "." or rel.startswith("./")):
+            sizes[rel] = round(int(kb) / 1024)
+    return sizes if "." in sizes else None
+
+
+def _root_folders():
+    """The main disk's top folders by size (no other disk mounted inside is entered), the biggest folder that isn't
+    the system's own (followed down while one folder holds at least half of its parent), and how much of the used
+    space they account for. Returns ([(MB, "/name")], ("/path", MB) or None, MB measured, MB in use, [top folders
+    that couldn't be measured]) or None."""
+    try:
+        root_dev = os.lstat(_ROOT).st_dev
+        used = shutil.disk_usage(_ROOT).used // 1024 ** 2
+    except OSError:
+        return None
+    tops, trees, unmeasured = [], {}, []
+    for name, is_dir, _mb in sorted(_scan(_ROOT) or []):
+        if not is_dir or name in _ROOT_SKIP or _left(5) < 1:
+            continue
+        path = os.path.join(_ROOT, name)
+        try:
+            if os.lstat(path).st_dev != root_dev:
+                continue  # another disk mounted here: its space isn't this disk's
+        except OSError:
+            continue
+        tree = _du_tree(path)
+        if tree:
+            tops.append((tree["."], name))
+            trees[name] = tree
+        else:
+            unmeasured.append("/" + name)
+    tops.sort(reverse=True)
+    biggest = None
+    for mb, name in tops:
+        if name in _SYSTEM_TOP:
+            continue
+        tree, rel, size = trees[name], ".", mb
+        for _ in range(ROOT_DEPTH):  # go one level down while a single folder holds at least half
+            kids = [(m, r) for r, m in tree.items() if r.startswith(rel + "/") and "/" not in r[len(rel) + 1:]]
+            if not kids or max(kids)[0] * 2 < size:
+                break
+            size, rel = max(kids)
+        biggest = ("/" + name + rel[1:], size)  # as the owner knows it (tests point _ROOT elsewhere)
+        break
+    return [(mb, "/" + name) for mb, name in tops], biggest, sum(mb for mb, _ in tops), used, unmeasured
+
+
 def _inspect_disk():
     rows = []
     for label, path in _disk_places():
@@ -752,22 +885,125 @@ def _inspect_disk():
     if sys.platform == "darwin" and not _mac_private_ok():
         lines.append("Not checked (macOS privacy): Downloads, Desktop, Documents, Movies, Trash. Allow once at the Mac "
                      "with `nightlight settings`.")
+    elif sys.platform != "darwin":
+        lines += _root_lines()
     return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
 
 
-def _inspect_processes():
-    out = _run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]
+def _root_lines():
+    """Lines about the main disk as a whole, so the biggest folder is always named wherever it is (say /srv), and
+    space no measured folder accounts for is said, not guessed."""
+    found = _root_folders()
+    if found is None:
+        return []
+    tops, biggest, measured, used, unmeasured = found
+    name = lambda p: _one_line(p, 160).replace(": ", " ")
+    lines = []
+    if biggest and biggest[1] >= ROOT_MIN_MB:
+        lines.append(f"Biggest folder on the main disk: {name(biggest[0])}: {_size(biggest[1])}")
+    big = [f"{name(p)} {_size(mb)}" for mb, p in tops[:8] if mb >= ROOT_MIN_MB]
+    if big:
+        lines.append("Folders on the main disk: " + ", ".join(big))
+    missing = used - measured
+    if tops and missing >= 1024 and missing * 10 >= used * 3:
+        skipped = f", in {', '.join(name(p) for p in unmeasured[:5])} (couldn't be measured in time)" if unmeasured else ""
+        lines.append(f"Not found in the measured folders: about {_size(missing)} of the {_size(used)} in use (in "
+                     f"folders the helper can't read{skipped}, or in deleted files a program still holds open)")
+    return lines
+
+
+CPU_SAMPLE = 1.0  # seconds between the two looks at what each program used
+TOP_CPU, TOP_MEM = 5, 8
+
+
+def _proc_table():
+    """{pid: (name, CPU ticks used so far, resident memory pages)} from /proc, or None (not Linux)."""
+    try:
+        pids = [p for p in os.listdir(_PROC) if p.isdigit()]
+    except OSError:
+        return None
+    out = {}
+    for pid in pids:
+        try:
+            with open(f"{_PROC}/{pid}/stat") as f:
+                raw = f.read()
+            name = raw[raw.index("(") + 1:raw.rindex(")")]
+            rest = raw[raw.rindex(")") + 2:].split()  # rest[0] is field 3 (state): utime 14, stime 15, rss 24
+            out[pid] = (name, int(rest[11]) + int(rest[12]), int(rest[21]))
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def _mem_total_kb():
+    try:
+        with open(f"{_PROC}/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _sampled_processes():
+    """Linux: (rows of (cpu % of one core, mem %, pid, name), processor busy % or None, seconds sampled), CPU measured
+    over the last CPU_SAMPLE seconds (two looks at /proc), not averaged over each program's lifetime as `ps` does,
+    so a program that just started spinning shows. None when /proc isn't there."""
+    first, t0, cpu0 = _proc_table(), time.monotonic(), _cpu_times()
+    if first is None:
+        return None
+    wait = _left(CPU_SAMPLE)
+    if wait > 0.05:
+        time.sleep(wait)
+    second, dt, cpu1 = _proc_table() or {}, time.monotonic() - t0, _cpu_times()
+    try:
+        hz, page = os.sysconf("SC_CLK_TCK"), os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        hz, page = 100, 4096
+    total = _mem_total_kb()
     rows = []
-    for line in out:
-        parts = line.split(None, 2)
-        if len(parts) == 3:
-            try:
-                rows.append((float(parts[1]), float(parts[0]), os.path.basename(parts[2])[:40]))
-            except ValueError:
-                pass
-    rows.sort(reverse=True)
-    return "Top programs by memory (memory %, CPU %, program):\n" + "\n".join(
-        f"{m:.1f}% mem, {c:.1f}% cpu, {name}" for m, c, name in rows[:10])
+    for pid, (name, ticks, rss) in second.items():
+        before = first.get(pid)
+        cpu = (ticks - before[1]) / hz / dt * 100 if before and before[0] == name and dt > 0.05 else 0.0
+        mem = rss * page / 1024 / total * 100 if total else 0.0
+        rows.append((max(0.0, cpu), mem, pid, name))
+    busy = None
+    if cpu0 and cpu1 and cpu1[1] > cpu0[1]:
+        busy = round(min(100.0, max(0.0, 100 * (1 - (cpu1[0] - cpu0[0]) / (cpu1[1] - cpu0[1])))))
+    return rows, busy, dt
+
+
+def _inspect_processes():
+    """The programs using the most processor right now and the most memory (both lists, so neither hides the
+    other), and how busy the whole processor is."""
+    head = []
+    sampled = _sampled_processes()
+    if sampled is not None:
+        rows, busy, dt = sampled
+        if busy is not None:
+            head.append(f"Processor busy right now: {busy}% of all {os.cpu_count() or '?'} cores")
+        how = f"CPU % of one core, measured over the last {dt:.1f} seconds" if dt > 0.05 else \
+            "CPU not measured (out of time)"
+    else:  # macOS: ps's CPU figure there is already a recent average
+        rows = []
+        for i, line in enumerate(_run(["ps", "-Ao", "pcpu,pmem,comm"], timeout=_left(10)).splitlines()[1:]):
+            parts = line.split(None, 2)
+            if len(parts) == 3:
+                try:
+                    rows.append((float(parts[0]), float(parts[1]), i, os.path.basename(parts[2])))
+                except ValueError:
+                    pass
+        how = "CPU % of one core, recent"
+    by_cpu = sorted((r for r in rows if r[0] >= 1), key=lambda r: r[0], reverse=True)[:TOP_CPU]
+    by_mem = sorted(rows, key=lambda r: r[1], reverse=True)[:TOP_MEM]
+    seen, shown = set(), []
+    for r in by_cpu + by_mem:
+        if r[2] not in seen:
+            seen.add(r[2])
+            shown.append(r)
+    return "\n".join(head + [f"Top programs by processor and by memory (memory %, {how}, program):"] + [
+        f"{m:.1f}% mem, {c:.1f}% cpu, {_one_line(name, 40)}" for c, m, _pid, name in shown])
 
 
 def _inspect_updates():
@@ -828,7 +1064,12 @@ def _inspect_load():
         one, five, fifteen = os.getloadavg()
     except OSError:
         return "Load: unknown"
-    return f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {os.cpu_count()} CPU cores"
+    cores = os.cpu_count() or 1
+    out = f"Load average (1/5/15 min): {one:.2f} / {five:.2f} / {fifteen:.2f} on {cores} CPU cores"
+    if one >= cores:  # a load is a count of programs wanting the processor, not a percent: at or over the cores, they queue
+        out += (f"\nProcessor overloaded: over the last minute {one:.1f} programs on average wanted the processor at "
+                f"once, with {cores} core{'s' if cores != 1 else ''} to share")
+    return out
 
 
 def _inspect_failed():

@@ -71,8 +71,10 @@ def evaluate(book: dict, output: str, device: dict) -> dict:
             if cleanup_on and not row["fixAllowed"]:
                 row["fixUnavailable"] = True  # switched on, but the device doesn't offer it (why isn't known here)
         found.append(row)
-    return {"id": book["id"], "title": book["title"], "found": found,
-            "nothing": None if found else book.get("nothing")}
+    nothing = book.get("nothing")
+    if isinstance(nothing, dict):  # said differently per system: a Linux server has no Documents or Movies folder
+        nothing = nothing["mac" if "mac" in str(device.get("os") or "").lower() else "other"]
+    return {"id": book["id"], "title": book["title"], "found": found, "nothing": None if found else nothing}
 
 
 def offered(device: dict) -> list[dict]:
