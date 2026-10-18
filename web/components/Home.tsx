@@ -20,6 +20,7 @@ import { restartTour } from "@/lib/tour";
 import { leaveLive, useLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
+import SampleTour from "./SampleTour";
 import Activity from "./Activity";
 import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
@@ -158,7 +159,7 @@ export default function Home({ user, account }: { user: User; account?: string }
         <button onClick={() => toggle("watch")}>Watch a website</button>
         <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
         {user.isAnonymous
-          && <button onClick={saveWithGoogle} title="Keep this home by linking a Google account">Save with Google</button>}
+          && <button onClick={saveWithGoogle} title="Keeps what you did here and lets you add your own devices.">Sign in with Google</button>}
         <div className="more">
           <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
             onClick={() => setMore(!more)}>More</button>
@@ -189,6 +190,8 @@ export default function Home({ user, account }: { user: User; account?: string }
                 Google again.</p>}
               <p className="small muted">This visit&apos;s practice changes won&apos;t carry over.</p>
             </div>)}
+          {me && sampleShown && <SampleTour uid={visit} actions={actions} devices={devices} discoveries={discoveries}
+            onAsk={askChat} onPanel={(p) => { setPanel(p); setPane("home"); }} onSave={saveWithGoogle} />}
           <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
           <div className="panel needs needs-strip" data-tour="needs">
             <strong className="verdict">{verdict(needs)}</strong>
