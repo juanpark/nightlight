@@ -168,3 +168,38 @@ def test_logs_not_allowed_says_what_was_not_read_and_what_would_allow_it(helper,
     summary, detail = helper._look_container("tasks", logs=False)
     assert summary == "tasks exited with code 2"
     assert "last log lines: not read" in detail and "\"read logs\" permission" in detail
+
+
+# ------------------------------------------------------------------ the disk scan is bounded in memory and in time
+
+def _fake_du(helper, monkeypatch, script):
+    import sys
+    monkeypatch.setattr(helper, "_du_cmd", lambda depth: [sys.executable, "-c", script])
+
+
+def test_a_flood_of_du_output_keeps_only_the_biggest_rows(helper, monkeypatch, tmp_path):
+    _fake_du(helper, monkeypatch, "import sys\nw=sys.stdout.write\n"
+             "[w(f'{i}\\t./d/{i}\\n') for i in range(100000)]\nw('x'*20000+'\\n')\nw('999999\\t.\\n')")
+    _until(helper)
+    tree, why = helper._du_tree(str(tmp_path))
+    assert why is None and tree["."] == round(999999 / 1024)
+    assert len(tree) == helper.DU_ROWS + 1 and "./d/99999" in tree and "./d/0" not in tree
+
+
+def test_too_much_du_output_is_stopped_and_said(helper, monkeypatch, tmp_path):
+    _fake_du(helper, monkeypatch, "import sys\nwhile True: sys.stdout.write('1\\t./x\\n' * 1000)")
+    monkeypatch.setattr(helper, "DU_BYTES", 256 * 1024)
+    _until(helper)
+    assert helper._du_tree(str(tmp_path)) == ({}, "too much output")
+
+
+def test_a_hanging_du_is_stopped_at_the_deadline_and_said(helper, monkeypatch, tmp_path):
+    (tmp_path / "srv").mkdir()
+    monkeypatch.setattr(helper, "_ROOT", str(tmp_path))
+    _fake_du(helper, monkeypatch, "import time\ntime.sleep(30)")
+    monkeypatch.setattr(helper.shutil, "disk_usage", lambda p: type("U", (), {"used": 1024 ** 2})())
+    _until(helper, 2)
+    t = time.time()
+    lines = helper._root_lines()
+    assert time.time() - t < 4
+    assert lines == ["Not measured on the main disk: /srv (not measured in time)"]

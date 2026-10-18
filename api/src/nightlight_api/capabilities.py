@@ -94,16 +94,18 @@ def _diagnose(c: Ctx):
                  "Nothing to undo.", "read"), {"target": target}
 
 
-def _log_target(c: Ctx) -> str:
-    """The reported container or system service a "read logs" card names (a service may be named without
-    ".service"); ValueError(code) when log reading can't be allowed for it here."""
+def _log_target(c: Ctx, exact: bool = False) -> str:
+    """The reported container or system service a "read logs" card names (when proposing, a service may be named
+    without ".service"; `exact` at approval: the card's own target, still reported, or nothing); ValueError(code)
+    when log reading can't be allowed for it here."""
     d, target = c.device, c.params.get("target")
     if d.get("manage") != "app":  # a strict device's permissions are set on the device itself
         raise ValueError("strict_device" if d.get("manage") == "strict" else "update_helper")
     if not isinstance(target, str) or not real.TARGET_NAME.fullmatch(target):
         raise ValueError("bad_target")
     known = real.log_targets(c.services.values())
-    target = target if target in known else target + ".service" if target + ".service" in known else None
+    target = target if target in known else None if exact else \
+        target + ".service" if target + ".service" in known else None
     if target is None:
         raise ValueError("no_such_target")
     logs = (d.get("permissions") or real.DEFAULT_PERMISSIONS).get("logs", [])
@@ -187,7 +189,7 @@ def _playbook_result(tx, uid: str, a: dict, device: dict, current: bool) -> list
 
 def _logs_allowed(tx, uid: str, a: dict, device: dict, services: list) -> str:
     """The owner approved reading a target's logs: added to the device's permissions (with its Activity line)."""
-    target = _log_target(Ctx(uid, device, {s["id"]: s for s in services}, a["params"]))
+    target = _log_target(Ctx(uid, device, {s["id"]: s for s in services}, a["params"]), exact=True)
     perms = {**real.DEFAULT_PERMISSIONS, **(device.get("permissions") or {})}
     real.permission_writes(tx, uid, device["id"], device, services, {**perms, "logs": [*perms["logs"], target]})
     return (f"Nightlight may now read the log lines of {target}. The device picks this up with its next report "

@@ -86,3 +86,20 @@ def test_a_service_can_be_named_without_its_suffix_and_unknown_or_strict_ones_ar
     beat(client, strict["token"], {**FACTS, "manage": "strict"})
     said = _call(tools, "allow_log_reading", device_id=strict["deviceId"], target="pi-grafana-1")["reason"]
     assert "nightlight allow logs" in said
+
+
+def test_approval_grants_exactly_the_card_target_or_goes_stale(client, started):
+    dev = enrolled(client)
+    facts = {**APP, "containers": [*APP["containers"],
+                                   {"name": "pihole-FTL", "image": "x", "state": "running", "status": "Up"}]}
+    beat(client, dev["token"], facts)  # a container named like the service (pihole-FTL.service is reported too)
+    tools, _ = _tools(started)
+    got = _call(tools, "allow_log_reading", device_id=dev["deviceId"], target="pihole-FTL")
+    assert got["status"] == "pending" and "pihole-FTL on" in got["plan"]  # the container itself
+    _again(dev["token"])
+    beat(client, dev["token"], APP)  # the container is gone; only pihole-FTL.service is left
+    assert "pihole-ftl" not in {s.id.lower() for s in db.services(started, dev["deviceId"]).get()}
+    r = client.post(f"/api/actions/{got['actionId']}/decide", json={"decision": "approve"})
+    assert r.status_code == 409 and r.json()["code"] == "stale"
+    perms = db.device(started, dev["deviceId"]).get().to_dict().get("permissions") or {}
+    assert perms.get("logs", []) == []

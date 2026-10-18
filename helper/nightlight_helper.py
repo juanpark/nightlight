@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.30"
+VERSION = "0.9.31"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -798,27 +798,74 @@ ROOT_MIN_MB = 50  # a main-disk folder smaller than this is not listed
 ROOT_DEPTH = 2  # how deep under each top folder sizes are taken (one `du` pass per top folder)
 
 
+DU_ROWS = 500  # sizes kept per top folder (the biggest ones): a tree with 100k folders can't fill the memory
+DU_BYTES = 16 * 1024 * 1024  # at most this much of du's output is read per top folder, then it is stopped
+DU_LINE = 8192  # a longer line (a strange name) is skipped, not kept
+
+
+def _du_cmd(depth):
+    return ["du", "-k", "-x", "-d", str(depth), "."]
+
+
 def _du_tree(path, depth=ROOT_DEPTH):
-    """{"." or "./a" or "./a/b": MB} for a pinned folder and the folders up to `depth` levels inside it, in one
-    `du -x` pass that never follows links or leaves the folder's own disk; None when it can't be measured in time."""
+    """({"." or "./a" or "./a/b": MB}, why) for a pinned folder and the folders up to `depth` levels inside it, in one
+    `du -x` pass that never follows links or leaves the folder's own disk. Bounded in time (the job's deadline), in
+    bytes read (DU_BYTES) and in what is kept (the DU_ROWS biggest folders and the total); du's complaints about
+    unreadable folders are discarded. ({}, why) when it couldn't be measured: why is "time", "too much output" or
+    "unreadable"."""
+    import heapq
+    import select
     if _guarded(path) or _left(25) < 1:
-        return None
+        return {}, "time"
     fd = _pin(path)
     if fd is None:
-        return None
+        return {}, "unreadable"
     try:
-        out = subprocess.run(["du", "-k", "-x", "-d", str(depth), "."], capture_output=True, text=True,
-                             timeout=_left(25), check=False, pass_fds=(fd,), preexec_fn=lambda: os.fchdir(fd)).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    finally:
+        p = subprocess.Popen(_du_cmd(depth), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=(fd,),
+                             preexec_fn=lambda: os.fchdir(fd))
+    except OSError:
         os.close(fd)
-    sizes = {}
-    for line in out.splitlines():
-        kb, _, rel = line.partition("\t")
-        if kb.isdigit() and (rel == "." or rel.startswith("./")):
-            sizes[rel] = round(int(kb) / 1024)
-    return sizes if "." in sizes else None
+        return {}, "unreadable"
+    os.close(fd)
+    keep, total, read, partial, why = [], None, 0, b"", None
+    out = p.stdout.fileno()
+    try:
+        while True:
+            left = _left(25)
+            if left <= 0 or not select.select([out], [], [], left)[0]:
+                why = "time"
+                break
+            block = os.read(out, 65536)
+            if not block:
+                break
+            read += len(block)
+            if read > DU_BYTES:
+                why = "too much output"
+                break
+            lines = (partial + block).split(b"\n")
+            partial = lines.pop()
+            if len(partial) > DU_LINE:
+                partial = b"\xff"  # never a valid row: the rest of that long line is skipped
+            for line in lines:
+                kb, _, rel = line.decode("utf-8", "replace").partition("\t")
+                if not kb.isdigit():
+                    continue
+                if rel == ".":
+                    total = int(kb)
+                elif rel.startswith("./"):
+                    heapq.heappush(keep, (int(kb), rel))
+                    if len(keep) > DU_ROWS:
+                        heapq.heappop(keep)  # the smallest goes
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.stdout.close()
+        p.wait()
+    if why or total is None:
+        return {}, why or "unreadable"
+    sizes = {rel: round(kb / 1024) for kb, rel in keep}
+    sizes["."] = round(total / 1024)
+    return sizes, None
 
 
 def _root_folders():
@@ -841,12 +888,12 @@ def _root_folders():
                 continue  # another disk mounted here: its space isn't this disk's
         except OSError:
             continue
-        tree = _du_tree(path)
+        tree, why = _du_tree(path)
         if tree:
             tops.append((tree["."], name))
             trees[name] = tree
         else:
-            unmeasured.append("/" + name)
+            unmeasured.append(("/" + name, why))
     tops.sort(reverse=True)
     biggest = None
     for mb, name in tops:
@@ -890,6 +937,10 @@ def _inspect_disk():
     return "Biggest known places (sizes):\n" + ("\n".join(lines) or "nothing large in the usual places")
 
 
+DU_WHY = {"time": "not measured in time", "too much output": "too many folders to measure",
+          "unreadable": "couldn't be read"}
+
+
 def _root_lines():
     """Lines about the main disk as a whole, so the biggest folder is always named wherever it is (say /srv), and
     space no measured folder accounts for is said, not guessed."""
@@ -906,9 +957,13 @@ def _root_lines():
         lines.append("Folders on the main disk: " + ", ".join(big))
     missing = used - measured
     if tops and missing >= 1024 and missing * 10 >= used * 3:
-        skipped = f", in {', '.join(name(p) for p in unmeasured[:5])} (couldn't be measured in time)" if unmeasured else ""
+        skipped = (", in " + ", ".join(f"{name(p)} ({DU_WHY.get(why, why)})" for p, why in unmeasured[:5])) \
+            if unmeasured else ""
         lines.append(f"Not found in the measured folders: about {_size(missing)} of the {_size(used)} in use (in "
                      f"folders the helper can't read{skipped}, or in deleted files a program still holds open)")
+    elif unmeasured:  # always said: a folder left out is never silently counted as small
+        lines.append("Not measured on the main disk: " + ", ".join(f"{name(p)} ({DU_WHY.get(why, why)})"
+                                                                     for p, why in unmeasured[:5]))
     return lines
 
 
