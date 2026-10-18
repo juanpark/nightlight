@@ -3,6 +3,7 @@
 // first question), to switch between them on any device, and New chat.
 import { useEffect, useState } from "react";
 import { recentSessions, type Conversation } from "@/lib/session";
+import { Chats, Plus } from "@/src/components/icons";
 
 const when = (d: Date | null) => d
   ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
@@ -30,11 +31,14 @@ export default function Conversations({ uid, generation, open, disabled, onPick 
   return (
     <div className="convos">
       <div className="convos-bar">
-        <button className="small" aria-expanded={shown} onClick={() => setShown(!shown)}>Conversations</button>
-        <button className="small" disabled={disabled || open === null} onClick={() => choose(null)}>New chat</button>
+        <button className="chat-tool" aria-expanded={shown} aria-controls="convos-list" onClick={() => setShown(!shown)}
+          data-tour="conversations" title="Your chats, on any device (kept 30 days)">
+          <Chats size={16} aria-hidden /><span>Conversations</span></button>
+        <button className="chat-tool" disabled={disabled || open === null} onClick={() => choose(null)} title="Start a new chat">
+          <Plus size={16} aria-hidden /><span>New chat</span></button>
       </div>
       {shown && (
-        <div className="convos-list" role="list">
+        <div className="convos-list" id="convos-list" role="list">
           {err ? <p className="small muted">Couldn&apos;t load your conversations. Try again in a moment.</p>
             : !list ? <p className="small muted">Loading…</p>
               : list.length === 0 ? <p className="small muted">No conversations yet. Ask something below.</p>

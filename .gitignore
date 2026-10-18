@@ -42,3 +42,6 @@ AGENTS.md
 .pytest_cache/
 .ruff_cache/
 .playwright-mcp/
+
+# Design tool scratch (found reference photos, screenshots): never in git
+web/.taste-skill/

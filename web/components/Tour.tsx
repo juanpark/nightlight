@@ -33,9 +33,10 @@ export default function Tour({ uid, state, ready }: { uid: string; state: TourSt
     if (t === "intro" && st.current.realDevices > 0) markSeen(uid, "firstDevice");
     if (t === "intro" && st.current.hasCard) markSeen(uid, "firstCard");
     const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const scrim = getComputedStyle(document.documentElement).getPropertyValue("--scrim").trim() || "#1a1a18";
     const d = driver({
       steps, animate: !still, smoothScroll: !still, showProgress: steps.length > 1, allowKeyboardControl: true,
-      popoverClass: "nl-tour", overlayOpacity: 0.45, stagePadding: 6, stageRadius: 12,
+      popoverClass: "nl-tour", overlayColor: scrim, overlayOpacity: 0.55, stagePadding: 6, stageRadius: 12,
       nextBtnText: "Next", prevBtnText: "Back", doneBtnText: "Done", progressText: "{{current}} of {{total}}",
       onPopoverRender: (p) => {
         p.wrapper.setAttribute("role", "dialog");

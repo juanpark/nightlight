@@ -83,6 +83,14 @@ export default function LiveSession() {
   useEffect(() => { machineState({ machineReady: ready && !live.resumed, leaseStart }); }, [ready, live.resumed, leaseStart]);
 
   const restore = me?.restoreSeconds ?? live.restore ?? 120;
+  // while the bar floats at the bottom, the panes that scroll under it leave room for it (app/needs.css)
+  const barShown = ready && !(live.resumed && me);
+  const [open, setOpen] = useState(false); // phones: the bar's controls, folded to one line until tapped
+  useEffect(() => {
+    if (!barShown) return;
+    document.documentElement.classList.add("has-live-bar");
+    return () => document.documentElement.classList.remove("has-live-bar");
+  }, [barShown]);
 
   if (live.resumed && me) {
     return (
@@ -113,11 +121,16 @@ export default function LiveSession() {
     );
   }
   return (
-    <div className="live-bar" role="region" aria-label="Live demo machine">
+    <div className="live-bar" role="region" aria-label="Live demo machine" data-tour="live-bar" data-open={open || undefined}>
       <span className="live-dot" aria-hidden /> <strong>{me?.machine ?? "Live machine"}</strong>
-      <span className="small muted">real VM</span>
-      <button className="small" disabled={working} onClick={() => fresh()}>Start fresh</button>
-      <button className="small" onClick={() => leaveLive()}>Leave</button>
+      <span className="small muted live-what">a real computer in Google Cloud</span>
+      {/* phones: one slim line; its controls open on a tap */}
+      <button className="small live-toggle" aria-expanded={open} aria-controls="live-controls" onClick={() => setOpen(!open)}>
+        {open ? "Close" : "Start fresh or leave"}</button>
+      <span className="live-controls" id="live-controls">
+        <button className="small" disabled={working} onClick={() => fresh()}>Start fresh</button>
+        <button className="small" onClick={() => leaveLive()}>Leave</button>
+      </span>
       {err && <span className="small" role="alert" style={{ color: "var(--crit-ink)" }}>{err}</span>}
     </div>
   );

@@ -16,20 +16,29 @@ export default function DemoTools({ devices }: { devices: Device[] }) {
   async function call(path: string, body: unknown, ok: string) {
     setMsg("");
     try { await api("POST", path, body); setMsg(ok); }
-    catch (e) { setMsg(e instanceof ApiError ? e.code : "Something went wrong"); }
+    catch (e) {
+      setMsg(e instanceof ApiError && e.status === 409 ? "The sample home is resetting. Try again in a moment."
+        : e instanceof ApiError && e.status === 422 ? "That doesn't apply right now. Reset the sample home and try again."
+          : "Couldn't do that. Please try again.");
+    }
   }
   return (
     <div className="panel">
-      <h3>Demo tools (sample home only)</h3>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <h3>Demo tools</h3>
+      <p className="small muted" style={{ marginTop: -4 }}>Cause trouble in the sample home on purpose, then ask Nightlight
+        about it. Only the simulated devices are touched.</p>
+      <div className="demo-grid">
         {INCIDENTS.filter((i) => devices.some((d) => d.id === i.device)).map((i) => (
           <button key={i.kind} onClick={() => call("/api/demo/inject", { kind: i.kind, deviceId: i.device },
-            `${i.label}: done`)}>{i.label}</button>
+            `${i.label}: done. Now ask Nightlight what's wrong.`)}>{i.label}</button>
         ))}
+      </div>
+      <div className="demo-reset">
         <button onClick={() => call("/api/demo/reset", {}, "The sample home is back to a clean start.")}>
           Reset the sample home</button>
+        <span className="small muted">Puts every simulated device back the way it started.</span>
       </div>
-      {msg && <p className="small muted">{msg}</p>}
+      {msg && <p className="small muted" role="status">{msg}</p>}
     </div>
   );
 }

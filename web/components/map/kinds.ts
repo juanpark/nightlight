@@ -1,7 +1,9 @@
 // The map's visual vocabulary: an icon per kind of device, a line style per kind of relationship.
-import { Activity, AppWindow, Archive, Cctv, CircleHelp, Cloud, Container, Cpu, Database, Download, Film, Folder,
-  Gamepad2, GitBranch, Globe, HardDrive, House, Image, KeyRound, Laptop, Lock, Monitor, Network, Pickaxe, Printer, Radio,
-  RefreshCw, Router, Server, Shield, Signpost, Speaker, Terminal, Workflow, type LucideIcon } from "lucide-react";
+import { Activity, AppWindow, Archive, Camera as Cctv, Unknown as CircleHelp, Cloud, Container, Cpu, Database,
+  Download, Film, Folder, Gamepad as Gamepad2, GitBranch, Globe, Nas as HardDrive, House, Image,
+  KeyIcon as KeyRound, Computer as Laptop, Lock, Monitor, Network, GameBlock as Pickaxe, Printer, Radio,
+  Refresh as RefreshCw, Router, Server, Shield, Signpost, Speaker, Terminal, Workflow,
+  type IconType as LucideIcon } from "@/src/components/icons";
 import type { Device, LinkKind, Role, Service } from "@/lib/types";
 
 export const DEVICE_ICON: Record<string, LucideIcon> = {

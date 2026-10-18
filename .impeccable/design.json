@@ -1,0 +1,666 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-17T15:07:27.778376+00:00",
+  "title": "Design System: Nightlight",
+  "extensions": {
+    "colorMeta": {
+      "night-ground": {
+        "role": "neutral",
+        "displayName": "Night Ground",
+        "canonical": "oklch(20.1% 0.057 267.6)",
+        "tonalRamp": [
+          "#030823",
+          "#192341",
+          "#354161",
+          "#536082",
+          "#7382a5",
+          "#95a4ca",
+          "#b9c9ef",
+          "#e8eefe"
+        ]
+      },
+      "night-panel": {
+        "role": "neutral",
+        "displayName": "Night Panel",
+        "canonical": "oklch(23.7% 0.065 267.4)",
+        "tonalRamp": [
+          "#030726",
+          "#172344",
+          "#334065",
+          "#516087",
+          "#7181aa",
+          "#93a4cf",
+          "#b6c9f5",
+          "#e7eeff"
+        ]
+      },
+      "night-panel-2": {
+        "role": "neutral",
+        "displayName": "Night Panel Raised",
+        "canonical": "oklch(27.6% 0.072 267.3)",
+        "tonalRamp": [
+          "#020629",
+          "#152248",
+          "#314069",
+          "#4f608b",
+          "#6f81ae",
+          "#91a4d3",
+          "#b4c8f9",
+          "#e7eeff"
+        ]
+      },
+      "night-line": {
+        "role": "neutral",
+        "displayName": "Night Hairline",
+        "canonical": "oklch(32.2% 0.080 268.4)",
+        "tonalRamp": [
+          "#02042c",
+          "#15214c",
+          "#303f6d",
+          "#4e5f8f",
+          "#6e81b3",
+          "#90a4d8",
+          "#b3c8ff",
+          "#e8eeff"
+        ]
+      },
+      "night-line-strong": {
+        "role": "neutral",
+        "displayName": "Night Rule",
+        "canonical": "oklch(40.3% 0.092 268.0)",
+        "tonalRamp": [
+          "#020231",
+          "#122051",
+          "#2d3e73",
+          "#4b5e96",
+          "#6a80ba",
+          "#8ca3e0",
+          "#b3c8fe",
+          "#e8eeff"
+        ]
+      },
+      "night-select": {
+        "role": "neutral",
+        "displayName": "Night Selection",
+        "canonical": "oklch(30.5% 0.086 268.4)",
+        "tonalRamp": [
+          "#02032f",
+          "#14204e",
+          "#2f3f70",
+          "#4d5f92",
+          "#6c80b7",
+          "#8ea3dc",
+          "#b4c8fd",
+          "#e8eefe"
+        ]
+      },
+      "night-muted": {
+        "role": "neutral",
+        "displayName": "Mist",
+        "canonical": "oklch(76.9% 0.041 271.3)",
+        "tonalRamp": [
+          "#06091c",
+          "#1e2439",
+          "#3a4158",
+          "#586079",
+          "#79819c",
+          "#9ba4c0",
+          "#bfc8e5",
+          "#e8eeff"
+        ]
+      },
+      "cream-ink": {
+        "role": "neutral",
+        "displayName": "Cream Ink",
+        "canonical": "oklch(95.3% 0.016 86.4)",
+        "tonalRamp": [
+          "#0e0b05",
+          "#28251c",
+          "#464239",
+          "#656157",
+          "#868278",
+          "#a9a59a",
+          "#cdc9be",
+          "#f3eee3"
+        ]
+      },
+      "navy-ink": {
+        "role": "neutral",
+        "displayName": "Navy Ink",
+        "canonical": "oklch(26.5% 0.076 267.5)",
+        "tonalRamp": [
+          "#02052a",
+          "#15224a",
+          "#30406b",
+          "#4e608d",
+          "#6e81b1",
+          "#90a4d6",
+          "#b3c8fc",
+          "#e7eeff"
+        ]
+      },
+      "star-yellow": {
+        "role": "primary",
+        "displayName": "Star Yellow",
+        "canonical": "oklch(88.9% 0.167 95.0)",
+        "tonalRamp": [
+          "#0f0b00",
+          "#2d2400",
+          "#4f4100",
+          "#736003",
+          "#9a8107",
+          "#c1a317",
+          "#ebc71a",
+          "#ffefb3"
+        ]
+      },
+      "star-hover": {
+        "role": "primary",
+        "displayName": "Star Hover",
+        "canonical": "oklch(91.6% 0.143 96.4)",
+        "tonalRamp": [
+          "#0f0b00",
+          "#2d2500",
+          "#4e4101",
+          "#726005",
+          "#98810a",
+          "#bfa41a",
+          "#e4c94d",
+          "#ffefad"
+        ]
+      },
+      "star-gold": {
+        "role": "primary",
+        "displayName": "Star Gold",
+        "canonical": "oklch(81.3% 0.167 85.6)",
+        "tonalRamp": [
+          "#110a00",
+          "#312300",
+          "#543e01",
+          "#7b5c03",
+          "#a37c08",
+          "#cd9d18",
+          "#fabf1b",
+          "#ffedc6"
+        ]
+      },
+      "day-ground": {
+        "role": "neutral",
+        "displayName": "Warm Cream Ground",
+        "canonical": "oklch(95.3% 0.018 86.1)",
+        "tonalRamp": [
+          "#0f0b04",
+          "#29251b",
+          "#464137",
+          "#666156",
+          "#878276",
+          "#aaa498",
+          "#cec9bc",
+          "#f4eee1"
+        ]
+      },
+      "day-panel": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "oklch(98.6% 0.014 84.6)",
+        "tonalRamp": [
+          "#0e0b05",
+          "#28251d",
+          "#45423a",
+          "#656158",
+          "#868279",
+          "#a9a49b",
+          "#cdc9bf",
+          "#f3eee4"
+        ]
+      },
+      "day-panel-2": {
+        "role": "neutral",
+        "displayName": "Paper Raised",
+        "canonical": "oklch(93.0% 0.024 85.8)",
+        "tonalRamp": [
+          "#100a02",
+          "#2a2417",
+          "#484133",
+          "#676052",
+          "#898272",
+          "#aca494",
+          "#d0c8b8",
+          "#f6eedd"
+        ]
+      },
+      "day-line": {
+        "role": "neutral",
+        "displayName": "Day Hairline",
+        "canonical": "oklch(88.2% 0.032 84.6)",
+        "tonalRamp": [
+          "#110a00",
+          "#2c2412",
+          "#4a412e",
+          "#6a604d",
+          "#8b816d",
+          "#aea48f",
+          "#d3c8b2",
+          "#f9edd7"
+        ]
+      },
+      "day-line-strong": {
+        "role": "neutral",
+        "displayName": "Day Rule",
+        "canonical": "oklch(77.7% 0.047 85.8)",
+        "tonalRamp": [
+          "#110a00",
+          "#2f2306",
+          "#4d4024",
+          "#6d6042",
+          "#8f8162",
+          "#b2a384",
+          "#d7c8a7",
+          "#fdedcc"
+        ]
+      },
+      "day-muted": {
+        "role": "neutral",
+        "displayName": "Slate Navy",
+        "canonical": "oklch(50.0% 0.067 272.3)",
+        "tonalRamp": [
+          "#040627",
+          "#1a2245",
+          "#363f66",
+          "#545f88",
+          "#7480ab",
+          "#96a3d0",
+          "#bac7f6",
+          "#e9eefe"
+        ]
+      },
+      "night-ok": {
+        "role": "status",
+        "displayName": "Fine (night)",
+        "canonical": "oklch(81.7% 0.097 155.2)",
+        "tonalRamp": [
+          "#000f05",
+          "#012e17",
+          "#02502c",
+          "#2a7149",
+          "#4e9369",
+          "#71b78b",
+          "#95dcae",
+          "#c5ffd8"
+        ]
+      },
+      "night-warn": {
+        "role": "status",
+        "displayName": "Needs a look (night)",
+        "canonical": "oklch(82.0% 0.142 78.9)",
+        "tonalRamp": [
+          "#120900",
+          "#332101",
+          "#583c03",
+          "#7f5909",
+          "#a97811",
+          "#d49920",
+          "#fabd50",
+          "#ffecce"
+        ]
+      },
+      "night-crit": {
+        "role": "status",
+        "displayName": "Broken (night)",
+        "canonical": "oklch(83.6% 0.091 33.2)",
+        "tonalRamp": [
+          "#1d0200",
+          "#480c02",
+          "#6a2c20",
+          "#8e4c3e",
+          "#b26d5e",
+          "#d89080",
+          "#ffb4a3",
+          "#fee9e4"
+        ]
+      },
+      "night-offline": {
+        "role": "status",
+        "displayName": "Silent (night)",
+        "canonical": "oklch(66.7% 0.049 272.7)",
+        "tonalRamp": [
+          "#06081f",
+          "#1d233d",
+          "#39405c",
+          "#58607d",
+          "#7881a0",
+          "#9aa4c4",
+          "#bec8ea",
+          "#e9eefe"
+        ]
+      },
+      "day-ok": {
+        "role": "status",
+        "displayName": "Fine (day)",
+        "canonical": "oklch(52.0% 0.104 153.6)",
+        "tonalRamp": [
+          "#001004",
+          "#012e15",
+          "#045029",
+          "#267245",
+          "#4b9465",
+          "#6eb887",
+          "#92ddaa",
+          "#c8fed7"
+        ]
+      },
+      "day-warn": {
+        "role": "status",
+        "displayName": "Needs a look (day)",
+        "canonical": "oklch(53.2% 0.121 63.3)",
+        "tonalRamp": [
+          "#150700",
+          "#391e01",
+          "#613602",
+          "#8c5107",
+          "#b47027",
+          "#da934e",
+          "#feb977",
+          "#ffead9"
+        ]
+      },
+      "day-crit": {
+        "role": "status",
+        "displayName": "Broken (day)",
+        "canonical": "oklch(58.7% 0.147 32.9)",
+        "tonalRamp": [
+          "#1d0100",
+          "#4a0800",
+          "#7b1500",
+          "#a43823",
+          "#cb5b45",
+          "#f37f67",
+          "#fdb5a4",
+          "#fee9e4"
+        ]
+      },
+      "day-offline": {
+        "role": "status",
+        "displayName": "Silent (day)",
+        "canonical": "oklch(58.3% 0.042 273.6)",
+        "tonalRamp": [
+          "#06091d",
+          "#1e233a",
+          "#3b4159",
+          "#59607a",
+          "#7a819c",
+          "#9ca4c0",
+          "#c0c8e5",
+          "#e9eefe"
+        ]
+      },
+      "day-select": {
+        "role": "neutral",
+        "displayName": "Day Selection",
+        "canonical": "rgb(21 34 74 / .08)",
+        "tonalRamp": [
+          "#02052a",
+          "#15224a",
+          "#30406b",
+          "#4e608d",
+          "#6e81b1",
+          "#90a4d6",
+          "#b3c8fc",
+          "#e7eeff"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The verdict sentence only; 19px on phones."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The empty chat's greeting under the mascot."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel headings; chat header at 17px."
+      },
+      "title-sm": {
+        "displayName": "Title Small",
+        "purpose": "Sub-section headings in panels and the device drawer."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "All UI text, buttons, nav, chat bubbles."
+      },
+      "body-sm": {
+        "displayName": "Body Small",
+        "purpose": "Details, card terms, chips, legends."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Sidebar group label, sentence case, muted."
+      },
+      "badge": {
+        "displayName": "Badge",
+        "purpose": "Count and risk badges."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Commands and pairing codes only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "panel-lift-night",
+        "value": "0 1px 0 rgb(255 255 255 / .03) inset, 0 10px 28px -12px rgb(3 7 20 / .6)",
+        "purpose": "Panels, cards, modals, device tiles, slide-in sidebar (night)."
+      },
+      {
+        "name": "panel-lift-day",
+        "value": "0 1px 2px rgb(21 34 74 / .05), 0 10px 26px -14px rgb(21 34 74 / .22)",
+        "purpose": "The same lift by day."
+      },
+      {
+        "name": "status-halo",
+        "value": "0 0 0 3px color-mix(in srgb, var(--crit) 18%, transparent)",
+        "purpose": "Broken device tile; the accent at 35% marks a selected tile or picked option."
+      },
+      {
+        "name": "verdict-glow",
+        "value": "0 0 0 4px rgb(var(--glow-rgb) / .22), 0 0 18px 2px rgb(var(--glow-rgb) / .55)",
+        "purpose": "Only the verdict light when something needs you. --glow-rgb is 253 216 58 at night and 232 178 0 by day so the halo reads on cream."
+      },
+      {
+        "name": "scrim",
+        "value": "rgb(5 10 26 / .6) + backdrop-filter: blur(2-3px)",
+        "purpose": "Behind modals and the phone sidebar."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-color",
+        "value": "150ms (background-color, border-color, color)",
+        "purpose": "Button and nav hover; colour only, nothing moves."
+      },
+      {
+        "name": "verdict-breathe",
+        "value": "3.2s ease-in-out infinite alternate",
+        "purpose": "The verdict glow when something needs you."
+      },
+      {
+        "name": "sidebar-slide",
+        "value": "280ms cubic-bezier(.2, .8, .2, 1)",
+        "purpose": "Phone sidebar drawer in and out."
+      },
+      {
+        "name": "step-pulse",
+        "value": "1s infinite alternate (opacity .35 to 1)",
+        "purpose": "A running step in the chat work log."
+      },
+      {
+        "name": "wire-flow",
+        "value": "1.2s linear infinite (stroke-dashoffset)",
+        "purpose": "A live map link."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "All of the above stop under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow-desktop",
+        "value": "1180px"
+      },
+      {
+        "name": "phone-shell",
+        "value": "900px"
+      },
+      {
+        "name": "tile-grid",
+        "value": "700px"
+      },
+      {
+        "name": "phone",
+        "value": "600px"
+      },
+      {
+        "name": "small",
+        "value": "520px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one Star Yellow action in an area: Approve, Review, Save with Google.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Approve</button>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-btn{font:550 15px/1.5 var(--font-ui);border-radius:10px;border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);padding:7px 13px;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s;}.ds-btn:hover{background:var(--panel-2);}.ds-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}.ds-btn-primary{background:var(--primary);color:var(--on-primary);border-color:transparent;font-weight:650;}.ds-btn-primary:hover{background:var(--primary-hover);}"
+    },
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Every other action: Not now, What should I do?, Check-up now.",
+      "html": "<button class=\"ds-btn\">Not now</button>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-btn{font:550 15px/1.5 var(--font-ui);border-radius:10px;border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);padding:7px 13px;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s;}.ds-btn:hover{background:var(--panel-2);}.ds-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Chat input and form fields; ground fill one step below the panel.",
+      "html": "<input class=\"ds-input\" placeholder=\"Ask Nightlight…\">",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-input{font:15px/1.5 var(--font-ui);color:var(--ink);background:var(--bg);border:1px solid var(--line-strong);border-radius:10px;padding:8px 11px;}.ds-input::placeholder{color:var(--muted);}.ds-input:focus-visible{outline:2px solid var(--accent);outline-offset:0;border-color:transparent;}"
+    },
+    {
+      "name": "Filter Chips",
+      "kind": "chip",
+      "refersTo": "chip-selected",
+      "description": "Map filters; selected is the Selection navy step with an accent border.",
+      "html": "<div class=\"ds-chips\"><button class=\"ds-chip ds-on\">Computers</button><button class=\"ds-chip\">Routers</button><button class=\"ds-chip\">Storage</button></div>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-chips{display:flex;gap:6px;}.ds-chip{font:500 13px/1.5 var(--font-ui);padding:5px 13px;border-radius:99px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;transition:background-color .15s,border-color .15s;}.ds-chip:hover{background:var(--panel-2);}.ds-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}.ds-chip.ds-on{background:var(--select);border-color:var(--accent);font-weight:600;}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-selected",
+      "description": "Slim left sidebar items with lucide icons, a selected ring and a Star Yellow count.",
+      "html": "<nav class=\"ds-side\"><button class=\"ds-item ds-on\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\"/><path d=\"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg><span>Home</span><span class=\"ds-count\">2</span></button><button class=\"ds-item\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M22 12h-4l-3 9L9 3l-3 9H2\"/></svg><span>Activity</span></button></nav>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-side{display:flex;flex-direction:column;gap:2px;width:212px;padding:12px;background:var(--panel);}.ds-item{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 10px;border:0;border-radius:10px;background:transparent;color:var(--muted);font:550 15px/1.5 var(--font-ui);cursor:pointer;}.ds-item:hover{background:var(--panel-2);color:var(--ink);}.ds-item:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}.ds-item.ds-on{background:var(--select);color:var(--ink);font-weight:650;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 45%,transparent);}.ds-item.ds-on svg{color:var(--accent);}.ds-count{margin-left:auto;min-width:20px;padding:0 6px;border-radius:99px;font-size:11.5px;font-weight:700;line-height:20px;text-align:center;background:var(--primary);color:var(--on-primary);}"
+    },
+    {
+      "name": "Verdict Strip",
+      "kind": "custom",
+      "refersTo": "panel",
+      "description": "Signature: the plain sentence about the home with the star light glowing when something needs you.",
+      "html": "<section class=\"ds-verdict\"><span class=\"ds-light\"></span><p>2 things need you, 1 urgent</p></section>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-verdict{display:flex;align-items:center;gap:10px;padding:16px 18px;background:var(--panel);border:1px solid color-mix(in srgb,var(--primary) 45%,var(--line));border-radius:14px;box-shadow:var(--shadow);color:var(--ink);}.ds-verdict p{margin:0;font:650 22px/1.2 var(--font-head);letter-spacing:-.01em;}.ds-light{width:12px;height:12px;border-radius:50%;flex:none;background:var(--primary);box-shadow:0 0 0 4px rgb(253 216 58 / .22),0 0 18px 2px rgb(253 216 58 / .55);animation:ds-glow 3.2s ease-in-out infinite alternate;}@keyframes ds-glow{to{box-shadow:0 0 0 5px rgb(253 216 58 / .14),0 0 26px 6px rgb(253 216 58 / .35);}}@media (prefers-reduced-motion:reduce){.ds-light{animation:none;}}"
+    },
+    {
+      "name": "Approval Card",
+      "kind": "card",
+      "refersTo": "approval-card",
+      "description": "Plan, what it touches, how to undo, risk in words, then Approve / Not now.",
+      "html": "<div class=\"ds-card\"><strong>Compress old log files</strong><span class=\"ds-risk\">safe</span><dl><dt>Touches</dt><dd>Raspberry Pi (sample)</dd><dt>Undo</dt><dd>Logs kept in an archive for 24 hours.</dd></dl><div class=\"ds-actions\"><button class=\"ds-btn ds-btn-primary\">Approve</button><button class=\"ds-btn\">Not now</button></div></div>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-btn{font:550 15px/1.5 var(--font-ui);border-radius:10px;border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);padding:7px 13px;cursor:pointer;transition:background-color .15s,border-color .15s,color .15s;}.ds-btn:hover{background:var(--panel-2);}.ds-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}.ds-btn-primary{background:var(--primary);color:var(--on-primary);border-color:transparent;font-weight:650;}.ds-btn-primary:hover{background:var(--primary-hover);}.ds-card{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border:1px solid var(--line-strong);border-radius:14px;background:var(--panel);box-shadow:var(--shadow);color:var(--ink);font:15px/1.5 var(--font-ui);}.ds-card dl{display:grid;grid-template-columns:92px 1fr;gap:4px 10px;margin:4px 0;font-size:13px;}.ds-card dt{color:var(--muted);}.ds-card dd{margin:0;}.ds-risk{align-self:flex-start;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok);}.ds-actions{display:flex;gap:8px;}"
+    },
+    {
+      "name": "Chat Bubbles",
+      "kind": "custom",
+      "refersTo": "bubble-agent",
+      "description": "Person on the raised panel at right, Nightlight on the ground colour at left; the near corner cut to 4px.",
+      "html": "<div class=\"ds-log\"><div class=\"ds-bubble ds-user\">Is anything wrong at home?</div><div class=\"ds-bubble ds-agent\">The Raspberry Pi's disk is 94% full. I've put up a card for your OK.</div></div>",
+      "css": ":host{--bg:#0b1430;--panel:#111c3d;--panel-2:#18254b;--line:#22305c;--line-strong:#33457a;--ink:#f4efe4;--muted:#aab3cf;--accent:#fdd83a;--primary:#fdd83a;--primary-hover:#ffe36a;--on-primary:#15224a;--select:#1d2b5a;--ok:#8fd6a8;--warn:#f5b84a;--crit:#ffb4a3;--shadow:0 1px 0 rgb(255 255 255 / .03) inset,0 10px 28px -12px rgb(3 7 20 / .6);--font-ui:'Funnel Sans',system-ui,sans-serif;--font-head:'Funnel Display',system-ui,sans-serif;}.ds-log{display:flex;flex-direction:column;gap:10px;padding:16px 18px;background:var(--panel);font:15px/1.55 var(--font-ui);color:var(--ink);}.ds-bubble{padding:10px 14px;border-radius:16px;max-width:92%;}.ds-user{align-self:flex-end;background:var(--panel-2);border:1px solid var(--line-strong);border-bottom-right-radius:4px;}.ds-agent{align-self:flex-start;background:var(--bg);border:1px solid var(--line);border-bottom-left-radius:4px;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lamp Left On",
+    "overview": "Nightlight is the landing page's night house turned into a calm working room. The ground is deep navy, text is cream, and the one warm thing in the room is the star yellow light, lit only where something needs the person: the primary button, a count, the verdict when something is wrong. Everything else stays quiet, so the light means something when it appears. The day theme is the same house with the curtains open: warm cream ground, navy ink, the same star.\n\nThe app shell is a slim left sidebar, the home in the middle (the verdict sentence on top, then filters and the house map), and the \"Ask Nightlight\" chat docked on the right. That form was chosen by the owner directly, not generated. Surfaces are soft rounded panels with hairline navy borders and lucide line icons at one stroke weight. Density is moderate: a non-technical owner should read the screen as sentences before they read it as data.\n\nThe world is shared with the marketing landing (same navy steps, same star, same Funnel Display and Funnel Sans), so a person who arrives from the landing should feel they walked into the house they were just shown. The landing's typography ramp is larger and more theatrical; the app keeps the faces and the palette, not the scale.",
+    "keyCharacteristics": [
+      "Two themes that share token names: night (navy ground, cream text, star accent) and day (cream ground, navy ink, navy accent, same star for the primary action).",
+      "Star yellow is scarce: primary action, counts, \"needs you\".",
+      "Status colours (green, amber, soft coral) only ever appear with a word.",
+      "Selection is a lighter navy step with a thin accent ring, never grey.",
+      "The verdict strip's star light is the signature: a slow soft glow when something needs you, a quiet green dot otherwise.",
+      "The traced mascot appears in the empty chat and switches to its thinking mood while Nightlight works."
+    ],
+    "rules": [
+      {
+        "name": "The Lamp Rule",
+        "body": "Star Yellow is spent only on the primary action, counts and \"needs you\". If a screen has two yellow things that are not one of those, one of them is wrong.",
+        "section": "colors"
+      },
+      {
+        "name": "The Said-Aloud Rule",
+        "body": "Green, amber and coral are status only and always travel with a word (\"needs you\", \"1 needs a look\", \"Disk 94\"). A coloured dot or ring is never the whole message.",
+        "section": "colors"
+      },
+      {
+        "name": "The Navy Ink Rule",
+        "body": "Text on a light surface (cream, paper, star yellow) is Navy Ink, never black.",
+        "section": "colors"
+      },
+      {
+        "name": "The Sentence-First Rule",
+        "body": "The largest type on any app screen is a plain-language sentence about the home, set in Funnel Display at weight 650. Numbers and device names never outrank it.",
+        "section": "typography"
+      },
+      {
+        "name": "The Wordmark-Is-Art Rule",
+        "body": "\"nightlight\" is never typed in a font. Use the outlined wordmark component (heavy \"night\", thin \"light\", the dot of the second i as the light); it follows `color` and takes its light from the logo-light token.",
+        "section": "typography"
+      },
+      {
+        "name": "The Still Control Rule",
+        "body": "Effects never change how a control looks while it is being used. Glows, pulses and line animations live on indicators (the verdict light, a running step dot, a flowing map wire), never on a button, input or chip being pressed, typed into or chosen.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Glow Rule",
+        "body": "Only the verdict light glows. Every other emphasis is a ring or a border.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep the palette to navy, star yellow and cream; use green, amber and soft coral only as status, and always with a word next to them.",
+      "**Do** spend Star Yellow only on the primary action, counts and \"needs you\".",
+      "**Do** show selection as the Selection navy step with a thin accent ring or border.",
+      "**Do** set every text on cream, paper or yellow in Navy Ink.",
+      "**Do** use the theme's own status set (pastel at night, deepened by day).",
+      "**Do** use lucide icons at 18px and 1.75 stroke in the shell.",
+      "**Do** use the outlined wordmark component and the supplied mascot art as they are.",
+      "**Do** mark anything simulated with a dashed border and the word \"simulated\" or \"sample\"."
+    ],
+    "donts": [
+      "**Don't** use grey for selection, hover or borders; every neutral here is a navy or a warm sand.",
+      "**Don't** use black text on light surfaces.",
+      "**Don't** let a glow, pulse, lift or animation change how a button, input or chip looks while it is being used.",
+      "**Don't** put a status colour on anything that is not a status, or show a status by colour alone.",
+      "**Don't** set \"nightlight\" in live text or redraw the mascot.",
+      "**Don't** add a page-level toolbar of buttons above the home column; actions live in the sidebar, in the verdict strip beside the verdict, and next to the thing they act on."
+    ]
+  }
+}

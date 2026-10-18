@@ -16,7 +16,9 @@ function problemText(p: Problem): string | null {
   return "Couldn't start a machine. Please try again.";
 }
 
-export default function SignIn() {
+/** The start screen's choices (Juan's wording and logic), shared by the plain start screen and the landing page's
+ * start dialog. */
+export function StartChoices() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [status, setStatus] = useState<LiveStatus | null>(null);
@@ -50,10 +52,9 @@ export default function SignIn() {
   const said = live.problem && problemText(live.problem);
   const off = busy || live.starting;
   return (
-    <div className="signin">
-      <div className="modal start">
+      <>
         <div className="brand" style={{ justifyContent: "center" }}><span className="bulb" /> Nightlight</div>
-        <h1>Go to sleep. It&apos;s got this.</h1>
+        <h1 id="start-title">Go to sleep. It&apos;s got this.</h1>
         <p className="muted">An agent for the machines you run. Nightlight watches, explains issues in plain words, and
           gets things fixed.</p>
         {live.ended && <p className="small" role="status">Your time on the live machine has ended. It is being reset
@@ -94,7 +95,10 @@ export default function SignIn() {
 
         <p className="small muted">*Signed in to Nightlight before? Sign out or use a private window to see the choices.</p>
         {err && <p className="small" style={{ color: "var(--crit-ink)" }}>{err}</p>}
-      </div>
-    </div>
+      </>
   );
+}
+
+export default function SignIn() {
+  return <div className="signin"><div className="modal start"><StartChoices /></div></div>;
 }

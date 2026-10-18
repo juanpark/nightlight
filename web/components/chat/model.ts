@@ -19,7 +19,7 @@ export type Turn =
   // `after`: the actions whose result or approval this turn continues (shown as a system line above it)
   | { kind: "agent"; key: string; turnId?: string; mode: Mode; blocks: Block[]; busy: boolean; error?: string;
       past?: boolean; after?: string[]; ms?: number; metrics?: Metrics;
-      startedAt?: number; budget?: number; retryable?: boolean; errorCode?: string }; // budget: the seconds the server gives this answer
+      startedAt?: number; budget?: number; retryable?: boolean; stopped?: boolean; errorCode?: string }; // budget: the seconds the server gives this answer
 
 export type AgentTurn = Extract<Turn, { kind: "agent" }>;
 

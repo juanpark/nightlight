@@ -1,0 +1,246 @@
+/* The app shell: a calm header (logo, the sample label, the verdict when the strip is out of sight, Add a device,
+   More), the home below it and the chat docked on the right. Phones get one pane at a time with a Home / Chat tab bar.
+   Colours only through the tokens in globals.css. */
+.shell { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
+  grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink);
+  font-family: var(--font-ui); }
+.shell > .pane-tabs { display: none; }
+
+/* header */
+.shell > .top { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 12px; min-height: 60px;
+  padding: 8px 16px 8px 20px; border-bottom: 1px solid var(--line); background: var(--bg); color: var(--ink); z-index: 45; }
+.top-logo { flex: none; display: block; }
+.top .spacer { flex: 1; }
+.top-add, .top-more { display: inline-flex; align-items: center; gap: 8px; }
+.sample { position: relative; }
+.sample-pill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 11px; border-radius: 99px; font-size: 12.5px;
+  white-space: nowrap;
+  font-weight: 600; color: var(--muted); border: 1px dashed var(--line-strong); background: transparent; }
+.sample-pill:hover:not(:disabled) { color: var(--ink); background: var(--panel); }
+.dot.sample { width: 7px; height: 7px; background: transparent; border: 1.5px dashed currentColor; }
+.sample-note { position: absolute; z-index: 60; top: calc(100% + 10px); left: 0; width: min(320px, calc(100vw - 32px));
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 16px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
+.sample-note p { margin: 0; }
+.sample-note button { margin-top: 6px; }
+.top-verdict { display: none; align-items: center; gap: 9px; padding: 5px 13px 5px 11px; border-radius: 99px; font-weight: 650;
+  white-space: nowrap;
+  border-color: var(--line); }
+.top-verdict[data-shown] { display: inline-flex; }
+.top-verdict .verdict-light { width: 9px; height: 9px; margin: 0; align-self: center; }
+.top-verdict[data-state="needs"] { border-color: color-mix(in srgb, var(--glow) 45%, var(--line)); }
+.top-verdict[data-state="needs"] .verdict-light { background: var(--glow);
+  box-shadow: 0 0 0 3px rgb(var(--glow-rgb) / .22), 0 0 12px 1px rgb(var(--glow-rgb) / .5); }
+
+/* the More menu */
+.more { position: relative; }
+.top-more { position: relative; }
+.more-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--glow);
+  box-shadow: 0 0 0 2px var(--bg); }
+.more-scrim { position: fixed; inset: 0; z-index: 55; border: 0; border-radius: 0; padding: 0; background: transparent;
+  cursor: default; }
+.more-scrim:hover:not(:disabled) { background: transparent; }
+.more-menu { position: absolute; z-index: 60; top: calc(100% + 8px); right: 0; width: 272px; max-height: calc(100dvh - 90px);
+  overflow-y: auto; display: flex; flex-direction: column; gap: 1px; padding: 8px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow); }
+.more-menu hr { width: 100%; margin: 6px 0; border: 0; border-top: 1px solid var(--line); }
+.more-label { margin: 8px 10px 4px; font: 600 12.5px/1.2 var(--font-ui); color: var(--muted); }
+.more-label:first-child { margin-top: 4px; }
+.more-item { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 9px 10px; border: 0;
+  border-radius: 10px; background: transparent; color: var(--ink); font-weight: 550; }
+.more-item svg { flex: none; color: var(--muted); }
+.more-item:hover:not(:disabled), .more-item:focus-visible { background: var(--panel-2); }
+.more-item.on { background: var(--select); font-weight: 650; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.more-item.on svg { color: var(--accent); }
+.more-count { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 99px; font-size: 11.5px; font-weight: 700;
+  line-height: 20px; text-align: center; background: var(--glow); color: var(--on-primary); }
+.more-switch { position: relative; margin-left: auto; width: 30px; height: 18px; border-radius: 99px; flex: none;
+  border: 1px solid var(--line-strong); background: var(--bg); }
+.more-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--muted); }
+.more-switch.on { background: var(--accent); border-color: var(--accent); }
+.more-switch.on::after { left: 14px; background: var(--on-accent); }
+.more-save { width: 100%; margin-bottom: 4px; padding: 9px 12px; }
+.more-email { padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more-phone { display: none; }
+
+/* a panel floating over the home from the right (Sheet.tsx) */
+.sheet { position: relative; z-index: 30; grid-column: 1; grid-row: 2; justify-self: end; min-height: 0; width: min(600px, 100%);
+  display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -18px 0 40px -24px rgb(3 7 20 / .55); outline: none; animation: sheet-from-right .2s cubic-bezier(.22, 1, .36, 1); }
+.sheet-close { position: absolute; z-index: 2; top: 12px; right: 12px; display: grid; place-items: center; width: 40px; height: 40px;
+  padding: 0; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 6px 24px; }
+.sheet-body > .panel { border: 0; box-shadow: none; background: transparent; padding: 18px 20px; }
+.sheet-body > .panel > h3:first-child { padding-right: 48px; font-size: 21px; }
+@keyframes sheet-from-right { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
+
+/* the home column and the chat */
+.main { display: contents; }
+.main > .left { grid-column: 1; grid-row: 2; min-height: 0; overflow-y: auto; padding: 22px 24px 32px; display: flex; flex-direction: column; gap: 16px; }
+.main > .left > .page { display: flex; flex-direction: column; gap: 16px; max-width: 880px; width: 100%; }
+.main > .right { grid-column: 2; grid-row: 2; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
+/* the device drawer sits over the home column's left edge (.main is display: contents here) */
+@media (min-width: 901px) {
+  .main > .drawer.side { grid-column: 1; grid-row: 2; }
+}
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px 12px; border-bottom: 1px solid var(--line); }
+.chat-head h2 { flex: 1; margin: 0; font: 650 17px/1.2 var(--font-head); }
+.chat-fold { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; margin: -6px -8px -6px 0;
+  border: 0; background: transparent; color: var(--muted); }
+.chat-fold:hover:not(:disabled) { color: var(--ink); }
+.chat-rail { display: none; }
+
+/* Folded (wide screens only): a slim rail with the mascot, and a count with a word when a card needs an answer. The
+   chat stays mounted underneath, so an answer keeps streaming while it is folded.
+   Motion: the column width is one animatable length. The chat keeps its full width (no text reflowing every frame)
+   and slides out past the right edge as the map widens, fading as it goes; the rail arrives once it has tucked away.
+   Opening plays it back, the chat fading in as room opens up. */
+@property --chat-w { syntax: "<length>"; inherits: true; initial-value: 400px; }
+@media (min-width: 901px) {
+  .shell { --chat-open: 400px; --chat-w: var(--chat-open); --fold: .38s cubic-bezier(.22, 1, .36, 1);
+    grid-template-columns: minmax(0, 1fr) var(--chat-w); transition: --chat-w var(--fold); }
+  .shell[data-chat="folded"] { --chat-w: 76px; }
+  .main > .right { position: relative; overflow: clip; } /* clip, not hidden: the panel itself never scrolls */
+  .main > .right > :not(.chat-rail) { flex-shrink: 0; width: calc(var(--chat-open) - 1px); /* the open column, less its border */
+    transition: opacity .3s ease-out .08s, visibility 0s; }
+  .shell[data-chat="folded"] .main > .right > :not(.chat-rail) { opacity: 0; visibility: hidden;
+    transition: opacity .2s ease-in, visibility 0s linear .38s; }
+
+  .chat-rail { position: absolute; top: 10px; left: 8px; width: 60px; display: flex; flex-direction: column;
+    align-items: center; gap: 8px; margin: 0; padding: 14px 4px 12px; border: 1px solid transparent; border-radius: 14px;
+    background: transparent; color: var(--muted); font-weight: 600; font-size: 12.5px;
+    opacity: 0; visibility: hidden; transform: translateX(10px);
+    transition: opacity .12s ease-in, transform .12s ease-in, visibility 0s linear .12s,
+      background-color .15s, border-color .15s, color .15s; }
+  .shell[data-chat="folded"] .chat-rail { opacity: 1; visibility: visible; transform: none;
+    transition: opacity .26s ease-out .18s, transform .32s cubic-bezier(.22, 1, .36, 1) .18s, visibility 0s,
+      background-color .15s, border-color .15s, color .15s; }
+  .chat-rail:hover { background: var(--panel-2); border-color: var(--line); color: var(--ink); }
+  .rail-count { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11.5px; line-height: 1.25;
+    text-align: center; color: var(--ink); }
+  .rail-count b { min-width: 22px; padding: 0 6px; border-radius: 99px; line-height: 22px; text-align: center;
+    background: var(--glow); color: var(--on-primary); font-size: 12px; }
+}
+@media (min-width: 901px) and (prefers-reduced-motion: reduce) {
+  .shell, .main > .right > *, .shell[data-chat="folded"] .main > .right > *, .chat-rail,
+  .shell[data-chat="folded"] .chat-rail { transition: none; }
+}
+@media (max-width: 900px) { .chat-fold { display: none; } }
+
+/* the verdict: the one sentence that says how home is, with the star lit when something needs you */
+.needs-strip { padding: 18px 20px 6px; }
+.needs-strip[data-state="ok"] { padding-bottom: 18px; }
+.strip-head { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; }
+.verdict-text { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.needs-strip .verdict { margin: 0; font: 650 22px/1.2 var(--font-head); letter-spacing: -.01em; text-wrap: balance; }
+.verdict-sub { margin: 0; color: var(--muted); }
+.verdict-light { width: 12px; height: 12px; border-radius: 50%; flex: none; align-self: flex-start; margin-top: 7px;
+  background: var(--ok-fill); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok-fill) 20%, transparent); }
+.needs-strip[data-state="needs"] { border-color: color-mix(in srgb, var(--glow) 45%, var(--line)); }
+.needs-strip[data-state="needs"] .verdict-light { background: var(--glow);
+  box-shadow: 0 0 0 4px rgb(var(--glow-rgb) / .22), 0 0 18px 2px rgb(var(--glow-rgb) / .55);
+  animation: verdict-glow 3.2s ease-in-out infinite alternate; }
+@keyframes verdict-glow { to { box-shadow: 0 0 0 5px rgb(var(--glow-rgb) / .14), 0 0 26px 6px rgb(var(--glow-rgb) / .35); } }
+@media (prefers-reduced-motion: reduce) { .needs-strip[data-state="needs"] .verdict-light { animation: none; } }
+.needs-strip .needs-list { margin: 12px 0 0; border-top: 1px solid var(--line); }
+
+/* resetting the demo */
+.modal.resetting { display: flex; align-items: center; gap: 16px; width: auto; padding: 18px 24px;
+  font: 600 17px/1.3 var(--font-head); }
+
+/* phones and narrow windows */
+@media (max-width: 1180px) and (min-width: 901px) {
+  .shell { --chat-open: 340px; } /* the chat column, open, and everything in it */
+  .main > .left { padding: 18px 18px 28px; }
+}
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .main { grid-row: 2; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .main > .left, .main > .right { grid-column: 1; grid-row: 1; }
+  .shell > .top { gap: 8px; min-height: 56px; padding: 6px 10px 6px 16px; background: var(--panel); }
+  .sample-long, .top-more-word, .sample-pill.practice { display: none; }
+  .top-add { min-height: 44px; }
+  .top-more { min-height: 44px; min-width: 44px; justify-content: center; padding: 0; }
+  .top-verdict { min-height: 44px; }
+  .more-phone { display: contents; }
+  .more-menu { position: fixed; top: 62px; right: 10px; left: auto; width: min(300px, calc(100vw - 20px)); }
+  .more-item { padding: 12px 10px; }
+  .sheet { position: fixed; z-index: 50; inset: env(safe-area-inset-top) 0 0; width: auto; border-left: 0;
+    border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); animation-name: sheet-in; }
+  .main > .left { padding: 14px 12px 20px; }
+  .chat-head { padding: 12px 16px; }
+  .needs-strip { padding: 16px 16px 4px; }
+  .needs-strip .verdict { font-size: 19px; }
+  .verdict-light { margin-top: 5px; }
+
+  .shell > .pane-tabs { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); background: var(--panel);
+    padding-bottom: env(safe-area-inset-bottom); }
+  .pane-tabs button { border: 0; border-radius: 0; background: transparent; padding: 12px; font-weight: 600; color: var(--muted);
+    display: flex; justify-content: center; align-items: center; gap: 7px; }
+  .pane-tabs button:hover:not(:disabled) { background: transparent; color: var(--ink); }
+  .pane-tabs button.on { color: var(--ink); box-shadow: inset 0 2px 0 var(--accent); }
+  .pane-tabs button.on svg { color: var(--accent); }
+  .pane-count { font-size: 11px; min-width: 18px; padding: 1px 5px; border-radius: 9px; background: var(--glow); color: var(--on-primary); }
+}
+
+/* Save with Google: what happened, in one line, until dismissed */
+.save-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 12px 16px; font-size: 14px; }
+.save-notice > span { flex: 1 1 260px; }
+
+/* Demo tools: the incidents as a grid, the reset set apart below */
+.demo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.demo-grid button { text-align: left; }
+.demo-reset { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid var(--line); }
+.status-icon { flex: none; margin-top: 2px; }
+.top-add[aria-current="page"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--primary); }
+
+/* Day, monochrome. The paper is quiet: solid hairlines on every card, no tinted borders, no glow halos. Colour is
+   spent where it says something: the status word and its ring, a coloured border only on the device that is broken,
+   and the star yellow on the main action and on what needs you. */
+/* The verdict strip on day: a plain white panel with a hairline; the steady star is its one bright spot */
+[data-theme="day"] .needs-strip, [data-theme="day"] .needs-strip[data-state="needs"] { border-color: var(--line); }
+[data-theme="day"] .needs-strip[data-state="needs"] .verdict-light,
+[data-theme="day"] .top-verdict[data-state="needs"] .verdict-light {
+  background: var(--glow); box-shadow: 0 0 0 4px rgb(var(--glow-rgb) / .26); animation: none; }
+[data-theme="day"] .top-verdict[data-state="needs"] { border-color: var(--line-strong); }
+/* the rest of the home, counted by state: each count a dot, a number and a word */
+.verdict-tally { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 0; font-size: 14px; color: var(--muted); }
+.tally-label { color: var(--muted); }
+.tally-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tally-item b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.tally-item .dot { width: 8px; height: 8px; }
+[data-theme="day"] .sheet { box-shadow: -18px 0 40px -28px rgb(26 26 24 / .3); }
+
+[data-theme="day"] .dnode, [data-theme="day"] .dnode.sample { border-width: 1px; border-style: solid; border-color: var(--line);
+  transition: box-shadow .2s cubic-bezier(.22, 1, .36, 1), translate .2s cubic-bezier(.22, 1, .36, 1), border-color .2s; }
+[data-theme="day"] .dnode.warn { border-color: var(--warn-fill); }
+[data-theme="day"] .dnode.crit { border-color: var(--crit-fill); }
+[data-theme="day"] .dnode.crit:not(.sel):not(.focused):not(.lit-working):not(.lit-done) { box-shadow: var(--shadow); }
+/* a small lift under the pointer: the card rises, its controls don't change */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  [data-theme="day"] .dnode:not(.sel):not(.focused):not(.lit-working):not(.lit-done):hover { translate: 0 -2px; box-shadow: var(--lift); border-color: var(--line-strong); }
+  [data-theme="day"] .dnode.crit:not(.sel):not(.focused):not(.lit-working):not(.lit-done):hover { border-color: var(--crit-fill); }
+  [data-theme="day"] .dnode.warn:not(.sel):not(.focused):not(.lit-working):not(.lit-done):hover { border-color: var(--warn-fill); }
+}
+[data-theme="day"] .dchip.crit { border-color: var(--line-strong); }
+
+/* "Ask if anything's wrong" while an answer is being written: the working dot, a quieter label, still a way to the answer */
+.ask-check.busy { display: inline-flex; align-items: center; gap: 8px; }
+.ask-check.busy::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--glow); flex: none;
+  box-shadow: 0 0 0 1px var(--glow-ink); animation: working-dot 1.1s ease-in-out infinite; }
+.ask-check-now { color: var(--muted); font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .ask-check.busy::before { animation: none; } }
+/* the chat is in view and answering: the button only says so (disabled reads as quiet, not broken) */
+.ask-check.busy:disabled { opacity: 1; color: var(--muted); cursor: default; }
+
+/* Add a device is always in the header, the one yellow button. A narrow phone keeps its plus as a 44px square (its
+   name stays with screen readers and on hover); the word comes back as soon as there is room for it. */
+@media (max-width: 560px) {
+  .top-add { min-width: 44px; padding: 0; justify-content: center; }
+  .top-add-word { display: none; }
+  /* the Home tab's badge below already says how many need you, so the header keeps its room for Add and More */
+  .top-verdict[data-shown] { display: none; }
+}

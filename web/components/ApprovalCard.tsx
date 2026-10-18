@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Fingerprint, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { challengeFor, passkeyProblem, passkeysSupported, signWithPasskey, useAppHost } from "@/lib/passkey";
 import { useNow } from "@/lib/data";
 import type { Action, Device } from "@/lib/types";
+import { ArrowText, Caret, Declined, Done, NotDone, OutOfDate, Passkey, Risky, type IconType } from "@/src/components/icons";
 
 const RISK = { routine: "Safe", service: "Some risk", destructive: "Risky", read: "Read-only" } as const;
 const SIGNED = new Set(["expert_command", "expert_grant"]); // approved only with the owner's passkey
@@ -13,8 +13,15 @@ const STATUS: Record<Action["status"], string> = {
   done: "Done", failed: "Didn't work", denied: "Declined", stale: "Out of date",
 };
 
-export default function ApprovalCard({ action, device, onFollowUp }: {
+// A settled card in the conversation folds to its outcome; the details stay one tap away.
+const SETTLED: Partial<Record<Action["status"], { Icon: IconType; tone: string }>> = {
+  done: { Icon: Done, tone: "done" }, failed: { Icon: NotDone, tone: "failed" },
+  denied: { Icon: Declined, tone: "quiet" }, stale: { Icon: OutOfDate, tone: "quiet" },
+};
+
+export default function ApprovalCard({ action, device, onFollowUp, fold }: {
   action: Action | undefined; device?: Device; onFollowUp: (turnId: string) => void;
+  fold?: boolean; // in the chat: once decided and finished, show one line
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -102,30 +109,51 @@ export default function ApprovalCard({ action, device, onFollowUp }: {
   // on an expert card the command is the point; elsewhere the plan says it in words and the command is one tap away
   const showCommand = SIGNED.has(action.type) || action.type === "expert_read";
   const signedCard = SIGNED.has(action.type);
+  const settled = fold ? SETTLED[action.status] : undefined;
   // how loud the card is: passkey and risky cards stand out, some-risk ones are amber, safe ones stay calm
   const passkey = signedCard || action.type === "expert_read";
   const level = passkey || action.riskClass === "destructive" ? "strong" : action.riskClass === "service" ? "some" : "calm";
-  return (
-    <div className={`card level-${level}`} data-tour="card">
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {level === "strong" && (passkey
-          ? <Fingerprint className="card-icon" size={18} aria-label="Needs your passkey" />
-          : <ShieldAlert className="card-icon" size={18} aria-label="Risky" />)}
-        <strong className="card-title">{action.plan}</strong>
-        <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
-      </div>
+  const head = (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      {level === "strong" && (passkey
+        ? <Passkey className="card-icon" size={18} aria-label="Needs your passkey" />
+        : <Risky className="card-icon" size={18} aria-label="Risky" />)}
+      <strong className="card-title" style={{ flex: 1 }}><ArrowText text={action.plan} /></strong>
+      <span className={`risk ${action.riskClass}`}>{RISK[action.riskClass]}</span>
+    </div>
+  );
+  const facts = (
       <dl>
         {command && (showCommand ? <><dt>Command</dt><dd><code className="perm-cmd">{command}</code>
             {payload?.command && until && <span className="small muted">Valid until {until}</span>}</dd></>
           : <><dt>Command</dt><dd><details><summary className="small">Show the exact command</summary>
               <code className="perm-cmd">{command}</code></details></dd></>)}
-        <dt>What happens</dt><dd>{action.dryRun}</dd>
+        <dt>What happens</dt><dd><ArrowText text={action.dryRun} /></dd>
         <dt>Affects</dt><dd>{device?.name ?? action.blastRadius.join(", ")}{device?.realm === "real" ? " (your real device)" : " (sample, nothing real)"}
           {payload?.device && payload.device !== device?.id ? <strong style={{ color: "var(--crit-ink)" }}> (signed for a different device!)</strong> : null}</dd>
-        <dt>Can it be undone?</dt><dd>{action.rollback}</dd>
+        <dt>Can it be undone?</dt><dd><ArrowText text={action.rollback} /></dd>
         <dt>Status</dt><dd>{STATUS[action.status]}{action.decision?.by === "auto" ? " (handled on its own, as you allowed)" : ""}</dd>
-        {action.result && <><dt>Result</dt><dd>{action.result.summary}</dd></>}
+        {action.result && <><dt>Result</dt><dd><ArrowText text={action.result.summary} /></dd></>}
       </dl>
+  );
+  if (settled) {
+    const { Icon, tone } = settled;
+    return (
+      <details className={`card folded ${tone}`}>
+        <summary>
+          <Icon size={18} weight="fill" aria-hidden />
+          <span className="fold-text"><b>{STATUS[action.status]}</b> <ArrowText text={action.plan.trim().replace(/\.$/, "")} /></span>
+          <Caret className="caret" size={12} aria-hidden /><span className="sr-only">Details</span>
+        </summary>
+        {facts}
+      </details>
+    );
+  }
+  return (
+    <div className={`card level-${level} ${action.status === "running" || action.status === "approved" ? "working" : ""}`}
+      data-tour="card">
+      {head}
+      {facts}
       {action.status === "pending" && (
         <div className="actions">
           {signedCard

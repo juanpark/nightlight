@@ -6,6 +6,7 @@ import { firebase } from "@/lib/firebase";
 import { presented, useActions, useDevices, useLinks, useDiscoveries, useEvents, useExpertStatus, useNow, useRelease, useTrust,
   useUserDoc, useWatches } from "@/lib/data";
 import { byDevice, needsYou, verdict, type Go, useDismissed } from "@/lib/needsYou";
+import type { Device } from "@/lib/types";
 import NeedsList from "./NeedsList";
 import FoundNearby from "./FoundNearby";
 import { addable, useFound } from "@/lib/found";
@@ -14,10 +15,6 @@ import WatchPanel from "./WatchPanel";
 import AwayBanner from "./AwayBanner";
 import HomeView from "./map/HomeView";
 import DeviceDrawer, { type Tab } from "./DeviceDrawer";
-import AccountSettings from "./AccountSettings";
-import Tour from "./Tour";
-import { restartTour } from "@/lib/tour";
-import { leaveLive, useLive } from "@/lib/live";
 import Chat, { type ChatHandle } from "./Chat";
 import TrustPanel from "./TrustPanel";
 import SampleTour from "./SampleTour";
@@ -25,10 +22,26 @@ import Activity from "./Activity";
 import DemoTools from "./DemoTools";
 import AddDevice from "./AddDevice";
 import FirstRun from "./FirstRun";
+import AccountSettings from "./AccountSettings";
+import Tour from "./Tour";
+import { restartTour } from "@/lib/tour";
+import { leaveLive, useLive } from "@/lib/live";
 import "@/app/mobile.css";
+import "@/app/shell.css";
 import MemoryPanel from "./MemoryPanel";
+import SamplePill from "./SamplePill";
+import Sheet from "./Sheet";
+import { Activity as ActivityIcon, Bell, DemoTools as FlaskConical, Globe, House, SignOutIcon as LogOut, Menu,
+  Chat as MessageCircle, Moon, Memory as NotebookPen, HideChat as PanelRightClose, Plus, FoundNearby as Radar,
+  Settings as Gear, Trust as ShieldCheck, Sun, Close as X, type IconType as LucideIcon } from "@/src/components/icons";
+import { Logo } from "@/src/components/brand/Logo";
+import { Mascot } from "@/src/components/mascot/Mascot";
+import { MascotHead } from "@/src/components/mascot/MascotHead";
+import { display, sans } from "@/src/components/landing/fonts";
 
 type Panel = "none" | "trust" | "activity" | "demo" | "add" | "memory" | "watch" | "found" | "settings";
+const PANEL_NAME: Record<Panel, string> = { none: "Home", trust: "Trust", activity: "Activity", demo: "Demo tools",
+  add: "Add a device", memory: "Memory", watch: "Watch a website", found: "Found nearby", settings: "Settings" };
 
 // account: on a live demo machine, the machine's account, whose data this visit (its own throwaway user) sees
 export default function Home({ user, account }: { user: User; account?: string }) {
@@ -66,16 +79,8 @@ export default function Home({ user, account }: { user: User; account?: string }
   useEventNotifications(events, notify.on);
   const [selected, setSelected] = useState<string | null>(null);
   const [app, setApp] = useState<string | null>(null); // one app on the selected device, opened on its own
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
-  const closeDrawer = useCallback(() => {
-    // keyboard focus goes back to the device on the map, when it was in the panel
-    const back = selectedRef.current;
-    const inPanel = document.activeElement?.closest(".drawer.side");
-    setSelected(null); setApp(null);
-    if (inPanel && back) requestAnimationFrame(() =>
-      (document.querySelector(`.react-flow__node[data-id="${CSS.escape(back)}"]`) as HTMLElement | null)?.focus());
-  }, []);
+  // the panel itself hands focus back to whatever opened it (a device on the map, a link in the strip)
+  const closeDrawer = useCallback(() => { setSelected(null); setApp(null); }, []);
   const [panel, setPanel] = useState<Panel>("none");
   const chat = useRef<ChatHandle>(null);
   const starting = useRef(false);
@@ -101,20 +106,69 @@ export default function Home({ user, account }: { user: User; account?: string }
   // Phones show one pane at a time (Home or Chat, switched by the tab bar) and fold the header into a menu.
   const [pane, setPane] = useState<"home" | "chat">("home");
   const [menu, setMenu] = useState(false);
-  const askChat = (q: string) => { setPane("chat"); chat.current?.ask(q); };
-  const [more, setMore] = useState(false); // wide screens: the secondary header links, folded under More
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  // the menu: Esc closes it and hands focus back; arrows move between its items
+  function menuKeys(e: React.KeyboardEvent<HTMLDivElement>) {
+    const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")]
+      .filter((b) => b.getClientRects().length > 0);
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") { setMenu(false); moreBtn.current?.focus(); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    }
+  }
   useEffect(() => {
-    if (!more) return;
-    const close = (e: Event) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !(e.target as Element).closest?.(".more")) setMore(false);
+    if (menu) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>("#more-menu button")?.focus());
+  }, [menu]);
+  // whether the verdict strip is on screen; when it isn't, the header carries the verdict
+  const stripRef = useRef<HTMLElement>(null);
+  const [stripSeen, setStripSeen] = useState(true);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) { setStripSeen(false); return; }
+    const io = new IntersectionObserver(([e]) => setStripSeen(e.isIntersecting), { threshold: 0.4 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [panel, pane]);
+  // Wide screens can fold the chat into a slim rail; asking for it from anywhere unfolds it.
+  const [folded, setFolded] = useFolded();
+  const [chatBusy, setChatBusy] = useState(false);
+  const waiting = actions.filter((a) => a.status === "pending").length;
+  const headMood = chatBusy ? "busy" : waiting ? "waiting" : "idle"; // an answer being written outranks a card that can wait
+  const foldBtn = useRef<HTMLButtonElement>(null);
+  const railBtn = useRef<HTMLButtonElement>(null);
+  const fold = (f: boolean) => {
+    setFolded(f);
+    requestAnimationFrame(() => (f ? railBtn : foldBtn).current?.focus()); // focus stays on the control that moved
+  };
+  const showChat = () => { setPane("chat"); setFolded(false); };
+  // the chat is out of sight when it is folded away, or on a narrow screen (one pane at a time, the home showing)
+  const narrow = useNarrow();
+  const chatHidden = folded || narrow;
+  const askChat = (q: string) => { showChat(); chat.current?.ask(q); };
+  // A panel replaces whatever was open over the home (the device panel included), so closing it lands on the home.
+  const open = (p: Panel) => { setMenu(false); setPane("home"); setSelected(null); setApp(null); setPanel(p); };
+  const [theme, flipTheme] = useTheme();
+  // Back closes what is open over the home (a panel or a device) instead of leaving the app, which matters most on a
+  // phone where they fill the screen. The entry carries Next's own state so its router treats it as the same page.
+  const layerOpen = panel !== "none" || !!selected;
+  useEffect(() => {
+    if (!layerOpen) return;
+    history.pushState({ ...history.state, nlLayer: true }, "");
+    const back = () => { setPanel("none"); closeDrawer(); };
+    window.addEventListener("popstate", back);
+    return () => {
+      window.removeEventListener("popstate", back);
+      if (history.state?.nlLayer) history.back(); // closed with a button: drop the entry it added
     };
-    document.addEventListener("keydown", close); document.addEventListener("pointerdown", close);
-    return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close); };
-  }, [more]);
-  const toggle = (p: Panel) => { setMenu(false); setMore(false); setPane("home"); setPanel((cur) => (cur === p ? "none" : p)); };
+  }, [layerOpen, closeDrawer]);
   function go(g: Go) {
-    if (g.to === "drawer") { setSelected(g.deviceId); setDrawerTab(g.app ? "apps" : g.tab ?? null); setApp(g.app ?? null); }
-    else if (g.to === "panel") setPanel(g.panel);
+    // on a phone the device panel and the panels live in the Home pane, so a link from the chat switches to it
+    if (g.to === "drawer") { setMenu(false); setPane("home"); setPanel("none"); setSelected(g.deviceId);
+      // a link names its tab or means the problem itself (Overview); only a tap on the map reopens the last tab used
+      setDrawerTab(g.app ? "apps" : g.tab ?? "overview"); setApp(g.app ?? null); }
+    else if (g.to === "panel") open(g.panel);
     else if (g.to === "chat") askChat(g.ask);
   }
 
@@ -122,104 +176,219 @@ export default function Home({ user, account }: { user: User; account?: string }
   // open the sample home again with Take the tour)
   async function signInReal() {
     const { auth } = await firebase();
-    await signInWithPopup(auth, new GoogleAuthProvider()).catch(alertless);
+    await signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => console.warn("sign-in failed", e));
   }
 
+  const foundCount = addable(found.items).length;
+  const count = (s: Device["status"]) => devices.filter((d) => d.status === s).length;
+  const tally = ([
+    ["crit", count("crit"), "broken"],
+    ["warn", count("warn"), count("warn") === 1 ? "needs a look" : "need a look"],
+    ["offline", count("offline"), "not reporting"],
+    ["ok", count("ok"), "fine"],
+  ] as const).filter(([, n]) => n > 0);
+  const sample = user.isAnonymous || sampleOn;
+  // the More menu: everything that isn't the home itself, in the order an owner reaches for it
+  const item = (p: Panel, label: string, Icon: LucideIcon, count?: number, tour?: string) => (
+    <button role="menuitem" className={`more-item ${panel === p ? "on" : ""}`} aria-current={panel === p ? "page" : undefined}
+      onClick={() => open(p)} data-tour={tour}>
+      <Icon size={18} aria-hidden /> <span>{label}</span>
+      {!!count && <span className="more-count" aria-label={`${count} new`}>{count}</span>}
+    </button>
+  );
+
   return (
-    <div className="shell">
+    <div className={`shell ${display.variable} ${sans.variable}`} data-theme={theme} data-chat={folded ? "folded" : undefined}>
       <header className="top">
-        <div className="brand"><span className="bulb" /> Nightlight</div>
+        <Logo height={22} className="top-logo" />
         {user.isAnonymous
-          ? <span className="pill">Sample home: simulated</span>
-          : !live && <button className="small" disabled={switching || !me} onClick={toggleSample}
-              title="A pretend home with a guided tour; your real devices aren't touched">{sampleOn ? "Hide the tour" : "Take the tour (simulated)"}</button>}
+          ? <SamplePill onTry={signInReal} />
+          : <button className="sample-pill practice" disabled={switching || !me} onClick={toggleSample}
+              title="A pretend home with a guided tour; your real devices aren't touched">
+              <span className="dot sample" aria-hidden />{sampleOn ? "Hide the tour" : "Take the tour (simulated)"}</button>}
+        {/* the verdict, here whenever the strip itself is out of sight (scrolled away, or a panel is open) */}
+        <button className="top-verdict" data-state={needs.length ? "needs" : "ok"} data-shown={stripSeen ? undefined : "yes"}
+          onClick={() => { setPanel("none"); setPane("home"); requestAnimationFrame(() =>
+            stripRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }}
+          tabIndex={stripSeen ? -1 : undefined} aria-hidden={stripSeen ? true : undefined}>
+          <span className="verdict-light" aria-hidden />{needs.length ? `${needs.length} need you` : "All good"}</button>
         <span className="spacer" />
-        <button className="menu-toggle" aria-expanded={menu} onClick={() => setMenu(!menu)}>{menu ? "Close" : "Menu"}</button>
-        <nav className={`top-nav ${menu ? "open" : ""}`}>
-        <button data-tour="add-device" onClick={() => toggle("add")}>Add a device</button>
-        <button onClick={() => toggle("watch")}>Watch a website</button>
-        <button data-tour="found-nearby" onClick={() => toggle("found")}>Found nearby</button>
-        {user.isAnonymous
-          && <button onClick={signInReal} title="Sign in with Google and add your own Mac or Raspberry Pi">Try the real app</button>}
+        <button className="top-add primary" onClick={() => open("add")} data-tour="add-device" aria-current={panel === "add" ? "page" : undefined}
+          aria-label="Add a device" title="Add a device">
+          <Plus size={18} aria-hidden /><span className="top-add-word">Add a device</span></button>
         <div className="more">
-          <button className="more-toggle" data-tour="more" aria-expanded={more} aria-haspopup="true"
-            onClick={() => setMore(!more)}>More</button>
-          <div className={`more-list ${more ? "open" : ""}`}>
-            <button onClick={() => toggle("trust")}>Trust</button>
-            <button onClick={() => toggle("activity")}>Activity</button>
-            {!live && <button onClick={() => toggle("memory")}>Memory</button>}
-            {sampleShown && <button onClick={() => toggle("demo")}>Demo tools</button>}
-            <button onClick={() => toggle("settings")}>Settings</button>
-            {!user.isAnonymous && <span className="small muted" title={user.email ?? undefined}>{user.email}</span>}
-            <button onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>Sign out</button>
-          </div>
+          <button ref={moreBtn} className="top-more" aria-haspopup="menu" aria-expanded={menu} aria-controls="more-menu"
+            onClick={() => setMenu(!menu)} data-tour="more" aria-label="More" title="More">
+            <Menu size={18} aria-hidden /><span className="top-more-word">More</span>
+            {foundCount > 0 && <span className="more-dot" aria-label={`${foundCount} found nearby`} />}</button>
+          {menu && <>
+            <button className="more-scrim" aria-label="Close menu" tabIndex={-1} onClick={() => setMenu(false)} />
+            <div id="more-menu" className="more-menu" role="menu" aria-label="More" onKeyDown={menuKeys}>
+              {user.isAnonymous && <button role="menuitem" className="primary more-save" onClick={() => { setMenu(false); signInReal(); }}
+                title="Sign in with Google and add your own Mac or Raspberry Pi">Try the real app</button>}
+              <p className="more-label">Your home</p>
+              {item("activity", "Activity", ActivityIcon)}
+              {item("trust", "Trust", ShieldCheck, undefined, "trust")}
+              {!live && item("memory", "Memory", NotebookPen)}
+              <p className="more-label">Add to your home</p>
+              {!user.isAnonymous && <span className="more-phone">
+                <button role="menuitem" className="more-item" disabled={switching || !me} onClick={() => { setMenu(false); toggleSample(); }}>
+                  <House size={18} aria-hidden /><span>{sampleOn ? "Hide the tour" : "Take the tour (simulated)"}</span></button></span>}
+              {item("found", "Found nearby", Radar, foundCount, "found-nearby")}
+              {item("watch", "Watch a website", Globe)}
+              <hr />
+              {notify.supported && <button role="menuitemcheckbox" aria-checked={notify.on} className="more-item"
+                onClick={notify.toggle} title={notify.denied ? "Notifications are blocked for this site in your browser settings"
+                  : "Show a notification when something goes wrong, while this tab is open"}>
+                <Bell size={18} aria-hidden /><span>{notify.on ? "Notifying you" : "Notify me"}</span>
+                <span className={`more-switch ${notify.on ? "on" : ""}`} aria-hidden /></button>}
+              <button role="menuitem" className="more-item" onClick={flipTheme}>
+                {theme === "night" ? <Sun size={18} aria-hidden /> : <Moon size={18} aria-hidden />}
+                <span>{theme === "night" ? "Day theme" : "Night theme"}</span></button>
+              {sampleShown && item("demo", "Demo tools", FlaskConical)}
+              {item("settings", "Settings", Gear, undefined, "settings")}
+              <hr />
+              {!user.isAnonymous && <span className="small muted more-email" title={user.email ?? undefined}>{user.email}</span>}
+              <button role="menuitem" className="more-item" onClick={async () => live ? leaveLive() : signOut((await firebase()).auth)}>
+                <LogOut size={18} aria-hidden /> <span>{live ? "Leave" : "Sign out"}</span></button>
+            </div>
+          </>}
         </div>
-        </nav>
       </header>
       <div className="main" data-pane={pane}>
         <section className="left">
           {me && sampleShown && <SampleTour uid={visit} actions={actions} devices={devices} discoveries={discoveries}
-            onAsk={askChat} onPanel={(p) => { setPanel(p); setPane("home"); }} onSave={signInReal} />}
+            onAsk={askChat} onPanel={(p) => open(p)} onSave={signInReal} />}
           <AwayBanner uid={visit} events={events} onSummarise={(q) => askChat(q)} />
-          <div className="panel needs needs-strip" data-tour="needs">
-            <strong className="verdict">{verdict(needs)}</strong>
-            <span className="spacer" />
-            {notify.supported && (
-              <button className={`small notify-toggle ${notify.on ? "on" : ""}`} onClick={notify.toggle}
-                aria-pressed={notify.on} title={notify.denied
-                  ? "Notifications are blocked for this site in your browser settings"
-                  : "Show a notification when something goes wrong, while this tab is open"}>
-                {notify.on ? "Notifying you" : "Notify me"}</button>)}
-            <button onClick={() => askChat("Is anything wrong with my servers?")}>Ask if anything&apos;s wrong</button>
-            <div style={{ flexBasis: "100%" }}>
-              <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice
-                onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }} />
-            </div>
-          </div>
-          {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
-          {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
-          {panel === "demo" && sampleShown && <DemoTools devices={devices} />}
-          {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={signInReal}
-            onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
-          {panel === "memory" && !live && <MemoryPanel />}
-          {panel === "watch" && <WatchPanel watches={watches} now={now} />}
-          {me && !live && !user.isAnonymous && <FirstRun uid={visit} devices={devices} discoveries={discoveries}
-            expert={expert} onAdd={() => setPanel("add")} onWatch={() => setPanel("watch")}
-            onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
-          {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} sample={sampleShown} />}
-          {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} sample={sampleShown} onSave={signInReal} devices={devices} />}
-          <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
-            onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
-            onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
-            settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
+            <section ref={stripRef} className="panel needs-strip" data-state={needs.length ? "needs" : "ok"} data-tour="needs"
+              aria-labelledby="verdict">
+              <div className="strip-head">
+                <span className="verdict-light" aria-hidden />
+                <div className="verdict-text">
+                  <h1 className="verdict" id="verdict">{verdict(needs)}</h1>
+                  {/* the rest of the home at a glance: how many devices are in each state, each with its word */}
+                  {needs.length > 0 && tally.length > 0 && <p className="verdict-tally">
+                    <span className="tally-label">Devices</span>
+                    {tally.map(([tone, n, word]) => <span key={tone} className="tally-item">
+                      <span className={`dot ${tone}`} aria-hidden /><b>{n}</b> {word}</span>)}</p>}
+                  {!needs.length && <p className="verdict-sub">Nothing needs you right now. Nightlight keeps watching.</p>}
+                </div>
+                {/* while an answer is being written, asking again would only wait in line: the button says it is checking and
+                    takes you to the answer instead */}
+                <button className={`small ask-check ${chatBusy ? "busy" : ""}`} aria-busy={chatBusy || undefined}
+                  disabled={chatBusy && !chatHidden}
+                  title={chatBusy ? (chatHidden ? "Nightlight is answering in the chat. Show the answer." : "Nightlight is answering in the chat")
+                    : undefined}
+                  onClick={() => chatBusy ? showChat() : askChat("Is anything wrong with my servers?")}>
+                  {chatBusy ? (chatHidden ? <><span className="ask-check-now">Checking…</span>Show me</> : "Checking…")
+                    : <>Ask if anything&apos;s wrong</>}</button>
+              </div>
+              {needs.length > 0 && <NeedsList needs={needs} actions={actions} devices={devices} onGo={go} showDevice plain fold
+                onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }} />}
+            </section>
+            {me && !live && !user.isAnonymous && <FirstRun uid={visit} devices={devices} discoveries={discoveries}
+              expert={expert} onAdd={() => open("add")} onWatch={() => open("watch")}
+              onSample={() => { if (!sampleOn) toggleSample(); }} onGo={go} />}
+            <HomeView uid={uid} devices={devices} watches={watches} links={links} marks={marks} selected={selected} now={now}
+              onSelect={(id) => { setSelected(id); setDrawerTab(null); setApp(null); }}
+              onApp={(id, svcId) => { setSelected(id); setDrawerTab("apps"); setApp(svcId); }} onAsk={askChat}
+              settingUp={!me || me.demo?.state !== "ready" || (user.isAnonymous && devices.length === 0)} />
         </section>
+        {/* panels float over the home as a sheet from the right; the map stays where it was underneath */}
+        {panel !== "none" && <Sheet label={PANEL_NAME[panel]} onClose={() => setPanel("none")}>
+            {panel === "trust" && <TrustPanel trust={trust} devices={devices} sample={user.isAnonymous || sampleOn} onGo={go} />}
+            {panel === "activity" && <Activity events={events} actions={actions} devices={devices} />}
+            {panel === "demo" && sampleShown && <DemoTools devices={devices} />}
+            {panel === "settings" && <AccountSettings me={me} anonymous={user.isAnonymous} live={live} onSave={signInReal}
+              onTour={() => { setPanel("none"); setPane("home"); restartTour(visit); }} />}
+            {panel === "memory" && !live && <MemoryPanel />}
+            {panel === "watch" && <WatchPanel watches={watches} now={now} />}
+            {panel === "found" && <FoundNearby found={found} discoveries={discoveries} devices={devices} onGo={go} sample={sampleShown} />}
+            {panel === "add" && <AddDevice anonymous={user.isAnonymous} live={live} sample={sampleShown} onSave={signInReal} devices={devices} />}
+        </Sheet>}
         {/* the device panel: from the left over the map's edge on a wide screen, a full-height sheet on a phone */}
-        {selected && devices.find((d) => d.id === selected) && (
+        {panel === "none" && selected && devices.find((d) => d.id === selected) && (
           <DeviceDrawer uid={uid} generation={gen} actions={actions} device={devices.find((d) => d.id === selected)!}
             needs={marks.get(selected) ?? []} devices={devices} release={release} tab={drawerTab} onTab={setDrawerTab}
-            onGo={go} onFollowUp={(id) => { setPane("chat"); chat.current?.followUp(id); }}
+            onGo={go} onFollowUp={(id) => { showChat(); chat.current?.followUp(id); }}
             onAsk={(q) => askChat(q)} onClose={closeDrawer} app={app} onApp={setApp} hidden={pane === "chat"} />
         )}
-        <aside className="right">
+        <aside className="right" aria-label="Ask Nightlight">
+          <button ref={railBtn} className="chat-rail" onClick={() => fold(false)} title="Show the chat"
+            aria-label={`Show the chat${waiting ? `, ${waiting} ${waiting === 1 ? "card" : "cards"} to approve` : ""}`}>
+            <MascotHead size={34} mood={headMood} />
+            <span className="rail-label">Chat</span>
+            {waiting > 0 && <span className="rail-count"><b>{waiting}</b> to approve</span>}
+          </button>
           <Chat ref={chat} uid={uid} generation={gen} actions={actions} devices={devices} disabled={resetting || !me}
-            onShowMap={() => { setPanel("none"); setPane("home"); }} />
+            onBusy={setChatBusy} onShowMap={() => { setPanel("none"); setPane("home"); }}
+            title={<><MascotHead size={28} mood={headMood} /><h2>Ask Nightlight</h2></>}
+            end={<button ref={foldBtn} className="chat-fold" onClick={() => fold(true)} title="Hide the chat"
+              aria-label="Hide the chat"><PanelRightClose size={18} aria-hidden /></button>} />
         </aside>
       </div>
       <nav className="pane-tabs" aria-label="Show">
-        <button className={pane === "home" ? "on" : ""} onClick={() => setPane("home")}>
-          Home{needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
-        <button className={pane === "chat" ? "on" : ""} onClick={() => setPane("chat")}>Chat</button>
+        <button className={pane === "home" ? "on" : ""} aria-current={pane === "home" ? "page" : undefined}
+          onClick={() => setPane("home")}>
+          <House size={18} aria-hidden /> Home
+          {needs.length > 0 && <span className="pane-count">{needs.length}</span>}</button>
+        <button className={pane === "chat" ? "on" : ""} aria-current={pane === "chat" ? "page" : undefined}
+          onClick={() => setPane("chat")}><MessageCircle size={18} aria-hidden /> Chat</button>
       </nav>
       {/* the sample home has its own guided checklist: the popover tour waits (Settings can still start it) */}
       <Tour uid={visit} ready={!!me && me.demo?.state === "ready" && (devices.length > 0 || !user.isAnonymous)
         && (!live || machine.machineReady) && !sampleShown}
         state={{ anonymous: user.isAnonymous, hasCard: actions.some((a) => a.status === "pending"),
           realDevices: devices.filter((d) => d.realm === "real" && d.kind !== "watched").length }} />
-      {resetting && <div className="overlay"><div className="modal">Resetting the sample home…</div></div>}
+      {resetting && <div className="overlay"><div className="modal resetting" role="status">
+        <Mascot size={56} mood="thinking" /> <span>Resetting the sample home…</span></div></div>}
     </div>
   );
 }
 
-function alertless(e: unknown) {
-  console.warn("link failed", e);
+// Whether the chat is folded on a wide screen, remembered in this browser.
+function useFolded(): [boolean, (f: boolean) => void] {
+  const [folded, setFolded] = useState(false);
+  useEffect(() => {
+    try { setFolded(localStorage.getItem("nl_chat") === "folded"); } catch { /* open */ }
+  }, []);
+  const set = (f: boolean) => {
+    setFolded(f);
+    try { localStorage.setItem("nl_chat", f ? "folded" : "open"); } catch { /* this visit */ }
+  };
+  return [folded, set];
 }
+
+// One pane at a time below this width (mobile.css): the chat and the home take turns
+function useNarrow() {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const q = window.matchMedia("(max-width: 900px)");
+    const read = () => setNarrow(q.matches);
+    read();
+    q.addEventListener("change", read);
+    return () => q.removeEventListener("change", read);
+  }, []);
+  return narrow;
+}
+
+// Day by default; night when the person picks it, remembered in this browser.
+function useTheme(): ["night" | "day", () => void] {
+  const [picked, setPicked] = useState<"night" | "day" | null>(null);
+  useEffect(() => {
+    try { const t = localStorage.getItem("nl_theme"); if (t === "night" || t === "day") setPicked(t); } catch { /* day */ }
+  }, []);
+  const theme = picked ?? "day";
+  // on the page too, so what sits outside the shell (the live machine bar, the tour) wears the same theme
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    return () => { delete document.documentElement.dataset.theme; };
+  }, [theme]);
+  const flip = () => {
+    const next = theme === "night" ? "day" : "night";
+    setPicked(next);
+    try { localStorage.setItem("nl_theme", next); } catch { /* this visit */ }
+  };
+  return [theme, flip];
+}
+

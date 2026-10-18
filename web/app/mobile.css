@@ -1,68 +1,40 @@
-/* Phones and narrow windows: one pane at a time (Home or Chat, from the tab bar at the bottom), the header folded into
-   a menu, and every pane scrolling on its own. Wide screens are unchanged. */
-.menu-toggle, .pane-tabs { display: none; }
-.top-nav { display: contents; }
-/* The header's secondary links (Trust, Activity, Memory, Demo tools, Settings, Sign out), folded under More */
-.more { position: relative; }
-.more-toggle::after { content: " ▾"; font-size: .8em; }
-.more-list { display: none; }
-.more-list.open { display: flex; flex-direction: column; align-items: stretch; gap: 2px; position: absolute; right: 0;
-  top: calc(100% + 6px); z-index: 40; min-width: 200px; padding: 6px; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
-.more-list > button { text-align: left; border-color: transparent; background: transparent; }
-.more-list > button:hover, .more-list > button:focus-visible { border-color: var(--line); }
-.more-list > .small { padding: 4px 12px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Mid-width screens: the header's links go quiet (no box until hover) so they fit on one row */
-@media (min-width: 901px) and (max-width: 1600px) {
-  .top { gap: 6px; }
-  .top-nav > button, .more-toggle { padding: 6px 9px; border-color: transparent; background: transparent; }
-  .top-nav > button:hover, .top-nav > button:focus-visible, .more-toggle:hover, .more-toggle:focus-visible { border-color: var(--line); }
-  .top-nav > .small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-}
-
+/* Phones and narrow windows: one pane at a time (Home or Chat, from the tab bar at the bottom), the sidebar folded
+   into a menu (shell.css), and every pane scrolling on its own. */
 @media (max-width: 900px) {
-  /* minmax(0, …): a wide child (a long command, a wide table) scrolls inside its pane instead of widening the page */
-  .shell { height: 100dvh; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr); }
-  .top { gap: 8px; padding: 8px 12px; flex-wrap: nowrap; position: relative; }
-  .top > .small, .top > .pill { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
-  .menu-toggle { display: inline-block; }
-  .top-nav { display: none; }
-  .top-nav.open { display: flex; flex-direction: column; align-items: stretch; gap: 6px; position: absolute; top: 100%;
-    left: 0; right: 0; z-index: 30; padding: 10px 12px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
-    box-shadow: var(--shadow); }
-  .top-nav.open > button { text-align: left; padding: 10px 12px; }
-  .top-nav.open > .small { padding: 4px 2px; overflow: hidden; text-overflow: ellipsis; }
-  .top-nav.open > .more { display: flex; flex-direction: column; align-items: stretch; }
-  .top-nav.open .more-toggle { text-align: left; padding: 10px 12px; }
-  .top-nav.open .more-list.open { position: static; min-width: 0; padding: 0 0 0 12px; border: 0; box-shadow: none; }
-  .top-nav.open .more-list > button { padding: 10px 12px; }
-
-  .main { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .main[data-pane="home"] > .right, .main[data-pane="chat"] > .left { display: none; }
-  .left { padding: 12px; gap: 12px; }
-  .right { border: 0; min-height: 0; }
-
-  .pane-tabs { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); background: var(--panel);
-    padding-bottom: env(safe-area-inset-bottom); }
-  .pane-tabs button { border: 0; border-radius: 0; background: transparent; padding: 12px; font-weight: 600;
-    color: var(--muted); display: flex; justify-content: center; align-items: center; gap: 6px; }
-  .pane-tabs button.on { color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
-  .pane-count { font-size: 11px; min-width: 18px; padding: 1px 5px; border-radius: 9px; background: var(--warn);
-    color: var(--bg); }
+  .main > .left { padding: 12px; gap: 12px; }
+  .main > .right { border: 0; min-height: 0; }
 
   /* chat: the input never covered */
-  .chat-input input { font-size: 16px; } /* below 16px iOS zooms the page on focus */
-  .bubble { max-width: 100%; }
+  .chat-input textarea { font-size: 16px; } /* below 16px iOS zooms the page on focus */
+  .bubble { max-width: 88%; }
 
   /* panels and the device drawer use the full width */
   .drawer { margin: 0; }
-  .needs-row { flex-wrap: wrap; }
   .tabs { overflow-x: auto; }
   .vitals { gap: 8px; }
+
+  /* fingers: every control on the home is at least 44px tall */
+  .homebar .fpill, .view-switch button, .chat-mode button, .chat-tool { min-height: 44px; padding-inline: 15px; }
+  .fmenu-panel label { min-height: 44px; }
+  .homemap .react-flow__controls-button { width: 44px; height: 44px; }
+  .homemap .react-flow__controls-button svg { max-width: 16px; max-height: 16px; }
+  .firstrun-line .linkish { display: inline-flex; align-items: center; min-height: 44px; }
+  .strip-head button, .needs-actions button, .needs-device, button.dapps { min-height: 44px; }
+  .needs-device { margin-block: -10px; } /* the finger-sized hit area overlaps the air around the name, not the layout */
+  /* the rest of what a finger taps: header pill and verdict, the chat's controls, the device panel's own */
+  .sample-pill, .top-verdict, .wl-head, .card .actions button, .chat-input button, .drawer-actions button,
+  .drawer .tabs button, .drawer-close, .star-btn:not(.small) { min-height: 44px; }
+  .drawer-close, .star-btn:not(.small) { min-width: 44px; }
+  .wl-head { align-items: center; }
+  .dtools button { min-height: 46px; } /* the toolbar sits outside the map's zoom, so leave a little room */
 }
 
-/* The map becomes a grid of tiles on phones (the desktop layout positions them by hand). */
-@media (max-width: 700px) {
-  .board { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .board .node { width: auto !important; position: relative; left: auto !important; top: auto !important; }
+/* touch screens wider than a phone (tablets) get the same finger-sized links into a device */
+@media (pointer: coarse) { .needs-device, button.dapps { min-height: 44px; } .needs-device { margin-block: -10px; } }
+/* the tour's buttons on a phone or any touch screen */
+@media (max-width: 900px), (pointer: coarse) {
+  .driver-popover.nl-tour .driver-popover-footer button { min-height: 44px; padding-inline: 16px; }
+  .driver-popover.nl-tour .driver-popover-close-btn { width: 44px; height: 44px; top: 2px; right: 2px; }
+  .driver-popover.nl-tour .driver-popover-title { padding-right: 36px; }
 }
