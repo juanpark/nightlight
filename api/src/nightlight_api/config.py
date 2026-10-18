@@ -84,6 +84,12 @@ class Settings:
     deep_price_out_per_m: float = float(os.environ.get("DEEP_PRICE_OUT_PER_M", "3.75"))
     deep_max_output_tokens: int = int(os.environ.get("DEEP_MAX_OUTPUT_TOKENS", "4096"))
     deep_calls_per_turn: int = int(os.environ.get("DEEP_CALLS_PER_TURN", "24"))
+    # Input ceiling per Investigate call. Measured 18 Oct: instruction + 31 tool declarations = 4.3k tokens, plus the
+    # home summary, memories and up to history_chars of chat (~3k) = about 9k before the turn's own steps; one full
+    # tool result (tool_result_bytes) is ~1-1.3k tokens. 16k left room for ~5 full steps of the 24 allowed; 24k holds
+    # ~12, and older ones are shortened in the request (agent.bound_input). Worst case reserved per call goes from
+    # $0.027 to $0.033 (deep_c_max), so the budget reservation stays exact.
+    deep_max_input_tokens: int = int(os.environ.get("DEEP_MAX_INPUT_TOKENS", "24000"))
     deep_turn_seconds: int = int(os.environ.get("DEEP_TURN_SECONDS", "240"))
     quick_turn_seconds: int = int(os.environ.get("QUICK_TURN_SECONDS", "120"))
     # A model call that sends nothing at all for this long is cancelled and retried once (Agent Platform has a
@@ -93,7 +99,7 @@ class Settings:
 
     @property
     def deep_c_max(self) -> float:
-        return (self.max_input_tokens * self.deep_price_in_per_m
+        return (self.deep_max_input_tokens * self.deep_price_in_per_m
                 + self.deep_max_output_tokens * self.deep_price_out_per_m) / 1e6
 
     @property
