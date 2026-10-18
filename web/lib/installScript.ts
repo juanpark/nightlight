@@ -49,11 +49,15 @@ PBS_PY=${PBS_PY}
 if [ "$(uname -s)" = Darwin ]; then APP_DIR="$HOME/Library/Application Support/Nightlight"; else APP_DIR="$HOME/.local/share/nightlight"; fi
 BUNDLED="$APP_DIR/python/bin/python3"
 PY=
+# This script's own private folder: always a fresh mktemp -d (mode 700), never a value from the environment.
+NL_TMP=
 
 workdir() {
-  [ -n "\${TMP:-}" ] && return 0
-  TMP=$(mktemp -d 2>/dev/null || mktemp -d -t nightlight)
-  trap 'rm -rf "$TMP"' EXIT
+  [ -n "$NL_TMP" ] && return 0
+  NL_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t nightlight) && [ -d "$NL_TMP" ] && [ ! -L "$NL_TMP" ] \\
+    || fail "couldn't create a private temporary folder."
+  chmod 700 "$NL_TMP"
+  trap 'rm -rf "$NL_TMP"' EXIT
   trap 'exit 130' INT TERM
 }
 
@@ -113,12 +117,12 @@ get_python() {
   say "Nightlight: this device has no Python it can use, so Nightlight is fetching its own (about $MB MB, once)."
   say "            It stays inside Nightlight's folder and changes nothing else on this device."
   NAME="cpython-$PBS_PY+$PBS_TAG-$T-install_only.tar.gz"
-  download "https://github.com/astral-sh/python-build-standalone/releases/download/$PBS_TAG/cpython-$PBS_PY%2B$PBS_TAG-$T-install_only.tar.gz" "$TMP/python.tar.gz" '=https' \\
+  download "https://github.com/astral-sh/python-build-standalone/releases/download/$PBS_TAG/cpython-$PBS_PY%2B$PBS_TAG-$T-install_only.tar.gz" "$NL_TMP/python.tar.gz" '=https' \\
     || fail "couldn't download Python ($NAME). Check the internet connection and try again."
-  [ "$(sha256_of "$TMP/python.tar.gz")" = "$WANT" ] || fail "the downloaded Python didn't match its checksum, so nothing was installed. Please try again."
+  [ "$(sha256_of "$NL_TMP/python.tar.gz")" = "$WANT" ] || fail "the downloaded Python didn't match its checksum, so nothing was installed. Please try again."
   NEW="$APP_DIR/.python-new"
   rm -rf "$NEW" && mkdir "$NEW" || fail "couldn't write to $APP_DIR."
-  tar -xzf "$TMP/python.tar.gz" -C "$NEW" || { rm -rf "$NEW"; fail "couldn't unpack Python into $APP_DIR (is the disk full?)."; }
+  tar -xzf "$NL_TMP/python.tar.gz" -C "$NEW" || { rm -rf "$NEW"; fail "couldn't unpack Python into $APP_DIR (is the disk full?)."; }
   # Not needed to run the helper (as in the Mac installer): headers, docs, Tcl/Tk and the GUI, tests, IDLE, pip.
   P="$NEW/python"; L="$P/lib/python3.12"
   rm -rf "$P/include" "$P/share" "$P/lib/pkgconfig" "$P/lib"/itcl* "$P/lib"/tcl* "$P/lib"/thread* "$P/lib"/tk* \\
@@ -149,7 +153,7 @@ remove_own_python() {
 
 fetch_helper() {
   workdir
-  HELPER="$TMP/nightlight_helper.py"
+  HELPER="$NL_TMP/nightlight_helper.py"
   download "$HELPER_URL" "$HELPER" '=https,http' || fail "couldn't download the helper. Check the internet connection and try again."
   [ "$(sha256_of "$HELPER")" = "$HELPER_SHA256" ] || fail "the downloaded helper didn't match its checksum, so nothing was installed. Please try again."
 }
@@ -175,8 +179,9 @@ link_command() {
   command -v nightlight >/dev/null 2>&1 && return 0
   if [ "$(uname -s)" = Linux ] && [ ! -e "$LINK" ] && [ ! -L "$LINK" ] && [ -d /usr/local/bin ]; then
     case ":$PATH:" in *:/usr/local/bin:*)
-      if [ "$(id -u)" = 0 ]; then ln -s "$SHORT" "$LINK" 2>/dev/null; else sudo -n ln -s "$SHORT" "$LINK" 2>/dev/null; fi
-      command -v nightlight >/dev/null 2>&1 && return 0 ;;
+      # A failed link must not end the script (set -e): fall through to the note instead.
+      if [ "$(id -u)" = 0 ]; then AS=; else AS="sudo -n"; fi
+      if $AS ln -s "$SHORT" "$LINK" 2>/dev/null && command -v nightlight >/dev/null 2>&1; then return 0; fi ;;
     esac
   fi
   NOTE="The nightlight command works by name after you next log in. Until then use: ~/.local/bin/nightlight status"

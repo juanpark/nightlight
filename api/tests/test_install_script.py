@@ -197,3 +197,36 @@ def test_command_link_is_only_removed_when_it_is_ours(tmp_path):
     assert body.index("helper uninstall") < body.index("remove_own_python\n  say")
     ins = _script(tmp_path, "installScript")
     assert ins.index("helper install") < ins.index("  link_command\n")
+
+
+def test_staging_folder_is_always_private_and_never_inherited(tmp_path):
+    """An inherited TMP or NL_TMP must not choose where downloads land (a pre-planted link could be swapped in)."""
+    evil = tmp_path / "shared"
+    evil.mkdir()
+    code = _functions(tmp_path) + 'workdir; echo "DIR=$NL_TMP"; ls -ld "$NL_TMP"\n'
+    path = _bin(tmp_path, BASE + ["uname"])
+    r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True,
+                       env={"PATH": path, "HOME": str(tmp_path), "TMP": str(evil), "NL_TMP": str(evil)})
+    assert r.returncode == 0, r.stderr
+    d = re.search(r"DIR=(.*)", r.stdout).group(1)
+    assert d not in (str(evil), "/tmp", "") and "drwx------" in r.stdout
+    assert not Path(d).exists()  # removed on exit
+
+
+def test_a_failed_command_link_falls_back_to_the_note_under_set_e(tmp_path):
+    """sudo -n refusing (a password would be needed) must not abort the script before the plain note."""
+    if not os.path.isdir("/usr/local/bin"):
+        pytest.skip("needs /usr/local/bin to exist")
+    home = tmp_path / "home"
+    (home / ".local/bin").mkdir(parents=True)
+    (home / ".local/bin/nightlight").write_text("#!/bin/sh\n")
+    fakes = {"uname": 'case "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n', "id": "echo 1000\n",
+             "sudo": "exit 1\n"}
+    path = _bin(tmp_path, [t for t in BASE if t != "id"], fakes)
+    link = tmp_path / "ulb" / "nightlight"
+    code = "set -eu\n" + _functions(tmp_path) + f"LINK={link}\n" + 'link_command; echo "NOTE=${NOTE:-}"; echo REACHED\n'
+    r = subprocess.run(["/bin/sh", "-c", code], capture_output=True, text=True,
+                       env={"PATH": path + ":/usr/local/bin", "HOME": str(home)})
+    assert r.returncode == 0, r.stderr
+    assert "REACHED" in r.stdout and "~/.local/bin/nightlight status" in r.stdout
+    assert not link.exists()
