@@ -174,3 +174,22 @@ button.dapps:hover .dapps-text { color: var(--accent); text-decoration: underlin
   .dnode.lit-working { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--glow) 70%, transparent), var(--shadow); }
   .dchip.lit-app { animation: none; }
 }
+/* Status board (StatusBoard.tsx): an ops-script look, one block per device */
+.status-board { padding: 12px 14px; }
+.sb-head { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.sb-summary { font-variant-numeric: tabular-nums; }
+.sb-summary.crit { color: var(--crit); } .sb-summary.warn { color: var(--warn); }
+.sb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 10px; }
+.sb-block { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.sb-block h4 { margin: 0 0 6px; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.sb-block h4 .linkish { font: inherit; font-weight: 700; }
+.sb-at { color: var(--muted); font-weight: 400; white-space: nowrap; }
+.sb-block ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.sb-block li { display: grid; grid-template-columns: 16px minmax(64px, auto) 1fr; gap: 6px; align-items: baseline; }
+.sb-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.sb-value { color: var(--muted); overflow-wrap: anywhere; }
+.sb-apps { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--ink); }
+.sb-mark { font-weight: 700; text-align: center; }
+.sb-mark.ok { color: var(--ok); } .sb-mark.warn { color: var(--warn); } .sb-mark.crit { color: var(--crit); }
+.sb-mark.unknown { color: var(--muted); }
