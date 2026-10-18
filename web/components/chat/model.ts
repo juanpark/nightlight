@@ -11,9 +11,7 @@ export type Block =
   | { kind: "text"; text: string }
   | { kind: "step"; name: string; label: string; command?: string; status: StepStatus; summary?: string;
       details?: string; startedAt: number; ms?: number; callId?: string }
-  | { kind: "card"; actionId: string }
-  // "Let me check the Raspberry Pi." said just before a step: read as the first line of the work log, not as an answer
-  | { kind: "lead"; text: string };
+  | { kind: "card"; actionId: string };
 
 export type Turn =
   | { kind: "user"; key: string; text: string; past?: boolean }
@@ -123,7 +121,9 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       if (m.text.slice(at, cut).trim()) blocks.push({ kind: "text", text: m.text.slice(at, cut) });
       at = cut;
       blocks.push(pastStep(s, devices));
-      if (s.actionId) blocks.push({ kind: "card", actionId: s.actionId });
+      // two steps can be answered by one card: it stays where it first appeared
+      if (s.actionId && !blocks.some((b) => b.kind === "card" && b.actionId === s.actionId))
+        blocks.push({ kind: "card", actionId: s.actionId });
     }
     if (m.text.slice(at).trim()) blocks.push({ kind: "text", text: m.text.slice(at) });
     for (const id of m.actionIds ?? []) {
@@ -137,14 +137,4 @@ export function fromHistory(msgs: PastMessage[], devices: Device[]): Turn[] {
       error: m.error?.message, after, ms: m.metrics?.latencyMs, metrics: m.metrics });
   }
   return out;
-}
-
-const LEAD = /^(Let me|I['’]ll) (check|look at|look into|see)[^.]{0,80}\.$/;
-
-/** A turn's blocks with its opening "Let me check…" sentence (only when it is the whole of the words before a step,
- * and that step comes right after) turned into a work-log line. Nothing else changes: other words are never removed. */
-export function withLead(blocks: Block[]): Block[] {
-  const [first, second] = blocks;
-  if (first?.kind !== "text" || second?.kind !== "step" || !LEAD.test(first.text.trim())) return blocks;
-  return [{ kind: "lead", text: first.text.trim() }, ...blocks.slice(1)];
 }
