@@ -99,6 +99,13 @@ with passkey**, confirm, and the device runs exactly that command, once, with a 
 (scrubbed) output. A transcript of every expert command stays on the device (`expert-transcript.log` in the helper's
 folder).
 
+**Audit it at the device, without trusting the cloud:** run `nightlight audit` there (or read
+`~/Library/Logs/nightlight-helper.log` on a Mac, `journalctl -u nightlight-helper` on Linux). Since helper 0.9.34
+each expert command and read-only grant leaves lines like `Expert command verified: signed by the owner's passkey
+(key 3F9A-7C21), for this device, nonce k8Zq2x, expires 15:02 KST; running: rm -rf ~/.gradle/caches`, then
+`finished: exit code 0`; refusals say why (bad signature, expired, other device, already used, expert sessions off).
+Never the output, a token or the signature itself.
+
 **What each prompt looks like.** Your phone or computer shows its usual passkey sheet ("Nightlight expert sessions"
 and Nightlight's address); the app button reads "Waiting for your passkey…" while it is open. Cancelling the sheet
 leaves the card untouched ("Cancelled or timed out. Tap again.").

@@ -302,3 +302,42 @@ def test_an_expired_passkey_card_turns_stale_and_unlock_time_reads_plainly(clien
     assert r.status_code == 409 and r.json()["code"] == "expired"
     a = db.action(uid, g2["id"]).get().to_dict()
     assert a["status"] == "stale" and "Ask again" in a["result"]["summary"]
+
+
+def test_the_device_keeps_its_own_audit_trail(helper, capsys):  # the owner audits at the device, not via the cloud
+    pk = Passkey()
+    _pinned(helper, pk)
+    payload, signed = _signed_command(pk, command="uname -a")
+    assert helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})[0]
+    helper.run_job({"type": "expert_command", "params": {"payload": payload, "signed": signed}})  # reused
+    p2, s2 = _signed_command(pk, device="dev_other")
+    helper.run_job({"type": "expert_command", "params": {"payload": p2, "signed": s2}})
+    grant = {"device": "dev_x", "mode": "read-only", "expires": int(time.time()) + 600, "nonce": "grant42"}
+    gs = pk.sign(expert.challenge_for(grant))
+    for cmd in ("uname", "uptime", "kill 1"):
+        helper.run_job({"type": "expert_read", "params": {"grant": grant, "signed": gs, "command": cmd}})
+    log = capsys.readouterr().out
+    assert "Expert command verified: signed by the owner's passkey (key x), for this device, nonce " \
+           f"{payload['nonce'][:6]}, expires " in log and "; running: uname -a" in log
+    assert "Expert command finished: exit code 0" in log
+    assert "Expert command refused: this signed command was already used; asked: uname -a" in log
+    assert "Expert command refused: the command was signed for another device" in log
+    assert log.count("Investigation grant verified") == 1 and "nonce grant4" in log and "read-only until " in log
+    assert "Read-only command (grant grant4): running: uptime" in log
+    assert "Read-only command refused on this device" in log
+    for secret in (signed["signature"], signed["authenticatorData"], "t" * 43):
+        assert secret not in log
+    assert "Linux" not in log and "Darwin" not in log  # never the output
+    helper.audit_show(3)
+    shown = capsys.readouterr().out.splitlines()
+    assert len(shown) == 3 and "Read-only command refused on this device" in shown[-1]
+
+
+def test_audit_lines_stay_one_line_and_scrubbed_and_the_file_bounded(helper, monkeypatch):
+    assert "\n" not in helper._audit_cmd("echo a\nforged line")
+    assert "hunter2" not in helper._audit_cmd("mysql --password=hunter2")
+    monkeypatch.setattr(helper, "AUDIT_MAX", 1000)
+    for i in range(100):
+        helper._audit(f"line {i} " + "x" * 40)
+    path = Path(helper.APP_DIR) / helper.AUDIT_FILE
+    assert path.stat().st_size < 1200 and path.read_text().splitlines()[-1].endswith("x" * 40)

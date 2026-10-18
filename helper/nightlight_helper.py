@@ -52,7 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.33"
+VERSION = "0.9.34"
 CONFIG_DIR = os.environ.get("NIGHTLIGHT_HOME", os.path.join(os.path.expanduser("~"), ".config", "nightlight"))
 CONFIG = os.path.join(CONFIG_DIR, "helper.json")
 JOB_TYPES = ("restart_container", "restart_service", "diagnose", "logs", "inspect", "fix", "update")
@@ -2035,14 +2035,22 @@ def run_readonly(params):
     cfg = _load()
     grant, signed, command = params.get("grant"), params.get("signed"), params.get("command")
     if not isinstance(grant, dict) or grant.get("mode") != "read-only":
+        _audit(f"Read-only command refused: there's no read-only investigation grant; asked: {_audit_cmd(command)}")
         return False, "Not run: there's no read-only investigation grant.", None
     why = expert_check(grant, signed, cfg, reusable=True)
     if why:
+        _audit(f"Read-only command refused: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run: {why}.", None
+    nonce = str(grant.get("nonce"))
+    if nonce not in _AUDITED_GRANTS:  # the grant line once per grant, then one line per command run under it
+        _AUDITED_GRANTS.add(nonce)
+        _audit(f"Investigation grant verified: {_audit_signer(cfg, grant)}; read-only until {_audit_time(grant)}")
     argv, why = readonly_command(command)
     if why:
+        _audit(f"Read-only command refused on this device: {why}; asked: {_audit_cmd(command)}")
         return False, f"Not run on this device: {why}.", None
-    return _execute(command, argv=argv)
+    _audit(f"Read-only command (grant {nonce[:6]}): running: {_audit_cmd(command)}")
+    return _execute(command, argv=argv, label="Read-only command")
 
 
 def run_expert(params):
@@ -2051,6 +2059,8 @@ def run_expert(params):
     payload, signed = params.get("payload"), params.get("signed")
     why = expert_check(payload, signed, cfg)
     if why:
+        _audit(f"Expert command refused: {why}; asked: "
+               f"{_audit_cmd(payload.get('command') if isinstance(payload, dict) else None)}")
         return False, f"Not run: {why}.", None
     taken = []
 
@@ -2066,11 +2076,73 @@ def run_expert(params):
         taken.append(True)
     _update_config(consume)
     if not taken:
+        _audit(f"Expert command refused: this signed command was already used; asked: {_audit_cmd(payload['command'])}")
         return False, "Not run: this signed command was already used.", None
-    return _execute(payload["command"], shell=True)
+    _audit(f"Expert command verified: {_audit_signer(cfg, payload)}, expires {_audit_time(payload)}; "
+           f"running: {_audit_cmd(payload['command'])}")
+    return _execute(payload["command"], shell=True, label="Expert command")
 
 
-def _execute(command, shell=False, argv=None):
+# The local audit trail: what ran here and on whose signature, readable at the device without trusting the cloud
+# (`nightlight audit`). One short line per step, in the helper's log and in an owner-only file in the app folder that
+# is kept under AUDIT_MAX bytes. Never the output, a token or the signature itself; the command is scrubbed.
+AUDIT_FILE = "expert-transcript.log"
+AUDIT_MAX = 256 * 1024
+_AUDITED_GRANTS = set()
+
+
+def _audit_cmd(command):
+    if not isinstance(command, str):
+        return "(none)"
+    text = scrub(" ".join(command.split()).replace(_HOME, "~"))[0]  # one line: no forged entries via newlines
+    return text if len(text) <= 300 else text[:300] + "..."
+
+
+def _audit_time(payload):
+    try:
+        return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(int(payload.get("expires"))))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"
+
+
+def _audit_signer(cfg, payload):
+    pinned = cfg.get("expert") or {}
+    fp = pinned.get("fingerprint") or key_fingerprint(pinned.get("pem", "")) or "?"
+    return (f"signed by the owner's passkey (key {str(fp)[:9]}), for this device, "
+            f"nonce {str(payload.get('nonce'))[:6]}")
+
+
+def _audit(line):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}"
+    print(line, flush=True)
+    try:
+        path = os.path.join(_own_dir(APP_DIR), AUDIT_FILE)
+        if os.path.exists(path) and os.path.getsize(path) > AUDIT_MAX:  # keep the newest half
+            with open(path, "rb") as f:
+                f.seek(-AUDIT_MAX // 2, os.SEEK_END)
+                keep = f.read().split(b"\n", 1)[-1]
+            with open(path, "wb") as f:
+                f.write(keep)
+        with open(path, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def audit_show(n=20):
+    """At the device: the last n expert entries (verified, refused, ran, finished)."""
+    try:
+        with open(os.path.join(_own_dir(APP_DIR), AUDIT_FILE), errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    if not lines:
+        print("No expert commands have been verified or refused on this device.")
+    for line in lines[-max(int(n), 1):]:
+        print(line)
+
+
+def _execute(command, shell=False, argv=None, label="Command"):
     """Run it (a shell only for a command the owner signed by itself; read-only ones run without a shell), keep a
     transcript on the device, and return the scrubbed output."""
     import shlex
@@ -2084,11 +2156,7 @@ def _execute(command, shell=False, argv=None):
         out, code = "(stopped after 60 seconds)", None
     except OSError as e:
         out, code = f"couldn't run it ({type(e).__name__})", None
-    try:  # a transcript stays on the device (owner-only folder)
-        with open(os.path.join(_own_dir(APP_DIR), "expert-transcript.log"), "a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} exit={code} $ {command}\n")
-    except OSError:
-        pass
+    _audit(f"{label} finished: exit code {code}" if code is not None else f"{label} finished: didn't finish ({out})")
     text, hidden = scrub(out.replace(_HOME, "~"))
     tail = _tail(text, lines=80, limit=3500) + (f"\n({hidden} private values hidden)" if hidden else "")
     return code == 0, f"Ran it (exit code {code})." if code is not None else "It didn't finish.", tail
@@ -3832,6 +3900,8 @@ def main():
     sub.add_parser("version")
     ex = sub.add_parser("expert", help="switch expert sessions on (pin your passkey) or off, at this device")
     ex.add_argument("--off", action="store_true")
+    au = sub.add_parser("audit", help="show the last expert commands verified, refused and run on this device")
+    au.add_argument("-n", type=int, default=20)
     sub.add_parser("rollback", help="go back to the version before the last update")
     sub.add_parser("joined", help="exit 0 if this device is already joined (used by the installer)")
     dsc = sub.add_parser("discover")
@@ -3859,6 +3929,8 @@ def main():
         print(VERSION)
     elif a.cmd == "expert":
         expert_setup(a.off)
+    elif a.cmd == "audit":
+        audit_show(a.n)
     elif a.cmd == "rollback":
         rollback()
     elif a.cmd == "settings":
